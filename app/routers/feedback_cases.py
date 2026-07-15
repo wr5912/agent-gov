@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, Query
 
-from app.routers.error_helpers import ensure_found, require_request
-from app.runtime.stores.feedback_store import FeedbackStore
+from app.routers.error_helpers import ensure_found
 from app.runtime.schemas import (
     EvidencePackageFileResponse,
     EvidencePackageResponse,
     FeedbackCaseCreateRequest,
     FeedbackCaseResponse,
 )
+from app.runtime.stores.feedback_store import FeedbackStore
 
 
 def create_feedback_cases_router(
@@ -55,8 +55,11 @@ def _register_case_routes(router: APIRouter, feedback_store: FeedbackStore) -> N
         summary="Create one feedback disposition case from feedback signals",
     )
     async def create_feedback_case(req: FeedbackCaseCreateRequest) -> FeedbackCaseResponse:
-        require_request(bool(req.source_ids), "source_ids is required")
-        feedback_case = feedback_store.create_case(source_ids=req.source_ids, title=req.title, priority=req.priority)
+        feedback_case = feedback_store.create_case(
+            source_refs=[(ref.source_kind, ref.source_id) for ref in req.source_refs],
+            title=req.title,
+            priority=req.priority,
+        )
         return ensure_found(feedback_case, "Feedback source not found")
 
 

@@ -1,6 +1,6 @@
 # Claude Code 团队项目说明
 
-本文件是团队级 Claude Code 通用说明，可在多个项目中复用。项目专属路径、脚本、CI、端口、密钥边界和产品不变量放在 `CLAUDE.project.md`，不要硬编码进通用规则。
+本文件是团队级 Claude Code 通用说明，可在多个项目中复用。项目专属路径、脚本、CI、端口、密钥边界和产品不变量放在 `.claude/rules/agentgov-project.md`，不要硬编码进通用规则。
 
 ## 读取顺序
 
@@ -9,7 +9,7 @@ Claude Code 会加载本文件，并通过 `@` 导入以下团队规则：
 @.claude/rules/project.md
 @.claude/rules/architecture.md
 @.claude/rules/verify.md
-@CLAUDE.project.md
+@.claude/rules/agentgov-project.md
 
 ## 协作语言
 

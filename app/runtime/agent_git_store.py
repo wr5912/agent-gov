@@ -13,12 +13,17 @@ from pathlib import Path
 from typing import Optional, Protocol
 
 from app.runtime.advisory_lock import advisory_lock
-from app.runtime.agent_version_store import WORKSPACE_EXCLUDED_NAMES, WORKSPACE_EXCLUDED_PATTERNS
-from app.runtime.feedback_privacy import SENSITIVE_KEY_PARTS
+from app.runtime.agent_git_workspace_diff import (
+    MAX_FILE_DIFF_BYTES,
+    parse_workspace_changes,
+    redact_sensitive_diff,
+    untracked_workspace_file_diff,
+    workspace_diff_error,
+)
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import utc_now
+from app.runtime.workspace_policy import WORKSPACE_EXCLUDED_NAMES, WORKSPACE_EXCLUDED_PATTERNS
 
-MAX_FILE_DIFF_BYTES = 200_000
 MAX_REPOSITORY_STATUS_DIFFS = 20
 
 
@@ -186,7 +191,7 @@ class GitAgentVersionStore:
     def workspace_file_diff(self, path: str) -> JsonObject:
         safe_path = self._safe_relative_path(path)
         if not safe_path:
-            return self._workspace_diff_error(path, "invalid_path", "路径不是合法的 workspace 相对路径。")
+            return workspace_diff_error(path, "invalid_path", "路径不是合法的 workspace 相对路径。")
         changes = {str(item["path"]): item for item in self._workspace_changes()}
         change = changes.get(safe_path)
         status = str((change or {}).get("status") or "unchanged")
@@ -202,13 +207,13 @@ class GitAgentVersionStore:
             result["reason"] = "文件没有未提交变化。"
             return result
         if bool(change.get("untracked")):
-            return self._untracked_workspace_file_diff(safe_path, status)
+            return untracked_workspace_file_diff(self.repository_dir, safe_path, status)
         diff = self._git(["diff", "--no-ext-diff", "--no-renames", "HEAD", "--", safe_path], cwd=self.repository_dir, check=False)
         if len(diff.encode("utf-8")) > MAX_FILE_DIFF_BYTES:
             result.update({"status": "binary_or_too_large", "truncated": True, "reason": f"diff 超过 {MAX_FILE_DIFF_BYTES} bytes，未展开内容。"})
             return result
         result["is_text"] = True
-        result["unified_diff"] = self._redact_sensitive_diff(diff)
+        result["unified_diff"] = redact_sensitive_diff(diff)
         if not result["unified_diff"]:
             result["reason"] = "文件变化无法生成文本 diff。"
         return result
@@ -251,7 +256,6 @@ class GitAgentVersionStore:
             "rollback_of_version_id": rollback_of_version_id,
             "source_change_set_ids": [],
             "note": note,
-            "snapshot_policy_version": "git-main-workspace-v1",
             "repository_dir": str(self.repository_dir),
             "file_count": self._tracked_file_count(commit_sha),
         }
@@ -275,6 +279,39 @@ class GitAgentVersionStore:
             self._configure_repo(worktree_path)
             self._write_info_exclude(worktree_path)
             return GitWorktreeRef(change_set_id, branch_name, worktree_path, base_commit)
+
+    def worktree_commit_sha(self, worktree_path: Path) -> str | None:
+        """Return a candidate worktree HEAD so interrupted commits can be reconciled."""
+        with self._lock:
+            safe_path = self._owned_worktree_path(worktree_path)
+            if not safe_path.exists() or not (safe_path / ".git").exists():
+                return None
+            commit = self._git(["rev-parse", "HEAD"], cwd=safe_path, check=False).strip()
+            return commit or None
+
+    def reset_worktree(self, worktree_path: Path, *, base_ref: str) -> None:
+        """Discard an interrupted, uncommitted automatic apply before its fenced retry."""
+        with self._lock:
+            safe_path = self._owned_worktree_path(worktree_path)
+            if not safe_path.exists() or not (safe_path / ".git").exists():
+                raise AgentGitError("Candidate worktree is missing")
+            base_commit = self._resolve_ref(base_ref)
+            self._git(["reset", "--hard", base_commit], cwd=safe_path)
+            self._git(["clean", "-fd"], cwd=safe_path)
+
+    def remove_worktree(self, change_set_id: str, *, delete_branch: bool = True) -> None:
+        """Compensate an abandoned automatic change set outside the DB transaction."""
+        if not change_set_id or any(part in change_set_id for part in ("/", "\\", "..")):
+            raise AgentGitError("Invalid change set id for worktree cleanup")
+        with self._lock:
+            worktree_path = self._owned_worktree_path(self.worktrees_dir / change_set_id)
+            branch_name = f"change-set/{change_set_id}"
+            self._git(["worktree", "remove", "--force", str(worktree_path)], cwd=self.repository_dir, check=False)
+            if worktree_path.exists():
+                shutil.rmtree(worktree_path)
+            self._git(["worktree", "prune"], cwd=self.repository_dir, check=False)
+            if delete_branch:
+                self._git(["branch", "-D", branch_name], cwd=self.repository_dir, check=False)
 
     def commit_worktree(self, worktree_path: Path, *, message: str) -> str:
         with self._mutation_guard():
@@ -387,19 +424,39 @@ class GitAgentVersionStore:
             self._maintenance = True
             try:
                 self._ensure_repo_ready()
+                candidate = self._resolve_commit(commit_sha)
+                self._validate_tag_name(tag_name)
                 current = self.current_commit_sha()
+                tag_ref = f"refs/tags/{tag_name}"
+                tagged_commit = self._git(["rev-parse", "--verify", f"{tag_ref}^{{commit}}"], cwd=self.repository_dir, check=False).strip()
+                if tagged_commit and tagged_commit != candidate:
+                    raise AgentGitError(f"Release tag {tag_name!r} already points to a different commit")
                 if self._git(["status", "--porcelain"], cwd=self.repository_dir).strip():
                     raise AgentGitError("Main Agent workspace has uncommitted changes")
-                target = self._resolve_ref(commit_sha)
                 if validate_ref is not None:
-                    validate_ref(target)
-                self._git(["merge", "--ff-only", target], cwd=self.repository_dir)
-                if not self._git(["tag", "--list", tag_name], cwd=self.repository_dir).strip():
-                    self._git(["tag", "-a", tag_name, "-m", message, target], cwd=self.repository_dir)
+                    validate_ref(candidate)
+                candidate_was_published = (
+                    tagged_commit and self._git(["merge-base", candidate, str(current)], cwd=self.repository_dir, check=False).strip() == candidate
+                )
+                if self.current_commit_sha() != candidate and not candidate_was_published:
+                    self._git(["merge", "--ff-only", candidate], cwd=self.repository_dir)
+                    if self.current_commit_sha() != candidate:
+                        raise AgentGitError("Agent candidate is no longer the active fast-forward target")
+                if not tagged_commit:
+                    try:
+                        self._git(["tag", "-a", tag_name, "-m", message, candidate], cwd=self.repository_dir)
+                    except AgentGitError:
+                        concurrently_tagged = self._git(
+                            ["rev-parse", "--verify", f"{tag_ref}^{{commit}}"],
+                            cwd=self.repository_dir,
+                            check=False,
+                        ).strip()
+                        if concurrently_tagged != candidate:
+                            raise
                 archive = self.archive_ref(tag_name)
                 return {
                     "previous_commit_sha": current,
-                    "published_commit_sha": self.current_commit_sha(),
+                    "published_commit_sha": candidate,
                     "tag_name": tag_name,
                     "archive": archive,
                     "requires_runtime_restart": True,
@@ -407,10 +464,47 @@ class GitAgentVersionStore:
             finally:
                 self._maintenance = False
 
+    def validate_publication_target(self, commit_sha: str, tag_name: str) -> None:
+        with self._lock:
+            self._ensure_repo_ready()
+            candidate = self._resolve_commit(commit_sha)
+            self._validate_tag_name(tag_name)
+            tagged_commit = self._git(
+                ["rev-parse", "--verify", f"refs/tags/{tag_name}^{{commit}}"],
+                cwd=self.repository_dir,
+                check=False,
+            ).strip()
+            if tagged_commit and tagged_commit != candidate:
+                raise AgentGitError(f"Release tag {tag_name!r} already points to a different commit")
+
+    def publication_side_effects_present(self, commit_sha: str, tag_name: str) -> bool:
+        with self._lock:
+            self._ensure_repo_ready()
+            candidate = self._resolve_commit(commit_sha)
+            tagged_commit = self._git(
+                ["rev-parse", "--verify", f"refs/tags/{tag_name}^{{commit}}"],
+                cwd=self.repository_dir,
+                check=False,
+            ).strip()
+            current = str(self.current_commit_sha() or "")
+            if current == candidate:
+                return True
+            merge_base = self._git(["merge-base", candidate, current], cwd=self.repository_dir, check=False).strip()
+            return tagged_commit == candidate and merge_base == candidate
+
     def archive_ref(self, ref: str) -> JsonObject:
-        resolved = self._resolve_ref(ref)
-        archive_path = self.releases_dir / f"{ref.replace('/', '-')}.tar.gz"
-        self._git(["archive", "--format=tar.gz", "-o", str(archive_path), resolved], cwd=self.repository_dir)
+        resolved = self._resolve_commit(ref)
+        ref_digest = hashlib.sha256(ref.encode("utf-8")).hexdigest()[:16]
+        archive_path = self.releases_dir / f"release-{ref_digest}-{resolved[:16]}.tar.gz"
+        temporary_path = archive_path.with_name(f".{archive_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            self._git(
+                ["archive", "--format=tar.gz", "-o", str(temporary_path), resolved],
+                cwd=self.repository_dir,
+            )
+            os.replace(temporary_path, archive_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
         return {
             "ref": ref,
             "commit_sha": resolved,
@@ -418,7 +512,13 @@ class GitAgentVersionStore:
             "sha256": self._sha256_file(archive_path),
         }
 
-    def rollback_to_ref(self, ref: str, *, validate_ref: Callable[[str], None] | None = None) -> JsonObject:
+    def rollback_to_ref(
+        self,
+        ref: str,
+        *,
+        expected_current_ref: str | None = None,
+        validate_ref: Callable[[str], None] | None = None,
+    ) -> JsonObject:
         with self._mutation_guard():
             self._maintenance = True
             try:
@@ -429,6 +529,10 @@ class GitAgentVersionStore:
                 if validate_ref is not None:
                     validate_ref(target)
                 previous = self.current_commit_sha()
+                if expected_current_ref is not None:
+                    expected = self._resolve_ref(expected_current_ref)
+                    if previous != expected:
+                        raise AgentGitError(f"Agent workspace HEAD changed before version maintenance (expected {expected}, found {previous or 'missing'})")
                 self._git(["reset", "--hard", target], cwd=self.repository_dir)
                 return {
                     "previous_commit_sha": previous,
@@ -480,32 +584,7 @@ class GitAgentVersionStore:
 
     def _workspace_changes(self) -> list[JsonObject]:
         raw = self._git(["status", "--porcelain=v1", "--untracked-files=all", "--no-renames"], cwd=self.repository_dir)
-        changes: list[JsonObject] = []
-        for line in raw.splitlines():
-            if len(line) < 4:
-                continue
-            index_status = line[0]
-            worktree_status = line[1]
-            raw_path = line[3:]
-            if " -> " in raw_path:
-                raw_path = raw_path.split(" -> ", 1)[1]
-            safe_path = self._safe_relative_path(raw_path)
-            if not safe_path:
-                continue
-            untracked = index_status == "?" and worktree_status == "?"
-            changes.append(
-                {
-                    "path": safe_path,
-                    "status": self._workspace_change_status(index_status, worktree_status),
-                    "index_status": index_status,
-                    "worktree_status": worktree_status,
-                    "staged": index_status not in {" ", "?"},
-                    "unstaged": worktree_status not in {" ", "?"},
-                    "untracked": untracked,
-                    "discardable": True,
-                }
-            )
-        return changes
+        return parse_workspace_changes(raw, normalize_path=self._safe_relative_path)
 
     def _requested_dirty_paths(self, paths: list[str], current: dict[str, JsonObject]) -> list[str]:
         requested: list[str] = []
@@ -518,86 +597,6 @@ class GitAgentVersionStore:
             if safe_path not in requested:
                 requested.append(safe_path)
         return requested
-
-    @staticmethod
-    def _workspace_change_status(index_status: str, worktree_status: str) -> str:
-        if index_status == "?" and worktree_status == "?":
-            return "untracked"
-        if "D" in {index_status, worktree_status}:
-            return "deleted"
-        if "A" in {index_status, worktree_status}:
-            return "added"
-        if "R" in {index_status, worktree_status}:
-            return "renamed"
-        if "M" in {index_status, worktree_status}:
-            return "modified"
-        return "changed"
-
-    def _untracked_workspace_file_diff(self, safe_path: str, status: str) -> JsonObject:
-        result: JsonObject = {
-            "path": safe_path,
-            "status": status,
-            "unified_diff": "",
-            "is_text": False,
-            "truncated": False,
-            "reason": None,
-        }
-        path = self.repository_dir / safe_path
-        if path.is_dir():
-            result["reason"] = "未跟踪目录未展开内容。"
-            return result
-        try:
-            data = path.read_bytes()
-        except OSError as exc:
-            result["reason"] = f"{exc.__class__.__name__}: {exc}"
-            return result
-        if len(data) > MAX_FILE_DIFF_BYTES:
-            result.update({"status": "binary_or_too_large", "truncated": True, "reason": f"文件超过 {MAX_FILE_DIFF_BYTES} bytes，未展开内容。"})
-            return result
-        if b"\x00" in data:
-            result["reason"] = "文件包含二进制内容，未展开内容。"
-            return result
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            result["reason"] = "文件不是 UTF-8 文本，未展开内容。"
-            return result
-        result["is_text"] = True
-        result["unified_diff"] = self._redact_sensitive_diff(
-            "".join(
-                difflib.unified_diff(
-                    [],
-                    text.splitlines(keepends=True),
-                    fromfile=f"HEAD:{safe_path}",
-                    tofile=f"workspace:{safe_path}",
-                    lineterm="\n",
-                )
-            )
-        )
-        return result
-
-    def _workspace_diff_error(self, path: str, status: str, reason: str) -> JsonObject:
-        return {
-            "path": path,
-            "status": status,
-            "unified_diff": "",
-            "is_text": False,
-            "truncated": False,
-            "reason": reason,
-        }
-
-    @staticmethod
-    def _redact_sensitive_diff(diff: str) -> str:
-        lines: list[str] = []
-        for line in diff.splitlines(keepends=True):
-            lowered = line.lower()
-            if line.startswith(("+++", "---", "@@")) or not any(part in lowered for part in SENSITIVE_KEY_PARTS):
-                lines.append(line)
-                continue
-            marker = line[:1] if line[:1] in {"+", "-", " "} else ""
-            newline = "\n" if line.endswith("\n") else ""
-            lines.append(f"{marker}[redacted sensitive line]{newline}")
-        return "".join(lines)
 
     def _ensure_repo_ready(self) -> None:
         self.ensure_bootstrap()
@@ -679,6 +678,20 @@ class GitAgentVersionStore:
             raise AgentGitError(f"Unknown git ref: {ref}")
         return value
 
+    def _resolve_commit(self, ref: str) -> str:
+        value = self._git(["rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=self.repository_dir, check=False).strip()
+        if not value:
+            raise AgentGitError(f"Unknown git commit: {ref}")
+        return value
+
+    def _validate_tag_name(self, tag_name: str) -> None:
+        if not tag_name or tag_name.startswith("-"):
+            raise AgentGitError(f"Invalid release tag name: {tag_name!r}")
+        try:
+            self._git(["check-ref-format", f"refs/tags/{tag_name}"], cwd=self.repository_dir)
+        except AgentGitError as exc:
+            raise AgentGitError(f"Invalid release tag name: {tag_name!r}") from exc
+
     def _commit_created_at(self, commit_sha: str) -> str:
         raw = self._git(["show", "-s", "--format=%cI", commit_sha], cwd=self.repository_dir, check=False).strip()
         return raw or utc_now()
@@ -734,6 +747,13 @@ class GitAgentVersionStore:
         if not raw or rel.is_absolute() or ".." in rel.parts:
             return None
         return rel.as_posix()
+
+    def _owned_worktree_path(self, path: Path) -> Path:
+        resolved = path.expanduser().resolve()
+        worktrees_root = self.worktrees_dir.expanduser().resolve()
+        if resolved.parent != worktrees_root:
+            raise AgentGitError("Candidate worktree path escapes the governed worktree root")
+        return resolved
 
     def _sha256_file(self, path: Path) -> str:
         digest = hashlib.sha256()

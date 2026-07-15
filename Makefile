@@ -13,7 +13,6 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/routers/responses.py \
 	app/runtime/api_auth.py \
 	app/runtime/advisory_lock.py \
-	app/runtime/api_health.py \
 	app/runtime/agent_job_types.py \
 	app/runtime/claude_runtime_permissions.py \
 	app/runtime/claude_runtime_stream.py \
@@ -21,6 +20,8 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/output_formatter.py \
 	app/runtime/agent_job_runner.py \
 	app/runtime/claude_runtime.py \
+	app/runtime/model_provider.py \
+	app/runtime/model_provider_capabilities.py \
 	app/runtime/openai_responses_adapter.py \
 	app/runtime/openai_responses_schemas.py \
 	app/runtime/openai_responses_stream.py \
@@ -33,7 +34,6 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/response_disposition_db.py \
 	app/runtime/response_disposition_stream.py \
 	app/runtime/stores/response_disposition_claim_store.py \
-	app/services/agent_job_worker.py \
 	app/services/improvement_execution_service.py \
 	app/services/improvement_governor_service.py \
 	app/services/workspace_execution_applier.py \
@@ -51,6 +51,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/audit_openapi_contract.py \
 	scripts/codex_governance_typed_output.py \
 	scripts/check_test_coverage_policy.py \
+	scripts/diagnose_runtime_health.py \
 	scripts/runtime_template_renderer.py \
 	scripts/runtime_cleanup.py \
 	scripts/cleanup_runtime_artifacts.py \
@@ -59,7 +60,7 @@ PYTHON_TYPECHECK_TARGETS := \
 COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test openapi-contract-check container-openapi-check container-live-test smoke zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test coverage main-flow-test openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -72,10 +73,11 @@ build:
 	$(COMPOSE) build
 
 up:
-	$(COMPOSE) stop claude-agent-worker claude-agent-api
-	$(COMPOSE) up -d agent-gov-litellm-sidecar claude-agent-api
-	$(COMPOSE) up -d --wait claude-agent-api
-	$(COMPOSE) up -d claude-agent-worker claude-agent-ui
+	@if ! $(COMPOSE) up -d --wait --remove-orphans; then \
+		$(MAKE) --no-print-directory compose-diagnose; \
+		exit 1; \
+	fi
+	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py || true
 
 down:
 	$(COMPOSE) down
@@ -109,6 +111,14 @@ ui-smoke:
 	done; \
 	echo "Frontend failed: $$frontend_url" >&2; \
 	exit 1
+
+ui-design-parity:
+	pnpm --dir frontend run verify:design-parity
+
+ui-feedback-smoke:
+	@if [ -z "$$RUNTIME_UI_BASE" ]; then echo "RUNTIME_UI_BASE=<real-container-ui> is required" >&2; exit 1; fi
+	@if [ -z "$$RUNTIME_API_BASE" ]; then echo "RUNTIME_API_BASE=<real-container-api> is required" >&2; exit 1; fi
+	@VERIFY_SCREENSHOT_DIR="$${VERIFY_SCREENSHOT_DIR:-/tmp/agentgov-ui-feedback-smoke}" pnpm --dir frontend run verify:real-container
 
 langfuse-dirs:
 	@runtime_root=$$($(PYTHON_RUN) -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from bootstrap_runtime_volume import resolve_runtime_root; print(resolve_runtime_root(None, Path("docker/.env")).as_posix())'); \
@@ -167,10 +177,10 @@ runtime-volume-seeds-restore-list:
 	$(PYTHON_RUN) scripts/restore_runtime_template_backup.py --list
 
 smoke:
-	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
-	curl -s "$$api_base/health" | $(PYTHON_RUN) -m json.tool
+	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py --require-ready
+
+compose-diagnose:
+	@bash scripts/compose_diagnose.sh
 
 chat:
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
@@ -180,13 +190,16 @@ chat:
 	curl -s -X POST "$$api_base/api/chat" \
 		-H 'Content-Type: application/json' \
 		-H "Authorization: Bearer $${api_key:-change-me}" \
-		-d '{"message":"你好，请说明你当前可用的 agents 和 skills。","skills_mode":"all"}' | $(PYTHON_RUN) -m json.tool
+		-d '{"message":"你好，请说明你当前可用的 agents 和 skills。","agent_id":"main-agent"}' | $(PYTHON_RUN) -m json.tool
 
 codex-guard:
+	$(PYTHON_RUN) .codex/skills/codex-config-optimizer/scripts/audit_codex_config.py --fail
 	$(PYTHON_RUN) scripts/check_codex_governance.py --mode fail
 	$(PYTHON_RUN) scripts/check_stage_language.py
 	$(PYTHON_RUN) scripts/check_version_consistency.py
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
+	$(PYTHON_RUN) scripts/check_docs_governance.py
+	$(PYTHON_RUN) scripts/check_test_coverage_policy.py --manifest-only --policy $(COVERAGE_POLICY)
 
 openapi-contract-check:
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
@@ -196,6 +209,9 @@ container-openapi-check:
 	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
 	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --base-url "$$api_base" --compare-local --fail
+
+container-health-e2e:
+	bash scripts/run_healthcheck_container_e2e.sh
 
 sync-version:
 	@v=$$(cat VERSION); sed -i '0,/"version":/s/"version": *"[^"]*"/"version": "'$$v'"/' frontend/package.json; echo "synced frontend/package.json -> $$v"
@@ -219,6 +235,7 @@ test: codex-guard
 	$(PYTHON_RUN) -m compileall app
 	$(PYTHON_RUN) -m pytest -q --cov=app --cov=scripts --cov-branch --cov-report=term-missing:skip-covered --cov-report=json:$(COVERAGE_JSON)
 	$(PYTHON_RUN) scripts/check_test_coverage_policy.py --coverage-json $(COVERAGE_JSON) --policy $(COVERAGE_POLICY)
+	$(PYTHON_RUN) scripts/check_docs_governance.py --collect-pytest
 
 coverage:
 	$(PYTHON_RUN) -m pytest -q --cov=app --cov=scripts --cov-branch --cov-report=term-missing:skip-covered --cov-report=json:$(COVERAGE_JSON)
@@ -228,4 +245,4 @@ main-flow-test:
 	$(PYTHON_RUN) scripts/run_main_flow_tests.py --policy $(COVERAGE_POLICY)
 
 container-live-test:
-	$(COMPOSE) run --rm --entrypoint sh -v "$(CURDIR):/app" -w /app claude-agent-api -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'
+	$(COMPOSE) run --rm --entrypoint sh -e REQUIRE_LIVE_RUNTIME=1 -v "$(CURDIR):/app" -w /app claude-agent-api -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'

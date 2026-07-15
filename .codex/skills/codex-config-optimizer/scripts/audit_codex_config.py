@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import json
 import re
+import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,15 +15,24 @@ from pathlib import Path
 SURFACE_PATTERNS = (
     "AGENTS.md",
     "AGENTS.override.md",
+    "CLAUDE.md",
     ".codex/README.md",
     ".codex/config.toml",
     ".codex/hooks.json",
+    ".codex/hooks/*.py",
+    ".codex/agents/*.toml",
+    ".codex/guidance/*.md",
     ".codex/rules/*.rules",
     ".codex/skills/*/SKILL.md",
+    ".codex/skills/*/references/*.md",
     ".claude/README.md",
     ".claude/settings.json",
+    ".claude/settings.local.json.example",
+    ".claude/agents/*.md",
+    ".claude/hooks/*.py",
     ".claude/rules/*.md",
     ".claude/skills/*/SKILL.md",
+    ".claude/skills/*/references/*.md",
 )
 
 HOT_TERMS = (
@@ -207,7 +219,7 @@ def _audit_size(root: Path, path: Path, text: str) -> Iterable[Issue]:
     if path.name == "SKILL.md" and lines > 500:
         yield Issue("P1", rel, None, f"SKILL.md 有 {lines} 行，触发渐进披露风险。", "move-to-skill")
     if path.suffix == ".rules" and lines > 220:
-        yield Issue("P1", rel, None, f"rules 文件有 {lines} 行，常驻治理说明可能过重。", "merge")
+        yield Issue("P1", rel, None, f"rules 文件有 {lines} 行，命令执行策略可能过重。", "merge")
     if rel in {"AGENTS.md", "AGENTS.override.md"} and lines > 260:
         yield Issue("P2", rel, None, f"常驻说明有 {lines} 行，建议审计是否能迁入 skill。", "move-to-skill")
 
@@ -257,15 +269,195 @@ def _audit_config(root: Path, path: Path, text: str) -> Iterable[Issue]:
         yield Issue("P0", rel, None, "项目配置疑似包含敏感变量名。", "delete")
 
 
+def _audit_structured_config(root: Path, path: Path, text: str) -> Iterable[Issue]:
+    rel = _relative(root, path)
+    if rel == ".codex/config.toml" or rel.startswith(".codex/agents/"):
+        try:
+            tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            yield Issue("P0", rel, None, f"TOML 无法解析：{exc}。", "keep")
+        return
+    if rel not in {".codex/hooks.json", ".claude/settings.local.json.example"}:
+        return
+    try:
+        json.loads(text)
+    except json.JSONDecodeError as exc:
+        yield Issue("P0", rel, exc.lineno, f"JSON 无法解析：{exc.msg}。", "keep")
+
+
+def _audit_claude_settings(root: Path, path: Path, text: str) -> Iterable[Issue]:
+    rel = _relative(root, path)
+    if rel != ".claude/settings.json":
+        return
+    try:
+        settings = json.loads(text)
+    except json.JSONDecodeError as exc:
+        yield Issue("P0", rel, exc.lineno, f"Claude settings JSON 无法解析：{exc.msg}。", "keep")
+        return
+    if not isinstance(settings, dict):
+        yield Issue("P0", rel, 1, "Claude settings 顶层必须是对象。", "keep")
+        return
+    permissions = settings.get("permissions")
+    if not isinstance(permissions, dict):
+        return
+    allow_rules = permissions.get("allow", [])
+    if not isinstance(allow_rules, list):
+        allow_rules = []
+    for rule in allow_rules:
+        if not isinstance(rule, str):
+            continue
+        if re.fullmatch(r"(?:Edit|Write)\([^)]*\.env[^)]*\)", rule):
+            yield Issue(
+                "P0",
+                rel,
+                _find_line(text, rule),
+                f"共享设置自动放行私有 env 写入：`{rule}`。",
+                "delete",
+            )
+
+    for policy_name in ("allow", "ask", "deny"):
+        policy_rules = permissions.get(policy_name, [])
+        if not isinstance(policy_rules, list):
+            continue
+        for rule in policy_rules:
+            if not isinstance(rule, str):
+                continue
+            if re.fullmatch(r"(?:Read|Edit|Write)\(\./[^)]*\)", rule):
+                yield Issue(
+                    "P1",
+                    rel,
+                    _find_line(text, rule),
+                    f"Claude `{policy_name}` 路径使用 cwd 相对锚点：`{rule}`；从子目录启动时会漂移。",
+                    "merge",
+                )
+
+
+def _iter_command_hooks(value: object) -> Iterable[tuple[str, tuple[str, ...]]]:
+    if isinstance(value, dict):
+        if value.get("type") == "command" and isinstance(value.get("command"), str):
+            args = value.get("args", [])
+            hook_args = tuple(item for item in args if isinstance(item, str)) if isinstance(args, list) else ()
+            yield value["command"], hook_args
+        for child in value.values():
+            yield from _iter_command_hooks(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_command_hooks(child)
+
+
+def _iter_hook_handlers(value: object) -> Iterable[dict[str, object]]:
+    if isinstance(value, dict):
+        if "type" in value:
+            yield value
+        for child in value.values():
+            yield from _iter_hook_handlers(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_hook_handlers(child)
+
+
+def _contains_unanchored_repo_path(value: str) -> bool:
+    return bool(re.search(r"(?<![\w}/])(?:\./)?(?:\.venv|\.codex|\.claude|scripts)/", value))
+
+
+def _audit_hook_paths(root: Path, path: Path, text: str) -> Iterable[Issue]:
+    rel = _relative(root, path)
+    if rel not in {".codex/hooks.json", ".claude/settings.json"}:
+        return
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return
+    for handler in _iter_hook_handlers(payload):
+        if handler.get("type") != "command":
+            continue
+        command = handler.get("command")
+        if not isinstance(command, str) or not command.strip():
+            yield Issue("P0", rel, None, "command hook 必须声明非空 `command`。", "keep")
+        args = handler.get("args")
+        if args is not None and (not isinstance(args, list) or not all(isinstance(item, str) for item in args)):
+            yield Issue("P0", rel, None, "command hook 的 `args` 必须是字符串数组。", "keep")
+    for command, args in _iter_command_hooks(payload):
+        values = (command, *args)
+        unanchored = next((value for value in values if _contains_unanchored_repo_path(value)), None)
+        if unanchored is None:
+            continue
+        yield Issue(
+            "P0",
+            rel,
+            _find_line(text, unanchored),
+            f"hook 使用未锚定的仓库相对路径：`{unanchored}`；从子目录启动时会失效。",
+            "merge",
+        )
+
+
+def _audit_agent(root: Path, path: Path, text: str) -> Iterable[Issue]:
+    rel = _relative(root, path)
+    if not (rel.startswith(".codex/agents/") or rel.startswith(".claude/agents/")):
+        return
+    if "等待用户确认" in text:
+        yield Issue(
+            "P1",
+            rel,
+            _find_line(text, "等待用户确认"),
+            "子 Agent 要求每次写文件前等待用户确认，和自主执行职责冲突。",
+            "merge",
+        )
+    if not rel.startswith(".claude/agents/") or not re.search(r"开发任务|具体开发|实现", text):
+        return
+    frontmatter_end = text.find("\n---\n", 4) if text.startswith("---\n") else -1
+    frontmatter = text[: frontmatter_end + 5] if frontmatter_end >= 0 else ""
+    if not re.search(r"(?m)^\s*-\s+(?:Edit|Write)\s*$", frontmatter):
+        yield Issue(
+            "P1",
+            rel,
+            1,
+            "实现型 Claude subagent 的 tools allowlist 缺少 Edit/Write。",
+            "merge",
+        )
+
+
+def _audit_instruction_discovery(root: Path) -> Iterable[Issue]:
+    agents = root / "AGENTS.md"
+    override = root / "AGENTS.override.md"
+    if agents.is_file() and override.is_file():
+        yield Issue(
+            "P0",
+            "AGENTS.override.md",
+            1,
+            "同级 AGENTS.override.md 会遮蔽 AGENTS.md，而不是与其叠加。",
+            "merge",
+        )
+
+
 def _audit_rules(root: Path, path: Path, text: str) -> Iterable[Issue]:
     if path.suffix != ".rules":
         return
     rel = _relative(root, path)
-    for index, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            yield Issue("P0", rel, index, ".rules 文件包含非注释正文，可能被 Starlark 解析失败。", "keep")
-            break
+    try:
+        tree = ast.parse(text, filename=rel)
+    except SyntaxError as exc:
+        yield Issue("P0", rel, exc.lineno, f".rules 不是有效的 Starlark/Python 表达式：{exc.msg}。", "keep")
+        return
+    if not tree.body:
+        yield Issue("P1", rel, 1, ".rules 未声明任何 `prefix_rule(...)`；模型指引应迁入 guidance。", "delete")
+        return
+    for node in tree.body:
+        valid_call = (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "prefix_rule"
+        )
+        if not valid_call:
+            yield Issue(
+                "P0",
+                rel,
+                getattr(node, "lineno", 1),
+                ".rules 只允许顶层 `prefix_rule(...)` 命令执行策略。",
+                "keep",
+            )
+            return
 
 
 def _term_report(root: Path, files: list[Path]) -> list[tuple[str, list[str], int]]:
@@ -329,18 +521,26 @@ def _matrix_coverage(root: Path) -> list[MatrixCoverage]:
 
 
 def _collect_issues(root: Path, files: list[Path]) -> list[Issue]:
-    issues: list[Issue] = []
+    issues = list(_audit_instruction_discovery(root))
     for path in files:
         text = _read(path)
         issues.extend(_audit_size(root, path, text))
         issues.extend(_audit_skill(root, path, text))
         issues.extend(_audit_nested_references(root, path, text))
         issues.extend(_audit_config(root, path, text))
+        issues.extend(_audit_structured_config(root, path, text))
+        issues.extend(_audit_claude_settings(root, path, text))
+        issues.extend(_audit_hook_paths(root, path, text))
+        issues.extend(_audit_agent(root, path, text))
         issues.extend(_audit_rules(root, path, text))
     return sorted(issues, key=lambda issue: (issue.severity, issue.path, issue.line or 0))
 
 
-def _print_report(root: Path) -> None:
+def _has_blocking_findings(root: Path, issues: list[Issue]) -> bool:
+    return bool(issues) or any(coverage.missing_markers for coverage in _matrix_coverage(root))
+
+
+def _print_report(root: Path) -> list[Issue]:
     files = _iter_files(root)
     issues = _collect_issues(root, files)
 
@@ -403,14 +603,16 @@ def _print_report(root: Path) -> None:
             f"- MISSING `{coverage.path}` 缺少 {coverage.label} 标记：{missing}。"
             f"建议动作：`{coverage.action}`；验证：{coverage.verification}"
         )
+    return issues
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="只读审计 Codex 配置面。")
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="仓库根目录，默认当前目录。")
+    parser.add_argument("--fail", action="store_true", help="发现 P0/P1/P2 静态问题时返回非零。")
     args = parser.parse_args()
-    _print_report(args.root.resolve())
-    return 0
+    issues = _print_report(args.root.resolve())
+    return 1 if args.fail and _has_blocking_findings(args.root.resolve(), issues) else 0
 
 
 if __name__ == "__main__":

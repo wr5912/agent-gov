@@ -1,20 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import update
 from sqlalchemy.orm import sessionmaker
 
-from ..errors import BusinessRuleViolation, NotFoundError
+from ..errors import BusinessRuleViolation, ConflictError, NotFoundError
 from ..improvement_db import (
     AttributionModel,
     ExecutionRecordModel,
-    ImprovementFeedbackModel,
+    ImprovementItemModel,
     NormalizedFeedbackModel,
     OptimizationPlanModel,
     RegressionAssessmentModel,
 )
 from ..runtime_db import utc_now
+from ..state_machines import validate_transition
+from .improvement_execution_claim_store import ImprovementExecutionClaimStore
+from .improvement_feedback_store import ImprovementFeedbackRecord as ImprovementFeedbackRecord
+from .improvement_feedback_store import ImprovementFeedbackStoreMixin
+from .improvement_store import advance_improvement_stage_in_transaction
 
 CONTENT_STATUS = {"draft", "confirmed"}
 
@@ -54,25 +61,6 @@ class AttributionRecord:
     counter_evidence: list[str] = field(default_factory=list)
     uncertainty_factors: list[str] = field(default_factory=list)
     verification_suggestions: list[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class ImprovementFeedbackRecord:
-    feedback_id: str
-    improvement_id: str
-    agent_id: str
-    summary: str
-    source: str
-    status: str
-    raw_text: str
-    run_id: str
-    session_id: str
-    agent_version_id: str
-    scenario: str
-    task_id: str
-    alert_id: str
-    case_id: str
-    created_at: str
 
 
 @dataclass(frozen=True)
@@ -124,116 +112,57 @@ class ExecutionRecord:
     rollback_instructions: list[str] = field(default_factory=list)
     generation_trace_id: str = ""
     generation_trace_url: str = ""
+    base_commit_sha: str = ""
+    source_optimization_plan_id: str = ""
+    source_optimization_plan_updated_at: str = ""
+    source_attribution_id: str = ""
+    source_attribution_updated_at: str = ""
+    claim_token: str = ""
+    claim_generation: int = 0
+    claim_expires_at: str = ""
 
 
-class ImprovementContentStore:
+class ImprovementContentStore(ImprovementFeedbackStoreMixin):
     """改进事项内容子资源（四阶段改进治理 P3）：系统理解 NormalizedFeedback + 归因 Attribution + 优化方案 OptimizationPlan + 执行记录 ExecutionRecord（均与事项 1:1）+ 来源反馈 Feedback（1:多）。"""
 
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory
+        self.execution_claims = ImprovementExecutionClaimStore(session_factory, mutable_guard=self._lock_mutable_improvement)
 
-    # ---- Feedback（来源反馈，§8.4）----
-    def create_feedback(
-        self,
-        improvement_id: str,
-        *,
-        agent_id: str = "main-agent",
-        summary: str,
-        source: str = "playground_run",
-        status: str = "merged",
-        raw_text: str = "",
-        run_id: str = "",
-        session_id: str = "",
-        agent_version_id: str = "",
-        scenario: str = "",
-        task_id: str = "",
-        alert_id: str = "",
-        case_id: str = "",
-    ) -> ImprovementFeedbackRecord:
-        clean_summary = (summary or "").strip()
-        if not clean_summary:
-            raise BusinessRuleViolation("feedback summary cannot be empty")
-        fid = f"fb-{uuid4().hex[:12]}"
-        now = utc_now()
-        with self._session_factory.begin() as db:
-            db.add(
-                ImprovementFeedbackModel(
-                    feedback_id=fid,
-                    improvement_id=improvement_id,
-                    agent_id=agent_id,
-                    summary=clean_summary,
-                    source=source,
-                    status=status,
-                    raw_text=raw_text,
-                    run_id=run_id,
-                    session_id=session_id,
-                    agent_version_id=agent_version_id,
-                    scenario=scenario,
-                    task_id=task_id,
-                    alert_id=alert_id,
-                    case_id=case_id,
-                    created_at=now,
-                )
+    @staticmethod
+    def _lock_mutable_improvement(db: Any, improvement_id: str) -> None:
+        """Serialize content writes with archive/delete and reject archived items."""
+        locked = db.execute(
+            update(ImprovementItemModel)
+            .where(
+                ImprovementItemModel.improvement_id == improvement_id,
+                ImprovementItemModel.improvement_status != "archived",
             )
-        return ImprovementFeedbackRecord(
-            feedback_id=fid,
-            improvement_id=improvement_id,
-            agent_id=agent_id,
-            summary=clean_summary,
-            source=source,
-            status=status,
-            raw_text=raw_text,
-            run_id=run_id,
-            session_id=session_id,
-            agent_version_id=agent_version_id,
-            scenario=scenario,
-            task_id=task_id,
-            alert_id=alert_id,
-            case_id=case_id,
-            created_at=now,
+            .values(updated_at=ImprovementItemModel.updated_at)
+        ).rowcount
+        if locked == 1:
+            return
+        item = db.get(ImprovementItemModel, improvement_id)
+        if item is not None and item.improvement_status == "archived":
+            raise ConflictError(f"Archived improvement cannot be modified: {improvement_id}")
+
+    @staticmethod
+    def _require_feedback_intake(item: ImprovementItemModel | None) -> None:
+        if item is not None and item.improvement_stage != "feedback_intake":
+            raise ConflictError(f"Refine improvement {item.improvement_id} to feedback_intake before changing source feedback")
+
+    @staticmethod
+    def _assert_no_execution_claim(db: Any, improvement_id: str, *, resource: str) -> None:
+        applying = (
+            db.query(ExecutionRecordModel.execution_id)
+            .filter(
+                ExecutionRecordModel.improvement_id == improvement_id,
+                ExecutionRecordModel.status == "applying",
+            )
+            .first()
         )
-
-    def list_feedbacks(self, improvement_id: str) -> list[ImprovementFeedbackRecord]:
-        with self._session_factory.begin() as db:
-            rows = (
-                db.query(ImprovementFeedbackModel)
-                .filter(ImprovementFeedbackModel.improvement_id == improvement_id)
-                .order_by(ImprovementFeedbackModel.created_at, ImprovementFeedbackModel.feedback_id)
-                .all()
-            )
-            return [_fb_record(r) for r in rows]
-
-    def reassign_feedback(self, feedback_id: str, *, target_improvement_id: str) -> ImprovementFeedbackRecord:
-        """把一条来源反馈从当前事项移动到另一个改进事项（跨事项调整）。目标存在性/同 agent 由调用方校验。"""
-        clean_target = (target_improvement_id or "").strip()
-        if not clean_target:
-            raise BusinessRuleViolation("target_improvement_id is required")
-        with self._session_factory.begin() as db:
-            row = db.get(ImprovementFeedbackModel, feedback_id)
-            if row is None:
-                raise NotFoundError(f"Feedback not found: {feedback_id}")
-            if row.improvement_id == clean_target:
-                raise BusinessRuleViolation("Feedback already belongs to the target improvement")
-            row.improvement_id = clean_target
-            return _fb_record(row)
-
-    def count_feedbacks(self, improvement_id: str) -> int:
-        with self._session_factory.begin() as db:
-            return db.query(ImprovementFeedbackModel).filter(ImprovementFeedbackModel.improvement_id == improvement_id).count()
-
-    def list_attachable_feedbacks(self, *, agent_id: str, exclude_improvement_id: str) -> list[ImprovementFeedbackRecord]:
-        """其他改进事项中、同一业务 Agent 的来源反馈——供「从其他事项调整过来」选择。"""
-        with self._session_factory.begin() as db:
-            rows = (
-                db.query(ImprovementFeedbackModel)
-                .filter(
-                    ImprovementFeedbackModel.agent_id == agent_id,
-                    ImprovementFeedbackModel.improvement_id != exclude_improvement_id,
-                )
-                .order_by(ImprovementFeedbackModel.created_at.desc(), ImprovementFeedbackModel.feedback_id)
-                .all()
-            )
-            return [_fb_record(r) for r in rows]
+        if applying is not None:
+            raise ConflictError(f"Cannot modify {resource} while execution is applying: {improvement_id}")
 
     # ---- NormalizedFeedback（系统理解）----
     def upsert_normalized_feedback(
@@ -249,14 +178,20 @@ class ImprovementContentStore:
         generated_by: str = "heuristic",
         generation_trace_id: str = "",
         generation_trace_url: str = "",
+        advance_to_stage: str | None = None,
+        item_title: str | None = None,
     ) -> NormalizedFeedbackRecord:
+        clean_problem = (problem or "").strip()
+        if not clean_problem:
+            raise BusinessRuleViolation("normalized feedback problem cannot be empty")
         now = utc_now()
         with self._session_factory.begin() as db:
+            self._lock_mutable_improvement(db, improvement_id)
             row = db.query(NormalizedFeedbackModel).filter(NormalizedFeedbackModel.improvement_id == improvement_id).one_or_none()
             if row is None:
                 row = NormalizedFeedbackModel(normalized_feedback_id=f"nf-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
                 db.add(row)
-            row.problem = problem
+            row.problem = clean_problem
             row.possible_reason = possible_reason
             row.possible_object = possible_object
             row.impact = impact
@@ -267,7 +202,15 @@ class ImprovementContentStore:
             row.generation_trace_id = generation_trace_id
             row.generation_trace_url = generation_trace_url
             row.updated_at = now
+            if item_title:
+                item = db.get(ImprovementItemModel, improvement_id)
+                if item is None:
+                    raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+                item.title = item_title
+                item.updated_at = now
             db.flush()
+            if advance_to_stage:
+                advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _nf_record(row)
 
     def get_normalized_feedback(self, improvement_id: str) -> NormalizedFeedbackRecord | None:
@@ -275,15 +218,24 @@ class ImprovementContentStore:
             row = db.query(NormalizedFeedbackModel).filter(NormalizedFeedbackModel.improvement_id == improvement_id).one_or_none()
             return _nf_record(row) if row is not None else None
 
-    def set_normalized_feedback_status(self, improvement_id: str, *, status: str) -> NormalizedFeedbackRecord:
+    def set_normalized_feedback_status(
+        self,
+        improvement_id: str,
+        *,
+        status: str,
+        advance_to_stage: str | None = None,
+    ) -> NormalizedFeedbackRecord:
         if status not in CONTENT_STATUS:
             raise BusinessRuleViolation(f"Unknown status: {status}; expected one of {sorted(CONTENT_STATUS)}")
         with self._session_factory.begin() as db:
+            self._lock_mutable_improvement(db, improvement_id)
             row = db.query(NormalizedFeedbackModel).filter(NormalizedFeedbackModel.improvement_id == improvement_id).one_or_none()
             if row is None:
                 raise BusinessRuleViolation(f"No normalized feedback for improvement: {improvement_id}")
             row.status = status
             row.updated_at = utc_now()
+            if advance_to_stage:
+                advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _nf_record(row)
 
     # ---- Attribution（归因结果）----
@@ -300,14 +252,20 @@ class ImprovementContentStore:
         generated_by: str = "heuristic",
         generation_trace_id: str = "",
         generation_trace_url: str = "",
+        advance_to_stage: str | None = None,
     ) -> AttributionRecord:
+        clean_summary = (summary or "").strip()
+        if not clean_summary:
+            raise BusinessRuleViolation("attribution summary cannot be empty")
         now = utc_now()
         with self._session_factory.begin() as db:
+            self._lock_mutable_improvement(db, improvement_id)
+            self._assert_no_execution_claim(db, improvement_id, resource="attribution")
             row = db.query(AttributionModel).filter(AttributionModel.improvement_id == improvement_id).one_or_none()
             if row is None:
                 row = AttributionModel(attribution_id=f"attr-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
                 db.add(row)
-            row.summary = summary
+            row.summary = clean_summary
             row.responsibility_boundary_json = list(responsibility_boundary or [])
             row.evidence_json = list(evidence or [])
             row.counter_evidence_json = list(counter_evidence or [])
@@ -319,6 +277,8 @@ class ImprovementContentStore:
             row.generation_trace_url = generation_trace_url
             row.updated_at = now
             db.flush()
+            if advance_to_stage:
+                advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _attr_record(row)
 
     def get_attribution(self, improvement_id: str) -> AttributionRecord | None:
@@ -326,15 +286,25 @@ class ImprovementContentStore:
             row = db.query(AttributionModel).filter(AttributionModel.improvement_id == improvement_id).one_or_none()
             return _attr_record(row) if row is not None else None
 
-    def set_attribution_status(self, improvement_id: str, *, status: str) -> AttributionRecord:
+    def set_attribution_status(
+        self,
+        improvement_id: str,
+        *,
+        status: str,
+        advance_to_stage: str | None = None,
+    ) -> AttributionRecord:
         if status not in CONTENT_STATUS:
             raise BusinessRuleViolation(f"Unknown status: {status}; expected one of {sorted(CONTENT_STATUS)}")
         with self._session_factory.begin() as db:
+            self._lock_mutable_improvement(db, improvement_id)
+            self._assert_no_execution_claim(db, improvement_id, resource="attribution")
             row = db.query(AttributionModel).filter(AttributionModel.improvement_id == improvement_id).one_or_none()
             if row is None:
                 raise BusinessRuleViolation(f"No attribution for improvement: {improvement_id}")
             row.status = status
             row.updated_at = utc_now()
+            if advance_to_stage:
+                advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _attr_record(row)
 
     # ---- OptimizationPlan（优化方案，§106）----
@@ -348,15 +318,32 @@ class ImprovementContentStore:
         generated_by: str = "heuristic",
         generation_trace_id: str = "",
         generation_trace_url: str = "",
+        advance_to_stage: str | None = None,
     ) -> OptimizationPlanRecord:
+        clean_summary = (summary or "").strip()
+        if not clean_summary:
+            raise BusinessRuleViolation("optimization plan summary cannot be empty")
+        clean_changes: list[dict] = []
+        for change in changes or []:
+            if not isinstance(change, dict):
+                raise BusinessRuleViolation("optimization plan changes must be objects")
+            target = str(change.get("target") or "").strip()
+            description = str(change.get("change") or "").strip()
+            if not target or not description:
+                raise BusinessRuleViolation("optimization plan changes require non-empty target and change")
+            clean_changes.append({**change, "target": target, "change": description})
+        if not clean_changes:
+            raise BusinessRuleViolation("optimization plan requires at least one change")
         now = utc_now()
         with self._session_factory.begin() as db:
+            self._lock_mutable_improvement(db, improvement_id)
+            self._assert_no_execution_claim(db, improvement_id, resource="optimization plan")
             row = db.query(OptimizationPlanModel).filter(OptimizationPlanModel.improvement_id == improvement_id).one_or_none()
             if row is None:
                 row = OptimizationPlanModel(optimization_plan_id=f"opt-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
                 db.add(row)
-            row.summary = summary
-            row.changes_json = list(changes or [])
+            row.summary = clean_summary
+            row.changes_json = clean_changes
             row.risk_level = risk_level
             row.status = "draft"
             row.generated_by = generated_by
@@ -364,6 +351,8 @@ class ImprovementContentStore:
             row.generation_trace_url = generation_trace_url
             row.updated_at = now
             db.flush()
+            if advance_to_stage:
+                advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _opt_record(row)
 
     def get_optimization_plan(self, improvement_id: str) -> OptimizationPlanRecord | None:
@@ -371,72 +360,52 @@ class ImprovementContentStore:
             row = db.query(OptimizationPlanModel).filter(OptimizationPlanModel.improvement_id == improvement_id).one_or_none()
             return _opt_record(row) if row is not None else None
 
-    def set_optimization_plan_status(self, improvement_id: str, *, status: str) -> OptimizationPlanRecord:
+    def set_optimization_plan_status(
+        self,
+        improvement_id: str,
+        *,
+        status: str,
+        advance_to_stage: str | None = None,
+    ) -> OptimizationPlanRecord:
         if status not in CONTENT_STATUS:
             raise BusinessRuleViolation(f"Unknown status: {status}; expected one of {sorted(CONTENT_STATUS)}")
         with self._session_factory.begin() as db:
+            self._lock_mutable_improvement(db, improvement_id)
+            self._assert_no_execution_claim(db, improvement_id, resource="optimization plan")
             row = db.query(OptimizationPlanModel).filter(OptimizationPlanModel.improvement_id == improvement_id).one_or_none()
             if row is None:
                 raise BusinessRuleViolation(f"No optimization plan for improvement: {improvement_id}")
             row.status = status
             row.updated_at = utc_now()
+            if advance_to_stage:
+                advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _opt_record(row)
 
     # ---- ExecutionRecord（执行记录，§107）----
-    def upsert_execution(
-        self,
-        improvement_id: str,
-        *,
-        summary: str,
-        changes_applied: list[str] | None = None,
-        agent_version: str = "",
-        generated_by: str = "heuristic",
-        change_set_id: str = "",
-        applied_agent_version_id: str = "",
-        applied_diff: dict | None = None,
-        risk_level: str = "",
-        rollback_strategy: str = "",
-        rollback_instructions: list[str] | None = None,
-        generation_trace_id: str = "",
-        generation_trace_url: str = "",
-    ) -> ExecutionRecord:
-        now = utc_now()
-        with self._session_factory.begin() as db:
-            row = db.query(ExecutionRecordModel).filter(ExecutionRecordModel.improvement_id == improvement_id).one_or_none()
-            if row is None:
-                row = ExecutionRecordModel(execution_id=f"exec-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
-                db.add(row)
-            row.summary = summary
-            row.changes_applied_json = list(changes_applied or [])
-            row.agent_version = agent_version
-            row.status = "draft"
-            row.generated_by = generated_by
-            row.change_set_id = change_set_id
-            row.applied_agent_version_id = applied_agent_version_id
-            row.applied_diff_json = dict(applied_diff or {})
-            row.risk_level = risk_level
-            row.rollback_strategy = rollback_strategy
-            row.rollback_instructions_json = list(rollback_instructions or [])
-            row.generation_trace_id = generation_trace_id
-            row.generation_trace_url = generation_trace_url
-            row.updated_at = now
-            db.flush()
-            return _exec_record(row)
-
     def get_execution(self, improvement_id: str) -> ExecutionRecord | None:
         with self._session_factory.begin() as db:
             row = db.query(ExecutionRecordModel).filter(ExecutionRecordModel.improvement_id == improvement_id).one_or_none()
             return _exec_record(row) if row is not None else None
 
-    def set_execution_status(self, improvement_id: str, *, status: str) -> ExecutionRecord:
+    def set_execution_status(
+        self,
+        improvement_id: str,
+        *,
+        status: str,
+        advance_to_stage: str | None = None,
+    ) -> ExecutionRecord:
         if status not in CONTENT_STATUS:
             raise BusinessRuleViolation(f"Unknown status: {status}; expected one of {sorted(CONTENT_STATUS)}")
         with self._session_factory.begin() as db:
+            self._lock_mutable_improvement(db, improvement_id)
             row = db.query(ExecutionRecordModel).filter(ExecutionRecordModel.improvement_id == improvement_id).one_or_none()
             if row is None:
                 raise BusinessRuleViolation(f"No execution record for improvement: {improvement_id}")
+            validate_transition("improvement_execution", row.status, status)
             row.status = status
             row.updated_at = utc_now()
+            if advance_to_stage:
+                advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _exec_record(row)
 
     # ---- RegressionAssessment（回归保障评估，§11/§17.5）----
@@ -450,15 +419,30 @@ class ImprovementContentStore:
         generated_by: str = "heuristic",
         generation_trace_id: str = "",
         generation_trace_url: str = "",
+        advance_to_stage: str | None = None,
     ) -> RegressionAssessmentRecord:
+        clean_summary = (summary or "").strip()
+        if not clean_summary:
+            raise BusinessRuleViolation("regression assessment summary cannot be empty")
+        clean_cases: list[dict] = []
+        for case in cases or []:
+            if not isinstance(case, dict):
+                raise BusinessRuleViolation("regression assessment cases must be objects")
+            prompt = str(case.get("prompt") or "").strip()
+            if not prompt:
+                raise BusinessRuleViolation("regression assessment cases require a non-empty prompt")
+            clean_cases.append({**case, "prompt": prompt})
+        if not clean_cases:
+            raise BusinessRuleViolation("regression assessment requires at least one case")
         now = utc_now()
         with self._session_factory.begin() as db:
+            self._lock_mutable_improvement(db, improvement_id)
             row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
             if row is None:
                 row = RegressionAssessmentModel(regression_assessment_id=f"reg-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
                 db.add(row)
-            row.summary = summary
-            row.cases_json = list(cases or [])
+            row.summary = clean_summary
+            row.cases_json = clean_cases
             row.suggested_gate_thresholds_json = dict(suggested_gate_thresholds or {})
             row.status = "draft"
             row.generated_by = generated_by
@@ -466,6 +450,8 @@ class ImprovementContentStore:
             row.generation_trace_url = generation_trace_url
             row.updated_at = now
             db.flush()
+            if advance_to_stage:
+                advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _reg_record(row)
 
     def get_regression_assessment(self, improvement_id: str) -> RegressionAssessmentRecord | None:
@@ -473,15 +459,24 @@ class ImprovementContentStore:
             row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
             return _reg_record(row) if row is not None else None
 
-    def set_regression_assessment_status(self, improvement_id: str, *, status: str) -> RegressionAssessmentRecord:
+    def set_regression_assessment_status(
+        self,
+        improvement_id: str,
+        *,
+        status: str,
+        advance_to_stage: str | None = None,
+    ) -> RegressionAssessmentRecord:
         if status not in CONTENT_STATUS:
             raise BusinessRuleViolation(f"Unknown status: {status}; expected one of {sorted(CONTENT_STATUS)}")
         with self._session_factory.begin() as db:
+            self._lock_mutable_improvement(db, improvement_id)
             row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
             if row is None:
                 raise BusinessRuleViolation(f"No regression assessment for improvement: {improvement_id}")
             row.status = status
             row.updated_at = utc_now()
+            if advance_to_stage:
+                advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _reg_record(row)
 
 
@@ -536,6 +531,14 @@ def _exec_record(row: ExecutionRecordModel) -> ExecutionRecord:
         rollback_instructions=list(row.rollback_instructions_json or []),
         generation_trace_id=row.generation_trace_id or "",
         generation_trace_url=row.generation_trace_url or "",
+        base_commit_sha=row.base_commit_sha or "",
+        source_optimization_plan_id=row.source_optimization_plan_id or "",
+        source_optimization_plan_updated_at=row.source_optimization_plan_updated_at or "",
+        source_attribution_id=row.source_attribution_id or "",
+        source_attribution_updated_at=row.source_attribution_updated_at or "",
+        claim_token=row.claim_token or "",
+        claim_generation=int(row.claim_generation or 0),
+        claim_expires_at=row.claim_expires_at or "",
     )
 
 
@@ -574,24 +577,4 @@ def _attr_record(row: AttributionModel) -> AttributionRecord:
         generated_by=row.generated_by or "heuristic",
         generation_trace_id=row.generation_trace_id or "",
         generation_trace_url=row.generation_trace_url or "",
-    )
-
-
-def _fb_record(row: ImprovementFeedbackModel) -> ImprovementFeedbackRecord:
-    return ImprovementFeedbackRecord(
-        feedback_id=row.feedback_id,
-        improvement_id=row.improvement_id,
-        agent_id=row.agent_id,
-        summary=row.summary,
-        source=row.source,
-        status=row.status,
-        raw_text=row.raw_text or "",
-        run_id=row.run_id or "",
-        session_id=row.session_id or "",
-        agent_version_id=row.agent_version_id or "",
-        scenario=row.scenario or "",
-        task_id=row.task_id or "",
-        alert_id=row.alert_id or "",
-        case_id=row.case_id or "",
-        created_at=row.created_at,
     )

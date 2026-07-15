@@ -8,6 +8,7 @@ interface PlaygroundSessionSidebarProps {
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
   onRefresh: () => void;
+  streaming: boolean;
 }
 
 export function PlaygroundSessionSidebar({
@@ -17,6 +18,7 @@ export function PlaygroundSessionSidebar({
   onNewSession,
   onDeleteSession,
   onRefresh,
+  streaming,
 }: PlaygroundSessionSidebarProps) {
   return (
     <aside className="playground-session-sidebar" data-testid="playground-session-sidebar" aria-label="Playground 会话导航">
@@ -37,32 +39,37 @@ export function PlaygroundSessionSidebar({
       <div className="session-sidebar-list" data-testid="playground-session-list">
         {sessions.length === 0 ? (
           <div className="empty-state">暂无会话。发送第一条消息后会自动创建。</div>
-        ) : sessions.map((session) => (
-          <article
-            className={`session-sidebar-item ${activeSessionId === session.session_id ? "active" : ""}`.trim()}
-            data-testid="playground-session-item"
-            data-session-id={session.session_id}
-            key={session.session_id}
-          >
-            <button
-              className="session-sidebar-main"
-              type="button"
-              onClick={() => onSelectSession(session.session_id)}
+        ) : sessions.map((session) => {
+          const deleteBlocked = Boolean(session.active_run_id) || (streaming && activeSessionId === session.session_id);
+          return (
+            <article
+              className={`session-sidebar-item ${activeSessionId === session.session_id ? "active" : ""}`.trim()}
+              data-testid="playground-session-item"
+              data-session-id={session.session_id}
+              key={session.session_id}
             >
-              <strong>{session.title || session.session_id}</strong>
-              <span>{session.turns} turns · {formatDate(session.updated_at)}</span>
-            </button>
-            <button
-              className="icon-button session-sidebar-delete"
-              type="button"
-              title="删除会话映射"
-              aria-label="删除会话映射"
-              onClick={() => onDeleteSession(session.session_id)}
-            >
-              <Trash2 size={14} />
-            </button>
-          </article>
-        ))}
+              <button
+                className="session-sidebar-main"
+                type="button"
+                onClick={() => onSelectSession(session.session_id)}
+              >
+                <strong>{session.title || session.session_id}</strong>
+                <span>{session.turns} turns · {formatDate(session.updated_at)}</span>
+              </button>
+              <button
+                className="icon-button session-sidebar-delete"
+                data-testid="session-sidebar-delete"
+                type="button"
+                title={deleteBlocked ? "会话运行中" : "删除会话映射"}
+                aria-label="删除会话映射"
+                disabled={deleteBlocked}
+                onClick={() => onDeleteSession(session.session_id)}
+              >
+                <Trash2 size={14} />
+              </button>
+            </article>
+          );
+        })}
       </div>
     </aside>
   );

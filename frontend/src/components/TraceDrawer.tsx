@@ -150,10 +150,8 @@ function AgentActivitySummary({ activity }: { activity: AgentActivity }) {
         <span>{activity.tool_calls.length} calls · {activity.tool_results.length} results</span>
       </div>
       <div className="detail-activity-grid">
-        <ActivityCard label="请求 Skills" values={activity.requested_skills} emptyText="未指定" />
         <ActivityCard label="实际 Skill 调用" values={activity.skill_calls.map(skillLabel)} emptyText="未捕获" />
         <ActivityCard label="使用 Tools" values={Object.entries(toolCounts).map(([name, count]) => `${name} × ${count}`)} emptyText="未捕获" />
-        <ActivityCard label="工具边界" values={[`allow: ${activity.allowed_tools.join(", ") || "-"}`, `deny: ${activity.disallowed_tools.join(", ") || "-"}`]} emptyText="-" />
       </div>
     </section>
   );
@@ -191,10 +189,6 @@ function extractAgentActivity(events: StreamLogEvent[]): AgentActivity {
 
   const skillCalls = toolCalls.map(skillCallFromToolCall).filter(Boolean) as Record<string, unknown>[];
   return {
-    requested_skills: [],
-    skills_mode: undefined,
-    allowed_tools: [],
-    disallowed_tools: [],
     tool_names: uniqueStrings(toolCalls.map((call) => stringValue(call.name)).filter(Boolean) as string[]),
     tool_calls: toolCalls,
     tool_results: toolResults,
@@ -204,10 +198,6 @@ function extractAgentActivity(events: StreamLogEvent[]): AgentActivity {
 
 function normalizeAgentActivity(value: AgentActivity): AgentActivity {
   return {
-    requested_skills: stringArray(value.requested_skills),
-    skills_mode: stringValue(value.skills_mode),
-    allowed_tools: stringArray(value.allowed_tools),
-    disallowed_tools: stringArray(value.disallowed_tools),
     tool_names: stringArray(value.tool_names),
     tool_calls: recordArray(value.tool_calls),
     tool_results: recordArray(value.tool_results),

@@ -1,6 +1,6 @@
 # 《Agent 版本治理与 Diff 对比重构方案》评审报告 v2
 
-> 评审对象：[`docs/Agent版本治理与Diff对比重构方案.md`](../Agent版本治理与Diff对比重构方案.md)
+> 评审对象：[`docs/archive/design/Agent版本治理与Diff对比重构方案.md`](../archive/design/Agent版本治理与Diff对比重构方案.md)
 > 评审日期：2026-06-03
 > 评审方式：使用外部 `claude` reviewer 重新评审 v1 报告与当前源码；Codex 复核新增 finding 的关键证据后整理成本报告。
 > 对照版本：[`Agent版本治理与Diff对比重构方案评审报告.md`](../archive/design/Agent版本治理与Diff对比重构方案评审报告.md)

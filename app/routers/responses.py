@@ -31,6 +31,7 @@ from app.runtime.response_disposition_control import (
 )
 from app.runtime.response_disposition_stream import observe_response_disposition_stream
 from app.runtime.schemas import RuntimeChatRequest
+from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -52,26 +53,60 @@ class _RunPlan(NamedTuple):
     response_disposition: TrustedResponseDispositionContext | None
 
 
-def _resolve_session_id(req: ResponsesRequest, *, feedback_store: FeedbackStore) -> Optional[str]:
+def _resolve_session_id(
+    req: ResponsesRequest,
+    *,
+    feedback_store: FeedbackStore,
+    session_store: LocalSessionStore,
+    effective_agent_id: str,
+) -> Optional[str]:
     """由 ``conversation`` / ``previous_response_id`` 解析服务端 session_id（权威续接源）。"""
     conv_session = session_id_from_conversation(req.conversation)
-    if not req.previous_response_id:
-        return conv_session
-    prev_run_id = run_id_from_response(req.previous_response_id)
-    prev = feedback_store.find_run(run_id=prev_run_id) if prev_run_id else None
-    if not prev:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"previous_response_id {req.previous_response_id} not found",
-        )
-    prev_session = prev.get("session_id")
-    prev_session = prev_session if isinstance(prev_session, str) else None
-    if conv_session and prev_session and conv_session != prev_session:
+    prev_session: Optional[str] = None
+    if req.previous_response_id:
+        prev_run_id = run_id_from_response(req.previous_response_id)
+        prev = feedback_store.find_run(run_id=prev_run_id) if prev_run_id else None
+        if not prev:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"previous_response_id {req.previous_response_id} not found",
+            )
+        raw_prev_session = prev.get("session_id")
+        prev_session = raw_prev_session if isinstance(raw_prev_session, str) else None
+        prev_agent_id = prev.get("agent_id")
+        if not isinstance(prev_agent_id, str) or prev_agent_id != effective_agent_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="previous_response_id belongs to a different business agent",
+            )
+        if not prev_session:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="previous_response_id has no resumable conversation",
+            )
+        if conv_session and prev_session and conv_session != prev_session:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="conversation is inconsistent with previous_response_id",
+            )
+    resolved_session = prev_session or conv_session
+    existing = session_store.get(resolved_session) if resolved_session else None
+    if req.previous_response_id and existing is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="conversation is inconsistent with previous_response_id",
+            detail="previous_response_id conversation mapping no longer exists",
         )
-    return prev_session or conv_session
+    if existing and existing.agent_id is None and (existing.turns > 0 or existing.sdk_session_id is not None):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="conversation has no unambiguous business agent owner",
+        )
+    if existing and existing.agent_id and existing.agent_id != effective_agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="conversation belongs to a different business agent",
+        )
+    return resolved_session
 
 
 def _resolve_run_target(
@@ -123,6 +158,7 @@ def _prepare_run(
     agent_registry_store: AgentRegistryStore,
     runtime_settings_store: RuntimeSettingsStore,
     feedback_store: FeedbackStore,
+    session_store: LocalSessionStore,
     principal: ApiPrincipal,
     authenticator: ApiAuthenticator,
     claim_store: ResponseDispositionClaimStore,
@@ -139,13 +175,18 @@ def _prepare_run(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Response orchestrator credential may only create response-disposition runs",
         )
-    session_id = _resolve_session_id(req, feedback_store=feedback_store)
     control = req.agentgov is not None
     profile, effective_agent_id, system_append = _resolve_run_target(
         req,
         settings=settings,
         agent_registry_store=agent_registry_store,
         runtime_settings_store=runtime_settings_store,
+    )
+    session_id = _resolve_session_id(
+        req,
+        feedback_store=feedback_store,
+        session_store=session_store,
+        effective_agent_id=effective_agent_id,
     )
     try:
         response_disposition = validate_response_disposition_control(
@@ -194,6 +235,7 @@ async def _create_response_impl(
         agent_registry_store=agent_registry_store,
         runtime_settings_store=runtime_settings_store,
         feedback_store=feedback_store,
+        session_store=runtime.session_store,
         principal=principal,
         authenticator=authenticator,
         claim_store=claim_store,

@@ -1,14 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Annotated, Literal
+from uuid import uuid4
 
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 from sqlalchemy.orm import sessionmaker
 
-from ..agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
+from ..agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile, read_requires_web_hitl
 from ..agent_registry_db import AgentRegistryModel
-from ..errors import BusinessRuleViolation, ConflictError, NotFoundError
+from ..errors import BusinessRuleViolation, ConflictError, DataIntegrityError, NotFoundError
 from ..runtime_db import utc_now
+from ..runtime_db_base import begin_sqlite_write_transaction
+from ..runtime_recovery import runtime_operation_heartbeat, runtime_operation_is_stale
 from ..state_machines import validate_transition
+
+_PROVISIONING = "provisioning"
+_PROVISION_READY = "ready"
+_NonEmptyText = Annotated[str, StringConstraints(min_length=1)]
 
 
 @dataclass(frozen=True)
@@ -22,7 +32,41 @@ class AgentRegistryRecord:
     created_at: str
     status: str = "active"
     origin: str = "user"  # #26：seed（声明式基线，禁删）vs user（用户创建，可 tombstone 删除）
-    requires_web_hitl: bool = False  # 部署契约：其执行能力依赖 ENABLE_CLAUDE_WEB_HITL（agent.yaml 声明）
+    requires_web_hitl: bool = False  # 从 workspace project settings permissions.ask 派生的只读观测值
+
+
+@dataclass(frozen=True)
+class AgentProvisionReservation:
+    """Opaque ownership claim for one DB + workspace provisioning saga."""
+
+    agent_id: str
+    token: str
+    created_new: bool
+    require_workspace_absent: bool = False
+
+
+class _IncompleteWorkspaceRecovery(BaseModel):
+    """Durable marker that prevents an unverified partial workspace from reuse."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["workspace_must_be_absent"] = "workspace_must_be_absent"
+    workspace_dir: _NonEmptyText
+
+
+class _AgentProvisionPrevious(BaseModel):
+    """Typed rollback state; JSON exists only in the ORM persistence column."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: _NonEmptyText
+    category: _NonEmptyText
+    workspace_dir: _NonEmptyText
+    created_at: _NonEmptyText
+    status: _NonEmptyText
+    origin: _NonEmptyText
+    deleted_at: _NonEmptyText
+    workspace_recovery: _IncompleteWorkspaceRecovery | None = None
 
 
 class AgentRegistryStore:
@@ -45,6 +89,9 @@ class AgentRegistryStore:
                 origin = "seed" if profile.name in seed_agent_ids else "user"
                 existing = db.get(AgentRegistryModel, profile.name)
                 if existing is not None:
+                    # 未完成创建是内部 saga intent；磁盘发现不得把它提前 finalize 或改写。
+                    if (existing.provision_state or _PROVISION_READY) != _PROVISION_READY:
+                        continue
                     # #26：用户已删除（tombstone）的 Agent 不因磁盘 workspace 仍在而被复活。
                     if existing.deleted_at:
                         continue
@@ -52,7 +99,6 @@ class AgentRegistryStore:
                     if existing.workspace_dir != str(profile.workspace_dir):
                         existing.workspace_dir = str(profile.workspace_dir)
                     existing.origin = origin
-                    existing.requires_web_hitl = profile.requires_web_hitl  # 部署契约随 agent.yaml 校正
                     continue
                 db.add(
                     AgentRegistryModel(
@@ -62,7 +108,7 @@ class AgentRegistryStore:
                         workspace_dir=str(profile.workspace_dir),
                         created_at=utc_now(),
                         origin=origin,
-                        requires_web_hitl=profile.requires_web_hitl,
+                        provision_state=_PROVISION_READY,
                     )
                 )
 
@@ -71,6 +117,7 @@ class AgentRegistryStore:
             rows = (
                 db.query(AgentRegistryModel)
                 .filter(AgentRegistryModel.deleted_at.is_(None))  # #26：过滤 tombstone（已删除）
+                .filter(AgentRegistryModel.provision_state == _PROVISION_READY)
                 .order_by(AgentRegistryModel.created_at, AgentRegistryModel.agent_id)
                 .all()
             )
@@ -79,7 +126,7 @@ class AgentRegistryStore:
     def get_agent(self, agent_id: str) -> AgentRegistryRecord | None:
         with self._session_factory.begin() as db:
             row = db.get(AgentRegistryModel, agent_id)
-            return _record(row) if row is not None and not row.deleted_at else None
+            return _record(row) if row is not None and _is_public(row) else None
 
     def create_business_agent(self, *, name: str, agent_id: str, workspace_dir: str) -> AgentRegistryRecord:
         """注册一个业务 Agent 身份（被治理对象）。活跃 agent_id 重复拒绝，空 name 拒绝。
@@ -94,8 +141,11 @@ class AgentRegistryStore:
         with self._session_factory.begin() as db:
             existing = db.get(AgentRegistryModel, agent_id)
             if existing is not None:
-                if not existing.deleted_at:
+                if (existing.provision_state or _PROVISION_READY) != _PROVISION_READY or not existing.deleted_at:
                     raise ConflictError(f"Business agent already exists: {agent_id}")
+                if existing.provision_previous_json is not None:
+                    _parse_workspace_recovery(existing.provision_previous_json)
+                    raise ConflictError(f"Business agent {agent_id} has an incomplete workspace; retry through safe provisioning")
                 existing.deleted_at = None
                 existing.name = clean_name
                 existing.category = "business"
@@ -103,6 +153,10 @@ class AgentRegistryStore:
                 existing.origin = "user"
                 existing.status = "active"
                 existing.created_at = created_at
+                existing.provision_state = _PROVISION_READY
+                existing.provision_token = None
+                existing.provision_started_at = None
+                existing.provision_previous_json = None
                 return _record(existing)
             db.add(
                 AgentRegistryModel(
@@ -112,6 +166,7 @@ class AgentRegistryStore:
                     workspace_dir=workspace_dir,
                     created_at=created_at,
                     origin="user",  # #26：API 创建 = 用户来源（可 tombstone 删除）
+                    provision_state=_PROVISION_READY,
                 )
             )
         return AgentRegistryRecord(
@@ -121,7 +176,134 @@ class AgentRegistryStore:
             workspace_dir=workspace_dir,
             created_at=created_at,
             origin="user",
+            requires_web_hitl=read_requires_web_hitl(Path(workspace_dir)),
         )
+
+    def reserve_business_agent(self, *, name: str, agent_id: str, workspace_dir: str) -> AgentProvisionReservation:
+        """Persist an invisible, exclusive creation intent before touching the workspace."""
+        clean_name = name.strip()
+        if not clean_name:
+            raise BusinessRuleViolation("Business agent name cannot be empty")
+        now = utc_now()
+        token = uuid4().hex
+        created_new = False
+        require_workspace_absent = False
+        with self._session_factory.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = db.get(AgentRegistryModel, agent_id)
+            if row is None:
+                created_new = True
+                db.add(
+                    AgentRegistryModel(
+                        agent_id=agent_id,
+                        name=clean_name,
+                        category="business",
+                        workspace_dir=workspace_dir,
+                        created_at=now,
+                        status="active",
+                        origin="user",
+                        provision_state=_PROVISIONING,
+                        provision_token=token,
+                        provision_started_at=now,
+                    )
+                )
+            else:
+                if (row.provision_state or _PROVISION_READY) != _PROVISION_READY or not row.deleted_at:
+                    raise ConflictError(f"Business agent already exists or is being provisioned: {agent_id}")
+                validate_transition("agent_provision", _PROVISION_READY, _PROVISIONING)
+                previous = _snapshot_row(row)
+                recovery = previous.workspace_recovery
+                if recovery is not None and recovery.workspace_dir != workspace_dir:
+                    raise ConflictError(f"Business agent {agent_id} has incomplete workspace residue at a different path")
+                require_workspace_absent = recovery is not None
+                row.provision_previous_json = previous.model_dump(mode="json")
+                row.name = clean_name
+                row.category = "business"
+                row.workspace_dir = workspace_dir
+                row.created_at = now
+                row.status = "active"
+                row.origin = "user"
+                row.provision_state = _PROVISIONING
+                row.provision_token = token
+                row.provision_started_at = now
+            db.flush()
+        return AgentProvisionReservation(
+            agent_id=agent_id,
+            token=token,
+            created_new=created_new,
+            require_workspace_absent=require_workspace_absent,
+        )
+
+    def finalize_business_agent(self, reservation: AgentProvisionReservation) -> AgentRegistryRecord:
+        """Publish one reserved row only after its complete workspace is durable."""
+        with self._session_factory.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = _owned_reservation(db.get(AgentRegistryModel, reservation.agent_id), reservation)
+            validate_transition("agent_provision", _PROVISIONING, _PROVISION_READY)
+            row.deleted_at = None
+            row.provision_state = _PROVISION_READY
+            row.provision_token = None
+            row.provision_started_at = None
+            row.provision_previous_json = None
+            db.flush()
+        return _record(row)
+
+    def compensate_business_agent(
+        self,
+        reservation: AgentProvisionReservation,
+        *,
+        workspace_cleanup_complete: bool,
+    ) -> None:
+        """Undo a failed reservation without exposing a partial Agent."""
+        with self._session_factory.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = _owned_reservation(db.get(AgentRegistryModel, reservation.agent_id), reservation)
+            previous = row.provision_previous_json
+            if previous is not None:
+                attempted_workspace = row.workspace_dir
+                _restore_snapshot(row, _parse_snapshot(previous))
+                if not workspace_cleanup_complete:
+                    _mark_incomplete_workspace(row, attempted_workspace)
+            elif reservation.created_new and workspace_cleanup_complete:
+                db.delete(row)
+            else:
+                # Unknown FS residue must retain a tombstone so startup disk discovery cannot revive it.
+                _tombstone_incomplete(row)
+
+    def renew_business_agent_provision(
+        self,
+        reservation: AgentProvisionReservation,
+        *,
+        now: str | None = None,
+    ) -> None:
+        """Renew the persisted saga lease after a durable filesystem step."""
+        with self._session_factory.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = _owned_reservation(db.get(AgentRegistryModel, reservation.agent_id), reservation)
+            row.provision_started_at = runtime_operation_heartbeat(now=now)
+
+    def recover_incomplete_provisions(self, *, now: str | None = None) -> int:
+        """Fail closed only after a provisioning heartbeat has expired."""
+        recovery_now = runtime_operation_heartbeat(now=now)
+        recovered = 0
+        with self._session_factory.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            rows = db.query(AgentRegistryModel).filter(AgentRegistryModel.provision_state == _PROVISIONING).all()
+            for row in rows:
+                if not runtime_operation_is_stale(row.provision_started_at, now=recovery_now):
+                    continue
+                previous = row.provision_previous_json
+                attempted_workspace = row.workspace_dir
+                try:
+                    if previous is not None:
+                        _restore_snapshot(row, _parse_snapshot(previous))
+                        _mark_incomplete_workspace(row, attempted_workspace)
+                    else:
+                        _tombstone_incomplete(row)
+                except DataIntegrityError:
+                    _tombstone_incomplete(row)
+                recovered += 1
+        return recovered
 
     def transition_business_agent(self, agent_id: str, *, status: str) -> AgentRegistryRecord:
         """业务 Agent 生命周期状态转移（AGV-020）。
@@ -133,7 +315,7 @@ class AgentRegistryStore:
             raise BusinessRuleViolation("Main agent lifecycle is fixed (sample baseline)")
         with self._session_factory.begin() as db:
             row = db.get(AgentRegistryModel, agent_id)
-            if row is None:
+            if row is None or not _is_public(row):
                 raise NotFoundError(f"Business agent not found: {agent_id}")
             validate_transition("agent_lifecycle", row.status or "active", status)
             row.status = status
@@ -149,7 +331,7 @@ class AgentRegistryStore:
             raise BusinessRuleViolation("Main agent is the sample baseline and cannot be deleted")
         with self._session_factory.begin() as db:
             row = db.get(AgentRegistryModel, agent_id)
-            if row is None or row.deleted_at:
+            if row is None or not _is_public(row):
                 raise NotFoundError(f"Business agent not found: {agent_id}")
             if (row.origin or "user") == "seed":
                 raise BusinessRuleViolation(
@@ -169,5 +351,76 @@ def _record(row: AgentRegistryModel) -> AgentRegistryRecord:
         created_at=row.created_at,
         status=row.status or "active",
         origin=row.origin or "user",
-        requires_web_hitl=bool(row.requires_web_hitl),
+        requires_web_hitl=read_requires_web_hitl(Path(row.workspace_dir)),
     )
+
+
+def _is_public(row: AgentRegistryModel) -> bool:
+    return not row.deleted_at and (row.provision_state or _PROVISION_READY) == _PROVISION_READY
+
+
+def _owned_reservation(
+    row: AgentRegistryModel | None,
+    reservation: AgentProvisionReservation,
+) -> AgentRegistryModel:
+    if row is None or row.provision_state != _PROVISIONING or row.provision_token != reservation.token:
+        raise ConflictError(f"Business agent provisioning claim was lost: {reservation.agent_id}")
+    return row
+
+
+def _snapshot_row(row: AgentRegistryModel) -> _AgentProvisionPrevious:
+    if not row.deleted_at:
+        raise DataIntegrityError("Cannot snapshot a non-tombstoned Agent provisioning row")
+    return _AgentProvisionPrevious(
+        name=row.name,
+        category=row.category,
+        workspace_dir=row.workspace_dir,
+        created_at=row.created_at,
+        status=row.status,
+        origin=row.origin,
+        deleted_at=row.deleted_at,
+        workspace_recovery=(_parse_workspace_recovery(row.provision_previous_json) if row.provision_previous_json is not None else None),
+    )
+
+
+def _parse_snapshot(value: object) -> _AgentProvisionPrevious:
+    try:
+        return _AgentProvisionPrevious.model_validate(value)
+    except ValidationError as exc:
+        raise DataIntegrityError("Invalid Agent provisioning recovery snapshot") from exc
+
+
+def _parse_workspace_recovery(value: object) -> _IncompleteWorkspaceRecovery:
+    try:
+        return _IncompleteWorkspaceRecovery.model_validate(value)
+    except ValidationError as exc:
+        raise DataIntegrityError("Invalid incomplete Agent workspace recovery marker") from exc
+
+
+def _restore_snapshot(row: AgentRegistryModel, snapshot: _AgentProvisionPrevious) -> None:
+    validate_transition("agent_provision", row.provision_state, _PROVISION_READY)
+    row.name = snapshot.name
+    row.category = snapshot.category
+    row.workspace_dir = snapshot.workspace_dir
+    row.created_at = snapshot.created_at
+    row.status = snapshot.status
+    row.origin = snapshot.origin
+    row.deleted_at = snapshot.deleted_at
+    row.provision_state = _PROVISION_READY
+    row.provision_token = None
+    row.provision_started_at = None
+    row.provision_previous_json = snapshot.workspace_recovery.model_dump(mode="json") if snapshot.workspace_recovery is not None else None
+
+
+def _tombstone_incomplete(row: AgentRegistryModel) -> None:
+    validate_transition("agent_provision", row.provision_state, _PROVISION_READY)
+    row.deleted_at = row.deleted_at or utc_now()
+    row.provision_state = _PROVISION_READY
+    row.provision_token = None
+    row.provision_started_at = None
+    _mark_incomplete_workspace(row, row.workspace_dir)
+
+
+def _mark_incomplete_workspace(row: AgentRegistryModel, workspace_dir: str) -> None:
+    recovery = _IncompleteWorkspaceRecovery(workspace_dir=workspace_dir)
+    row.provision_previous_json = recovery.model_dump(mode="json")

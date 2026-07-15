@@ -310,7 +310,6 @@ def _is_owned_dict_return(rel_path: str, qualified_name: str) -> bool:
         "_coerce_payload",
         "_json_object",
         "filtered_mcp_servers",
-        "load_programmatic_agents",
         "parse_frontmatter_markdown",
     }
     if qualified_name.rsplit(".", 1)[-1] in boundary_names:
@@ -322,7 +321,6 @@ def _is_owned_dict_return(rel_path: str, qualified_name: str) -> bool:
         "_version_snapshot",
         ".build_env",
         ".claude_env",
-        ".claude_extra_args",
         ".file_context",
         ".policy_json",
         ".to_payload",
@@ -413,11 +411,6 @@ class _PythonMetricVisitor(ast.NodeVisitor):
                 target_name = _annotation_target_name(target)
                 qualified_name = ".".join([*self.scope, target_name]) if self.scope else target_name
                 self.map_any_boundaries.add(f"{qualified_name}:annotation")
-        if self.rel_path == "app/services/agent_job_worker.py" and annotation_contains_name(node.value, "BaseModel"):
-            for target in node.targets:
-                target_name = _annotation_target_name(target)
-                if target_name == "RunProfileJson":
-                    self.typed_output_stage_erasure.add(f"{target_name}:alias:BaseModel")
         self.generic_visit(node)
 
 

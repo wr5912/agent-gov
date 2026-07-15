@@ -1,11 +1,10 @@
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
+from app.routers.config import create_config_router
 from app.runtime.config_mapping import build_config_mapping
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
-from app.routers.config import create_config_router
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 class ProjectOnlySettings(AppSettings):
@@ -38,22 +37,14 @@ def test_config_mapping_uses_native_claude_code_paths(tmp_path):
     assert response.claude_root == str(claude_root)
     assert response.claude_config_dir is None
     assert response.claude_global_config_file == str(claude_root / ".claude.json")
-    assert response.setting_sources_effective is None
-    assert (
-        by_kind[("global", "state")].host_mount
-        == "volume-agent-gov/data/business-agents/main-agent/claude-root/.claude.json"
-    )
-    assert (
-        by_kind[("project", "instructions")].host_mount
-        == "volume-agent-gov/data/business-agents/main-agent/workspace/CLAUDE.md"
-    )
+    assert response.setting_sources_effective == ["project"]
+    assert by_kind[("global", "state")].host_mount == "volume-agent-gov/data/business-agents/main-agent/claude-root/.claude.json"
+    assert by_kind[("project", "instructions")].host_mount == "volume-agent-gov/data/business-agents/main-agent/workspace/CLAUDE.md"
     assert by_kind[("global", "state")].exists is True
     assert by_kind[("project", "instructions")].display_group == "agent_project_config"
     assert by_kind[("project", "instructions")].load_semantics == "claude_loaded"
     assert by_kind[("project", "instructions")].safe_to_edit is True
-    assert by_kind[("runtime", "agent-change-set-worktrees")].container_path == str(
-        data / "business-agents" / "main-agent" / "version" / "worktrees"
-    )
+    assert by_kind[("runtime", "agent-change-set-worktrees")].container_path == str(data / "business-agents" / "main-agent" / "version" / "worktrees")
 
 
 def test_config_mapping_loaded_flags_follow_sdk_setting_sources(tmp_path):
@@ -63,6 +54,26 @@ def test_config_mapping_loaded_flags_follow_sdk_setting_sources(tmp_path):
     response = build_config_mapping(settings)
     by_kind = {(item.scope, item.kind): item for item in response.mappings}
 
+    assert [(item.scope, item.kind) for item in response.mappings[:18]] == [
+        ("user", "settings"),
+        ("user", "instructions"),
+        ("user", "skills"),
+        ("user", "agents"),
+        ("user", "commands"),
+        ("user", "output-styles"),
+        ("global", "state"),
+        ("project", "instructions"),
+        ("local", "instructions"),
+        ("project", "mcp"),
+        ("project", "worktree-include"),
+        ("project", "settings"),
+        ("local", "settings"),
+        ("project", "rules"),
+        ("project", "skills"),
+        ("project", "commands"),
+        ("project", "agents"),
+        ("project", "output-styles"),
+    ]
     assert response.setting_sources_effective == ["project"]
     assert by_kind[("project", "instructions")].loaded_by_default is True
     assert by_kind[("project", "mcp")].loaded_by_default is True
@@ -70,6 +81,32 @@ def test_config_mapping_loaded_flags_follow_sdk_setting_sources(tmp_path):
     assert by_kind[("user", "settings")].loaded_by_default is False
     assert by_kind[("local", "settings")].loaded_by_default is False
     assert by_kind[("runtime", "agent-git-repository")].loaded_by_default is False
+    assert all(
+        (item.loaded_by_default, item.load_semantics, item.display_group, item.safe_to_edit, item.git_policy)
+        == (False, "claude_optional", "agent_user_state", False, "ignored")
+        for item in response.mappings[:6]
+    )
+    project_items = [item for item in response.mappings[7:18] if item.scope == "project" and item.kind != "worktree-include"]
+    assert all(
+        (item.loaded_by_default, item.load_semantics, item.display_group, item.safe_to_edit, item.git_policy)
+        == (True, "claude_loaded", "agent_project_config", True, "tracked")
+        for item in project_items
+    )
+    local_items = [item for item in response.mappings[7:18] if item.scope == "local"]
+    assert all(
+        (item.loaded_by_default, item.load_semantics, item.display_group, item.safe_to_edit, item.git_policy)
+        == (False, "claude_optional", "agent_user_state", False, "ignored")
+        for item in local_items
+    )
+    worktree = by_kind[("project", "worktree-include")]
+    assert (worktree.loaded_by_default, worktree.load_semantics, worktree.display_group, worktree.safe_to_edit, worktree.git_policy, worktree.notes) == (
+        False,
+        "not_applicable",
+        "agent_project_config",
+        True,
+        "tracked",
+        "Used by Claude Code worktree creation to copy selected gitignored files.",
+    )
 
 
 def test_config_mapping_is_agent_scoped_and_hides_host_mounts_by_default(tmp_path):
@@ -91,9 +128,7 @@ def test_config_mapping_is_agent_scoped_and_hides_host_mounts_by_default(tmp_pat
     assert all(item.host_mount is None for item in response.mappings)
     assert by_kind[("project", "instructions")].container_path == str(workspace / "CLAUDE.md")
     assert by_kind[("runtime", "agent-git-repository")].display_group == "versioning_runtime"
-    assert by_kind[("runtime", "agent-change-set-worktrees")].container_path == str(
-        data / "business-agents" / "response-disposal" / "version" / "worktrees"
-    )
+    assert by_kind[("runtime", "agent-change-set-worktrees")].container_path == str(data / "business-agents" / "response-disposal" / "version" / "worktrees")
 
 
 def test_config_mapping_router_requires_registered_agent(tmp_path):

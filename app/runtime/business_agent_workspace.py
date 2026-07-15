@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
-import shutil
+import stat
 from collections.abc import Mapping
-from pathlib import Path
+from contextlib import suppress
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from uuid import uuid4
 
 from scripts.runtime_template_renderer import (
+    RuntimeTemplateRenderContext,
     build_render_context,
     is_template_managed_text_file,
     render_template_file,
@@ -22,6 +27,7 @@ _RUNTIME_SEEDS_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "docker" / "r
 # 渲染占位符：模板文本里的 {{AGENT_ID}} / {{AGENT_NAME}} 被替换为具体值（双花括号不与 JSON 冲突）。
 _PLACEHOLDER_AGENT_ID = "{{AGENT_ID}}"
 _PLACEHOLDER_AGENT_NAME = "{{AGENT_NAME}}"
+_DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
 # general 模板缺失时的内联兜底（保证无种子目录的纯单测环境也能初始化）。
 _STARTER_CLAUDE_MD = """# {name}
@@ -60,6 +66,44 @@ class UnknownBusinessAgentTemplate(ValueError):
     """请求的 template_id 不在 catalog 中（外部输入越权/拼写错误）。"""
 
 
+class WorkspaceSafetyError(RuntimeError):
+    """Template or workspace violates the no-follow provisioning boundary."""
+
+
+class WorkspaceProvisioningError(RuntimeError):
+    """Workspace apply failed; ``cleanup_complete`` controls DB compensation."""
+
+    def __init__(self, message: str, *, cleanup_complete: bool) -> None:
+        super().__init__(message)
+        self.cleanup_complete = cleanup_complete
+
+
+@dataclass(frozen=True)
+class WorkspaceTemplateEntry:
+    relative_path: PurePosixPath
+    content: bytes
+    mode: int
+
+
+@dataclass(frozen=True)
+class WorkspaceTemplatePlan:
+    template_id: str
+    entries: tuple[WorkspaceTemplateEntry, ...]
+
+
+@dataclass(frozen=True)
+class _CreatedPath:
+    path: Path
+    device: int
+    inode: int
+
+
+@dataclass(frozen=True)
+class WorkspaceProvisionJournal:
+    created_files: tuple[_CreatedPath, ...]
+    created_directories: tuple[_CreatedPath, ...]
+
+
 class InvalidDeclaredBusinessAgentSeed(RuntimeError):
     """声明式业务 Agent seed 无法安全物化。"""
 
@@ -73,78 +117,150 @@ def business_agent_templates_dir() -> Path:
 def list_business_agent_templates() -> list[str]:
     """列出可用 template_id（按名排序）；catalog 目录缺失时回退到内置 general。"""
     root = business_agent_templates_dir()
-    if not root.is_dir():
+    root_stat = _lstat(root)
+    if root_stat is None:
         return [DEFAULT_TEMPLATE_ID]
-    ids = sorted(p.name for p in root.iterdir() if p.is_dir())
+    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+        raise WorkspaceSafetyError("Business Agent template catalog must be a real directory")
+    ids: list[str] = []
+    with os.scandir(root) as entries:
+        for entry in entries:
+            relative_path = PurePosixPath(entry.name)
+            _validate_relative_path(relative_path)
+            if _is_cache_artifact(relative_path):
+                raise WorkspaceSafetyError(f"Business Agent template catalog contains a cache artifact: {entry.name}")
+            if entry.is_symlink():
+                raise WorkspaceSafetyError(f"Business Agent template catalog contains a symlink: {entry.name}")
+            if entry.is_dir(follow_symlinks=False):
+                ids.append(entry.name)
+    ids.sort()
     return ids or [DEFAULT_TEMPLATE_ID]
 
 
-def seed_declared_business_agent_workspace(
-    workspace_dir: Path,
+def prepare_declared_business_agent_workspace(
     *,
     agent_id: str,
+    name: str,
     runtime_volume_mode: str,
     env: Mapping[str, str],
     runtime_root: Path,
-) -> bool:
-    """Birth a same-id declared seed into an empty staged workspace when available."""
+) -> WorkspaceTemplatePlan | None:
+    """Read and render a same-id declared seed before reserving persistent state."""
 
     seed_root = Path(os.environ.get("RUNTIME_VOLUME_SEEDS_DIR") or _RUNTIME_SEEDS_DIR_DEFAULT)
     source_workspace = seed_root / "data" / "business-agents" / agent_id / "workspace"
-    if not source_workspace.is_dir():
-        return False
-    if workspace_dir.exists() and any(workspace_dir.iterdir()):
-        raise InvalidDeclaredBusinessAgentSeed(f"Staged workspace is not empty: {workspace_dir}")
+    source_stat = _lstat(source_workspace)
+    if source_stat is None:
+        return None
+    if stat.S_ISLNK(source_stat.st_mode) or not stat.S_ISDIR(source_stat.st_mode):
+        raise InvalidDeclaredBusinessAgentSeed(f"Declared workspace seed must be a real directory: {agent_id}")
     context = build_render_context(mode=runtime_volume_mode, env=env, runtime_root=runtime_root)
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    for source in sorted(source_workspace.rglob("*")):
-        if source.is_symlink():
-            raise InvalidDeclaredBusinessAgentSeed(f"Declared seed contains a symlink: {source}")
-        if source.is_dir():
-            continue
-        relative = source.relative_to(source_workspace)
-        target = workspace_dir / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if is_template_managed_text_file(relative):
-            content = render_template_file(source.read_text(encoding="utf-8"), rel_path=relative, context=context)
-            errors = validate_rendered_config(content, rel_path=relative, context=context)
-            if errors:
-                raise InvalidDeclaredBusinessAgentSeed("; ".join(errors))
-            target.write_text(content, encoding="utf-8")
-            target.chmod(source.stat().st_mode & 0o777)
-        else:
-            shutil.copy2(source, target)
-    return True
-
-
-def _write_if_absent(path: Path, content: str) -> None:
-    """仅在文件不存在时写入，保留用户对该业务 Agent 配置的编辑。"""
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+    try:
+        entries = tuple(
+            _read_template_tree(
+                source_workspace,
+                agent_id=agent_id,
+                name=name,
+                render_context=context,
+            )
+        )
+    except WorkspaceSafetyError as exc:
+        raise InvalidDeclaredBusinessAgentSeed(str(exc)) from exc
+    if not entries:
+        raise InvalidDeclaredBusinessAgentSeed(f"Declared workspace seed is empty: {agent_id}")
+    return WorkspaceTemplatePlan(template_id=f"declared:{agent_id}", entries=entries)
 
 
 def _render(text: str, *, agent_id: str, name: str) -> str:
     return text.replace(_PLACEHOLDER_AGENT_ID, agent_id).replace(_PLACEHOLDER_AGENT_NAME, name)
 
 
-def _render_runtime_settings(text: str) -> str:
-    data = json.loads(text)
-    sandbox = data.get("sandbox") if isinstance(data, dict) else None
-    if isinstance(sandbox, dict):
-        marker = os.environ.get("RUNTIME_CONTAINER", "").strip().lower()
-        sandbox["enableWeakerNestedSandbox"] = marker in {"1", "true", "yes", "on", "container"}
-    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
-
-
-def _seed_inline_starter(workspace_dir: Path, *, agent_id: str, name: str) -> None:
-    """general 模板目录不可用时的内联兜底（与历史起始内容一致）。"""
-    _write_if_absent(workspace_dir / "CLAUDE.md", _STARTER_CLAUDE_MD.format(name=name, agent_id=agent_id))
-    _write_if_absent(
-        workspace_dir / ".claude" / "settings.json",
-        _render_runtime_settings(json.dumps(_STARTER_SETTINGS, ensure_ascii=False)),
+def prepare_business_agent_workspace(
+    *,
+    agent_id: str,
+    name: str,
+    template_id: str = DEFAULT_TEMPLATE_ID,
+    render_context: RuntimeTemplateRenderContext | None = None,
+) -> WorkspaceTemplatePlan:
+    """Read, render and validate the whole template before any DB/FS mutation."""
+    normalized = (template_id or DEFAULT_TEMPLATE_ID).strip() or DEFAULT_TEMPLATE_ID
+    _validate_template_id(normalized)
+    root = business_agent_templates_dir()
+    root_stat = _lstat(root)
+    if root_stat is not None and (stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode)):
+        raise WorkspaceSafetyError("Business Agent template catalog must be a real directory")
+    template_path = root / normalized
+    template_stat = _lstat(template_path)
+    if template_stat is None:
+        if normalized == DEFAULT_TEMPLATE_ID and _lstat(root) is None:
+            return _inline_plan(agent_id=agent_id, name=name, render_context=render_context)
+        raise UnknownBusinessAgentTemplate(f"Unknown business agent template: {normalized!r}; available: {list_business_agent_templates()}")
+    if stat.S_ISLNK(template_stat.st_mode) or not stat.S_ISDIR(template_stat.st_mode):
+        raise WorkspaceSafetyError(f"Business Agent template must be a real directory: {normalized}")
+    entries = tuple(
+        _read_template_tree(
+            template_path,
+            agent_id=agent_id,
+            name=name,
+            render_context=render_context,
+        )
     )
-    _write_if_absent(workspace_dir / ".mcp.json", json.dumps(_STARTER_MCP, ensure_ascii=False, indent=2) + "\n")
+    if not entries:
+        raise WorkspaceSafetyError(f"Business Agent template is empty: {normalized}")
+    return WorkspaceTemplatePlan(template_id=normalized, entries=entries)
+
+
+def apply_business_agent_workspace_plan(
+    workspace_dir: Path,
+    plan: WorkspaceTemplatePlan,
+    *,
+    require_workspace_absent: bool = False,
+) -> WorkspaceProvisionJournal:
+    """Publish atomically from a no-follow workspace root; recovered roots must be absent."""
+    created_files: list[_CreatedPath] = []
+    created_directories: list[_CreatedPath] = []
+    workspace_descriptor: int | None = None
+    try:
+        workspace_descriptor, workspace_path = _open_workspace_root(
+            workspace_dir,
+            created_directories,
+            require_new=require_workspace_absent,
+        )
+        for entry in plan.entries:
+            created = _publish_entry(
+                workspace_descriptor,
+                workspace_path,
+                entry,
+                created_directories,
+                reject_existing=require_workspace_absent,
+            )
+            if created is not None:
+                created_files.append(created)
+    except Exception as exc:
+        if workspace_descriptor is not None:
+            os.close(workspace_descriptor)
+            workspace_descriptor = None
+        journal = WorkspaceProvisionJournal(tuple(created_files), tuple(created_directories))
+        local_cleanup_complete = not isinstance(exc, WorkspaceProvisioningError) or exc.cleanup_complete
+        cleanup_complete = rollback_business_agent_workspace(journal) and local_cleanup_complete
+        raise WorkspaceProvisioningError(
+            f"Business Agent workspace provisioning failed: {exc.__class__.__name__}",
+            cleanup_complete=cleanup_complete,
+        ) from exc
+    finally:
+        if workspace_descriptor is not None:
+            os.close(workspace_descriptor)
+    return WorkspaceProvisionJournal(tuple(created_files), tuple(created_directories))
+
+
+def rollback_business_agent_workspace(journal: WorkspaceProvisionJournal) -> bool:
+    """Remove only paths whose inode is still owned by this provisioning attempt."""
+    complete = True
+    for created in reversed(journal.created_files):
+        complete = _unlink_owned_file(created) and complete
+    for created in reversed(journal.created_directories):
+        complete = _remove_owned_directory(created) and complete
+    return complete
 
 
 def seed_business_agent_workspace(
@@ -161,33 +277,424 @@ def seed_business_agent_workspace(
     - 模板内不含任何 api_key / MCP header / 本机私有路径。
     返回实际使用的 template_id。
     """
-    template_id = (template_id or DEFAULT_TEMPLATE_ID).strip() or DEFAULT_TEMPLATE_ID
-    workspace_dir.mkdir(parents=True, exist_ok=True)
-    template_path = business_agent_templates_dir() / template_id
-
-    if not template_path.is_dir():
-        if template_id == DEFAULT_TEMPLATE_ID:
-            _seed_inline_starter(workspace_dir, agent_id=agent_id, name=name)
-            return template_id
-        raise UnknownBusinessAgentTemplate(f"Unknown business agent template: {template_id!r}; available: {list_business_agent_templates()}")
-
-    for src in sorted(template_path.rglob("*")):
-        if src.is_dir():
-            continue
-        rel = src.relative_to(template_path)
-        if rel.name == "README.md":
-            continue
-        dest = workspace_dir / rel
-        if dest.exists():
-            continue
-        rendered = _render(src.read_text(encoding="utf-8"), agent_id=agent_id, name=name)
-        if rel.parts[-2:] == (".claude", "settings.json"):
-            rendered = _render_runtime_settings(rendered)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(rendered, encoding="utf-8")
-    return template_id
+    plan = prepare_business_agent_workspace(agent_id=agent_id, name=name, template_id=template_id)
+    apply_business_agent_workspace_plan(workspace_dir, plan)
+    return plan.template_id
 
 
 def initialize_business_agent_workspace(workspace_dir: Path, *, agent_id: str, name: str) -> None:
     """向后兼容入口：以默认 general 模板幂等初始化业务 Agent 工作区配置容器。"""
     seed_business_agent_workspace(workspace_dir, agent_id=agent_id, name=name, template_id=DEFAULT_TEMPLATE_ID)
+
+
+def _inline_plan(
+    *,
+    agent_id: str,
+    name: str,
+    render_context: RuntimeTemplateRenderContext | None,
+) -> WorkspaceTemplatePlan:
+    values = {
+        PurePosixPath("CLAUDE.md"): _STARTER_CLAUDE_MD.format(name=name, agent_id=agent_id),
+        PurePosixPath(".claude/settings.json"): json.dumps(_STARTER_SETTINGS, ensure_ascii=False, indent=2) + "\n",
+        PurePosixPath(".mcp.json"): json.dumps(_STARTER_MCP, ensure_ascii=False, indent=2) + "\n",
+    }
+    entries = tuple(
+        _validated_entry(
+            relative_path,
+            _render_managed_content(relative_path, content, render_context),
+            0o644,
+        )
+        for relative_path, content in values.items()
+    )
+    return WorkspaceTemplatePlan(template_id=DEFAULT_TEMPLATE_ID, entries=entries)
+
+
+def _read_template_tree(
+    root: Path,
+    *,
+    agent_id: str,
+    name: str,
+    render_context: RuntimeTemplateRenderContext | None,
+) -> list[WorkspaceTemplateEntry]:
+    rendered: list[WorkspaceTemplateEntry] = []
+    for current, directories, files in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        current_stat = os.lstat(current_path)
+        if stat.S_ISLNK(current_stat.st_mode) or not stat.S_ISDIR(current_stat.st_mode):
+            raise WorkspaceSafetyError("Business Agent template directory changed during validation")
+        directories.sort()
+        files.sort()
+        for name_on_disk in (*directories, *files):
+            candidate = current_path / name_on_disk
+            candidate_stat = os.lstat(candidate)
+            relative_path = PurePosixPath(candidate.relative_to(root).as_posix())
+            _validate_relative_path(relative_path)
+            if _is_cache_artifact(relative_path):
+                raise WorkspaceSafetyError(f"Business Agent template contains a cache artifact: {relative_path}")
+            if stat.S_ISLNK(candidate_stat.st_mode):
+                raise WorkspaceSafetyError(f"Business Agent template contains a symlink: {relative_path}")
+        for filename in files:
+            relative_path = PurePosixPath((current_path / filename).relative_to(root).as_posix())
+            if relative_path.name == "README.md":
+                continue
+            source = current_path / filename
+            source_stat, text = _read_regular_text_no_follow(source)
+            content = _render_managed_content(
+                relative_path,
+                _render(text, agent_id=agent_id, name=name),
+                render_context,
+            )
+            rendered.append(_validated_entry(relative_path, content, stat.S_IMODE(source_stat.st_mode)))
+    rendered.sort(key=lambda entry: entry.relative_path.as_posix())
+    return rendered
+
+
+def _render_managed_content(
+    relative_path: PurePosixPath,
+    content: str,
+    render_context: RuntimeTemplateRenderContext | None,
+) -> str:
+    if render_context is None:
+        return content
+    path = Path(relative_path.as_posix())
+    if not is_template_managed_text_file(path):
+        return content
+    rendered = render_template_file(content, rel_path=path, context=render_context)
+    errors = validate_rendered_config(rendered, rel_path=path, context=render_context)
+    if errors:
+        raise WorkspaceSafetyError("; ".join(errors))
+    return rendered
+
+
+def _validated_entry(relative_path: PurePosixPath, content: str, mode: int) -> WorkspaceTemplateEntry:
+    _validate_relative_path(relative_path)
+    if relative_path.suffix == ".json":
+        try:
+            value = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise WorkspaceSafetyError(f"Rendered template JSON is invalid: {relative_path}") from exc
+        if not isinstance(value, dict):
+            raise WorkspaceSafetyError(f"Rendered template JSON must be an object: {relative_path}")
+    if relative_path.suffix == ".py":
+        try:
+            ast.parse(content, filename=relative_path.as_posix())
+        except SyntaxError as exc:
+            raise WorkspaceSafetyError(f"Rendered template Python is invalid: {relative_path}") from exc
+    return WorkspaceTemplateEntry(
+        relative_path=relative_path,
+        content=content.encode("utf-8"),
+        mode=0o755 if mode & 0o111 else 0o644,
+    )
+
+
+def _read_regular_text_no_follow(path: Path) -> tuple[os.stat_result, str]:
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    descriptor = os.open(path, flags)
+    try:
+        source_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise WorkspaceSafetyError(f"Business Agent template entry is not a regular file: {path.name}")
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            raw = source.read()
+    finally:
+        os.close(descriptor)
+    try:
+        return source_stat, raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise WorkspaceSafetyError(f"Business Agent template entry is not UTF-8 text: {path.name}") from exc
+
+
+def _publish_entry(
+    workspace_descriptor: int,
+    workspace_path: Path,
+    entry: WorkspaceTemplateEntry,
+    created_directories: list[_CreatedPath],
+    *,
+    reject_existing: bool = False,
+) -> _CreatedPath | None:
+    destination = workspace_path.joinpath(*entry.relative_path.parts)
+    parent_descriptor = _open_workspace_relative_directory(
+        workspace_descriptor,
+        workspace_path,
+        entry.relative_path.parts[:-1],
+        created_directories,
+    )
+    temporary_name = f".agentgov-provision-{uuid4().hex}.tmp"
+    temporary_stat: os.stat_result | None = None
+    published: _CreatedPath | None = None
+    published_stat: os.stat_result | None = None
+    try:
+        destination_name = entry.relative_path.name
+        existing = _stat_at(parent_descriptor, destination_name)
+        if existing is not None:
+            _require_regular_destination(existing, entry.relative_path)
+            if reject_existing:
+                raise WorkspaceSafetyError(f"Recovered workspace changed during provisioning: {entry.relative_path}")
+            return None
+        temporary_stat = _write_temporary(parent_descriptor, temporary_name, entry.content, entry.mode)
+        try:
+            os.link(
+                temporary_name,
+                destination_name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        except FileExistsError as race_error:
+            raced = _stat_at(parent_descriptor, destination_name)
+            if raced is None:
+                raise WorkspaceSafetyError(f"Workspace destination disappeared during publish: {entry.relative_path}") from race_error
+            _require_regular_destination(raced, entry.relative_path)
+            if not _unlink_owned_at(parent_descriptor, temporary_name, temporary_stat):
+                raise WorkspaceSafetyError("Workspace temporary file cleanup failed") from race_error
+            temporary_stat = None
+            if reject_existing:
+                raise WorkspaceSafetyError(f"Recovered workspace changed during provisioning: {entry.relative_path}") from race_error
+            return None
+        published = _CreatedPath(destination, temporary_stat.st_dev, temporary_stat.st_ino)
+        published_stat = temporary_stat
+        if not _unlink_owned_at(parent_descriptor, temporary_name, temporary_stat):
+            raise WorkspaceSafetyError("Workspace temporary file cleanup failed")
+        temporary_stat = None
+        os.fsync(parent_descriptor)
+        return published
+    except Exception as exc:
+        cleanup_complete = not isinstance(exc, WorkspaceProvisioningError) or exc.cleanup_complete
+        if temporary_stat is not None:
+            cleanup_complete = _unlink_owned_at(parent_descriptor, temporary_name, temporary_stat) and cleanup_complete
+        if published is not None and published_stat is not None:
+            cleanup_complete = _unlink_owned_at(parent_descriptor, entry.relative_path.name, published_stat) and cleanup_complete
+        raise WorkspaceProvisioningError(
+            f"Workspace file publish failed: {entry.relative_path}",
+            cleanup_complete=cleanup_complete,
+        ) from exc
+    finally:
+        with suppress(OSError):
+            os.close(parent_descriptor)
+
+
+def _write_temporary(parent_descriptor: int, name: str, content: bytes, mode: int) -> os.stat_result:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    descriptor = os.open(name, flags, mode or 0o600, dir_fd=parent_descriptor)
+    temporary_stat = os.fstat(descriptor)
+    try:
+        view = memoryview(content)
+        while view:
+            written = os.write(descriptor, view)
+            view = view[written:]
+        os.fchmod(descriptor, mode or 0o600)
+        os.fsync(descriptor)
+        return temporary_stat
+    except Exception as exc:
+        cleanup_complete = _unlink_owned_at(parent_descriptor, name, temporary_stat)
+        raise WorkspaceProvisioningError(
+            "Workspace temporary file write failed",
+            cleanup_complete=cleanup_complete,
+        ) from exc
+    finally:
+        with suppress(OSError):
+            os.close(descriptor)
+
+
+def _open_workspace_root(
+    workspace_dir: Path,
+    created_directories: list[_CreatedPath],
+    *,
+    require_new: bool = False,
+) -> tuple[int, Path]:
+    workspace_path = _absolute_path(workspace_dir)
+    descriptor = os.open(workspace_path.anchor, _DIRECTORY_OPEN_FLAGS)
+    current_path = Path(workspace_path.anchor)
+    try:
+        relative_parts = workspace_path.parts[1:]
+        if not relative_parts and require_new:
+            raise WorkspaceSafetyError("Recovered Business Agent workspace must be absent before retry")
+        for position, component in enumerate(relative_parts):
+            current_path /= component
+            child_descriptor, created = _open_or_create_directory_at(
+                descriptor,
+                component,
+                current_path,
+                created_directories,
+            )
+            if position == len(relative_parts) - 1 and require_new and not created:
+                os.close(child_descriptor)
+                raise WorkspaceSafetyError("Recovered Business Agent workspace must be absent before retry")
+            os.close(descriptor)
+            descriptor = child_descriptor
+        return descriptor, workspace_path
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _open_workspace_relative_directory(
+    workspace_descriptor: int,
+    workspace_path: Path,
+    relative_parts: tuple[str, ...],
+    created_directories: list[_CreatedPath],
+) -> int:
+    descriptor = os.dup(workspace_descriptor)
+    current_path = workspace_path
+    try:
+        for component in relative_parts:
+            current_path /= component
+            child_descriptor, _ = _open_or_create_directory_at(
+                descriptor,
+                component,
+                current_path,
+                created_directories,
+            )
+            os.close(descriptor)
+            descriptor = child_descriptor
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _open_or_create_directory_at(
+    parent_descriptor: int,
+    name: str,
+    path: Path,
+    created_directories: list[_CreatedPath],
+) -> tuple[int, bool]:
+    try:
+        return os.open(name, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_descriptor), False
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise WorkspaceSafetyError(f"Workspace path component is not a real directory: {name}") from exc
+
+    try:
+        os.mkdir(name, 0o750, dir_fd=parent_descriptor)
+    except FileExistsError:
+        try:
+            return os.open(name, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_descriptor), False
+        except OSError as exc:
+            raise WorkspaceSafetyError(f"Workspace path component changed during create: {name}") from exc
+
+    created = _stat_at(parent_descriptor, name)
+    if created is None or not stat.S_ISDIR(created.st_mode):
+        raise WorkspaceSafetyError(f"Workspace path component changed during create: {name}")
+    owned = _CreatedPath(path, created.st_dev, created.st_ino)
+    created_directories.append(owned)
+    os.fsync(parent_descriptor)
+    try:
+        descriptor = os.open(name, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_descriptor)
+    except OSError as exc:
+        raise WorkspaceSafetyError(f"Workspace path component changed during create: {name}") from exc
+    opened = os.fstat(descriptor)
+    if (opened.st_dev, opened.st_ino) != (owned.device, owned.inode):
+        os.close(descriptor)
+        raise WorkspaceSafetyError(f"Workspace path component changed during create: {name}")
+    return descriptor, True
+
+
+def _absolute_path(path: Path) -> Path:
+    return Path(os.path.abspath(path))
+
+
+def _validate_template_id(template_id: str) -> None:
+    relative = PurePosixPath(template_id)
+    if relative.is_absolute() or len(relative.parts) != 1 or template_id in {".", ".."}:
+        raise UnknownBusinessAgentTemplate(f"Invalid business agent template id: {template_id!r}")
+
+
+def _validate_relative_path(relative_path: PurePosixPath) -> None:
+    if relative_path.is_absolute() or not relative_path.parts or any(part in {"", ".", ".."} for part in relative_path.parts):
+        raise WorkspaceSafetyError(f"Unsafe Business Agent template path: {relative_path}")
+
+
+def _is_cache_artifact(relative_path: PurePosixPath) -> bool:
+    return "__pycache__" in relative_path.parts or relative_path.suffix.lower() in {".pyc", ".pyo"}
+
+
+def _lstat(path: Path) -> os.stat_result | None:
+    try:
+        return os.lstat(path)
+    except FileNotFoundError:
+        return None
+
+
+def _stat_at(parent_descriptor: int, name: str) -> os.stat_result | None:
+    try:
+        return os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+
+
+def _require_regular_destination(destination_stat: os.stat_result, relative_path: PurePosixPath) -> None:
+    if not stat.S_ISREG(destination_stat.st_mode):
+        raise WorkspaceSafetyError(f"Workspace destination is not a regular file: {relative_path}")
+
+
+def _unlink_owned_at(parent_descriptor: int, name: str, owned: os.stat_result) -> bool:
+    current = _stat_at(parent_descriptor, name)
+    if current is None:
+        return True
+    if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (owned.st_dev, owned.st_ino):
+        return False
+    try:
+        os.unlink(name, dir_fd=parent_descriptor)
+    except OSError:
+        return False
+    return True
+
+
+def _unlink_owned_file(created: _CreatedPath) -> bool:
+    try:
+        parent_descriptor = _open_existing_directory(created.path.parent)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    try:
+        current = _stat_at(parent_descriptor, created.path.name)
+        if current is None:
+            return True
+        if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (created.device, created.inode):
+            return False
+        os.unlink(created.path.name, dir_fd=parent_descriptor)
+        os.fsync(parent_descriptor)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(parent_descriptor)
+
+
+def _remove_owned_directory(created: _CreatedPath) -> bool:
+    try:
+        parent_descriptor = _open_existing_directory(created.path.parent)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    try:
+        current = _stat_at(parent_descriptor, created.path.name)
+        if current is None:
+            return True
+        if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != (created.device, created.inode):
+            return False
+        os.rmdir(created.path.name, dir_fd=parent_descriptor)
+        os.fsync(parent_descriptor)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(parent_descriptor)
+
+
+def _open_existing_directory(path: Path) -> int:
+    absolute = _absolute_path(path)
+    descriptor = os.open(absolute.anchor, _DIRECTORY_OPEN_FLAGS)
+    try:
+        for component in absolute.parts[1:]:
+            child_descriptor = os.open(component, _DIRECTORY_OPEN_FLAGS, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child_descriptor
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise

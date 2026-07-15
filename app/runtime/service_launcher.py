@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import os
 import subprocess
 import sys
-import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -14,7 +12,6 @@ import uvicorn
 from scripts.bootstrap_runtime_volume import load_runtime_env
 
 from app.runtime.advisory_lock import AdvisoryLockBusy, AdvisoryLockError, advisory_lock
-from app.runtime.api_health import api_health_ready, internal_api_health_url
 from app.runtime.managed_agent_policy import ManagedAgentPolicyError, default_runtime_template_dir
 from app.runtime.runtime_coordination import (
     RuntimeContractStatus,
@@ -28,7 +25,6 @@ from app.runtime.settings import AppSettings, get_settings
 
 REQUIRED_FULL_STACK_RESTART_EXIT = 75
 API_SINGLETON_EXIT = 73
-WORKER_API_READY_TIMEOUT_SECONDS = 60.0
 
 
 def _selected_env(settings: AppSettings) -> dict[str, str]:
@@ -96,33 +92,6 @@ def _serve_api(settings: AppSettings) -> int:
     return 0
 
 
-def _wait_for_api(settings: AppSettings) -> str:
-    url = internal_api_health_url(settings)
-    deadline = time.monotonic() + WORKER_API_READY_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        if api_health_ready(url):
-            return url
-        time.sleep(1)
-    raise RuntimeCoordinationError(f"Worker timed out waiting for API readiness: {url}")
-
-
-def _run_worker(settings: AppSettings, template_dir: Path, env: dict[str, str]) -> int:
-    paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
-    if not paths.root.is_dir():
-        raise RuntimeCoordinationError("Worker cannot start before API runtime preparation")
-    health_url = _wait_for_api(settings)
-    with advisory_lock(paths.phase_lock, mode="shared"):
-        status = _check_status(settings, template_dir, env)
-        if not status.valid:
-            raise RuntimeCoordinationError(f"Worker runtime contract is invalid: {status.reason}")
-        if not api_health_ready(health_url):
-            raise RuntimeCoordinationError("API readiness changed while worker acquired its runtime lease")
-        from app.worker.agent_jobs import main as worker_main
-
-        asyncio.run(worker_main())
-    return 0
-
-
 def _prepare(settings: AppSettings, template_dir: Path, env: dict[str, str]) -> int:
     paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
     paths.root.mkdir(parents=True, exist_ok=True)
@@ -163,7 +132,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AgentGov runtime service launcher and maintenance gate.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("api")
-    subparsers.add_parser("worker")
     subparsers.add_parser("prepare")
     subparsers.add_parser("validate")
     tool = subparsers.add_parser("run-tool")
@@ -179,8 +147,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "api":
             return _run_api(settings, template_dir, env)
-        if args.command == "worker":
-            return _run_worker(settings, template_dir, env)
         if args.command == "prepare":
             return _prepare(settings, template_dir, env)
         if args.command == "validate":

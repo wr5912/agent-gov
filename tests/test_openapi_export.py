@@ -112,19 +112,34 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
     assert current_paths <= set(schema["paths"])
 
     legacy_paths = {
+        "/api/automation-policy",
+        "/api/eval-datasets/feedback/sync",
+        "/api/eval-cases",
+        "/api/eval-cases/{eval_case_id}",
+        "/api/feedback-sources/eval-cases/generate",
+        "/api/improvements/{improvement_id}/auto-advance",
         "/api/feedback-optimization-batches",
         "/api/feedback-cases/{feedback_case_id}/proposal-jobs",
         "/api/optimization-proposals",
         "/api/optimization-tasks/{task_id}/execution-jobs",
     }
     assert set(schema["paths"]).isdisjoint(legacy_paths)
+    assert not any(path.startswith(("/api/regression-assets", "/api/scenario-packs")) for path in schema["paths"])
 
     for schema_name in (
+        "AutomationPolicyResponse",
+        "AutomationPolicyUpdateRequest",
+        "AutoAdvanceResponse",
         "FeedbackOptimizationBatchResponse",
         "OptimizationTaskResponse",
         "OptimizationProposalResponse",
         "ExternalGovernanceItemResponse",
         "RegressionPlanResponse",
+        "EvalCaseResponse",
+        "FeedbackEvalCaseGenerateRequest",
+        "FeedbackEvalCaseUpdateRequest",
+        "RegressionAssetGovernanceActionRequest",
+        "ScenarioPackResponse",
     ):
         assert schema_name not in schema["components"]["schemas"]
 
@@ -175,6 +190,18 @@ def test_openapi_documents_streaming_media_types():
     assert responses_content["application/json"]["schema"] == {"$ref": "#/components/schemas/ResponseObject"}
 
 
+def test_openapi_documents_ownerless_session_conflicts() -> None:
+    schema = build_openapi_schema()
+
+    for path in (
+        "/v1/conversations/{conversation_id}/items",
+        "/api/sessions/{session_id}/messages",
+    ):
+        responses = schema["paths"][path]["get"]["responses"]
+        assert "409" in responses
+        assert "500" not in responses
+
+
 def test_openapi_documents_expected_domain_error_statuses():
     schema = build_openapi_schema()
 
@@ -182,6 +209,41 @@ def test_openapi_documents_expected_domain_error_statuses():
         responses = operation["responses"]
         for status_code in expected_error_statuses(path, method, operation):
             assert str(status_code) in responses, f"{method.upper()} {path} missing {status_code}"
+
+
+def test_openapi_documents_test_dataset_domain_errors_independently() -> None:
+    schema = build_openapi_schema()
+
+    list_responses = schema["paths"]["/api/test-datasets"]["get"]["responses"]
+    dataset_responses = schema["paths"]["/api/test-datasets/{dataset_id}"]["get"]["responses"]
+    revision_responses = schema["paths"]["/api/test-datasets/{dataset_id}/revisions"]["get"]["responses"]
+    assert {"400", "409"} <= set(list_responses)
+    assert {"400", "404", "409"} <= set(dataset_responses)
+    assert {"400", "404"} <= set(revision_responses)
+
+    lifecycle_responses = schema["paths"]["/api/test-datasets/{dataset_id}/lifecycle"]["post"]["responses"]
+    assert {"400", "404", "409"} <= set(lifecycle_responses)
+
+
+def test_openapi_documents_feedback_case_unknown_typed_source() -> None:
+    schema = build_openapi_schema()
+
+    responses = schema["paths"]["/api/feedback-cases"]["post"]["responses"]
+    assert {"400", "404", "409", "422"} <= set(responses)
+
+
+def test_openapi_requires_non_empty_typed_feedback_case_sources() -> None:
+    schema = build_openapi_schema()
+    request_schema = schema["components"]["schemas"]["FeedbackCaseCreateRequest"]
+    source_refs = request_schema["properties"]["source_refs"]
+
+    assert "source_refs" in request_schema["required"]
+    assert source_refs["minItems"] == 1
+    assert source_refs["items"] == {"$ref": "#/components/schemas/FeedbackSourceRef"}
+    assert request_schema["additionalProperties"] is False
+    source_ref_schema = schema["components"]["schemas"]["FeedbackSourceRef"]
+    assert source_ref_schema["additionalProperties"] is False
+    assert source_ref_schema["properties"]["source_id"]["minLength"] == 1
 
 
 def test_openapi_success_responses_do_not_have_empty_json_schema():

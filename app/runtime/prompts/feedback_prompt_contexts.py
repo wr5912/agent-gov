@@ -61,7 +61,7 @@ def build_improvement_optimization_prompt_context(input_json: JsonObject) -> Jso
             ),
             "target_guidance": [
                 "只输出事项级优化方案，不输出批次、任务队列、外部 webhook 或执行 job。",
-                "changes[].target 应指向 prompt、skill、subagent、mcp_config、runtime_config、eval_case 等治理资产。",
+                "changes[].target 应指向 prompt、skill、subagent、mcp_config、runtime_config、test_dataset 等治理资产。",
                 "提方案前用 Read 读取目标业务 Agent 的 workspace 原始配置，changes 只针对真实存在的配置资产、不提与当前配置无关的改动。",
             ],
             "target_agent_context": _target_agent_context_summary(_json_dict(input_json.get("target_agent_context"))),
@@ -81,15 +81,13 @@ def build_execution_prompt_context(input_json: JsonObject) -> JsonObject:
     )
 
 
-def build_eval_case_generation_prompt_context(input_json: JsonObject) -> JsonObject:
+def build_regression_assessment_prompt_context(input_json: JsonObject) -> JsonObject:
     feedback_cases = _json_list(input_json.get("feedback_cases"))
-    existing_eval_cases = _json_list(input_json.get("existing_eval_cases"))
     return _json_object(
         {
             "feedback_case_count": len(feedback_cases),
             "source_refs": _limited_objects(_json_list(input_json.get("source_refs")), _source_ref_summary),
-            "feedback_cases": _limited_objects(feedback_cases, _eval_case_generation_case_summary),
-            "existing_eval_case_summaries": _limited_objects(existing_eval_cases, _eval_case_summary),
+            "feedback_cases": _limited_objects(feedback_cases, _regression_assessment_case_summary),
         }
     )
 
@@ -165,23 +163,6 @@ def _included_file_summary(source: JsonObject) -> JsonObject:
     )
 
 
-def _eval_case_summary(source: JsonObject) -> JsonObject:
-    return _json_object(
-        {
-            "title": _text(source.get("title"), 300),
-            "prompt": _text(source.get("prompt"), MAX_PROMPT_TEXT_CHARS),
-            "expected_behavior": _text(source.get("expected_behavior"), MAX_PROMPT_TEXT_CHARS),
-            "checks_json": _compact_json_object(source.get("checks_json"), MAX_PROMPT_NESTED_TEXT_CHARS),
-            "labels": _limited_text_list(source.get("labels"), MAX_PROMPT_LIST_ITEMS),
-            "source_summary": _compact_json_object(source.get("source_summary"), MAX_PROMPT_NESTED_TEXT_CHARS),
-            "attribution_summary": _compact_json_object(source.get("attribution_summary"), MAX_PROMPT_NESTED_TEXT_CHARS),
-            "optimization_plan_summary": _compact_json_object(
-                source.get("optimization_plan_summary"), MAX_PROMPT_NESTED_TEXT_CHARS
-            ),
-        }
-    )
-
-
 def _plan_task_summary(source: JsonObject) -> JsonObject:
     return _json_object(
         {
@@ -238,7 +219,7 @@ def _source_ref_summary(source: JsonObject) -> JsonObject:
     return _json_object({"source_kind": _text(source.get("source_kind"), 100), "source_id": _text(source.get("source_id"), 300)})
 
 
-def _eval_case_generation_case_summary(source: JsonObject) -> JsonObject:
+def _regression_assessment_case_summary(source: JsonObject) -> JsonObject:
     feedback_case = _json_dict(source.get("feedback_case"))
     source_run = _json_dict(source.get("source_run"))
     return _json_object(

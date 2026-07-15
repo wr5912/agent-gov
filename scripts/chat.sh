@@ -22,7 +22,7 @@ import sys
 import urllib.request
 
 api_base, api_key, message = sys.argv[1:4]
-payload = json.dumps({"message": message, "skills_mode": "all"}).encode("utf-8")
+payload = json.dumps({"message": message, "agent_id": "main-agent"}).encode("utf-8")
 req = urllib.request.Request(
     api_base + "/api/chat",
     data=payload,

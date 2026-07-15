@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Literal, Optional, TypeAlias
+from collections.abc import Mapping
+from typing import Any, Literal, Optional, TypeAlias
 
 from pydantic import Field, field_validator, model_validator
 
@@ -15,7 +16,6 @@ from app.runtime.state_machines import PENDING_CORRELATION_STATES, validate_tran
 
 from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
-
 
 PendingCorrelationStatus = Literal["pending", "resolved"]
 FeedbackSourceKind = Literal["signal", "soc_event", "pending_correlation"]
@@ -51,7 +51,7 @@ class AgentRunRecord(StrictRuntimeRecord):
     payload: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_shape(self) -> "AgentRunRecord":
+    def validate_shape(self) -> AgentRunRecord:
         if not self.run_id.strip():
             raise ValueError("run_id cannot be empty")
         if not self.created_at.strip():
@@ -77,25 +77,26 @@ class AgentRunRecord(StrictRuntimeRecord):
         return payload
 
     @classmethod
-    def from_payload(cls, payload: JsonObject) -> "AgentRunRecord":
+    def from_payload(cls, payload: Mapping[str, object]) -> AgentRunRecord:
+        raw_payload = dict(payload)
         return cls.model_validate(
             {
-                "run_id": payload.get("run_id"),
-                "created_at": payload.get("created_at"),
-                "session_id": payload.get("session_id"),
-                "sdk_session_id": payload.get("sdk_session_id"),
-                "agent_version_id": payload.get("agent_version_id"),
-                "alert_id": payload.get("alert_id"),
-                "case_id": payload.get("case_id"),
-                "completed_at": payload.get("completed_at"),
-                "langfuse_trace_id": payload.get("langfuse_trace_id"),
-                "langfuse_trace_url": payload.get("langfuse_trace_url"),
-                "payload": payload,
+                "run_id": raw_payload.get("run_id"),
+                "created_at": raw_payload.get("created_at"),
+                "session_id": raw_payload.get("session_id"),
+                "sdk_session_id": raw_payload.get("sdk_session_id"),
+                "agent_version_id": raw_payload.get("agent_version_id"),
+                "alert_id": raw_payload.get("alert_id"),
+                "case_id": raw_payload.get("case_id"),
+                "completed_at": raw_payload.get("completed_at"),
+                "langfuse_trace_id": raw_payload.get("langfuse_trace_id"),
+                "langfuse_trace_url": raw_payload.get("langfuse_trace_url"),
+                "payload": raw_payload,
             }
         )
 
     @classmethod
-    def from_row(cls, row: AgentRunModel) -> "AgentRunRecord":
+    def from_row(cls, row: AgentRunModel) -> AgentRunRecord:
         payload = dict(row.payload_json or {})
         payload.update(
             {
@@ -112,6 +113,28 @@ class AgentRunRecord(StrictRuntimeRecord):
             }
         )
         return cls.from_payload(payload)
+
+
+def upsert_agent_run_record(db: Any, record: AgentRunRecord) -> None:
+    """Project one validated run record inside the caller's transaction."""
+    values = {
+        "session_id": record.session_id,
+        "sdk_session_id": record.sdk_session_id,
+        "agent_version_id": record.agent_version_id,
+        "alert_id": record.alert_id,
+        "case_id": record.case_id,
+        "created_at": record.created_at,
+        "completed_at": record.completed_at,
+        "langfuse_trace_id": record.langfuse_trace_id,
+        "langfuse_trace_url": record.langfuse_trace_url,
+        "payload_json": record.to_payload(),
+    }
+    row = db.get(AgentRunModel, record.run_id)
+    if row is None:
+        db.add(AgentRunModel(run_id=record.run_id, **values))
+        return
+    for key, value in values.items():
+        setattr(row, key, value)
 
 
 class FeedbackSignalRecord(StrictRuntimeRecord):
@@ -140,7 +163,7 @@ class FeedbackSignalRecord(StrictRuntimeRecord):
         return [str(item).strip() for item in value if str(item).strip()]
 
     @model_validator(mode="after")
-    def validate_shape(self) -> "FeedbackSignalRecord":
+    def validate_shape(self) -> FeedbackSignalRecord:
         if not self.signal_id.strip():
             raise ValueError("signal_id cannot be empty")
         if not self.created_at.strip():
@@ -153,7 +176,7 @@ class FeedbackSignalRecord(StrictRuntimeRecord):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_row(cls, row: FeedbackSignalModel) -> "FeedbackSignalRecord":
+    def from_row(cls, row: FeedbackSignalModel) -> FeedbackSignalRecord:
         payload = dict(row.payload_json or {})
         payload.update(
             {
@@ -179,6 +202,7 @@ class SocEventRecord(StrictRuntimeRecord):
     event_type: SocEventType
     timestamp: str
     created_at: str
+    agent_id: Optional[str] = None
     matched_run_id: Optional[str] = None
     run_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -200,7 +224,7 @@ class SocEventRecord(StrictRuntimeRecord):
         return {str(key): [str(item) for item in items if item] for key, items in value.items() if isinstance(items, list)}
 
     @model_validator(mode="after")
-    def validate_shape(self) -> "SocEventRecord":
+    def validate_shape(self) -> SocEventRecord:
         for key, value in (
             ("event_id", self.event_id),
             ("source_system", self.source_system),
@@ -215,13 +239,14 @@ class SocEventRecord(StrictRuntimeRecord):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_row(cls, row: SocEventModel) -> "SocEventRecord":
+    def from_row(cls, row: SocEventModel) -> SocEventRecord:
         payload = dict(row.payload_json or {})
         payload.update(
             {
                 "event_id": row.event_id,
                 "event_type": row.event_type,
                 "source_system": row.source_system,
+                "agent_id": row.agent_id,
                 "run_id": row.run_id,
                 "matched_run_id": row.matched_run_id,
                 "session_id": row.session_id,
@@ -258,7 +283,7 @@ class PendingCorrelationRecord(StrictRuntimeRecord):
         return value
 
     @model_validator(mode="after")
-    def validate_shape(self) -> "PendingCorrelationRecord":
+    def validate_shape(self) -> PendingCorrelationRecord:
         for key, value in (
             ("pending_id", self.pending_id),
             ("created_at", self.created_at),
@@ -281,7 +306,7 @@ class PendingCorrelationRecord(StrictRuntimeRecord):
         alert_id: Optional[str] = None,
         case_id: Optional[str] = None,
         comment: Optional[str] = None,
-    ) -> "PendingCorrelationRecord":
+    ) -> PendingCorrelationRecord:
         validate_transition("pending_correlation", self.status, "resolved")
         payload = self.to_payload()
         payload.update(
@@ -301,7 +326,7 @@ class PendingCorrelationRecord(StrictRuntimeRecord):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_row(cls, row: PendingCorrelationModel) -> "PendingCorrelationRecord":
+    def from_row(cls, row: PendingCorrelationModel) -> PendingCorrelationRecord:
         payload = dict(row.payload_json or {})
         payload.update(
             {
@@ -342,7 +367,7 @@ class FeedbackSourceAnnotationRecord(StrictRuntimeRecord):
         return [str(item).strip() for item in value if str(item).strip()]
 
     @model_validator(mode="after")
-    def validate_shape(self) -> "FeedbackSourceAnnotationRecord":
+    def validate_shape(self) -> FeedbackSourceAnnotationRecord:
         for key, value in (
             ("annotation_id", self.annotation_id),
             ("source_id", self.source_id),
@@ -353,7 +378,7 @@ class FeedbackSourceAnnotationRecord(StrictRuntimeRecord):
                 raise ValueError(f"{key} cannot be empty")
         return self
 
-    def update(self, *, fields: dict[str, object], updated_at: str) -> "FeedbackSourceAnnotationRecord":
+    def update(self, *, fields: dict[str, object], updated_at: str) -> FeedbackSourceAnnotationRecord:
         payload = self.to_payload()
         payload["updated_at"] = updated_at
         for key in ("comment", "labels", "priority", "status", "requires_review", "metadata"):
@@ -365,7 +390,7 @@ class FeedbackSourceAnnotationRecord(StrictRuntimeRecord):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_row(cls, row: FeedbackSourceAnnotationModel) -> "FeedbackSourceAnnotationRecord":
+    def from_row(cls, row: FeedbackSourceAnnotationModel) -> FeedbackSourceAnnotationRecord:
         payload = dict(row.payload_json or {})
         payload.update(
             {

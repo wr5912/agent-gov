@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
+import tarfile
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+import restore_runtime_template_backup as restore_module  # noqa: E402
 from bootstrap_runtime_volume import LOCAL_DEBUG_RUNTIME_VOLUME_ROOT, bootstrap_runtime_volume, resolve_runtime_root  # noqa: E402
 from export_runtime_template import _create_backup, export_runtime_template  # noqa: E402
 from restore_runtime_template_backup import restore_backup  # noqa: E402
@@ -355,6 +360,15 @@ def test_resolve_runtime_root_uses_local_debug_mode_default(tmp_path):
     assert resolve_runtime_root(None, env_file) == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
 
 
+def _write_runtime_backup(path: Path, sizes: list[int]) -> None:
+    with tarfile.open(path, "w:gz") as archive:
+        for index, size in enumerate(sizes):
+            payload = bytes([index % 256]) * size
+            member = tarfile.TarInfo(f"template/file-{index}.txt")
+            member.size = size
+            archive.addfile(member, io.BytesIO(payload))
+
+
 def test_restore_runtime_template_backup_creates_pre_restore_backup(tmp_path):
     template = tmp_path / "template"
     template.mkdir()
@@ -367,7 +381,184 @@ def test_restore_runtime_template_backup_creates_pre_restore_backup(tmp_path):
     restored = restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
 
     assert restored["ok"] is True
-    assert restored["pre_restore_backup"] is None
-    assert restored["cleanup_removed"]
+    assert restored["pre_restore_backup"] is not None
+    assert Path(restored["pre_restore_backup"]).is_file()
+    assert Path(restored["pre_restore_backup"]).parent == backup_dir
+    assert (template / "README.md").read_text(encoding="utf-8") == "before"
+
+
+def test_restore_runtime_template_backup_rejects_symlink_member(tmp_path):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_dir = tmp_path / "backups"
+    backup_path = tmp_path / "symlink.tar.gz"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    with tarfile.open(backup_path, "w:gz") as archive:
+        link = tarfile.TarInfo("template/escape")
+        link.type = tarfile.SYMTYPE
+        link.linkname = outside.as_posix()
+        archive.addfile(link)
+        payload = b"escaped"
+        file_member = tarfile.TarInfo("template/escape/payload.txt")
+        file_member.size = len(payload)
+        archive.addfile(file_member, io.BytesIO(payload))
+
+    with pytest.raises(ValueError, match="unsupported tar member type"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert not (outside / "payload.txt").exists()
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
     assert not backup_dir.exists()
-    assert (template / "README.md").read_text(encoding="utf-8") != "changed"
+
+
+def test_restore_runtime_template_backup_rejects_hardlink_member(tmp_path):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_dir = tmp_path / "backups"
+    backup_path = tmp_path / "hardlink.tar.gz"
+    outside = tmp_path / "outside.txt"
+    outside.write_text("unchanged", encoding="utf-8")
+
+    with tarfile.open(backup_path, "w:gz") as archive:
+        link = tarfile.TarInfo("template/linked.txt")
+        link.type = tarfile.LNKTYPE
+        link.linkname = outside.as_posix()
+        archive.addfile(link)
+
+    with pytest.raises(ValueError, match="unsupported tar member type"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert outside.read_text(encoding="utf-8") == "unchanged"
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
+
+
+def test_restore_runtime_template_backup_rejects_excess_member_count(tmp_path, monkeypatch):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "too-many-members.tar.gz"
+    _write_runtime_backup(backup_path, [0, 0, 0])
+    monkeypatch.setattr(restore_module, "MAX_TAR_MEMBERS", 2)
+
+    backup_dir = tmp_path / "backups"
+    with pytest.raises(ValueError, match="member count budget"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
+
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit", "sizes", "message"),
+    [
+        ("MAX_TAR_MEMBER_BYTES", 4, [5], "declared byte budget"),
+        ("MAX_TAR_DECLARED_BYTES", 6, [4, 4], "total declared byte budget"),
+    ],
+)
+def test_restore_runtime_template_backup_rejects_declared_byte_budgets(
+    tmp_path,
+    monkeypatch,
+    limit_name,
+    limit,
+    sizes,
+    message,
+):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "declared-budget.tar.gz"
+    _write_runtime_backup(backup_path, sizes)
+    monkeypatch.setattr(restore_module, limit_name, limit)
+
+    backup_dir = tmp_path / "backups"
+    with pytest.raises(ValueError, match=message):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
+
+
+def test_restore_runtime_template_backup_rechecks_actual_member_bytes(tmp_path, monkeypatch):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "actual-member-budget.tar.gz"
+    _write_runtime_backup(backup_path, [1])
+    monkeypatch.setattr(restore_module, "MAX_TAR_MEMBER_BYTES", 4)
+    monkeypatch.setattr(tarfile.TarFile, "extractfile", lambda self, member: io.BytesIO(b"12345"))
+
+    backup_dir = tmp_path / "backups"
+    with pytest.raises(ValueError, match="extracted byte budget"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
+
+
+def test_restore_runtime_template_backup_rechecks_total_actual_bytes(tmp_path, monkeypatch):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "actual-total-budget.tar.gz"
+    _write_runtime_backup(backup_path, [3, 3])
+    monkeypatch.setattr(restore_module, "MAX_TAR_EXTRACTED_BYTES", 5)
+
+    backup_dir = tmp_path / "backups"
+    with pytest.raises(ValueError, match="total extracted byte budget"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
+
+
+def test_restore_runtime_template_backup_rejects_compressed_archive_budget_before_backup(tmp_path, monkeypatch):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "oversized.tar.gz"
+    backup_path.write_bytes(b"12345")
+    backup_dir = tmp_path / "backups"
+    monkeypatch.setattr(restore_module, "MAX_TAR_ARCHIVE_BYTES", 4)
+
+    with pytest.raises(ValueError, match="compressed byte budget"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert not backup_dir.exists()
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit", "member_name", "message"),
+    [
+        ("MAX_TAR_MEMBER_NAME_BYTES", 12, "template/name-is-too-long.txt", "name exceeds byte budget"),
+        ("MAX_TAR_PATH_DEPTH", 2, "template/a/b/payload.txt", "path exceeds depth budget"),
+    ],
+)
+def test_restore_runtime_template_backup_rejects_member_path_budgets(
+    tmp_path,
+    monkeypatch,
+    limit_name,
+    limit,
+    member_name,
+    message,
+):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "path-budget.tar.gz"
+    with tarfile.open(backup_path, "w:gz") as archive:
+        member = tarfile.TarInfo(member_name)
+        member.size = 1
+        archive.addfile(member, io.BytesIO(b"x"))
+    backup_dir = tmp_path / "backups"
+    monkeypatch.setattr(restore_module, limit_name, limit)
+
+    with pytest.raises(ValueError, match=message):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert not backup_dir.exists()
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"

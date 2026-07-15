@@ -1,224 +1,176 @@
-# Agent 指令
+# AgentGov Codex 项目说明
 
-本文件是团队级 Codex 通用说明，可在多个项目中复用。所有在项目内工作的 Agent 都必须先阅读并遵守本文件；项目专属路径、脚本、CI 和产品不变量应放在 `AGENTS.override.md`，不要硬编码进本通用层。
+本文件是本仓库唯一的根级 Codex 指令入口。Codex 在同一目录只加载
+`AGENTS.override.md` 或 `AGENTS.md` 中优先命中的一个文件，因此根目录不得再创建
+同级 `AGENTS.override.md`。团队通用约束和本仓库专属约束在这里提供有效入口，详细
+流程按需进入 `.codex/guidance/`、`.codex/skills/`、脚本和 docs，避免并行真相源。
 
 ## 读取顺序
 
-1. 先阅读本文件。
-2. 如存在 `AGENTS.override.md`，继续读取并应用其中的项目覆盖说明；覆盖说明只应承载当前项目特例。
-3. 读取 `.codex/rules/project.rules` 中的统一规则，并按其要求继续读取 `.codex/rules/architecture.rules` 与 `.codex/rules/verify.rules`。
-4. 涉及代码编写、配置调整、测试补充、构建修复、重构、调试或评审时，启用 `.codex/skills/project-skill/SKILL.md` 中的项目技能。
+开始非琐碎任务前按顺序读取：
 
-## 协作语言
+1. `.codex/guidance/project.md`，并继续读取其中声明的 `architecture.md` 与 `verify.md`。
+2. 涉及代码、配置、测试、构建、重构、调试或评审时，读取
+   `.codex/skills/project-skill/SKILL.md`。
+3. 根据任务触发对应专项 skill；不要把专项矩阵复制回本文件。
+4. 长程重构、GSD 或跨层契约收口还要读取 `.planning/METHODOLOGY.md`。
 
-- 所有对话、文档、代码注释和提交说明默认使用中文。
-- 保留代码标识符、命令、日志关键字和第三方 API 名称的原文。
+本仓库治理硬门来源与长程方法论：
 
-## 工作流
+- `docs/codex_setting_review_reports/智能体治理反思与改进方案第二轮.md`
+- `docs/engineering/长程重构质量闭环.md`
+- `docs/engineering/GSD长程重构阶段清单.md`
 
-所有非琐碎代码变更必须遵循 Analyze -> Plan -> Execute -> Verify。
+专项 skill 触发入口：
 
-## 产品化翻译门
+- Codex 配置、AGENTS/rules/hooks/skill 噪声或重复：`codex-config-optimizer`
+- docs 新增、迁移、归档、删除、索引或引用：`docs-governance`
+- runtime/env、Docker、PyCharm、Langfuse、volume 或模型凭据：`runtime-env-governance`
+- 功能增删改、重构或测试同步：`test-sync-governance`
+- AgentGov 定位、反馈治理、多业务 Agent 或治理资产沉淀：`agentgov-governance-preflight`
+- 四阶段工作台、反馈闭环 UI、Diff、执行、测试用例或 Trace：
+  `improvement-workbench-contract-preflight`
+- 单个业务 Agent workspace 配置资产：`business-agent-workspace-optimizer`
+- 阶段收尾、里程碑交接或发版同步：`agentgov-closeout-sync`
 
-设计文档、需求说明或治理方案描述的是意图，不是 UI 和后端对象清单。涉及用户可见功能、工作流、审批、审计、回滚、任务编排或状态流转时，必须先把文字描述翻译为用户旅程、最少决策点和信息呈现方式，再决定是否新增按钮、状态、job、API 或 schema。
+## 协作与工作流
 
-- 能作为记录、diff、快照、日志、事件、结果详情或回滚能力呈现的审计诉求，默认不要设计成新的显式流程。
-- 用户已有动作能表达意图时，优先复用已有动作；例如确认、执行、编辑、重新生成、撤销或回滚，不要为同一意图叠加同义按钮或中间状态。
-- 每个新增用户入口和持久化生命周期对象都必须能追溯到明确用户任务；不能说明用户何时使用、为什么需要、如何判断成功的，默认不新增。
+- 所有对话、文档、代码注释和提交说明默认使用中文；代码标识符、命令、日志关键字
+  和第三方 API 名称保留原文。
+- 非琐碎变更遵循 Analyze -> Plan -> Execute -> Verify。
+- 写文件前说明涉及文件、逻辑变化、架构阈值、验证方式、Docker 卷影响和测试分层。
+- 能从仓库和官方文档确认的事实先只读确认。只有存在不可发现的关键歧义、破坏性操作、
+  安全风险或公开契约风险时才停下来请求确认；普通实现任务按已确认目标持续完成。
+- 评审以缺陷、风险、行为回归和缺失测试为主，结论必须有当前文件、命令或运行态证据。
 
-## 质量优先级与替换旧设计模式
+## 核心架构原则
 
-当目标涉及重构、去除旧设计、优化架构、提高代码质量、引入更优秀的设计方案/框架/架构，或 Analyze 阶段发现旧 facade、兼容 shim、历史路径、重复实现、schema 双轨、状态分散、过期 API、不可达分支等旧债信号时，必须进入“替换旧设计模式”。
+本仓库以 `claude-agent-sdk` 及其捆绑的 Claude Code agent 为中心。后端只是交互接口、
+确定性编排和反馈优化闭环的薄层。
 
-替换旧设计模式的优先级为：代码质量 > 新设计/框架/架构 > 旧模式兼容或保留。旧实现只有被明确列入保留清单，或属于已确认的公开契约、数据迁移边界、安全边界时才保留；不得以“精准改动”“匹配现有风格”“外部行为不变”为理由默认延续旧设计。
+- Agent/SDK 是会话、消息、trace、session 元数据和子 Agent 行为事实的单一真相源。
+- 优先使用 SDK 原生 `get_session_messages`、`get_session_info`、`list_sessions`、
+  `get_subagent_messages`、`SessionStore` 等能力，不手解析 CLI transcript，也不另建并行副本。
+- 后端只做 API 契约、证据投影和治理编排；交互与优化共享同一份 Agent 行为事实。
+- 不重写或绕过 agent loop。权限、MCP、hooks、skills、subagents 以 Claude Code 原生发现
+  和配置为准，后端不通过 Options 接管。
+- 新增后端 schema、存储或解析前，必须先证明 SDK/agent 没有持有或暴露同一事实。
 
-进入该模式后，Agent 必须先列出旧设计的删除、迁移、保留清单，并按公开 API、配置/env、持久化数据、文档、测试、内部兼容层逐项说明处理方式，等待用户确认兼容边界后再执行。普通小改仍适用最小必要改动原则。
+## 质量优先与旧设计替换
 
-### Analyze
+优先级是：代码质量 > 新设计/框架/架构 > 旧模式兼容或保留。用户要求重构、去旧设计、
+优化架构或提高质量，或分析发现旧 facade、兼容 shim、历史路径、重复实现、schema 双轨、
+状态分散、过期 API、不可达分支时，进入替换旧设计模式。
 
-- 先阅读相关代码、报错、需求、已有文档和配置。
-- 能从仓库确认的事实，先通过只读方式确认。
-- 执行架构饱和检查：确认待修改文件行数、类/函数/路由规模、复制粘贴风险、生命周期状态和 Schema 表示是否分散。
-- 对照 `.codex/rules/architecture.rules` 判断是否存在机器护栏尚未覆盖的结构债；不能把检查未报警等同于架构无问题。
-- 通过用户意图和代码结构多方式检查是否触发替换旧设计模式；触发时先识别旧设计清单与兼容边界。
-- 涉及用户可见功能或设计文档落地时，先识别用户旅程、决策点、信息展示和记录化审计边界，不得直接把文档术语实体化为界面或后端对象。
-- 显式说明关键假设、歧义和技术权衡。
-- 需求不清或存在安全/数据风险时，先提问，不要猜测实现。
+该模式下先列删除、迁移、保留清单，并覆盖：
 
-### Plan
+- 公开 API、OpenAPI、前端生成类型；
+- 配置、环境变量、Docker 路径和 `config/*`；
+- SQLite、`${HOME}/volume-agent-gov`、迁移前 `docker/volume/` 与迁移脚本；
+- README、docs、测试、治理硬门和内部兼容层。
 
-执行前必须输出修改计划，并等待用户确认。计划至少包含：
+历史 job/payload 不作为永久产品契约。保留旧实现必须有公开契约、安全或迁移依据，并写明
+退出条件；不得以“精准改动”“匹配现有风格”或“外部行为不变”延续已确认的旧设计。
 
-1. 涉及的文件列表。
-2. 逻辑修改点。
-3. 与四项准则的对应关系。
-4. Docker 卷挂载路径；不涉及时写明“不涉及”。
-5. 验证方式和成功标准。
-6. 架构阈值命中情况；如命中，说明先拆分、抽象、统一或列为阻断债务的方案。
-7. 必须运行的治理硬门；优先使用 `AGENTS.override.md` 或项目文档声明的命令。项目未配置硬门时，写明替代验证与缺口。
-8. 如触发替换旧设计模式，列出删除、迁移、保留清单，以及公开契约、配置、数据、文档、测试和内部兼容层处理方式。
-9. 如涉及用户可见功能，列出用户动作矩阵：新增按钮、状态、job、API、schema 字段分别对应哪个用户任务，是否可由已有动作替代，审计信息是否可作为记录或结果详情呈现。
+## 反复整改前置矩阵
 
-### Execute
+任务同时涉及实现、docs、skill、runtime/env、测试、UI 或部署中的两个以上配置面，或用户
+要求“举一反三”“触类旁通”时，Analyze 阶段先给短矩阵：
 
-- 仅在用户确认后写文件。
-- 普通小改只改完成目标所需的文件和逻辑；替换旧设计模式下，改动范围以已确认的新架构边界和旧设计清理清单为准。
-- 优先复用健康的现有模式、工具和约定；旧设计、旧兼容层或已识别结构债不得作为继续复用的默认依据。
-- 不引入无当下价值的依赖、抽象、配置或“未来可能需要”的功能。
-- 如果发现无关问题，记录并说明，不要顺手重构或删除。
+- 治理对象矩阵：业务 Agent、治理 Agent、`main` 样板、runtime data、template workspace、
+  开发者离线工具。
+- 配置面矩阵：当前 prompt、根 `AGENTS.md` / `.claude/rules/agentgov-project.md`、guidance/rules、skill、script、
+  hook、docs、memory。
+- 验收路径矩阵：docs/skill、专项测试、主流程测试、真实容器、发版硬门；不得用 local-debug 结果声明容器验收通过。
+- UI 语义矩阵：按钮、业务产物、API 副作用、状态推进、容器和信息归属，以及不应混入的内容。
+  决策卡主按钮必须完成业务动作，状态推进只能是副作用。
 
-### Verify
+## 反馈闭环与治理模型契约
 
-- 对照原始目标验证结果。
-- 运行相关测试、构建、类型检查或端到端检查。
-- 回答架构验证项：是否新增超限文件、重复块、生命周期状态分散、Schema 双轨、跨事务中间态或文档漂移。
-- 非琐碎代码变更必须运行项目覆盖层声明的治理硬门；`warn` / dry-run 类模式只能用于 Analyze 阶段观察，不能作为 Verify 通过标准。
-- 如无法验证，说明原因、残余风险和后续路径。
-- 涉及 Docker 持久化时，检查项目覆盖层声明的宿主机运行态路径。
+反馈优化、归因、治理模型任务、DSPy formatter、提示词、OpenAPI 或前端类型默认按
+产品级契约问题处理。排查必须贯通 UI/API -> application service -> runner/formatter ->
+store 投影 -> 持久化 payload，并核查空态、成功态、失败详情和重试入口。历史
+`agent_jobs` 只读查询不属于活跃执行链路。
 
-## 四项核心准则
+- 结构化错误、raw output、validated output、聚合字段和页面状态必须属于同一业务动作契约。
+- 单条与批次优化方案复用同一生成契约；保留分支必须证明不可合并。
+- 旧 proposal job/路由/prompt/signature/UI/生成类型必须从活跃主流程清零。
+- DSPy 成功输出以内层 Pydantic OutputModel 实例继续流转，不在 formatter 边界立即 dump。
+- 无外部协议、多版本运行时或历史迁移需求时，不新增输出 `schema_version`。
+- job type、profile、prompt builder、Signature 和 OutputModel 收口到集中注册表。
+- prompt/Signature 只要求 agent-owned 业务语义。job id、workflow/case ids、时间戳、scope、
+  provenance 等 backend-owned 字段由后端注入或覆盖；JSON 只在 DB/HTTP/文件/日志边界生成。
+- Formatter、projection 和 boundary payload 的类型与命名必须区分
+  `raw_agent_text -> formatter_output -> projected_output -> raw_output_json`。
 
-### 三思而后行
+## 架构卫生
 
-- 不做未验证假设。
-- 多种解释并存时，先列出解释和取舍。
-- 有更简单或风险更低的方案时，明确提出。
-- 困惑时停止推进，说明不清楚的点并请求澄清。
+以下任一命中都必须在计划中先处理边界，不能以治理脚本未报警代替架构判断：
 
-### 简洁优先
+- 手写代码文件超过 800 行、类超过 30 个公开方法、函数超过 80 行或圈复杂度超过 15；
+- 路由文件超过 20 个路由，或即将复制超过 40 行现有代码；
+- 同一职责在 3 个以上文件靠字符串字面量耦合；
+- 同一实体存在多套手写 schema/DTO/ORM/序列化表示且无派生关系；
+- 持久化生命周期状态缺集中状态集合、完整转移表、统一校验 helper 或非法转移测试；
+- 跨表、跨文件、跨服务或 DB + 文件系统更新缺幂等、回滚或部分失败处理；
+- 事务块内执行 `rmtree`、外部通知或远程调用等不可回滚副作用；
+- 旧 facade、shim、历史路径/格式、过期 API、不可达 UI 或调试脚本仍参与主流程；
+- 修改 API、settings、Docker env、公开 schema 或默认值而不更新 README/docs。
 
-- 用最少代码解决当前问题。
-- 不为一次性逻辑创建抽象。
-- 不添加未被要求的灵活性、配置项或扩展点。
-- 如果实现命中架构阈值、明显臃肿或触发替换旧设计模式，先收缩、拆分、替换或统一后再继续。
-- 简洁优先不得被解释为保留低质量旧设计；删除旧兼容层、收口单一来源或引入成熟框架能降低复杂度时，应优先纳入方案。
+治理硬门按 git base 只阻断新增债或旧债增长；`BASELINE` 不是“无问题”，普通 docs/issue
+也不能作为机器放行豁免。
 
-### 精准改动
+## 测试与验证
 
-- 每一行修改都应能追溯到用户目标。
-- 普通小改匹配健康的项目现有风格，即使个人偏好不同。
-- “匹配现有风格”只适用于健康模式；不得作为继续复制大段代码、扩大神模块、分散状态机、保留旧 facade 或延续兼容 shim 的理由。
-- 不改动与任务无关的格式、注释、结构或命名。
-- 普通小改只清理本次改动造成的无用导入、变量、函数和文件；替换旧设计模式清理已确认清单内的旧实现和兼容层。
-- 替换旧设计模式下，删除、迁移和重命名旧实现属于用户目标的一部分，不视为漫游 diff。
+功能迭代先按 `test-sync-governance` 填测试同步矩阵。删除行为同步删陈测；重构优先测行为和
+契约，不测私有实现细节。测试深度随风险增加：
 
-### 目标驱动
+- 日常红绿循环运行目标 pytest/前端检查。
+- 修改反馈主流程、Agent job、formatter、store、API response 或用户可见 tab 时，运行
+  `make main-flow-test`，并同步 `tests/coverage_policy.json` 的场景绑定。
+- UI 空态、成功态、失败详情必须有场景证据，不能用后端单测或 coverage 百分比替代。
+- 生命周期加非法转移测试；并发资源加重复/竞争/部分失败测试；外部输入加异常/恶意/越权测试；
+  Agent 输出契约加 hostile backend-owned 字段污染测试。
+- 提交、CI、发版或用户要求完整验证时运行 `make test`；专项覆盖率调整运行 `make coverage`。
 
-- 把任务转成可验证的成功标准。
-- 修 bug 时优先复现问题，再实现修复。
-- 普通重构先确认现有行为，再证明公开行为未变；替换旧设计模式下，先确认保留契约和允许变化，再证明旧设计已删除或迁移且新契约通过验证。
-- 多步骤任务要小步交付，每步都有验证点。
+本仓库非琐碎代码、配置、测试和治理文档变更必须运行：
 
-## 架构卫生护栏
-
-以下任一情况视为架构阈值命中，必须先在计划中说明处理方式，并优先选择能阻止债务继续扩大的最小重构：
-
-- 单个手写代码文件超过 800 行；Markdown 文档不适用该阈值。
-- 单类超过 30 个公开方法。
-- 单函数超过 80 行，或圈复杂度超过 15。
-- 路由文件超过 20 个路由。
-- 即将复制超过 40 行的已有代码块。
-- 同一职责在 3 个及以上文件中通过字符串字面量耦合。
-- 表达持久化生命周期的状态字段（如 `status` / `state` / `phase` / `stage`）的合法转移散落在多个分支中，或集中状态机只登记状态集合但缺完整转移表。
-- 同一实体存在多套手写 schema、DTO、ORM 或序列化表示且缺少单一真相来源；Python 项目中包括 Pydantic 模型与手写 dict 双轨表示。
-- 跨表、跨文件、跨服务或 DB + 文件系统更新被拆成多个不可恢复的事务步骤，或在事务块内执行 `rmtree`、外部通知等不可回滚副作用。
-- 旧 facade、兼容 shim、历史路径、旧数据格式、过期 API、不可达 UI 分支或调试脚本仍参与主流程，且没有明确迁移/删除计划。
-- 修改公开 API、settings、Docker env、公开 schema 或默认值但不同步 README / docs 对应章节。
-
-命中阈值不意味着必须大重构。普通小改默认先抽出当前改动必需的最小边界；若用户目标或旧债信号触发替换旧设计模式，则必须以代码质量和新架构边界为准规划删除、迁移或统一旧实现。
-治理硬门以 git base 对比判定旧债：既有超限可暂存但本次不得增长，新增超限直接失败。普通文档或 issue 只能用于还债管理，不得作为放行豁免。
-
-### 生命周期状态硬约束
-
-- 当字段表达持久化生命周期且存在受约束的合法转移时，必须在集中状态机中登记状态集合与完整合法转移表。
-- `status` / `state` / `phase` / `stage` 只是常见信号；只读外部字段、展示标签、临时 UI 步骤或无受限转移的简单属性，不强制状态机。
-- 缺少转移表视为状态机未实现，不允许以“已集中登记状态集合”作为合规理由。
-- 写入生命周期状态前必须经统一 helper 调用状态转移校验；不得在多个模块中直接散写状态。
-- 如果当前任务无法补齐既有生命周期状态的完整转移表，必须把该问题列为阻断债务或先做最小状态机修复后再继续。
-
-## 测试纵深
-
-- 涉及生命周期状态字段时，至少补充 1 个非法状态转移或非法状态输入的负向测试。
-- 涉及 DB、文件系统、子进程或并发资源时，至少补充 1 个重复执行、竞争或部分失败场景测试。
-- 涉及路径、URL、JSON、外部输入或权限边界时，至少补充 1 个异常或恶意输入测试。
-- happy path 只能证明主流程可用，不能替代边界和失败场景验证。
-
-## 环境规范
-
-### Python
-
-- 必须使用仓库本地 `.venv`。
-- Python 版本必须为 3.10+。
-- 包管理器使用 `uv`，禁止直接使用 `pip`。
-- 创建环境使用 `uv venv .venv`。
-- 安装依赖使用 `uv pip install <package>` 或 `uv pip install -r requirements.txt`。
-- 运行 Python 工具优先使用 `.venv/bin/python`，除非当前 shell 已激活 `.venv`。
-- 不要使用系统 Python 或 Conda Python 执行项目 runtime、测试、依赖检查或脚本。
-
-### Node.js
-
-- Node.js 版本使用 20+。
-- 前端包管理器必须使用 `pnpm`，不得新增 npm/yarn lockfile 或以 npm/yarn 作为项目默认入口。
-- 常用命令为 `pnpm install`、`pnpm dev`、`pnpm build`。
-
-### Docker
-
-- Docker 文件统一放在 `docker/`。
-- 环境变量文件遵循项目覆盖层声明；没有声明时使用可提交示例文件和本地私有配置文件分离真实配置。
-- 卷挂载路径遵循项目覆盖层声明；禁止临时挂载到未声明的私有路径。
-- 容器内部端口小于 10000 时，宿主机端口映射为 `50000 + 原端口`，例如 `5432 -> 55432`。
-- Dockerfile、CI 安装脚本和镜像构建脚本中，所有可配置下载源必须优先使用国内源。
-- apt 源优先使用阿里云镜像，npm registry 优先使用淘宝源 `https://registry.npmmirror.com`，Python/pip/uv 源优先使用阿里云 PyPI 镜像或项目已配置镜像。
-- 如某依赖没有可用国内源，必须在 Dockerfile 注释或变更说明中写明原因。
-
-## 安全与产品不变量
-
-- 如项目覆盖层声明离线、隐私、合规或数据安全不变量，必须优先遵守。
-- 不得将API key提交到git仓库。
-- 不要硬编码配置值。环境变量和应用配置使用项目覆盖层声明的配置文件；不得提交真实密钥或本地私有覆盖。
-
-## Git 提交
-
-提交标题使用：
-
-```text
-<type>(<scope>): <描述>
+```bash
+make codex-guard
 ```
 
-`scope` 可省略。小改动可以只有标题；非琐碎变更必须在标题后空一行补正文，说明背景、主要改动、兼容影响和验证结果。
+`warn`/dry-run 只用于 Analyze，不能作为 Verify 通过标准。`.github/workflows/governance.yml`
+是 PR 以及 `main`/`master` push 的 CI 入口。
 
-常用类型：
+## Runtime / Env 与安全边界
 
-- `feat`: 新功能
-- `fix`: 修复 bug
-- `refactor`: 重构
-- `docs`: 文档更新
-- `test`: 测试
-- `chore`: 构建或工具变更
-- `perf`: 性能优化
-- `ci`: CI/CD 变更
+- 离线模式是产品不变量，但始终会提供本地化 LLM；必需工作流不得依赖远程服务。
+- Docker 持久化宿主机根目录统一为 `${HOME}/volume-agent-gov`；`docker/volume/` 只作迁移来源。
+- `docker/.env` 服务 Compose/API 容器；`docker/.env.local-debug` 服务宿主机 Python/
+  PyCharm；`frontend/.env.local` 只服务 Vite。它们是按运行环境选择，不是 layered override。
+- 宿主机进程自动选择本机调试 env，容器由 Compose 注入 `RUNTIME_CONTAINER=1` 选择容器 env。
+- 本机 API 内的治理模型任务不复用交互式 Claude `/login`；真实运行前私有 env 必须提供
+  `MODEL_PROVIDER_API_KEY`，但真实值不得进入仓库、日志、文档、提交说明或最终回复。
+- API key、MCP header、数据库凭据、本机私有路径、运行态 SQLite 和私有日志不得提交。
+- 当前 Playground、调试 UI 和自托管 Langfuse 是开发观测面，可保留完整 prompt/tool/governance/trace
+  I/O；该例外不放宽仓库和对外输出边界。
+- 修改 env 选择、路径、模型凭据或 Langfuse 地址时，同步 README、示例、policy 测试和启动日志。
 
-非琐碎提交正文建议使用：
+## 文档与配置治理
 
-```text
-Background:
-- 为什么需要这个变更。
+- 活跃文档入口是 `docs/README.md`，归档入口是 `docs/archive/README.md`。
+- 新增、移动、归档或删除 docs 前使用 `docs-governance`；先检查相对链接、旧路径引用、
+  文档契约测试和 Codex/Claude skill 镜像。
+- 常驻根指令只保留稳定不变量和触发入口；按需流程进 skill，可机械判定的规则进 script/hook。
+- `.codex/guidance/*.md` 承载根 `AGENTS.md` 显式引用的模型治理说明；
+  `.codex/rules/*.rules` 只保留 Codex `prefix_rule(...)` 命令执行策略，不放散文说明。
+- 不把本仓库脚本名、CI、路径或产品不变量复制到团队通用 skill/rules 模板。
 
-Changes:
-- 主要改了什么。
+## 版本与提交
 
-Compatibility:
-- API、schema、迁移、配置、部署或用户行为影响；无影响写“无”。
-
-Verification:
-- 实际运行过的测试、构建、治理检查或人工验收。
-```
-
-提交说明不得包含密钥、私有路径、用户隐私、完整 prompt 对话或流水账。
-
-## 外部实践来源
-
-本说明吸收并改写了 `forrestchang/andrej-karpathy-skills` 中适合团队开发的行为规则，保留其“四项准则”的工程思想，并作为团队通用 Codex 项目配置；各项目可在 `AGENTS.override.md` 中追加本地约束。
-
-来源: https://github.com/forrestchang/andrej-karpathy-skills
-许可: MIT
+- 根 `VERSION` 是版本唯一真相源；`app/version.py`、前端 version 和 Compose 镜像 tag 由它派生。
+- 默认不 bump VERSION、不创建或推送 tag。发布点由用户确认后用 `make tag`，并确保 `v<VERSION>`
+  与 VERSION 一致；发现 VERSION 领先远端 tag 时只提示，不擅自补 tag。
+- 用户要求提交时先审 diff。普通小改可只有标题；涉及 API/schema/runtime data/部署/主流程、
+  删除旧入口或跨两个以上配置面的提交必须有 `Compatibility` 和 `Verification` 正文。
+- 提交说明只写工程意图、兼容影响和已执行验证，不写密钥、私有路径或 prompt 流水账。

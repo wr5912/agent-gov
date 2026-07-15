@@ -159,6 +159,7 @@ async function installMockRoutes(page, streamRequests, decisionRequests) {
       return sse(route, [
         { event: "agentgov.session", data: { session_id: sessionId, sdk_session_id: "sdk-hitl-ui-session", run_id: `run-${kind}` } },
         { event: "agentgov.confirmation.requested", data: requestEvent(kind, sessionId) },
+        { event: "response.completed", data: { response: { status: "completed" } } },
         { event: "agentgov.done", data: "[DONE]" },
       ]);
     }

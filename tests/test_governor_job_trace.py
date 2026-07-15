@@ -27,7 +27,7 @@ def test_governor_trace_attributes_improvement_scope_uses_improvement_prefix():
 
 
 def test_governor_trace_attributes_falls_back_to_job_id_session():
-    attrs = governor_trace_attributes(job_type="eval_case_generation", scope_kind="", scope_id="", job_id="job-9")
+    attrs = governor_trace_attributes(job_type="regression_assessment", scope_kind="", scope_id="", job_id="job-9")
     assert attrs["session_id"] == "job:job-9"
 
 

@@ -1,6 +1,6 @@
 # 《Agent 版本治理与 Diff 对比重构方案》评审报告
 
-> 评审对象：[`docs/Agent版本治理与Diff对比重构方案.md`](../../Agent版本治理与Diff对比重构方案.md)
+> 评审对象：[`docs/archive/design/Agent版本治理与Diff对比重构方案.md`](./Agent版本治理与Diff对比重构方案.md)
 > 评审日期：2026-06-03
 > 评审视角：GSD plan review、现状断言准确性、旧设计替换边界、数据/状态迁移、候选回归隔离、Git 服务运维、API/OpenAPI/前端契约、阶段排序与验证矩阵
 > GSD review 状态：原生 `gsd-review <phase>` 需要 `.planning` phase/PLAN artifacts；当前仓库只有 `.planning/METHODOLOGY.md`，没有可解析 phase 目录。已探测 reviewer：`claude`、`codex` 可用；按独立性跳过本机 `codex`，调用 `claude -p` 时返回 429（GLM Coding Plan 套餐到期），本报告为本地 GSD 风格评审，未生成跨 AI `REVIEWS.md`。

@@ -2,41 +2,32 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal, TypedDict
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from .agent_job_errors import (
-    LITELLM_CLAUDE_CODE_COMPAT_FAILED,
-    MODEL_AGENT_LOOP_CAPABILITY_FAILED,
-    MODEL_PROVIDER_SIDECAR_UNAVAILABLE,
-    MODEL_SCHEMA_EXACT_OUTPUT_FAILED,
-    VLLM_CHAT_PROBE_FAILED,
-    VLLM_DIRECT_CLAUDE_CODE_COMPAT_FAILED,
-    VLLM_MODELS_PROBE_FAILED,
-    VLLM_TOOL_CALLING_UNSUPPORTED,
+    MODEL_PROVIDER_CONFIGURATION_MISSING,
+    MODEL_PROVIDER_NOT_CHECKED,
+    MODEL_PROVIDER_PROBE_IN_PROGRESS,
+    MODEL_PROVIDER_READINESS_PROBE_FAILED,
     ModelProviderCapabilityError,
     provider_api_key_configured,
 )
 from .json_types import JsonObject
-from .model_provider_responses import (
-    anthropic_content_has_tool_use,
-    anthropic_tool_probe_body,
-    first_choice_message,
-    first_tool_call,
-    message_content_text,
-    parse_json_object,
-)
 
 logger = logging.getLogger(__name__)
 
 ModelProviderBackend = Literal["vllm", "ollama", "openai_compatible", "anthropic_compatible"]
 ProviderRouteName = Literal["direct_anthropic", "litellm_sidecar"]
 ProbeStatus = Literal["skipped", "succeeded", "failed"]
+ProviderReadinessStatus = Literal["not_checked", "checking", "ready", "degraded"]
 
 LITELLM_SIDECAR_BASE_URL = "http://agent-gov-litellm-sidecar:4000"
 LOCAL_PROVIDER_DUMMY_API_KEY = "agent-gov-local-provider"
@@ -80,6 +71,37 @@ class VersionProbeResult:
             "status_code": self.status_code,
             "duration_ms": self.duration_ms,
             "error_code": self.error_code,
+        }
+        return {key: value for key, value in summary.items() if value is not None}
+
+
+@dataclass(frozen=True)
+class ProviderReadinessSnapshot:
+    status: ProviderReadinessStatus
+    error_code: str | None = None
+    message: str | None = None
+    reason: str | None = None
+    route: str | None = None
+    probe: str | None = None
+    status_code: int | None = None
+    duration_ms: int | None = None
+    retryable: bool | None = None
+    action: str | None = None
+    checked_at: str | None = None
+
+    def to_summary(self) -> JsonObject:
+        summary: JsonObject = {
+            "status": self.status,
+            "error_code": self.error_code,
+            "message": self.message,
+            "reason": self.reason,
+            "route": self.route,
+            "probe": self.probe,
+            "status_code": self.status_code,
+            "duration_ms": self.duration_ms,
+            "retryable": self.retryable,
+            "action": self.action,
+            "checked_at": self.checked_at,
         }
         return {key: value for key, value in summary.items() if value is not None}
 
@@ -135,8 +157,21 @@ class ModelProviderRouter:
         self.settings = settings
         self._route: ModelProviderRoute | None = None
         self._agent_runtime_ready = False
+        self._probe_lock = threading.RLock()
+        self._readiness_lock = threading.Lock()
+        self._readiness = ProviderReadinessSnapshot(
+            status="not_checked",
+            error_code=MODEL_PROVIDER_NOT_CHECKED,
+            message="Model provider readiness has not been checked yet; the API control plane is live.",
+            retryable=True,
+            action="wait for the background provider probe or trigger a model-backed action",
+        )
 
     def route(self) -> ModelProviderRoute:
+        with self._probe_lock:
+            return self._resolve_route()
+
+    def _resolve_route(self) -> ModelProviderRoute:
         if self._route is not None:
             return self._route
 
@@ -153,6 +188,7 @@ class ModelProviderRouter:
                 version_probe=VersionProbeResult(status="skipped"),
                 provider_api_key_required=True,
             )
+            self._record_route_readiness(self._route)
             return self._route
 
         version_probe = self._probe_vllm_version(provider_endpoint) if backend == "vllm" else VersionProbeResult(status="skipped")
@@ -187,6 +223,7 @@ class ModelProviderRouter:
                     sidecar_required=False,
                     provider_api_key_required=False,
                 )
+                self._record_route_readiness(self._route)
                 return self._route
 
         # Default: vLLM / OpenAI-compatible / Ollama are exposed to Claude Code through
@@ -204,6 +241,7 @@ class ModelProviderRouter:
             sidecar_required=True,
             provider_api_key_required=False,
         )
+        self._record_route_readiness(self._route)
         return self._route
 
     def _version_meets_threshold(self, version_probe: VersionProbeResult) -> bool:
@@ -272,324 +310,169 @@ class ModelProviderRouter:
         return not route.provider_api_key_required and bool(route.provider_endpoint)
 
     def health_summary(self) -> JsonObject:
-        return self.route().to_summary()
+        route = self._route
+        if route is not None:
+            summary = route.to_summary()
+        else:
+            backend = normalize_backend(getattr(self.settings, "model_provider_backend", "anthropic_compatible"))
+            provider_endpoint = normalize_url(getattr(self.settings, "provider_api_url", None))
+            summary = {
+                "backend": backend,
+                "route": "direct_anthropic" if backend == "anthropic_compatible" else None,
+                "provider_endpoint_configured": bool(provider_endpoint),
+                "provider_endpoint": sanitize_endpoint(provider_endpoint),
+                "claude_base_url": None,
+                "formatter_api_base": None,
+                "formatter_model_prefix": None,
+                "sidecar_required": None,
+                "sidecar_base_url": None,
+                "provider_api_key_required": backend == "anthropic_compatible",
+                "version_probe": None,
+            }
+        summary["readiness"] = self.readiness_summary()
+        return summary
+
+    def readiness_summary(self) -> JsonObject:
+        with self._readiness_lock:
+            return self._readiness.to_summary()
+
+    def mark_readiness_checking(self) -> None:
+        self._set_readiness(
+            ProviderReadinessSnapshot(
+                status="checking",
+                error_code=MODEL_PROVIDER_PROBE_IN_PROGRESS,
+                message="Model provider readiness probe is running in the background; API liveness is unaffected.",
+                retryable=True,
+                action="wait for /health/ready to report ready or a specific degraded error",
+            )
+        )
+
+    def refresh_readiness(self) -> JsonObject:
+        """Refresh provider routing in one background-safe, single-flight probe."""
+        self.mark_readiness_checking()
+        try:
+            with self._probe_lock:
+                self._route = None
+                self._agent_runtime_ready = False
+                self._resolve_route()
+        except Exception as exc:
+            self._set_readiness(
+                ProviderReadinessSnapshot(
+                    status="degraded",
+                    error_code=MODEL_PROVIDER_READINESS_PROBE_FAILED,
+                    message="Unexpected model provider readiness probe failure; the API control plane remains live.",
+                    reason=exc.__class__.__name__,
+                    probe="provider_route",
+                    retryable=True,
+                    action="inspect API logs and verify model provider settings before retrying",
+                    checked_at=_utc_now(),
+                )
+            )
+        return self.readiness_summary()
 
     def ensure_agent_runtime_ready(self) -> None:
+        try:
+            with self._probe_lock:
+                self._ensure_agent_runtime_ready()
+        except ModelProviderCapabilityError as exc:
+            self._record_capability_failure(exc)
+            raise
+        self._set_readiness(
+            ProviderReadinessSnapshot(
+                status="ready",
+                message="Model provider passed the Agent runtime capability checks.",
+                route=self._route.route if self._route else None,
+                probe="agent_runtime_capabilities",
+                retryable=False,
+                checked_at=_utc_now(),
+            )
+        )
+
+    def _ensure_agent_runtime_ready(self) -> None:
         route = self.route()
         if route.backend == "anthropic_compatible" or self._agent_runtime_ready:
             return
-        if route.requires_litellm_sidecar:
-            self._ensure_sidecar_ready(route)
-        if route.backend == "vllm":
-            self._ensure_vllm_models_ready(route)
-            self._ensure_vllm_chat_ready(route)
-            tool_call = self._ensure_vllm_tool_calling_ready(route)
-            self._ensure_model_agent_loop_ready(route, tool_call)
-            self._ensure_schema_exact_output_ready(route)
-        if route.requires_litellm_sidecar:
-            self._ensure_anthropic_messages_compat_ready(
-                route,
-                base_url=route.sidecar_base_url,
-                error_code=LITELLM_CLAUDE_CODE_COMPAT_FAILED,
-                probe_label="claude",
-                system_in_messages=False,
-                retryable=True,
-                action="verify LiteLLM Anthropic tool/streaming translation and upstream vLLM response shape",
-            )
-        elif route.backend == "vllm":
-            self._ensure_anthropic_messages_compat_ready(
-                route,
-                base_url=route.claude_base_url,
-                error_code=VLLM_DIRECT_CLAUDE_CODE_COMPAT_FAILED,
-                probe_label="vllm_direct",
-                system_in_messages=True,
-                retryable=False,
-                action="vLLM /v1/messages must accept Claude Code requests (system in messages, tool_use, streaming); upgrade vLLM or unset MODEL_PROVIDER_VLLM_ALLOW_DIRECT to route via the LiteLLM sidecar",
-            )
+        from .model_provider_capabilities import ensure_model_provider_capabilities
+
+        ensure_model_provider_capabilities(self, route)
         self._agent_runtime_ready = True
 
-    def _ensure_sidecar_ready(self, route: ModelProviderRoute) -> None:
-        assert route.sidecar_base_url is not None
-        result = self._http_json("GET", route.sidecar_base_url.rstrip("/") + "/health/readiness")
-        if result.status_code is not None and 200 <= result.status_code < 300:
+    def _record_route_readiness(self, route: ModelProviderRoute) -> None:
+        probe = route.version_probe
+        if probe.status == "failed":
+            self._set_readiness(
+                ProviderReadinessSnapshot(
+                    status="degraded",
+                    error_code=probe.error_code or VLLM_VERSION_PROBE_FAILED,
+                    message="vLLM version probe failed; the API control plane remains live while model routing is degraded.",
+                    reason=probe.reason,
+                    route=route.route,
+                    probe="vllm_version",
+                    status_code=probe.status_code,
+                    duration_ms=probe.duration_ms,
+                    retryable=True,
+                    action="verify external vLLM is reachable and MODEL_PROVIDER_API_URL points to its base URL",
+                    checked_at=_utc_now(),
+                )
+            )
             return
-        raise ModelProviderCapabilityError(
-            error_code=MODEL_PROVIDER_SIDECAR_UNAVAILABLE,
-            message="LiteLLM sidecar is not reachable or not ready.",
-            route=route.route,
-            probe="sidecar_readiness",
-            endpoint=sanitize_endpoint(route.sidecar_base_url),
-            status_code=result.status_code,
-            duration_ms=result.duration_ms,
-            retryable=True,
-            action="start or restart agent-gov-litellm-sidecar and verify MODEL_PROVIDER_API_URL",
-        )
 
-    def _ensure_vllm_models_ready(self, route: ModelProviderRoute) -> None:
-        endpoint = provider_v1_api_base(route.provider_endpoint)
-        if endpoint is None:
-            raise ModelProviderCapabilityError(
-                error_code=VLLM_MODELS_PROBE_FAILED,
-                message="vLLM model service URL is not configured.",
+        provider_key = getattr(self.settings, "provider_api_key", None)
+        credentials_ready = provider_api_key_configured(provider_key) or (not route.provider_api_key_required and bool(route.provider_endpoint))
+        if not credentials_ready:
+            self._set_readiness(
+                ProviderReadinessSnapshot(
+                    status="degraded",
+                    error_code=MODEL_PROVIDER_CONFIGURATION_MISSING,
+                    message="Model provider credentials or endpoint are not configured; the API control plane remains live.",
+                    reason="missing_provider_configuration",
+                    route=route.route,
+                    probe="configuration",
+                    retryable=True,
+                    action="configure MODEL_PROVIDER_API_KEY and MODEL_PROVIDER_API_URL for the selected backend",
+                    checked_at=_utc_now(),
+                )
+            )
+            return
+
+        self._set_readiness(
+            ProviderReadinessSnapshot(
+                status="ready",
+                message=(
+                    "vLLM version probe succeeded and model routing is configured."
+                    if probe.status == "succeeded"
+                    else "Model provider routing configuration is ready."
+                ),
                 route=route.route,
-                probe="models",
-                endpoint=None,
-                retryable=True,
-                action="configure MODEL_PROVIDER_API_URL with the running vLLM base URL",
+                probe="vllm_version" if probe.status == "succeeded" else "configuration",
+                status_code=probe.status_code,
+                duration_ms=probe.duration_ms,
+                retryable=False,
+                checked_at=_utc_now(),
             )
-        result = self._http_json("GET", endpoint.rstrip("/") + "/models")
-        if result.status_code is not None and 200 <= result.status_code < 300:
-            return
-        raise ModelProviderCapabilityError(
-            error_code=VLLM_MODELS_PROBE_FAILED,
-            message="vLLM model service /v1/models probe failed.",
-            route=route.route,
-            probe="models",
-            endpoint=sanitize_endpoint(route.provider_endpoint),
-            status_code=result.status_code,
-            duration_ms=result.duration_ms,
-            retryable=True,
-            action="verify vLLM OpenAI-compatible server is running and MODEL_PROVIDER_API_URL has no /v1 suffix",
         )
 
-    def _ensure_vllm_chat_ready(self, route: ModelProviderRoute) -> None:
-        result = self._post_vllm_chat(
-            route,
-            {
-                "model": self._agent_model(),
-                "messages": [{"role": "user", "content": "Reply with OK."}],
-                "max_tokens": 32,
-                "temperature": 0,
-            },
-        )
-        message = first_choice_message(result.body_json)
-        if is_success(result) and message and message_content_text(message):
-            return
-        self._raise_capability_error(
-            error_code=VLLM_CHAT_PROBE_FAILED,
-            message="vLLM chat completion probe failed.",
-            route=route,
-            probe="chat",
-            result=result,
-            retryable=True,
-            action="verify the vLLM OpenAI-compatible chat/completions endpoint and selected AGENT_MODEL",
-        )
-
-    def _ensure_vllm_tool_calling_ready(self, route: ModelProviderRoute) -> JsonObject:
-        result = self._post_vllm_chat(
-            route,
-            {
-                "model": self._agent_model(),
-                "messages": [{"role": "user", "content": "Call the agent_gov_probe tool with value ok."}],
-                "tools": [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "agent_gov_probe",
-                            "description": "Return a probe value.",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {"value": {"type": "string"}},
-                                "required": ["value"],
-                            },
-                        },
-                    }
-                ],
-                "tool_choice": {"type": "function", "function": {"name": "agent_gov_probe"}},
-                "max_tokens": 128,
-                "temperature": 0,
-            },
-        )
-        message = first_choice_message(result.body_json)
-        tool_call = first_tool_call(message)
-        if is_success(result) and tool_call:
-            return tool_call
-        self._raise_capability_error(
-            error_code=VLLM_TOOL_CALLING_UNSUPPORTED,
-            message="vLLM model service is reachable but tool calling probe failed.",
-            route=route,
-            probe="tool_calling",
-            result=result,
-            retryable=False,
-            action="check vLLM tool parser settings or choose a tool-calling capable model",
-        )
-
-    def _ensure_model_agent_loop_ready(self, route: ModelProviderRoute, tool_call: JsonObject) -> None:
-        tool_call_id = str(tool_call.get("id") or "call_1")
-        function = tool_call.get("function")
-        tool_name = function.get("name") if isinstance(function, dict) and isinstance(function.get("name"), str) else "agent_gov_probe"
-        result = self._post_vllm_chat(
-            route,
-            {
-                "model": self._agent_model(),
-                "messages": [
-                    {"role": "user", "content": "Call the agent_gov_probe tool with value ok, then answer DONE after the tool result."},
-                    {"role": "assistant", "content": None, "tool_calls": [tool_call]},
-                    {"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": '{"value":"ok"}'},
-                ],
-                "max_tokens": 64,
-                "temperature": 0,
-            },
-        )
-        message = first_choice_message(result.body_json)
-        if is_success(result) and message_content_text(message):
-            return
-        self._raise_capability_error(
-            error_code=MODEL_AGENT_LOOP_CAPABILITY_FAILED,
-            message="Target model failed the two-step Claude Code-style tool loop probe.",
-            route=route,
-            probe="agent_tool_loop",
-            result=result,
-            retryable=False,
-            action="choose a model that can continue after tool_result messages without looping or stalling",
-        )
-
-    def _ensure_schema_exact_output_ready(self, route: ModelProviderRoute) -> None:
-        result = self._post_vllm_chat(
-            route,
-            {
-                "model": self._agent_model(),
-                "messages": [{"role": "user", "content": 'Return exactly this JSON object and nothing else: {"ok": true}'}],
-                "response_format": {"type": "json_object"},
-                "max_tokens": 64,
-                "temperature": 0,
-            },
-        )
-        message = first_choice_message(result.body_json)
-        if is_success(result) and parse_json_object(message_content_text(message)) == {"ok": True}:
-            return
-        self._raise_capability_error(
-            error_code=MODEL_SCHEMA_EXACT_OUTPUT_FAILED,
-            message="Target model failed schema-exact JSON output probe.",
-            route=route,
-            probe="schema_exact_json",
-            result=result,
-            retryable=False,
-            action="choose a model that can obey response_format=json_object and schema-exact governor outputs",
-        )
-
-    def _ensure_anthropic_messages_compat_ready(
-        self,
-        route: ModelProviderRoute,
-        *,
-        base_url: str | None,
-        error_code: str,
-        probe_label: str,
-        system_in_messages: bool,
-        retryable: bool,
-        action: str,
-    ) -> None:
-        # Shared Claude Code Anthropic Messages compatibility probe for the LiteLLM sidecar
-        # (sidecar_base_url) and vLLM direct (provider_endpoint). `system_in_messages` injects a
-        # `system`-role entry inside `messages` (the exact shape Claude Code emits) so strict vLLM
-        # Anthropic schemas that reject it fail-close instead of passing a false positive.
-        base = normalize_url(base_url)
-        if base is None:
-            raise ModelProviderCapabilityError(
-                error_code=error_code,
-                message="Anthropic Messages compatibility route has no endpoint configured.",
-                route=route.route,
-                probe=f"{probe_label}_compat",
-                endpoint=None,
-                retryable=True,
-                action=action,
+    def _record_capability_failure(self, exc: ModelProviderCapabilityError) -> None:
+        details = exc.raw_output_json or {}
+        self._set_readiness(
+            ProviderReadinessSnapshot(
+                status="degraded",
+                error_code=exc.error_code,
+                message=str(details.get("message") or exc),
+                reason=str(details.get("reason")) if details.get("reason") else None,
+                route=str(details.get("route")) if details.get("route") else None,
+                probe=str(details.get("probe")) if details.get("probe") else None,
+                status_code=details.get("status_code") if isinstance(details.get("status_code"), int) else None,
+                duration_ms=details.get("duration_ms") if isinstance(details.get("duration_ms"), int) else None,
+                retryable=bool(details.get("retryable")),
+                action=str(details.get("action")) if details.get("action") else None,
+                checked_at=_utc_now(),
             )
-        messages_url = base + "/v1/messages"
-        tool_result = self._http_json(
-            "POST",
-            messages_url,
-            request_body=anthropic_tool_probe_body(self._agent_model(), system_in_messages=system_in_messages),
-        )
-        if not is_success(tool_result) or not anthropic_content_has_tool_use(tool_result.body_json):
-            self._raise_capability_error(
-                error_code=error_code,
-                message="Anthropic Messages endpoint failed the Claude Code tool compatibility probe.",
-                route=route,
-                probe=f"{probe_label}_tool_compat",
-                result=tool_result,
-                endpoint=base_url,
-                retryable=retryable,
-                action=action,
-            )
-        self._ensure_anthropic_streaming_compat(
-            route,
-            messages_url=messages_url,
-            endpoint=base_url,
-            error_code=error_code,
-            probe_label=probe_label,
-            retryable=retryable,
-            action=action,
         )
 
-    def _ensure_anthropic_streaming_compat(
-        self,
-        route: ModelProviderRoute,
-        *,
-        messages_url: str,
-        endpoint: str | None,
-        error_code: str,
-        probe_label: str,
-        retryable: bool,
-        action: str,
-    ) -> None:
-        stream_result = self._http_request(
-            "POST",
-            messages_url,
-            request_body={
-                "model": self._agent_model(),
-                "max_tokens": 32,
-                "stream": True,
-                "messages": [{"role": "user", "content": "Reply with OK."}],
-            },
-            accept="text/event-stream",
-        )
-        stream_text = stream_result.raw_body.decode("utf-8", errors="replace")
-        if is_success(stream_result) and "event:" in stream_text and "event: error" not in stream_text:
-            return
-        self._raise_capability_error(
-            error_code=error_code,
-            message="Anthropic Messages endpoint failed the Claude Code streaming compatibility probe.",
-            route=route,
-            probe=f"{probe_label}_streaming",
-            result=stream_result,
-            endpoint=endpoint,
-            retryable=retryable,
-            action=action,
-        )
-
-    def _post_vllm_chat(self, route: ModelProviderRoute, request_body: Mapping[str, object]) -> HttpProbeResult:
-        endpoint = provider_v1_api_base(route.provider_endpoint)
-        if endpoint is None:
-            return HttpProbeResult(status_code=None, duration_ms=0, reason="missing_provider_endpoint")
-        return self._http_json("POST", endpoint.rstrip("/") + "/chat/completions", request_body=request_body)
-
-    def _agent_model(self) -> str:
-        value = getattr(self.settings, "agent_model", None)
-        return value.strip() if isinstance(value, str) and value.strip() else "agent-gov-model"
-
-    def _raise_capability_error(
-        self,
-        *,
-        error_code: str,
-        message: str,
-        route: ModelProviderRoute,
-        probe: str,
-        result: HttpProbeResult,
-        retryable: bool,
-        action: str,
-        endpoint: str | None = None,
-    ) -> None:
-        raise ModelProviderCapabilityError(
-            error_code=error_code,
-            message=message,
-            route=route.route,
-            probe=probe,
-            endpoint=sanitize_endpoint(endpoint or route.provider_endpoint),
-            status_code=result.status_code,
-            duration_ms=result.duration_ms,
-            retryable=retryable,
-            action=action,
-        )
+    def _set_readiness(self, snapshot: ProviderReadinessSnapshot) -> None:
+        with self._readiness_lock:
+            self._readiness = snapshot
 
     def _http_json(self, method: str, endpoint: str, request_body: Mapping[str, object] | None = None) -> HttpProbeResult:
         result = self._http_request(method, endpoint, request_body=request_body)
@@ -762,6 +645,10 @@ def sanitize_endpoint(value: str | None) -> str | None:
 
 def elapsed_ms(start: float) -> int:
     return max(0, round((time.monotonic() - start) * 1000))
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def parse_version(value: str) -> tuple[int, ...] | None:

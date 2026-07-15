@@ -20,7 +20,7 @@
 
 ## 阶段 0 任务
 
-1. 将 `docs/Agent版本治理与Diff对比重构方案.md` 改为评审采纳后的权威方案。
+1. 将现已归档的 `docs/archive/design/Agent版本治理与Diff对比重构方案.md` 改为评审采纳方案。
 2. 新增 `.planning/PROJECT.md` 和 `.planning/ROADMAP.md`。
 3. 新增本阶段 `CONTEXT.md` 和 `PLAN.md`。
 4. 更新项目专属说明，使 Docker 持久化默认路径变为 `${HOME}/volume-agent-gov`。

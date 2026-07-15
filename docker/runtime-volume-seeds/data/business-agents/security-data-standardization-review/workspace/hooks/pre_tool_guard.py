@@ -1,60 +1,61 @@
 #!/usr/bin/env python3
-"""Claude Code PreToolUse hook: hard-deny unsafe Bash and mutating MCP operations."""
+"""Fail-closed Claude Code PreToolUse guard for business-agent Bash calls."""
 
 import json
 import re
 import sys
 
-payload = json.load(sys.stdin)
-tool_name = payload.get("tool_name", "")
-tool_input = payload.get("tool_input", {}) or {}
-command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
-
-DENY_BASH_PATTERNS = [
-    r"rm\s+-rf\s+/(\s|$)",
-    r"mkfs\.",
-    r"dd\s+if=.*\s+of=/dev/",
+DENY_PATTERNS = (
+    r"\brm\s+-rf\s+/(?:\*|\s|$)",
+    r"\bdd\s+if=.*\s+of=/dev/",
+    r"\bmkfs(?:\.|\s)",
+    r"\b(?:shutdown|reboot|poweroff)\b",
+    r"\biptables\b.*\s-F\b",
+    r"\bkubectl\s+(?:delete|drain|cordon|apply|patch|replace|scale|rollout)\b",
+    r"\bterraform\s+apply\b",
+    r"\bansible-playbook\b.*(?:--limit\s+(?:all|production|prod)|production|prod)",
+    r"\bsystemctl\s+(?:restart|stop)\b",
+    r"\b(?:nmap|masscan)\b.*(?:-sS|-sT|-A|--script)",
+    r"\bdocker\s+(?:rm|rmi|system\s+prune|volume\s+rm)\b",
+    r"\b(?:ssh|scp)\b",
+    r"\bcurl\b.*\|\s*(?:bash|sh)\b",
+    r"\bwget\b.*\|\s*(?:bash|sh)\b",
     r":\(\)\s*\{\s*:\|:&\s*\};:",
-    r"curl\s+[^|]+\|\s*(sh|bash)",
-    r"wget\s+[^|]+\|\s*(sh|bash)",
-    r"\bkubectl\b\s+(delete|apply|scale|rollout)\b",
-    r"\bterraform\b\s+apply\b",
-    r"\bsystemctl\b\s+(restart|stop)\b",
-]
-DENY_MCP_NAME = re.compile(
-    r"(write|update|delete|block|isolate|disable|kill|quarantine|execute|submit|register)",
-    re.IGNORECASE,
 )
 
-for pattern in DENY_BASH_PATTERNS:
-    if command and re.search(pattern, command, flags=re.IGNORECASE):
-        print(
-            json.dumps(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "permissionDecision": "deny",
-                        "permissionDecisionReason": "标准化审查智能体只允许只读审查和报告输出，已阻止高风险命令。",
-                    }
-                },
-                ensure_ascii=False,
-            )
-        )
-        sys.exit(0)
 
-if tool_name.startswith("mcp__") and DENY_MCP_NAME.search(tool_name):
+def _deny(reason: str) -> None:
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "deny",
-                    "permissionDecisionReason": "标准化审查智能体不执行写入、更新、删除、下发或注册类 MCP 操作。",
+                    "permissionDecisionReason": reason,
                 }
-            },
-            ensure_ascii=False,
+            }
         )
     )
-    sys.exit(0)
 
-sys.exit(0)
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+        if not isinstance(payload, dict) or not isinstance(payload.get("tool_name"), str):
+            raise ValueError("expected a PreToolUse object with tool_name")
+        if payload["tool_name"] != "Bash":
+            return 0
+        tool_input = payload.get("tool_input")
+        if not isinstance(tool_input, dict) or not isinstance(tool_input.get("command"), str):
+            raise ValueError("expected tool_input.command string")
+        command = tool_input["command"]
+    except Exception as exc:
+        print(f"PreToolUse safety validation failed closed: {exc.__class__.__name__}", file=sys.stderr)
+        return 2
+    if any(re.search(pattern, command, flags=re.IGNORECASE) for pattern in DENY_PATTERNS):
+        _deny("A destructive or remote command was denied by the workspace safety policy.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

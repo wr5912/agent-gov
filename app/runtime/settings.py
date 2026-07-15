@@ -37,10 +37,6 @@ def _string_dict(value: JsonObject) -> dict[str, str]:
     return {str(key): str(val) for key, val in value.items()}
 
 
-def _optional_string_dict(value: JsonObject) -> dict[str, str | None]:
-    return {str(key): None if val is None else str(val) for key, val in value.items()}
-
-
 # main 已并入业务模型：其 workspace/claude-root 由 business_agent_layout(data_dir, "main-agent")
 # 派生（在 /data 下），不再有专属顶层挂载与 env 字段。governor 仍是顶层挂载的特殊治理 Agent。
 MAIN_AGENT_ID = "main-agent"
@@ -192,10 +188,6 @@ class AppSettings(BaseSettings):
 
     agent_model: Optional[str] = Field(default="claude-sonnet-4-5", alias="AGENT_MODEL")
     fallback_model: Optional[str] = Field(default=None, alias="FALLBACK_MODEL")
-    default_agent: Optional[str] = Field(default=None, alias="DEFAULT_AGENT")
-
-    default_skills_raw: Optional[str] = Field(default=None, alias="DEFAULT_SKILLS")
-    default_skills_mode: Literal["all", "default", "none"] = Field(default="default", alias="DEFAULT_SKILLS_MODE")
     claude_system_append: Optional[str] = Field(default=None, alias="CLAUDE_SYSTEM_APPEND")
 
     enable_sdk_session_resume: bool = Field(default=True, alias="ENABLE_SDK_SESSION_RESUME")
@@ -215,9 +207,7 @@ class AppSettings(BaseSettings):
     max_buffer_size: Optional[int] = Field(default=None, alias="MAX_BUFFER_SIZE")
 
     claude_cli_path: Optional[Path] = Field(default=None, alias="CLAUDE_CLI_PATH")
-    claude_add_dirs_raw: Optional[str] = Field(default=None, alias="CLAUDE_ADD_DIRS")
     claude_betas_raw: Optional[str] = Field(default=None, alias="CLAUDE_BETAS")
-    permission_prompt_tool_name: Optional[str] = Field(default=None, alias="PERMISSION_PROMPT_TOOL_NAME")
     claude_user: Optional[str] = Field(default=None, alias="CLAUDE_USER")
     max_thinking_tokens: Optional[int] = Field(default=None, alias="MAX_THINKING_TOKENS")
     effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(default=None, alias="EFFORT")
@@ -226,7 +216,6 @@ class AppSettings(BaseSettings):
     load_timeout_ms: int = Field(default=60000, alias="LOAD_TIMEOUT_MS")
 
     claude_env_json: Optional[str] = Field(default=None, alias="CLAUDE_ENV_JSON")
-    claude_extra_args_json: Optional[str] = Field(default=None, alias="CLAUDE_EXTRA_ARGS_JSON")
 
     agent_git_service_provider: Literal["local", "gitea"] = Field(default="local", alias="AGENT_GIT_SERVICE_PROVIDER")
     agent_git_service_url: Optional[str] = Field(default=None, alias="AGENT_GIT_SERVICE_URL")
@@ -333,29 +322,16 @@ class AppSettings(BaseSettings):
         return (self.claude_config_dir or self.claude_home) / "projects"
 
     @property
-    def default_skills(self) -> Optional[list[str]]:
-        skills = _csv(self.default_skills_raw)
-        return skills or None
-
-    @property
-    def claude_add_dirs(self) -> list[str]:
-        return _csv(self.claude_add_dirs_raw)
-
-    @property
     def claude_betas(self) -> list[str]:
         return _csv(self.claude_betas_raw)
 
     @property
-    def setting_sources(self) -> Optional[list[str]]:
-        return None
+    def setting_sources(self) -> list[str]:
+        return ["project"]
 
     @property
     def claude_env(self) -> dict[str, str]:
         return _string_dict(_json_object(self.claude_env_json))
-
-    @property
-    def claude_extra_args(self) -> dict[str, str | None]:
-        return _optional_string_dict(_json_object(self.claude_extra_args_json))
 
     @property
     def langfuse_otel_signals(self) -> list[str]:

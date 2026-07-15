@@ -5,8 +5,6 @@ import {
   Loader2,
   Plus,
   Save,
-  ShieldCheck,
-  Sparkles,
   Trash2,
   Wrench,
   X,
@@ -24,11 +22,10 @@ import {
   setOpenAICompatAgent,
   type OpenAICompatAgentConfig,
 } from "../api/runtime";
-import { getAutomationPolicy, setAutomationPolicy } from "../api/improvements";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import "./SettingsModal.css";
 
-// 四阶段改进治理 §2 平台设置：业务 Agent 管理 / 自动化策略 / Developer·Debug（纯配置）。
+// 四阶段改进治理 §2 平台设置：业务 Agent 管理 / Developer·Debug（纯配置）。
 // 资产 Registry 已提升为一级导航「资产复利」（W3 修订，三支柱 Playground/改进事项/资产复利）；旧反馈优化、API Docs、Langfuse 仍在此处。
 
 const LIFECYCLE_OPTIONS = [
@@ -37,17 +34,11 @@ const LIFECYCLE_OPTIONS = [
   { value: "deprecated", label: "弃用" },
   { value: "archived", label: "归档" },
 ];
-const AUTOMATION_OPTIONS: { value: string; label: string; detail: string }[] = [
-  { value: "off", label: "人工", detail: "只在用户点击后执行" },
-  { value: "semi", label: "半自动", detail: "自动推进到判断点" },
-  { value: "full", label: "全自动", detail: "推进至发布门禁前" },
-];
 const SETTINGS_TABS: { key: SettingsTab; label: string; eyebrow: string; description: string; Icon: LucideIcon }[] = [
   { key: "agents", label: "业务 Agent", eyebrow: "Agents", description: "创建、停用和维护业务 Agent。", Icon: Bot },
-  { key: "automation", label: "自动化策略", eyebrow: "Policy", description: "设置每个业务 Agent 的自动推进边界。", Icon: Sparkles },
   { key: "developer", label: "Developer", eyebrow: "Runtime", description: "配置本浏览器连接的 Runtime 与调试入口。", Icon: Wrench },
 ];
-type SettingsTab = "agents" | "automation" | "developer";
+type SettingsTab = "agents" | "developer";
 
 // F7：业务 Agent ID 客户端校验，与后端 agent_paths `^[A-Za-z0-9._-]+$` 一致；留空合法（自动生成）。
 const AGENT_ID_RE = /^[A-Za-z0-9._-]+$/;
@@ -83,16 +74,12 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | undefined>();
   const [idError, setIdError] = useState<string | undefined>();
-  const [policyAgent, setPolicyAgent] = useState("");
-  const [policyMode, setPolicyMode] = useState("off");
   const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
   const [openaiCompat, setOpenaiCompat] = useState<OpenAICompatAgentConfig | null>(null);
   const [openaiCompatSel, setOpenaiCompatSel] = useState("main-agent");
   const busy = pending !== null; // 全局禁用沿用（防并发），具体进行中的控件再叠加 spinner/aria-busy。
 
   const activeTabMeta = useMemo(() => SETTINGS_TABS.find((tab) => tab.key === activeTab) ?? SETTINGS_TABS[0], [activeTab]);
-  const selectedAgent = useMemo(() => agents.find((agent) => agent.agent_id === policyAgent) ?? null, [agents, policyAgent]);
-  const policyLabel = useMemo(() => AUTOMATION_OPTIONS.find((option) => option.value === policyMode)?.label ?? "人工", [policyMode]);
   const openaiCompatOptions = useMemo(() => ["main-agent", ...agents.map((agent) => agent.agent_id)], [agents]);
 
   const reloadAgents = useCallback(async () => {
@@ -101,13 +88,12 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
     try {
       const list = await listBusinessAgents(config);
       setAgents(list);
-      if (!policyAgent && list[0]) setPolicyAgent(list[0].agent_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setAgentsLoading(false);
     }
-  }, [config, policyAgent]);
+  }, [config]);
 
   useEffect(() => {
     setApiBase(config.apiBase);
@@ -152,11 +138,6 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
       setOpenaiCompatSel("main-agent");
     }
   }, [openaiCompatOptions, openaiCompatSel]);
-
-  useEffect(() => {
-    if (!open || !policyAgent) return;
-    void getAutomationPolicy(config, policyAgent).then((p) => setPolicyMode(p.mode)).catch(() => setPolicyMode("off"));
-  }, [open, policyAgent, config]);
 
   if (!open) return null;
 
@@ -226,14 +207,6 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
     }, `delete:${agentId}`);
   };
 
-  const handleSetPolicy = (mode: string) => {
-    if (!policyAgent) return;
-    void run(async () => {
-      const p = await setAutomationPolicy(config, policyAgent, mode);
-      setPolicyMode(p.mode);
-    });
-  };
-
   return (
     <div className="settings-backdrop" role="presentation">
       <section className="settings-panel" data-testid="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title">
@@ -241,11 +214,10 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
           <div className="settings-header-main">
             <span className="settings-kicker">平台配置</span>
             <h3 id="settings-panel-title">设置</h3>
-            <p>业务 Agent、自动化策略和开发者连接配置。</p>
+            <p>业务 Agent 和开发者连接配置。</p>
           </div>
           <div className="settings-header-status" aria-label="设置摘要">
             <span><Bot size={14} />{agents.length} Agent</span>
-            <span><Sparkles size={14} />{policyLabel}</span>
           </div>
           <button className="icon-button settings-close" type="button" onClick={onClose} aria-label="关闭">
             <X size={18} />
@@ -345,44 +317,6 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                       );
                     })}
                   </div>
-                </div>
-              </section>
-            ) : null}
-
-            {activeTab === "automation" ? (
-              <section className="settings-section settings-section-automation" data-testid="settings-section-automation" role="tabpanel">
-                <div className="settings-policy-grid">
-                  <label className="settings-policy-agent">
-                    <span>业务 Agent</span>
-                    <select className="select" data-testid="settings-automation-agent" value={policyAgent} disabled={busy} onChange={(e) => setPolicyAgent(e.target.value)}>
-                      <option value="">选择业务 Agent</option>
-                      {agents.map((agent) => <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>)}
-                    </select>
-                  </label>
-                  <div className="settings-policy-current" data-testid="settings-policy-current">
-                    <ShieldCheck size={18} />
-                    <div>
-                      <span>当前策略</span>
-                      <strong>{selectedAgent?.name || "未选择 Agent"} · {policyLabel}</strong>
-                    </div>
-                  </div>
-                </div>
-                <div className="settings-segmented" data-testid="settings-automation-mode" role="group" aria-label="自动化策略">
-                  {AUTOMATION_OPTIONS.map((option) => (
-                    <button
-                      className={policyMode === option.value ? "active" : ""}
-                      type="button"
-                      data-testid="settings-automation-mode-option"
-                      data-mode={option.value}
-                      aria-pressed={policyMode === option.value}
-                      disabled={busy || !policyAgent}
-                      onClick={() => handleSetPolicy(option.value)}
-                      key={option.value}
-                    >
-                      <strong>{option.label}</strong>
-                      <span>{option.detail}</span>
-                    </button>
-                  ))}
                 </div>
               </section>
             ) : null}

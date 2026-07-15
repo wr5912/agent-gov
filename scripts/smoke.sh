@@ -15,6 +15,6 @@ API_KEY=${API_KEY:-$(env_value API_KEY)}
 API_KEY=${API_KEY:-change-me}
 PYTHON=${PYTHON:-$ROOT_DIR/.venv/bin/python}
 
-curl -s "$API_BASE/health" | "$PYTHON" -m json.tool
+"$PYTHON" "$ROOT_DIR/scripts/diagnose_runtime_health.py" --api-base "$API_BASE" --require-ready
 curl -s -H "Authorization: Bearer $API_KEY" "$API_BASE/api/agents" | "$PYTHON" -m json.tool
 curl -s -H "Authorization: Bearer $API_KEY" "$API_BASE/api/skills" | "$PYTHON" -m json.tool

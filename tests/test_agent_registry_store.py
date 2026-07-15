@@ -15,6 +15,7 @@ from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from fastapi.testclient import TestClient
 
+from feedback_store_test_utils import _seed_test_dataset
 from test_api_execution_optimizer import _load_app
 
 
@@ -50,6 +51,30 @@ def test_get_agent_returns_stable_identity(tmp_path: Path) -> None:
     assert record.name == "main-agent"
     assert record.workspace_dir  # 非空 workspace，作为归属锚点
     assert record.created_at
+
+
+def test_hitl_observation_is_derived_from_current_project_settings(tmp_path: Path) -> None:
+    store, profiles = _store(tmp_path)
+    workspace = tmp_path / "workspace"
+    settings_path = workspace / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        '{"permissions":{"ask":["mcp__approval__execute"]}}\n',
+        encoding="utf-8",
+    )
+    store.create_business_agent(
+        name="SOC",
+        agent_id="soc-ops",
+        workspace_dir=str(workspace),
+    )
+
+    assert store.get_agent("soc-ops").requires_web_hitl is True
+
+    settings_path.write_text('{"permissions":{"ask":[]}}\n', encoding="utf-8")
+    assert store.get_agent("soc-ops").requires_web_hitl is False
+
+    store.sync_business_agents(profiles)
+    assert store.get_agent("soc-ops").requires_web_hitl is False
 
 
 def test_sync_updates_drifted_workspace_dir(tmp_path: Path) -> None:
@@ -100,6 +125,7 @@ def test_create_business_agent_endpoint_registers_and_lists(monkeypatch, tmp_pat
     assert created.status_code == 201
     assert created.json()["agent_id"] == "soc-ops"
     assert created.json()["category"] == "business"
+    assert created.json()["requires_web_hitl"] is True
     assert created.json()["workspace_dir"].endswith("/business-agents/soc-ops/workspace")
     assert {item["agent_id"] for item in listed.json()} == {"main-agent", "soc-ops"}
     assert duplicate.status_code == 409  # 重复身份被拒绝，不污染既有 Agent
@@ -203,14 +229,24 @@ def test_feedback_asset_provenance_traces_agent_and_relationship(monkeypatch, tm
 
     module = _load_app(monkeypatch, tmp_path)
     fs = module.feedback_store
+    module.agent_registry_store.create_business_agent(
+        name="SOC Ops",
+        agent_id="soc-ops",
+        workspace_dir=str(module.settings.data_dir / "business-agents" / "soc-ops" / "workspace"),
+    )
     fs.record_run({"run_id": "run-x", "agent_id": "soc-ops", "created_at": "2026-06-12T00:00:00Z"})
     signal = fs.create_signal(FeedbackSignalCreateRequest(run_id="run-x", labels=["tool_data_incomplete"]))
-    case = fs.create_case(source_ids=[signal["signal_id"]], title="数据标准化反馈")
+    case = fs.create_case(source_refs=[("signal", signal["signal_id"])], title="数据标准化反馈")
     case_id = case["feedback_case_id"]
     improvement = module.improvement_store.create_improvement(
         agent_id="soc-ops",
         title="数据标准化映射治理",
-        source_feedback_refs=[case_id],
+    )
+    module.improvement_content_store.attach_feedback_case(
+        improvement.improvement_id,
+        agent_id="soc-ops",
+        feedback_case_id=case_id,
+        summary=case["title"],
     )
     module.improvement_store.add_link(improvement.improvement_id, kind="change_set", ref_id="agc-test")
 
@@ -274,7 +310,12 @@ def test_delete_business_agent_reports_impact_and_protects_main(monkeypatch, tmp
         gov.mark_candidate_committed(str(change_set["change_set_id"]), candidate_commit_sha=commit, execution_job_id=None, operator="t")
         release = gov.publish_change_set(str(change_set["change_set_id"]), operator="t")
         # 评估维度：eval run 锚定该 Agent 的 change set → 继承归属。
-        eval_run = fs.create_eval_run(eval_case_ids=[], agent_version_id=release["commit_sha"], change_set_id=str(change_set["change_set_id"]))
+        dataset_id = _seed_test_dataset(fs, agent_id="soc-ops", dataset_id="tds-soc-ops")
+        eval_run = fs.create_eval_run(
+            dataset_id=dataset_id,
+            agent_version_id=release["commit_sha"],
+            change_set_id=str(change_set["change_set_id"]),
+        )
 
         # Agent ID 在运行/反馈/评估/版本中保持一致（统一治理对象，无需跨入口手工拼接）。
         assert signal["agent_id"] == "soc-ops"
@@ -320,7 +361,12 @@ def test_main_agent_paradigm_generalizes_to_new_business_agent(monkeypatch, tmp_
         commit = gov._store_for("shop-bot").commit_worktree(worktree, message="c")
         gov.mark_candidate_committed(str(change_set["change_set_id"]), candidate_commit_sha=commit, execution_job_id=None, operator="t")
         release = gov.publish_change_set(str(change_set["change_set_id"]), operator="t")
-        eval_run = fs.create_eval_run(eval_case_ids=[], agent_version_id=release["commit_sha"], change_set_id=str(change_set["change_set_id"]))
+        dataset_id = _seed_test_dataset(fs, agent_id="shop-bot", dataset_id="tds-shop-bot")
+        eval_run = fs.create_eval_run(
+            dataset_id=dataset_id,
+            agent_version_id=release["commit_sha"],
+            change_set_id=str(change_set["change_set_id"]),
+        )
 
         # 同一抽象、不同实例：main 与新 Agent 版本 store 经同一 _store_for 工厂取，物理隔离（非硬编码 main 路径）。
         assert gov._store_for("shop-bot") is not gov._store_for("main-agent")

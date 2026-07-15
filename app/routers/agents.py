@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 import os
-import shutil
 from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from scripts.bootstrap_runtime_volume import load_runtime_env
+from scripts.runtime_template_renderer import build_render_context
 
-from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout
 from app.runtime.business_agent_workspace import (
     DEFAULT_TEMPLATE_ID,
+    InvalidDeclaredBusinessAgentSeed,
+    WorkspaceSafetyError,
     list_business_agent_templates,
-    seed_business_agent_workspace,
-    seed_declared_business_agent_workspace,
+    prepare_business_agent_workspace,
+    prepare_declared_business_agent_workspace,
 )
 from app.runtime.errors import ConflictError
 from app.runtime.managed_agent_policy import ManagedAgentPolicyError, require_runtime_workspace_policy
@@ -32,6 +33,7 @@ from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRe
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.agent_governance import AgentGovernanceService
+from app.services.business_agent_provisioning import provision_business_agent
 
 _PASSED_EVAL_RESULT_STATUSES = {"passed", "passed_with_notes"}
 
@@ -65,63 +67,49 @@ def _register_and_seed_agent(req: AgentCreateRequest, settings: AppSettings, sto
     agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
     try:
         # 缺陷③：agent_id 直接作路径段，business_agent_layout 收敛了防穿越校验，非法 → 422。
-        layout = business_agent_layout(settings.data_dir, agent_id)
+        workspace_dir = business_agent_layout(settings.data_dir, agent_id).workspace
     except InvalidAgentId as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if store.get_agent(agent_id) is not None:
-        raise ConflictError(f"Business agent already exists: {agent_id}")
-    layout.root.parent.mkdir(parents=True, exist_ok=True)
-    staging_root = layout.root.parent / f".{agent_id}.staging-{uuid4().hex}"
-    staging_workspace = staging_root / "workspace"
+    env = dict(load_runtime_env(settings.settings_env_file)) if settings.settings_env_file else dict(os.environ)
+    runtime_root = Path("/") if settings.data_dir.resolve() == Path("/data") else settings.data_dir.resolve().parent
     try:
-        env = dict(load_runtime_env(settings.settings_env_file)) if settings.settings_env_file else dict(os.environ)
-        runtime_root = Path("/") if settings.data_dir.resolve() == Path("/data") else settings.data_dir.resolve().parent
-        used_declared_seed = req.template_id is None and seed_declared_business_agent_workspace(
-            staging_workspace,
-            agent_id=agent_id,
-            runtime_volume_mode=settings.runtime_volume_mode,
-            env=env,
-            runtime_root=runtime_root,
+        render_context = build_render_context(mode=settings.runtime_volume_mode, env=env, runtime_root=runtime_root)
+        plan = (
+            prepare_declared_business_agent_workspace(
+                agent_id=agent_id,
+                name=req.name,
+                runtime_volume_mode=settings.runtime_volume_mode,
+                env=env,
+                runtime_root=runtime_root,
+            )
+            if req.template_id is None
+            else None
         )
-        if not used_declared_seed:
-            seed_business_agent_workspace(
-                staging_workspace,
+        if plan is None:
+            plan = prepare_business_agent_workspace(
                 agent_id=agent_id,
                 name=req.name,
                 template_id=template_id,
+                render_context=render_context,
             )
-        require_runtime_workspace_policy(
-            workspace=staging_workspace,
+        record = provision_business_agent(
+            store=store,
             agent_id=agent_id,
-            runtime_mode=settings.runtime_volume_mode,
-            env=env,
-            runtime_root=runtime_root,
-        )
-        GitAgentVersionStore(
-            repository_dir=staging_workspace,
-            worktrees_dir=staging_root / "version" / "worktrees",
-            releases_dir=staging_root / "version" / "releases",
-            repository_name=f"{agent_id}-config",
-            git_user_name=settings.agent_git_user_name,
-            git_user_email=settings.agent_git_user_email,
-        ).ensure_bootstrap()
-        if layout.root.exists():
-            raise ConflictError(f"Business agent runtime directory already exists: {agent_id}")
-        os.replace(staging_root, layout.root)
-        try:
-            record = store.create_business_agent(
-                name=req.name,
+            name=req.name,
+            workspace_dir=workspace_dir,
+            template_id=template_id,
+            plan=plan,
+            validate_workspace=lambda workspace: require_runtime_workspace_policy(
+                workspace=workspace,
                 agent_id=agent_id,
-                workspace_dir=str(layout.workspace),
-            )
-        except Exception:
-            shutil.rmtree(layout.root, ignore_errors=True)
-            raise
+                runtime_mode=settings.runtime_volume_mode,
+                env=env,
+                runtime_root=runtime_root,
+            ),
+        )
         return _summary(record)
-    except ManagedAgentPolicyError as exc:
+    except (InvalidDeclaredBusinessAgentSeed, WorkspaceSafetyError, ManagedAgentPolicyError) as exc:
         raise HTTPException(status_code=422, detail=f"Business agent template violates managed policy: {exc}") from exc
-    finally:
-        shutil.rmtree(staging_root, ignore_errors=True)
 
 
 def create_agents_router(
@@ -173,7 +161,7 @@ def create_agents_router(
     async def transition_agent(agent_id: str, req: AgentLifecycleTransitionRequest) -> AgentSummaryResponse:
         # 生命周期转移（AGV-020）；非法转移由状态机拒绝并返回可理解错误（409）。
         # eval 门（AGV-027）：从 evaluating 进入 active 必须有该 Agent 通过的评估运行——
-        # 复用场景包/配置变更后须评估通过才能激活，避免未验证配置直接上线。
+        # 复用能力配置或修改配置后须评估通过才能激活，避免未验证配置直接上线。
         if req.status == "active":
             current = agent_registry_store.get_agent(agent_id)
             if current is not None and current.status == "evaluating" and not _has_passed_eval(agent_id):

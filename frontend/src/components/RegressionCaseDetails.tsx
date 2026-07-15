@@ -55,7 +55,7 @@ export function RegressionCaseSummaryList({ cases }: { cases: RegressionCase[] }
     return (
       <div className="iw-regression-empty" data-testid="regression-case-coverage">
         <strong>尚未生成测试用例</strong>
-        <span>执行回归测试前会生成候选用例；生成后可在这里查看每条用例详情。</span>
+        <span>回归方案会生成候选用例；生成后可在这里查看每条用例详情。</span>
       </div>
     );
   }

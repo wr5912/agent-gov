@@ -58,13 +58,10 @@ _MUTATING_METHODS = frozenset({"post", "put", "patch", "delete"})
 _DOMAIN_PREFIXES = (
     "/api/agent-registry",
     "/api/improvements",
-    "/api/automation-policy",
     "/api/assets",
-    "/api/scenario-packs",
     "/api/langfuse/traces",
     "/api/agent-jobs",
     "/api/eval-",
-    "/api/regression-assets",
     "/api/feedback-",
     "/api/evidence-packages",
     "/api/agent-runs",
@@ -75,6 +72,7 @@ _DOMAIN_PREFIXES = (
     "/api/agent-repository",
     "/api/agent-change-sets",
     "/api/agent-releases",
+    "/api/test-datasets",
 )
 _RUNTIME_OR_RELEASE_PREFIXES = (
     "/api/chat",
@@ -137,6 +135,12 @@ def expected_error_statuses(path: str, method: str, operation: OpenApiMapping) -
 
 
 def _special_error_statuses(path: str, method: str) -> set[int]:
+    if method == "get" and path in {"/api/test-datasets", "/api/test-datasets/{dataset_id}"}:
+        return {400, 409}
+    if method == "get" and path == "/api/test-datasets/{dataset_id}/revisions":
+        return {400}
+    if method == "post" and path == "/api/feedback-cases":
+        return {404}
     if path == CHAT_STREAM_PATH or path == "/api/chat":
         return {400, 404, 422, 503}
     if path == "/v1/chat/completions":
@@ -146,7 +150,7 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
     if path == "/v1/responses/{response_id}":
         return {404}
     if path == "/v1/conversations/{conversation_id}/items":
-        return {404, 500}
+        return {404, 409}
     if path == "/v1/conversations/{conversation_id}" and method != "delete":
         return {404}
     if path in {
@@ -161,7 +165,7 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
     if path == "/api/settings/openai-compat-agent" and method == "put":
         return {400, 404, 422}
     if path == "/api/sessions/{session_id}/messages":
-        return {404, 500}
+        return {404, 409}
     return set()
 
 

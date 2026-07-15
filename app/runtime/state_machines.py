@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Literal, TypeAlias
 
 from .errors import FeedbackStoreError
 
@@ -11,28 +12,6 @@ class StateTransitionError(FeedbackStoreError):
     status_code = 409
     error_code = "STATE_TRANSITION_ERROR"
 
-
-JOB_STATES = {
-    "created",
-    "queued",
-    "running",
-    "schema_validating",
-    "evidence_packaging",
-    "completed",
-    "failed",
-    "needs_human_review",
-    "timeout",
-}
-
-JOB_IN_PROGRESS_STATES = {
-    "created",
-    "queued",
-    "running",
-    "schema_validating",
-    "evidence_packaging",
-}
-
-AGENT_JOB_STATES = JOB_STATES
 
 CASE_STATES = {
     "pending_evidence",
@@ -46,21 +25,6 @@ EVAL_RUN_STATES = {
     "running",
     "completed",
     "failed",
-}
-
-EVAL_CASE_STATES = {
-    "draft",
-    "active",
-    "archived",
-}
-
-EVAL_CASE_PROMOTION_STATES = {
-    "candidate",
-    "needs_review",
-    "approved",
-    "rejected",
-    "superseded",
-    "archived",
 }
 
 PENDING_CORRELATION_STATES = {
@@ -90,8 +54,10 @@ AGENT_CHANGE_SET_STATES = {
     "approved",
     "rejected",
     "regression_running",
+    "regression_review_required",
     "regression_passed",
     "regression_failed",
+    "publishing",
     "published",
     "abandoned",
     "failed",
@@ -102,6 +68,20 @@ AGENT_RELEASE_STATES = {
     "archived",
     "rolled_back",
     "rollback_failed",
+}
+
+AGENT_RELEASE_OPERATION_STATES = {
+    "reserved",
+    "git_applied",
+    "completed",
+    "failed",
+}
+
+AGENT_RELEASE_OPERATION_TRANSITIONS: Mapping[str, set[str]] = {
+    "reserved": {"git_applied", "failed"},
+    "git_applied": {"completed", "failed"},
+    "completed": set(),
+    "failed": {"reserved"},
 }
 
 # 业务 Agent 生命周期（AGV-020）。archived 为终态：仍可审计但不参与新运行、不可再转移。
@@ -121,8 +101,42 @@ AGENT_LIFECYCLE_TRANSITIONS: Mapping[str, set[str]] = {
     "archived": set(),
 }
 
+# TestDataset shares this lifecycle graph, but remains a separately named
+# machine so every persisted transition passes through the central validator.
+TestDatasetLifecycleState: TypeAlias = Literal["draft", "active", "evaluating", "deprecated", "archived"]
+
 # 可参与新运行选择的生命周期状态（AGV-020 criterion 3：archived 等不参与新运行）。
 AGENT_RUNNABLE_LIFECYCLE_STATES = {"active", "evaluating"}
+
+# Agent registry reservation is deliberately separate from the public lifecycle.
+# A provisioning row is an internal saga intent and must never be listed or run.
+AGENT_PROVISION_STATES = {"provisioning", "ready"}
+
+AGENT_PROVISION_TRANSITIONS: Mapping[str, set[str]] = {
+    "provisioning": {"ready"},
+    "ready": {"provisioning"},
+}
+
+# One SDK turn owns exactly one persistence intent. Running intents may only
+# enter a terminal state; retries create a new run instead of reopening the
+# previous intent.
+SESSION_TURN_INTENT_STATES = {
+    "running",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "interrupted",
+}
+
+SESSION_TURN_INTENT_TERMINAL_STATES = SESSION_TURN_INTENT_STATES - {"running"}
+
+SESSION_TURN_INTENT_TRANSITIONS: Mapping[str, set[str]] = {
+    "running": set(SESSION_TURN_INTENT_TERMINAL_STATES),
+    "succeeded": set(),
+    "failed": set(),
+    "cancelled": set(),
+    "interrupted": set(),
+}
 
 # 改进事项阶段（四阶段改进治理 跨代重建：事项级单一领域实体 ImprovementItem 的生命周期单一来源）。
 # 七段对应中文 反馈收集/系统整理/归因分析/优化方案/执行优化/回归测试/发布；release 为终态。
@@ -137,7 +151,7 @@ IMPROVEMENT_STAGES = {
     "release",
 }
 
-# 改进事项阶段线性顺序（单一来源）：自动化编排与前端 stepper 的推进次序均以此为准。
+# 改进事项阶段线性顺序（单一来源）：业务产物推进命令与前端 stepper 均以此为准。
 IMPROVEMENT_STAGE_ORDER: tuple[str, ...] = (
     "feedback_intake",
     "triage",
@@ -158,29 +172,17 @@ IMPROVEMENT_STAGE_TRANSITIONS: Mapping[str, set[str]] = {
     "release": set(),
 }
 
+# 执行记录既承载用户可确认的执行产物，也承载自动 apply 的短生命周期 claim。
+# applying 只表示已有持久化执行申请，不代表已应用；真实应用仍以 candidate commit + diff 为准。
+IMPROVEMENT_EXECUTION_STATES = {"draft", "applying", "confirmed"}
+
+IMPROVEMENT_EXECUTION_TRANSITIONS: Mapping[str, set[str]] = {
+    "draft": {"applying", "confirmed"},
+    "applying": {"draft"},
+    "confirmed": {"draft", "applying"},
+}
+
 _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
-    "job": {
-        "created": {"queued", "running", "failed"},
-        "queued": {"running", "schema_validating", "completed", "needs_human_review", "failed", "timeout"},
-        "running": {"schema_validating", "completed", "needs_human_review", "failed", "timeout"},
-        "schema_validating": {"completed", "needs_human_review", "failed", "timeout"},
-        "evidence_packaging": {"queued", "running", "failed", "timeout"},
-        "needs_human_review": {"schema_validating", "failed"},
-        "failed": {"schema_validating"},
-        "completed": set(),
-        "timeout": {"failed"},
-    },
-    "agent_job": {
-        "created": {"queued", "running", "failed"},
-        "queued": {"running", "schema_validating", "completed", "needs_human_review", "failed", "timeout"},
-        "running": {"schema_validating", "completed", "needs_human_review", "failed", "timeout"},
-        "schema_validating": {"completed", "needs_human_review", "failed", "timeout"},
-        "evidence_packaging": {"queued", "running", "failed", "timeout"},
-        "needs_human_review": {"schema_validating", "failed"},
-        "failed": {"schema_validating"},
-        "completed": set(),
-        "timeout": {"failed"},
-    },
     "case": {
         "pending_evidence": {"pending_attribution", "attribution_queued", "needs_human_review"},
         "pending_attribution": {"attribution_queued", "pending_review", "needs_human_review"},
@@ -193,19 +195,6 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "completed": set(),
         "failed": set(),
     },
-    "eval_case": {
-        "draft": {"active", "archived"},
-        "active": {"draft", "archived"},
-        "archived": set(),
-    },
-    "eval_case_promotion": {
-        "candidate": {"needs_review", "approved", "rejected", "superseded", "archived"},
-        "needs_review": {"candidate", "approved", "rejected", "superseded", "archived"},
-        "approved": {"needs_review", "superseded", "archived"},
-        "rejected": {"candidate", "archived"},
-        "superseded": set(),
-        "archived": set(),
-    },
     "pending_correlation": {
         "pending": {"resolved"},
         "resolved": set(),
@@ -214,13 +203,15 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     "agent_change_set": {
         "draft": {"execution_ready", "candidate_committed", "pending_approval", "abandoned", "failed"},
         "execution_ready": {"candidate_committed", "abandoned", "failed"},
-        "candidate_committed": {"pending_approval", "regression_running", "approved", "published", "rejected", "abandoned", "failed"},
+        "candidate_committed": {"pending_approval", "regression_running", "approved", "publishing", "rejected", "abandoned", "failed"},
         "pending_approval": {"approved", "rejected", "regression_running", "abandoned", "failed"},
-        "approved": {"regression_running", "regression_passed", "published", "rejected", "abandoned", "failed"},
+        "approved": {"regression_running", "regression_passed", "publishing", "rejected", "abandoned", "failed"},
         "rejected": {"abandoned"},
-        "regression_running": {"regression_passed", "regression_failed", "failed"},
-        "regression_passed": {"approved", "published", "regression_running", "abandoned"},
-        "regression_failed": {"regression_running", "rejected", "abandoned", "failed", "published"},
+        "regression_running": {"regression_review_required", "regression_passed", "regression_failed", "failed"},
+        "regression_review_required": {"regression_running", "regression_passed", "regression_failed", "rejected", "abandoned", "failed"},
+        "regression_passed": {"approved", "publishing", "regression_running", "abandoned"},
+        "regression_failed": {"regression_running", "rejected", "abandoned", "failed", "publishing"},
+        "publishing": {"candidate_committed", "approved", "regression_passed", "regression_failed", "published"},
         "published": set(),
         "abandoned": set(),
         "failed": {"draft", "abandoned"},
@@ -231,23 +222,29 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "rolled_back": set(),
         "rollback_failed": {"rolled_back"},
     },
+    "agent_release_operation": AGENT_RELEASE_OPERATION_TRANSITIONS,
     "agent_lifecycle": AGENT_LIFECYCLE_TRANSITIONS,
+    "test_dataset": AGENT_LIFECYCLE_TRANSITIONS,
+    "agent_provision": AGENT_PROVISION_TRANSITIONS,
+    "session_turn_intent": SESSION_TURN_INTENT_TRANSITIONS,
     "improvement_stage": IMPROVEMENT_STAGE_TRANSITIONS,
+    "improvement_execution": IMPROVEMENT_EXECUTION_TRANSITIONS,
 }
 
 _KNOWN_STATES = {
-    "job": JOB_STATES,
-    "agent_job": AGENT_JOB_STATES,
     "case": CASE_STATES,
     "eval_run": EVAL_RUN_STATES,
-    "eval_case": EVAL_CASE_STATES,
-    "eval_case_promotion": EVAL_CASE_PROMOTION_STATES,
     "pending_correlation": PENDING_CORRELATION_STATES,
     "response_disposition_claim": RESPONSE_DISPOSITION_CLAIM_STATES,
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,
+    "agent_release_operation": AGENT_RELEASE_OPERATION_STATES,
     "agent_lifecycle": AGENT_LIFECYCLE_STATES,
+    "test_dataset": AGENT_LIFECYCLE_STATES,
+    "agent_provision": AGENT_PROVISION_STATES,
+    "session_turn_intent": SESSION_TURN_INTENT_STATES,
     "improvement_stage": IMPROVEMENT_STAGES,
+    "improvement_execution": IMPROVEMENT_EXECUTION_STATES,
 }
 
 

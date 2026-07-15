@@ -272,17 +272,17 @@ def test_hitl_required_deployment_contract_and_low_fixes() -> None:
     from app.runtime.agent_profiles import read_requires_web_hitl
 
     for workspace in (SECOPS_EXPERT_WORKSPACE, RESPONSE_DISPOSAL_WORKSPACE):
-        # 部署契约：agent.yaml 声明 requires_web_hitl 且被 read_requires_web_hitl 识别为 True。
+        # 观测值由 Claude 原生 permissions.ask 派生，不再要求 agent.yaml 维护第二份布尔声明。
         assert read_requires_web_hitl(workspace) is True
-        assert "requires_web_hitl: true" in (workspace / "agent.yaml").read_text(encoding="utf-8")
+        assert "requires_web_hitl" not in (workspace / "agent.yaml").read_text(encoding="utf-8")
         settings = json.loads((workspace / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        assert settings["permissions"]["ask"]
         assert "skillOverrides" not in settings  # #5：no-op 键已删（门控在 SKILL.md frontmatter）
         assert [h["matcher"] for h in settings["hooks"]["PreToolUse"]] == ["Bash"]  # #6：matcher 收窄
         session_start = (workspace / "hooks" / "session_start.py").read_text(encoding="utf-8")
         assert "hookSpecificOutput" in session_start  # #17：SessionStart 规范包裹
         assert "duration_ms" not in (workspace / "hooks" / "post_tool_audit.py").read_text(encoding="utf-8")  # #18
-        # #16：pre_tool_guard 对畸形 stdin fail-closed（try/except 包裹 json.load）
-        assert "except Exception:" in (workspace / "hooks" / "pre_tool_guard.py").read_text(encoding="utf-8")
+        # pre_tool_guard 的畸形输入阻断语义由 native workspace policy 参数化测试覆盖。
 
     # #4：secops 跨 Agent outputs 读收窄到本 Agent 子路径。
     secops_allow = json.loads((SECOPS_EXPERT_WORKSPACE / ".claude" / "settings.json").read_text(encoding="utf-8"))["permissions"]["allow"]

@@ -5,7 +5,11 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
-from app.runtime.managed_agent_policy import ManagedAgentPolicyError, require_runtime_workspace_policy
+from app.runtime.managed_agent_policy import (
+    ManagedAgentPolicyError,
+    managed_workspace_policy_paths,
+    require_runtime_workspace_policy,
+)
 
 
 def build_ref_policy_validator(
@@ -16,15 +20,7 @@ def build_ref_policy_validator(
     runtime_mode: str,
     runtime_env: Mapping[str, str],
 ) -> Callable[[str], None]:
-    managed_paths = [".claude/settings.json", ".mcp.json"]
-    if agent_id == "security-operations-expert":
-        managed_paths.extend(
-            [
-                "CLAUDE.md",
-                "agent.yaml",
-                ".claude/skills/threat-response-disposition/SKILL.md",
-            ]
-        )
+    managed_paths = managed_workspace_policy_paths(agent_id)
 
     def validate(ref: str) -> None:
         try:

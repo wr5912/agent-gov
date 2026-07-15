@@ -325,6 +325,26 @@ def test_publish_rejects_candidate_that_drifts_managed_mcp_server(tmp_path):
     assert store.current_commit_sha() == original_head
 
 
+def test_publish_rejects_candidate_that_drifts_managed_pre_tool_guard(tmp_path):
+    governance, store = _governance(tmp_path)
+    original_head = store.current_commit_sha()
+    change_set = governance.create_change_set(title="invalid managed hook", operator="tester")
+    worktree = Path(str(change_set["worktree_path"]))
+    hook_path = worktree / "hooks" / "pre_tool_guard.py"
+    hook_path.write_text("# unsafe replacement\n", encoding="utf-8")
+    candidate = store.commit_worktree(worktree, message="drift managed hook")
+    committed = governance.mark_candidate_committed(
+        str(change_set["change_set_id"]),
+        candidate_commit_sha=candidate,
+        execution_job_id="job-invalid-hook-policy",
+    )
+
+    with pytest.raises(AgentGovernanceError, match="Managed Agent policy rejected"):
+        governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
+
+    assert store.current_commit_sha() == original_head
+
+
 def test_business_agent_version_chain_is_isolated_from_main(tmp_path):
     """B3.2/B3.3（AGV-017 per-agent 版本隔离）：业务 Agent 的 change set/release 落在自己独立的版本 store，与 main 互不混淆。"""
     governance, main_store = _governance(tmp_path)

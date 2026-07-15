@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,16 @@ from scripts.runtime_template_renderer import RuntimeTemplateRenderContext, buil
 
 SECURITY_OPERATIONS_EXPERT_AGENT_ID = "security-operations-expert"
 BASH_ALLOW_RULE = "Bash(*)"
+_MANAGED_SETTINGS_PATH = ".claude/settings.json"
+_MANAGED_MCP_PATH = ".mcp.json"
+_MANAGED_PRE_TOOL_GUARD_PATH = "hooks/pre_tool_guard.py"
+_BASE_MANAGED_POLICY_PATHS = (
+    _MANAGED_SETTINGS_PATH,
+    _MANAGED_MCP_PATH,
+    _MANAGED_PRE_TOOL_GUARD_PATH,
+)
+_DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+_FILE_OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 GENERIC_MCP_MUTATION_RULES = (
     "mcp__*__*write*",
     "mcp__*__*update*",
@@ -95,6 +106,13 @@ _SECURITY_LEGACY_FILE_HASHES = {
 }
 
 
+def managed_workspace_policy_paths(agent_id: str) -> tuple[str, ...]:
+    paths = _BASE_MANAGED_POLICY_PATHS
+    if agent_id == SECURITY_OPERATIONS_EXPERT_AGENT_ID:
+        paths += tuple(_SECURITY_MANAGED_TEXT_FILES)
+    return paths
+
+
 class ManagedAgentPolicyError(RuntimeError):
     """Raised when managed policy cannot be safely validated or migrated."""
 
@@ -136,9 +154,10 @@ class PolicyChange:
     agent_id: str
     path: Path
     rule_id: str
-    before_sha256: str
+    before_sha256: str | None
     after_sha256: str
     content: str
+    mode: int | None = None
 
 
 @dataclass(frozen=True)
@@ -157,17 +176,64 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _read_regular_text(path: Path, *, agent_id: str, required: bool = True) -> tuple[str | None, PolicyViolation | None]:
-    if not path.exists():
+def _managed_relative_path(path: Path, anchor: Path) -> Path:
+    try:
+        relative = path.relative_to(anchor)
+    except ValueError as exc:
+        raise ValueError("managed path escapes its anchor") from exc
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise ValueError("managed path is invalid")
+    return relative
+
+
+def _open_managed_parent(anchor: Path, relative: Path) -> int:
+    descriptor = os.open(anchor, _DIRECTORY_OPEN_FLAGS)
+    try:
+        for part in relative.parent.parts:
+            child = os.open(part, _DIRECTORY_OPEN_FLAGS, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _read_regular_text(
+    path: Path,
+    *,
+    anchor: Path,
+    agent_id: str,
+    required: bool = True,
+) -> tuple[str | None, PolicyViolation | None]:
+    try:
+        relative = _managed_relative_path(path, anchor)
+        parent_descriptor = _open_managed_parent(anchor, relative)
+    except FileNotFoundError:
         if not required:
             return None, None
         return None, PolicyViolation(agent_id, path.as_posix(), "required_file_missing", "required managed file is missing")
+    except (OSError, ValueError) as exc:
+        return None, PolicyViolation(agent_id, path.as_posix(), "unsafe_file_type", exc.__class__.__name__)
     try:
-        if path.is_symlink() or not path.is_file():
-            return None, PolicyViolation(agent_id, path.as_posix(), "unsafe_file_type", "managed path is not a regular file")
-        return path.read_text(encoding="utf-8"), None
+        try:
+            descriptor = os.open(relative.name, _FILE_OPEN_FLAGS, dir_fd=parent_descriptor)
+        except FileNotFoundError:
+            if not required:
+                return None, None
+            return None, PolicyViolation(agent_id, path.as_posix(), "required_file_missing", "required managed file is missing")
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return None, PolicyViolation(agent_id, path.as_posix(), "unsafe_file_type", "managed path is not a regular file")
+            with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as stream:
+                return stream.read(), None
+        finally:
+            os.close(descriptor)
     except (OSError, UnicodeDecodeError) as exc:
-        return None, PolicyViolation(agent_id, path.as_posix(), "managed_file_unreadable", exc.__class__.__name__)
+        rule_id = "unsafe_file_type" if isinstance(exc, OSError) else "managed_file_unreadable"
+        return None, PolicyViolation(agent_id, path.as_posix(), rule_id, exc.__class__.__name__)
+    finally:
+        os.close(parent_descriptor)
 
 
 def _string_list(value: object) -> list[str]:
@@ -279,10 +345,19 @@ def _reconciled_security_text(path: str, current: str, template: str) -> str:
     return result
 
 
-def _append_change(changes: list[PolicyChange], *, agent_id: str, path: Path, rule_id: str, before: str, after: str) -> None:
+def _append_change(
+    changes: list[PolicyChange],
+    *,
+    agent_id: str,
+    path: Path,
+    rule_id: str,
+    before: str | None,
+    after: str,
+    mode: int | None = None,
+) -> None:
     if before == after:
         return
-    changes.append(PolicyChange(agent_id, path, rule_id, _sha256(before), _sha256(after), after))
+    changes.append(PolicyChange(agent_id, path, rule_id, _sha256(before) if before is not None else None, _sha256(after), after, mode))
 
 
 def _append_json_change(
@@ -315,8 +390,8 @@ def plan_workspace_policy(
 ) -> WorkspacePolicyPlan:
     changes: list[PolicyChange] = []
     violations: list[PolicyViolation] = []
-    settings_path = workspace / ".claude" / "settings.json"
-    settings_text, violation = _read_regular_text(settings_path, agent_id=agent_id)
+    settings_path = workspace / _MANAGED_SETTINGS_PATH
+    settings_text, violation = _read_regular_text(settings_path, anchor=workspace, agent_id=agent_id)
     if violation:
         violations.append(violation)
     elif settings_text is not None:
@@ -333,20 +408,30 @@ def plan_workspace_policy(
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             violations.append(PolicyViolation(agent_id, settings_path.as_posix(), "invalid_settings", exc.__class__.__name__))
 
-    mcp_path = workspace / ".mcp.json"
-    mcp_text, violation = _read_regular_text(mcp_path, agent_id=agent_id)
+    mcp_path = workspace / _MANAGED_MCP_PATH
+    mcp_text, violation = _read_regular_text(mcp_path, anchor=workspace, agent_id=agent_id)
     if violation:
         violations.append(violation)
     elif mcp_text is not None:
         try:
             after = mcp_text
-            if template_workspace is not None and (template_workspace / ".mcp.json").is_file():
-                template_text = render_template_file(
-                    (template_workspace / ".mcp.json").read_text(encoding="utf-8"),
-                    rel_path=Path(".mcp.json"),
-                    context=render_context,
+            if template_workspace is not None:
+                template_path = template_workspace / _MANAGED_MCP_PATH
+                template_mcp, template_violation = _read_regular_text(
+                    template_path,
+                    anchor=template_workspace,
+                    agent_id=agent_id,
+                    required=False,
                 )
-                after = _reconciled_mcp(mcp_text, template_text)
+                if template_violation:
+                    violations.append(PolicyViolation(agent_id, mcp_path.as_posix(), "invalid_mcp_template", template_violation.rule_id))
+                elif template_mcp is not None:
+                    template_text = render_template_file(
+                        template_mcp,
+                        rel_path=Path(_MANAGED_MCP_PATH),
+                        context=render_context,
+                    )
+                    after = _reconciled_mcp(mcp_text, template_text)
             _append_json_change(
                 changes,
                 agent_id=agent_id,
@@ -359,9 +444,44 @@ def plan_workspace_policy(
         except (OSError, UnicodeDecodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
             violations.append(PolicyViolation(agent_id, mcp_path.as_posix(), "invalid_mcp_config", exc.__class__.__name__))
 
+    if template_workspace is not None:
+        _plan_pre_tool_guard(workspace, template_workspace, agent_id, changes, violations)
     if agent_id == SECURITY_OPERATIONS_EXPERT_AGENT_ID and template_workspace is not None:
         _plan_security_text_files(workspace, template_workspace, agent_id, changes, violations)
     return WorkspacePolicyPlan(agent_id, workspace, tuple(changes), tuple(violations))
+
+
+def _plan_pre_tool_guard(
+    workspace: Path,
+    template_workspace: Path,
+    agent_id: str,
+    changes: list[PolicyChange],
+    violations: list[PolicyViolation],
+) -> None:
+    relative = Path(_MANAGED_PRE_TOOL_GUARD_PATH)
+    path = workspace / relative
+    current, violation = _read_regular_text(path, anchor=workspace, agent_id=agent_id, required=False)
+    if violation:
+        violations.append(violation)
+        return
+    template_path = template_workspace / relative
+    template, template_violation = _read_regular_text(template_path, anchor=template_workspace, agent_id=agent_id)
+    if template_violation or template is None:
+        detail = template_violation.rule_id if template_violation else "required_file_missing"
+        violations.append(PolicyViolation(agent_id, path.as_posix(), "invalid_pre_tool_guard_template", detail))
+        return
+    try:
+        _append_change(
+            changes,
+            agent_id=agent_id,
+            path=path,
+            rule_id="managed_pre_tool_guard",
+            before=current,
+            after=template,
+            mode=0o600,
+        )
+    except OSError as exc:
+        violations.append(PolicyViolation(agent_id, path.as_posix(), "invalid_pre_tool_guard_template", exc.__class__.__name__))
 
 
 def _plan_security_text_files(
@@ -374,12 +494,16 @@ def _plan_security_text_files(
     for relative in _SECURITY_MANAGED_TEXT_FILES:
         path = workspace / relative
         template_path = template_workspace / relative
-        current, violation = _read_regular_text(path, agent_id=agent_id)
+        current, violation = _read_regular_text(path, anchor=workspace, agent_id=agent_id)
         if violation:
             violations.append(violation)
             continue
+        template, template_violation = _read_regular_text(template_path, anchor=template_workspace, agent_id=agent_id)
+        if template_violation or template is None:
+            detail = template_violation.rule_id if template_violation else "required_file_missing"
+            violations.append(PolicyViolation(agent_id, path.as_posix(), "unknown_security_contract", detail))
+            continue
         try:
-            template = template_path.read_text(encoding="utf-8")
             assert current is not None
             after = _reconciled_security_text(relative, current, template)
             _append_change(changes, agent_id=agent_id, path=path, rule_id="security_response_contract", before=current, after=after)
@@ -427,14 +551,24 @@ def validate_managed_mcp_content(
 
     violations = list(validate_mcp_content(content, agent_id=agent_id))
     templates = template_dir or default_runtime_template_dir()
-    template_path = templates / "data" / "business-agents" / agent_id / "workspace" / ".mcp.json"
-    if not template_path.is_file():
+    template_workspace = templates / "data" / "business-agents" / agent_id / "workspace"
+    template_path = template_workspace / _MANAGED_MCP_PATH
+    template_mcp, template_violation = _read_regular_text(
+        template_path,
+        anchor=template_workspace,
+        agent_id=agent_id,
+        required=False,
+    )
+    if template_violation:
+        violations.append(PolicyViolation(agent_id, _MANAGED_MCP_PATH, "managed_mcp_template_invalid", template_violation.rule_id))
+        return tuple(violations)
+    if template_mcp is None:
         return tuple(violations)
     try:
         context = build_render_context(mode=runtime_mode, env=env, runtime_root=runtime_root)
         rendered = render_template_file(
-            template_path.read_text(encoding="utf-8"),
-            rel_path=Path(".mcp.json"),
+            template_mcp,
+            rel_path=Path(_MANAGED_MCP_PATH),
             context=context,
         )
         current_data = json.loads(content)

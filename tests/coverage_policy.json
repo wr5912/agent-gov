@@ -114,10 +114,12 @@
             "tests/test_normalized_feedback_generation.py::test_backfill_does_not_overwrite_user_edited_title",
             "tests/test_agent_profiles_category.py::test_governor_workspace_owns_read_only_policy",
             "tests/test_agent_profiles_category.py::test_governor_build_options_uses_project_discovery_without_policy_injection",
-            "tests/test_native_workspace_policy.py::test_business_agent_seed_matches_canonical_native_policy",
+            "tests/test_managed_agent_policy.py::test_seeded_business_agent_workspaces_match_managed_policy",
+            "tests/test_managed_agent_policy.py::test_symlinked_hook_parent_is_rejected_without_reading_external_content",
+            "tests/test_agent_governance_publish.py::test_publish_rejects_candidate_that_drifts_managed_pre_tool_guard",
             "tests/test_native_workspace_policy.py::test_native_pre_tool_guard_invalid_input_blocks_with_exit_two",
             "tests/test_native_workspace_policy.py::test_native_pre_tool_guard_ignores_valid_non_bash_events",
-            "tests/test_native_workspace_policy.py::test_workspace_policy_migrates_old_volume_with_backup_audit_and_idempotence",
+            "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_migrated_with_git_snapshot",
             "tests/test_improvement_governor_service.py::test_attribution_accepts_relative_claude_md_evidence",
             "tests/test_improvement_governor_service.py::test_attribution_rejects_path_traversal_evidence",
             "tests/test_improvement_governor_service.py::test_guard_rejection_is_logged_not_silent",
@@ -351,7 +353,7 @@
       "scenarios": [
         {
           "id": "seeded_business_agent_bootstrap_registry",
-          "description": "预置业务 Agent seed 能被 bootstrap 到运行卷、启动发现并同步进注册表，Playground 依赖的 /api/agent-registry 可见。",
+          "description": "预置业务 Agent seed 能被 bootstrap 到运行卷、启动发现并同步进注册表；已有 workspace 保持 Git 真相源，不按已退役 seed 清单逐文件删除或回灌。",
           "pytest": [
             "tests/test_seeded_business_agent_configs.py::test_ai_soc_gap_analyzer_seed_bootstraps_into_registry_for_playground",
             "tests/test_seeded_business_agent_configs.py::test_ai_soc_gap_analyzer_seed_routes_through_openai_responses",
@@ -360,9 +362,7 @@
             "tests/test_seeded_business_agent_configs.py::test_hitl_required_deployment_contract_and_low_fixes",
             "tests/test_agent_registry_store.py::test_lifespan_auto_registers_seeded_business_agents",
             "tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent",
-            "tests/test_retired_seed_assets.py::test_matching_seed_is_verified_backed_up_removed_and_idempotent",
-            "tests/test_retired_seed_assets.py::test_modified_seed_is_preserved_without_backup_and_startup_can_continue",
-            "tests/test_retired_seed_assets.py::test_symlink_in_target_path_fails_closed_without_touching_external_content"
+            "tests/test_bootstrap_business_agent_protection.py::test_bootstrap_preserves_optimized_business_agent_and_renders_new_seed"
           ]
         },
         {

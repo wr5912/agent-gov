@@ -12,8 +12,6 @@
 
 `runtime-bootstrap` 通过 API 同款启动协调器执行。业务 Agent 只在整个 workspace 缺失时播种出生配置；已有 workspace 不逐文件补齐或覆盖。真实部署值应写入 `docker/.env`、部署环境变量或不提交的本地私有配置文件。
 
-已从模板退役的托管文件登记在 `workspace-policy/retired-seed-assets.json`。容器启动只会删除内容 SHA256 与登记值完全一致的旧 seed 副本，并先在运行卷 `data/.retired-seed-assets/` 下生成私有备份和审计；用户修改内容会保留，符号链接、非普通文件或路径安全异常会阻断自动清理。
-
 ## 预置业务 Agent
 
 - `main-agent`：默认安全运营样板业务 Agent。

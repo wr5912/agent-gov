@@ -183,19 +183,44 @@ def _atomic_json(path: Path, payload: object) -> None:
         os.close(directory)
 
 
-def _write_policy_changes(changes: tuple[PolicyChange, ...]) -> None:
+def _ensure_managed_parent(workspace: Path, target: Path) -> None:
+    try:
+        relative = target.relative_to(workspace)
+    except ValueError as exc:
+        raise RuntimeInitializationError(f"Managed path escapes workspace: {target}") from exc
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise RuntimeInitializationError(f"Invalid managed path: {target}")
+    if workspace.is_symlink() or not workspace.is_dir():
+        raise RuntimeInitializationError(f"Managed workspace is not a real directory: {workspace}")
+    current = workspace
+    for part in relative.parent.parts:
+        current /= part
+        if current.is_symlink() or (current.exists() and not current.is_dir()):
+            raise RuntimeInitializationError(f"Managed parent is not a real directory: {current}")
+        if not current.exists():
+            current.mkdir(mode=0o700)
+
+
+def _write_policy_changes(workspace: Path, changes: tuple[PolicyChange, ...]) -> None:
     staged: list[tuple[PolicyChange, Path]] = []
     try:
         for change in changes:
             target = change.path
-            if target.is_symlink() or not target.is_file():
-                raise RuntimeInitializationError(f"Managed path changed type before apply: {target}")
-            current = target.read_text(encoding="utf-8")
-            if hashlib.sha256(current.encode("utf-8")).hexdigest() != change.before_sha256:
-                raise RuntimeInitializationError(f"Managed path changed during migration: {target}")
+            _ensure_managed_parent(workspace, target)
+            if change.before_sha256 is None:
+                if target.is_symlink() or target.exists():
+                    raise RuntimeInitializationError(f"Managed path appeared during migration: {target}")
+                mode = change.mode or 0o600
+            else:
+                if target.is_symlink() or not target.is_file():
+                    raise RuntimeInitializationError(f"Managed path changed type before apply: {target}")
+                current = target.read_text(encoding="utf-8")
+                if hashlib.sha256(current.encode("utf-8")).hexdigest() != change.before_sha256:
+                    raise RuntimeInitializationError(f"Managed path changed during migration: {target}")
+                mode = target.stat().st_mode & 0o777
             temporary = target.with_name(f".{target.name}.agentgov-{change.after_sha256[:12]}.tmp")
             temporary.unlink(missing_ok=True)
-            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, target.stat().st_mode & 0o777)
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
             try:
                 os.write(descriptor, change.content.encode("utf-8"))
                 os.fsync(descriptor)
@@ -203,7 +228,14 @@ def _write_policy_changes(changes: tuple[PolicyChange, ...]) -> None:
                 os.close(descriptor)
             staged.append((change, temporary))
         for change, temporary in staged:
-            os.replace(temporary, change.path)
+            if change.before_sha256 is None:
+                try:
+                    os.link(temporary, change.path, follow_symlinks=False)
+                except FileExistsError as exc:
+                    raise RuntimeInitializationError(f"Managed path appeared during migration: {change.path}") from exc
+                temporary.unlink()
+            else:
+                os.replace(temporary, change.path)
             directory = os.open(change.path.parent, os.O_RDONLY)
             try:
                 os.fsync(directory)
@@ -293,7 +325,7 @@ def _apply_policy_migrations(
     commits: dict[str, str] = {}
     try:
         for plan in changing:
-            _write_policy_changes(plan.changes)
+            _write_policy_changes(plan.workspace, plan.changes)
             summary = stores[plan.agent_id].create_snapshot(
                 reason="managed_policy_migration",
                 note=f"AgentGov managed policy migration {transaction_id}",

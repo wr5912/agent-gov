@@ -64,7 +64,11 @@ ALLOWED_TRANSITIONS: dict[ReleaseStatus, frozenset[ReleaseStatus]] = {
             ReleaseStatus.FAILED,
         }
     ),
-    ReleaseStatus.SUCCEEDED: frozenset(),
+    # 人工回滚：运维用 `releasectl rollback --approved-by` 把一个已成功的发布换下线。
+    # 此前该动作绕过状态机、只裸写 active metadata，于是 30 秒后 poll 看到"head 仍是
+    # SUCCEEDED"就把 active 覆写回去——机器上跑 A、治理面说 B，且永不自愈。
+    # 把它建模成一条边，rollback() 才能走 finalize_release 的原子写。
+    ReleaseStatus.SUCCEEDED: frozenset({ReleaseStatus.ROLLED_BACK}),
     ReleaseStatus.ROLLED_BACK: frozenset(),
     ReleaseStatus.FAILED: frozenset(),
     ReleaseStatus.SUPERSEDED: frozenset(),
@@ -228,6 +232,19 @@ def load_github_token() -> str:
     raise ControllerError(
         "GitHub credential is unavailable; use systemd LoadCredential=github_token"
     )
+
+
+def sanitized_environment(config: ControllerConfig) -> Mapping[str, str]:
+    """派生子进程环境：剥掉 GitHub 凭据，注入部署目标。
+
+    与 load_github_token 是同一条边界的两端（凭据进 / 凭据出），故与 ControllerConfig
+    同处；控制器与对账器都要 fork 部署脚本，共用这一份剥离逻辑，避免哪天漏掉一处。
+    """
+    environment = os.environ.copy()
+    for credential_name in ("GITHUB_TOKEN", "GH_TOKEN", "CREDENTIALS_DIRECTORY"):
+        environment.pop(credential_name, None)
+    environment.update({"DEPLOY_USER": config.deploy_user, "REMOTE_DIR": config.remote_dir})
+    return environment
 
 
 class GitHubClient:

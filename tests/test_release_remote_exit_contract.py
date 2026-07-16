@@ -146,9 +146,12 @@ def release_root(tmp_path: Path) -> Path:
     (root / "shared" / "docker.env").write_text(
         "\n".join(
             [
-                "HOST_PORT=48080",
-                "FRONTEND_HOST_PORT=45173",
-                "LANGFUSE_HOST_PORT=43000",
+                # 端口取容器环境约定（50000 + 容器端口）。具体值对本用例无意义——假 docker
+                # 不监听任何端口——但**不得取本机私有调试端口族**（4 开头的五位）：
+                # 仓库策略禁止把它提交进受版本控制的文件，见 test_repository_env_policy。
+                "HOST_PORT=58080",
+                "FRONTEND_HOST_PORT=55173",
+                "LANGFUSE_HOST_PORT=53000",
                 "CONTAINER_NAME_PREFIX=agent-gov-exitcontract",
                 f"HOST_RUNTIME_VOLUME_ROOT={tmp_path / 'runtime'}",
                 *(

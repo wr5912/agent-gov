@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.runtime.agent_admission import AgentAdmissionError, AgentMaintenanceClaim
 from app.runtime.agent_git_store import AgentGitError
 from app.runtime.agent_maintenance_db import AgentReleaseOperationModel
+from app.runtime.agent_ownership import require_persisted_agent_id
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import AgentReleaseModel, utc_now
 from app.runtime.state_machines import validate_transition
@@ -80,7 +81,7 @@ def publish_change_set(
     change_set = service.get_change_set(change_set_id)
     if change_set is None:
         raise _error(404, "Agent change set not found")
-    agent_id = service._normalize_agent_id(str(change_set.get("agent_id") or ""))
+    agent_id = require_persisted_agent_id(change_set.get("agent_id"), entity=f"Agent change set {change_set_id}")
     try:
         with service.version_maintenance.lease(
             agent_id=agent_id,
@@ -357,7 +358,7 @@ def _run_release_operation(
     release = service.get_release(release_id)
     if release is None:
         raise _error(404, "Agent release not found")
-    agent_id = service._normalize_agent_id(str(release.get("agent_id") or ""))
+    agent_id = require_persisted_agent_id(release.get("agent_id"), entity=f"Agent release {release_id}")
     store = service._store_for(agent_id)
     target = _release_operation_target(store, release, kind=kind)
     try:
@@ -585,8 +586,7 @@ def _apply_or_reconcile_git(service: _GovernanceService, store: Any, claim: _Ope
     if claim.status == "git_applied":
         if current_head != claim.target_commit_sha:
             raise AgentGitError(
-                "Agent workspace HEAD changed after the rollback Git effect was persisted "
-                f"(expected target {claim.target_commit_sha}, found {current_head})"
+                f"Agent workspace HEAD changed after the rollback Git effect was persisted (expected target {claim.target_commit_sha}, found {current_head})"
             )
         return claim.git_result or _reconciled_git_result(claim)
     if current_head == claim.target_commit_sha:

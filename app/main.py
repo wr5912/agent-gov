@@ -118,8 +118,8 @@ runtime.agent_version_maintenance_provider = lambda agent_id: is_agent_version_m
 # #24-C/D：单一 per-agent 版本解析器——复用 agent_governance._store_for 缓存按 agent_id 路由到各业务 Agent
 # 自己的 GitAgentVersionStore（repository_dir=该 Agent workspace）。FeedbackStore 版本 stamping 与
 # ClaudeRuntime 运行版本归属共用它，杜绝非 main Agent 的版本/基线/执行门落到 main 库（issue #24 C/D）。
-def _resolve_agent_version_id(agent_id: Optional[str]) -> Optional[str]:
-    return agent_governance._store_for(agent_id or "main-agent").current_version_id()
+def _resolve_agent_version_id(agent_id: str) -> Optional[str]:
+    return agent_governance._store_for(agent_id).current_version_id()
 
 
 feedback_store.agent_version_provider = _resolve_agent_version_id

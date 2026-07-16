@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Optional, cast
 
+from app.runtime.agent_ownership import require_persisted_agent_id
 from app.runtime.json_types import JsonObject
 from app.runtime.schemas import ChatRequest, ChatResponse, EvalRunResponse
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -151,9 +152,7 @@ class FeedbackEvalRunner:
         candidate_worktree_path: Optional[str],
     ) -> ChatResponse:
         if change_set_id and candidate_commit_sha and candidate_worktree_path and self.run_candidate_chat:
-            agent_id = (request.agent_id or "").strip()
-            if not agent_id:
-                raise RuntimeError("Candidate EvalRun request is missing snapshot agent_id")
+            agent_id = require_persisted_agent_id(request.agent_id, entity="Candidate EvalRun snapshot")
             return await self.run_candidate_chat(request, Path(candidate_worktree_path), candidate_commit_sha, change_set_id, agent_id)
         return await self.run_chat(request)
 

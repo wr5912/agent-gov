@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.runtime.agent_admission import AgentAdmissionError
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
+from app.runtime.agent_ownership import require_persisted_agent_id
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
 from app.runtime.errors import ConflictError, FeedbackStoreError
 from app.runtime.json_types import JsonObject
@@ -333,7 +334,7 @@ class AgentGovernanceService(AgentRegressionMixin):
         change_set = self.get_change_set(change_set_id)
         if change_set is None:
             raise AgentGovernanceError(404, "Agent change set not found")
-        agent_id = self._normalize_agent_id(str(change_set.get("agent_id") or ""))
+        agent_id = require_persisted_agent_id(change_set.get("agent_id"), entity=f"Agent change set {change_set_id}")
         try:
             with self.version_maintenance.lease(
                 agent_id=agent_id,
@@ -362,7 +363,7 @@ class AgentGovernanceService(AgentRegressionMixin):
         change_set = self.get_change_set(change_set_id)
         if change_set is None:
             raise AgentGovernanceError(404, "Agent change set not found")
-        agent_id = self._normalize_agent_id(str(change_set.get("agent_id") or ""))
+        agent_id = require_persisted_agent_id(change_set.get("agent_id"), entity=f"Agent change set {change_set_id}")
         try:
             with self.version_maintenance.lease(
                 agent_id=agent_id,
@@ -559,7 +560,7 @@ class AgentGovernanceService(AgentRegressionMixin):
             if existing_release and tag_name and existing_release.tag_name != tag_name:
                 raise AgentGovernanceError(409, "Agent change set already has release metadata for a different tag")
             now = utc_now()
-            agent_id = self._normalize_agent_id(row.agent_id)
+            agent_id = require_persisted_agent_id(row.agent_id, entity=f"Agent change set {change_set_id}")
             previous_status = row.status
             previous_updated_at = row.updated_at
             intent = PublicationIntent(
@@ -651,7 +652,7 @@ class AgentGovernanceService(AgentRegressionMixin):
     ) -> None:
         if intent.change_set_id != row.change_set_id or intent.commit_sha != row.candidate_commit_sha:
             raise AgentGovernanceError(409, "Agent publication intent no longer matches its change set")
-        if intent.agent_id != self._normalize_agent_id(row.agent_id):
+        if intent.agent_id != require_persisted_agent_id(row.agent_id, entity=f"Agent change set {row.change_set_id}"):
             raise AgentGovernanceError(409, "Agent publication intent has a different Agent owner")
         if requested_tag_name and requested_tag_name != intent.tag_name:
             raise AgentGovernanceError(409, "Agent change set is already publishing with a different tag")
@@ -693,7 +694,7 @@ class AgentGovernanceService(AgentRegressionMixin):
         payload.update(
             {
                 "change_set_id": row.change_set_id,
-                "agent_id": row.agent_id or "main-agent",
+                "agent_id": require_persisted_agent_id(row.agent_id, entity=f"Agent change set {row.change_set_id}"),
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "status": row.status,
@@ -762,7 +763,7 @@ class AgentGovernanceService(AgentRegressionMixin):
         payload.update(
             {
                 "release_id": row.release_id,
-                "agent_id": row.agent_id or "main-agent",
+                "agent_id": require_persisted_agent_id(row.agent_id, entity=f"Agent release {row.release_id}"),
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "status": row.status,

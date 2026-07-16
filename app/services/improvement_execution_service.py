@@ -12,6 +12,7 @@ from typing import Any, TypedDict
 
 from app.runtime.agent_git_store import AgentGitError
 from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
+from app.runtime.agent_ownership import require_persisted_agent_id
 from app.runtime.errors import BusinessRuleViolation, ConflictError, DataIntegrityError, RuntimeUnavailableError
 from app.runtime.execution_content_guards import guard_execution_write
 from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
@@ -127,7 +128,7 @@ class ImprovementExecutionService:
                 raise ConflictError(f"Applied execution belongs to a different plan or attribution revision: {improvement_id}")
             self._ensure_change_set_link(existing)
             return existing  # type: ignore[return-value]
-        agent_id = getattr(item, "agent_id", "main-agent") or "main-agent"
+        agent_id = require_persisted_agent_id(item.agent_id, entity=f"ImprovementItem {improvement_id}")
         store = self._gov._store_for(agent_id)
         change_set_id, base_commit_sha = self._execution_intent(existing, store)
         now, lease_expires_at = _lease_window()
@@ -177,7 +178,8 @@ class ImprovementExecutionService:
                     now=now,
                     claim_expires_at=claim_expires_at,
                 )
-                store = self._gov._store_for(getattr(item, "agent_id", "main-agent") or "main-agent")
+                agent_id = require_persisted_agent_id(item.agent_id, entity=f"ImprovementItem {expired.improvement_id}")
+                store = self._gov._store_for(agent_id)
                 if self._candidate_commit_exists(claim, store=store):
                     try:
                         self._recover_candidate_claim(claim, store=store)

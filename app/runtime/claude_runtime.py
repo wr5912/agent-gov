@@ -13,6 +13,7 @@ from app.services.feedback_eval_runner import FeedbackEvalRunner
 from .agent_git_store import AgentVersionProvider
 from .agent_job_runner import AgentJobRunner, ClaudeCodeResultError
 from .agent_job_types import FormatterOutputModel
+from .agent_ownership import require_persisted_agent_id
 from .agent_profile_versions import profile_version_snapshot
 from .agent_profiles import (
     MAIN_AGENT_PROFILE,
@@ -74,9 +75,9 @@ class RuntimeRequestContext:
     created_at: str
     prompt: str
     telemetry_input: JsonObject
+    agent_id: str
     langfuse_trace_id: Optional[str] = None
     langfuse_trace_url: Optional[str] = None
-    agent_id: str = MAIN_AGENT_PROFILE
     finalized: bool = False
     finalization_attempted: bool = False
 
@@ -305,11 +306,14 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             }
         )
 
-    def _current_agent_version_id(self, agent_id: Optional[str] = None) -> Optional[str]:
-        # #24-D：复用 feedback_store 的 per-agent 版本解析器；无 feedback_store 时回退主 store。
+    def _current_agent_version_id(self, agent_id: str) -> Optional[str]:
+        # #24-D：复用 feedback_store 的 per-agent 版本解析器；仅 main-agent 可用主 store。
+        owner = require_persisted_agent_id(agent_id, entity="Runtime request")
         if self.feedback_store is not None:
-            return self.feedback_store._current_agent_version_id(agent_id)
-        return self.agent_version_store.current_version_id() if self.agent_version_store else None
+            return self.feedback_store._current_agent_version_id(owner)
+        if owner == MAIN_AGENT_PROFILE and self.agent_version_store is not None:
+            return self.agent_version_store.current_version_id()
+        return None
 
     def profile_version_snapshot(self, profile_name: str) -> JsonObject | None:
         profile = self.profiles.get(profile_name)
@@ -723,11 +727,13 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             heartbeat=heartbeat,
         )
 
-    async def run_candidate(
-        self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str, agent_id: str = MAIN_AGENT_PROFILE
-    ) -> ChatResponse:
+    async def run_candidate(self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str, agent_id: str) -> ChatResponse:
         # #24-A：候选 profile 按 change_set.agent_id 派生（归属/trace/隔离落到该业务 Agent）。
-        profile = candidate_profile(self.settings, agent_id=agent_id, workspace_dir=worktree_path, candidate_id=change_set_id)
+        owner = require_persisted_agent_id(agent_id, entity=f"Agent change set {change_set_id}")
+        requested = (req.agent_id or "").strip()
+        if requested != owner:
+            raise BusinessRuleViolation(f"Candidate Agent {owner} does not match requested business agent {requested or '<missing>'}")
+        profile = candidate_profile(self.settings, agent_id=owner, workspace_dir=worktree_path, candidate_id=change_set_id)
         return await self.run(req, profile=profile, agent_version_id_override=candidate_commit_sha)
 
     async def stream(self, req: ChatRequest, *, profile: AgentRuntimeProfile | None = None) -> AsyncIterator[JsonObject]:

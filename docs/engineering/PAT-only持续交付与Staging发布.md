@@ -19,10 +19,47 @@
 
 | Consumer | Mode | 配置来源 | 数据边界 | 凭据边界 |
 | --- | --- | --- | --- | --- |
-| 228 发布控制器 | systemd oneshot/timer | `/etc/agent-gov-release-controller/controller.env` | `/var/lib/agent-gov-release-controller/state` | PAT 只由 systemd `LoadCredential` 注入 |
-| 发布构建 | 精确 `master` SHA | 当前提交的 Compose 文件；本地选择一份完整 build env | Docker 本地镜像缓存 | 不继承 PAT 或 Multica secret |
+| 228 发布控制器 | systemd oneshot/timer | `/etc/agent-gov-release-controller/controller.env` | `/var/lib/agent-gov-release-controller/state` | PAT 只由 systemd `LoadCredential` 注入到进程环境；**注入方式不等于隔离**，见下节 |
+| 发布构建 | 精确 `master` SHA | 当前提交的 Compose 文件；本地选择一份完整 build env | Docker 本地镜像缓存 | 子进程环境不继承 PAT 或 Multica secret；但构建**跑在 228 上**，构建面由 `assert_release_build_is_sandboxed.py` 限定在 release 归档内 |
 | 232 Compose | staging container | `<release-root>/shared/docker.env` | `${HOME}/volume-agent-gov` | 私有 env 不复制进 release |
 | Release SRE | 只读/受控恢复 | `releasectl` | 控制器状态和远端 release manifest | 不获得 PAT，不直接 SSH |
+
+## 合并权限的真实爆炸半径
+
+**先说结论：在本链路里，`master` 的合并权限 ≈ 228 整机 root + GitHub PAT + 232 的部署私钥。**
+「合并 = 发布批准」只说了一半；下面这些是它同时授予的，评审和授权时必须按这个尺度衡量。
+
+### `SupplementaryGroups=docker` 抵消了那一整段 systemd 加固
+
+service 单元里有 `NoNewPrivileges` / `ProtectSystem=strict` / `ProtectHome` /
+`RestrictSUIDSGID` 等一整套加固，**但同一单元也有 `SupplementaryGroups=docker`**。
+docker 组约等于 root：以 `agent-gov-release` 身份跑的任意代码，一句
+
+```bash
+docker run -v /etc:/mnt alpine cat /mnt/agent-gov-release-controller/github_token
+```
+
+就能读到那份「只有 root 能读（0600 root:root）」的 PAT；`-v /:/host` 就是 228 整机 root。
+那些加固**挡不住**它——它们限制的是本进程的挂载视图，而容器是 docker daemon 在**另一个
+命名空间**里建的。
+
+**因此：不要把那段加固当作凭据隔离来计分。** 它防的是本进程误操作，不防 docker 组。
+真正的隔离需要把构建/部署与持凭据的进程分到不同主机或不同 uid，且不给 docker 组——
+本链路当前不具备该性质。
+
+### 控制器工作树不随发布更新（这是唯一让门有意义的性质）
+
+部署只做 `git fetch` + `git archive <SHA>`，**从不 checkout 控制器自己的工作树**。所以
+控制器实际执行的代码是**安装时**的版本，一次合并不会自动改写控制器自身的门、血缘校验或
+构建沙箱检查。代价是控制器会跑旧代码，升级需人工介入；收益是被发布的提交改不动看门的人。
+
+若将来引入「控制器自动更新自身」，上述所有门都会变成被发布提交可自改的对象，
+本节结论必须整体重写。
+
+### PAT 的最小权限与轮换
+
+PAT 只需读取仓库、分支保护和 Actions 运行信息。鉴于上述爆炸半径，它**不应**具备写权限，
+且应按「228 上任何一次可疑合并即视为 PAT 与部署私钥已泄露」来准备轮换流程。
 
 ## GitHub 触发契约
 
@@ -146,8 +183,10 @@ releasectl status
 ## 凭据与审计
 
 - 控制器读取 PAT 后，不向部署脚本、`multica` 子进程、日志或 manifest 传播
-  `GITHUB_TOKEN`、`GH_TOKEN` 或 `CREDENTIALS_DIRECTORY`。
-- release 日志和 SQLite 状态目录权限为 `0700/0600`。
+  `GITHUB_TOKEN`、`GH_TOKEN` 或 `CREDENTIALS_DIRECTORY`。**这只挡住「环境变量顺手泄漏」，
+  不构成隔离**：凭据文件仍在 228 磁盘上，而同机的 docker 组可直接读取（见「合并权限的
+  真实爆炸半径」）。
+- release 日志和 SQLite 状态目录权限为 `0700/0600`。**同上：文件权限挡不住 docker 组。**
 - GitHub PAT 只需要读取仓库、分支保护和 Actions 运行信息；控制器不创建 GitHub
   Deployment，也不写 Issue。SQLite 原子记录 SHA、环境、游标和待发送通知；Multica
   AID 评论记录 release、PR、CI 与回滚状态。通知失败会留在 durable outbox 重试，发布

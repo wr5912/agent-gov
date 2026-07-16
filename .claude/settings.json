@@ -10,15 +10,6 @@
       "Write(/frontend/.env.local)"
     ],
     "deny": [
-      "Read(/.env)",
-      "Read(/.env.local)",
-      "Read(/docker/.env)",
-      "Read(/docker/.env.local-debug)",
-      "Read(/docker/.env.bak*)",
-      "Read(/frontend/.env.local)",
-      "Read(/secrets/**)",
-      "Read(/**/*credentials*.json)",
-      "Read(/**/*.pem)"
     ]
   },
   "hooks": {

@@ -578,10 +578,24 @@ if [[ ! -f "$LOCAL_COMPOSE_ENV_PATH" ]]; then
 fi
 
 log "Consumer x Mode x Boundary: target containers select shared/docker.env; runtime data remains on the target; GitHub credentials remain in the controller"
+
+# 构建跑在控制器上（PAT 与部署私钥所在），而这份 compose 来自被发布的提交本身。
+# 先确认它没把构建面伸出 release 归档——否则合并一个把 build.context 指向控制器 HOME
+# 的 PR，就能把 PAT 和部署私钥打包外带。
+# 门取自 $SOURCE_REPO_DIR（控制器自己的工作树）而非 $TMP_DIR（被发布提交的归档）：
+# 部署只做 fetch + archive，从不 checkout 工作树，所以这里跑的是**安装时的版本**，
+# 被发布的提交改不动它。若改用归档里那份，恶意 PR 一个提交就能把 compose 和门一起换掉。
+BUILD_SERVICES=(agent-gov-litellm-sidecar claude-agent-api claude-agent-ui)
+sandbox_args=()
+for service in "${BUILD_SERVICES[@]}"; do sandbox_args+=(--service "$service"); done
+python3 "$SOURCE_REPO_DIR/scripts/assert_release_build_is_sandboxed.py" \
+  --compose "$TMP_DIR/$COMPOSE_FILE" --archive-root "$TMP_DIR" "${sandbox_args[@]}" \
+  || die "released commit tries to build outside its own release archive"
+
 log "Building immutable project images for $IMAGE_VERSION"
 APP_VERSION="$IMAGE_VERSION" docker compose \
   --env-file "$LOCAL_COMPOSE_ENV_PATH" -f "$TMP_DIR/$COMPOSE_FILE" build \
-  agent-gov-litellm-sidecar claude-agent-api claude-agent-ui
+  "${BUILD_SERVICES[@]}"
 
 PROJECT_IMAGES=(
   "agent-gov-api:${IMAGE_VERSION}"

@@ -321,7 +321,14 @@ def test_runtime_emits_backend_owned_suggestion_without_persisting_it(tmp_path, 
         "session_id": "api-session",
     }
     assert events.index(suggestion) > events.index(result)
-    assert events[-1]["event"] == "done"
+    # 契约已变更：done 不再是最后一帧。答案完成即收尾，建议作为**迟到帧**跟在 done 之后
+    # ——否则交互模式下没有建议时，每一轮都要为它白等满 3 秒尾随窗口。
+    # 迟到帧仍会送达：Responses 投影层把 prompt_suggestion 豁免于 done 守卫，
+    # 前端也按 session 存建议，与 run/流生命周期解耦。
+    assert events.index(suggestion) > events.index(
+        next(event for event in events if event["event"] == "done")
+    )
+    assert {event["event"] for event in events} >= {"result", "done", "prompt_suggestion"}
     assert record is not None
     assert all(message.get("event") != "PromptSuggestionMessage" for message in record["messages"])
     assert "下一步检查边界条件" not in str(record)

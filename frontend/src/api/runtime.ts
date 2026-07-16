@@ -467,7 +467,7 @@ export async function streamChat(
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
     let terminalReceived = false;
-    let doneEnvelope: StreamEnvelope | null = null;
+    let doneReceived = false;
     let controlFailureReceived = false;
     let standardFailure: unknown;
     const consumeEvent = (parsed: StreamEnvelope) => {
@@ -482,7 +482,11 @@ export async function streamChat(
       const envelope = translateResponsesEnvelope(parsed);
       if (!envelope) return;
       if (envelope.event === "done") {
-        doneEnvelope = envelope;
+        // done 到达即收尾，不等 HTTP 流关闭：后端在答案完成时就发 done，而流可能还要
+        // 为迟到的 prompt_suggestion 多开一会儿。若压到流关闭再派发，用户就要为一条
+        // 可能永远不来的建议白等整个尾随窗口（「停止」按钮挂着、发不出下一句）。
+        doneReceived = true;
+        dispatchEnvelope(envelope, handlers);
         return;
       }
       dispatchEnvelope(envelope, handlers);
@@ -511,8 +515,8 @@ export async function streamChat(
         dispatchEnvelope({ event: "error", data: standardFailure }, handlers);
       }
       if (!terminalReceived) throw new Error("Stream ended before terminal event");
-      if (!doneEnvelope) throw new Error("Stream ended before agentgov.done");
-      dispatchEnvelope(doneEnvelope, handlers);
+      // done 已在到达时派发过；这里只校验它确实来过，不再重复派发（否则 onDone 触发两次）。
+      if (!doneReceived) throw new Error("Stream ended before agentgov.done");
     } finally {
       reader.releaseLock();
     }

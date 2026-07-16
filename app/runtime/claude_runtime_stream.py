@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -37,6 +37,7 @@ class StreamRun:
     final_output: JsonObject | None = None
     persisted: bool = False  # 幂等落库标志：ResultMessage 处先落库，非取消终止时 finally 兜底
     persistence_attempted: bool = False
+    finalized: bool = False  # 幂等收尾标志：ResultMessage 处即收尾，其余路径由 finally 兜底
     turn_heartbeat: SessionTurnLeaseHeartbeat | None = None
 
 
@@ -177,6 +178,7 @@ async def _emit_query_events(
     query_func: Any,
     sdk_client_factory: Any,
     result_message_type: type,
+    finalize: Callable[[], Awaitable[None]],
 ) -> None:
     runtime = stream_run.runtime
     await asyncio.to_thread(runtime.model_provider_router.ensure_agent_runtime_ready)
@@ -240,6 +242,12 @@ async def _emit_query_events(
                 # 落库先于 result 事件（-> response.completed），使 items/retrieve 在完成信号时刻即可查。
                 await asyncio.to_thread(_persist_stream_run, stream_run)
                 await _publish_result_event(stream_run, event_queue, result_errors)
+                # 答案已完成，立刻收尾：Prompt Suggestion 是可选增强，不得把终态扣在手里。
+                # 交互模式下 CLI 进程还活着、输出流不关闭，若在这里等它的尾随窗口，
+                # 没有建议时每一轮都白等满 3 秒——「停止」按钮挂着、发不出下一句。
+                # 建议若稍后到达，仍会作为迟到帧从这条尚未关闭的流送出（见下方 async for 继续消费，
+                # 且 Responses 投影层已把 prompt_suggestion 豁免于 done 守卫）。
+                await finalize()
     finally:
         await close_async_iterator(messages)
 
@@ -287,8 +295,37 @@ async def _run_sdk_query(
     result_message_type: type,
 ) -> None:
     cancelled = False
+
+    async def finalize() -> None:
+        """收尾（观测归档 -> 可能的 error -> done），恰好一次。
+
+        由 ResultMessage 处即时调用，使终态不被可选的 Prompt Suggestion 扣住；
+        error/无 ResultMessage/异常等路径由 finally 兜底调用。顺序保持
+        「complete -> error -> done」不变：投影层会丢弃 done 之后的 error，
+        若把 done 提前到 complete 之前，收尾期的错误就会被静默吞掉。
+        """
+        if stream_run.finalized:
+            return
+        stream_run.finalized = True
+        try:
+            await _complete_stream_run(stream_run, root_span, generation)
+        except Exception as exc:
+            if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
+                stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
+                await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
+            if stream_run.runtime.user_input_service is not None:
+                stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
+        await event_queue.put({"event": "done", "data": "[DONE]"})
+
     try:
-        await _emit_query_events(stream_run, event_queue, query_func, sdk_client_factory, result_message_type)
+        await _emit_query_events(
+            stream_run,
+            event_queue,
+            query_func,
+            sdk_client_factory,
+            result_message_type,
+            finalize,
+        )
     except asyncio.CancelledError as exc:
         cancelled = True
         await asyncio.to_thread(
@@ -318,15 +355,8 @@ async def _run_sdk_query(
             if stream_run.runtime.user_input_service is not None:
                 stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
         else:
-            try:
-                await _complete_stream_run(stream_run, root_span, generation)
-            except Exception as exc:
-                if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
-                    stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
-                    await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
-                if stream_run.runtime.user_input_service is not None:
-                    stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
-            await event_queue.put({"event": "done", "data": "[DONE]"})
+            # 正常路径已在 ResultMessage 处收过尾；这里兜底 error/无 ResultMessage 等路径。
+            await finalize()
             await event_queue.put(None)
 
 

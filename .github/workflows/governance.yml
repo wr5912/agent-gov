@@ -11,6 +11,15 @@ permissions:
   contents: read
 
 jobs:
+  pull-request-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Require exactly one Multica AID trace
+        run: python3 scripts/check_pr_aid.py --event-file "$GITHUB_EVENT_PATH"
+
   governance-static:
     runs-on: ubuntu-latest
     env:
@@ -152,6 +161,7 @@ jobs:
   quality-gate:
     if: always()
     needs:
+      - pull-request-metadata
       - governance-static
       - backend-main-full
       - frontend-ui
@@ -159,12 +169,14 @@ jobs:
     steps:
       - name: Require every blocking lane
         env:
+          METADATA_RESULT: ${{ needs.pull-request-metadata.result }}
           STATIC_RESULT: ${{ needs.governance-static.result }}
           BACKEND_RESULT: ${{ needs.backend-main-full.result }}
           FRONTEND_RESULT: ${{ needs.frontend-ui.result }}
         run: |
-          printf 'governance-static=%s\nbackend-main-full=%s\nfrontend-ui=%s\n' \
-            "$STATIC_RESULT" "$BACKEND_RESULT" "$FRONTEND_RESULT"
+          printf 'pull-request-metadata=%s\ngovernance-static=%s\nbackend-main-full=%s\nfrontend-ui=%s\n' \
+            "$METADATA_RESULT" "$STATIC_RESULT" "$BACKEND_RESULT" "$FRONTEND_RESULT"
+          test "$METADATA_RESULT" = success
           test "$STATIC_RESULT" = success
           test "$BACKEND_RESULT" = success
           test "$FRONTEND_RESULT" = success

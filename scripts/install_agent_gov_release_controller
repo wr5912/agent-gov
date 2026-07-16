@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$ROOT_DIR"
+
+SERVICE_USER="agent-gov-release"
+STATE_ROOT="/var/lib/agent-gov-release-controller"
+CONFIG_ROOT="/etc/agent-gov-release-controller"
+REPOSITORY_URL="https://github.com/wr5912/agent-gov.git"
+MULTICA_CONFIG=""
+SSH_PRIVATE_KEY=""
+SSH_KNOWN_HOSTS=""
+
+usage() {
+  cat <<'USAGE'
+Usage: sudo scripts/install_agent_gov_release_controller \
+  --multica-config <profile-config.json> \
+  --ssh-private-key <private-key> \
+  --ssh-known-hosts <known-hosts>
+
+Prerequisite:
+  Install a newly rotated GitHub PAT locally at
+  /etc/agent-gov-release-controller/github_token with mode 0600. The installer
+  intentionally has no credential option, so secrets cannot enter argv.
+
+The source repository is public and is cloned without GitHub credentials.
+USAGE
+}
+
+die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+while (( $# )); do
+  case "$1" in
+    --multica-config)
+      MULTICA_CONFIG=${2:-}
+      shift 2
+      ;;
+    --ssh-private-key)
+      SSH_PRIVATE_KEY=${2:-}
+      shift 2
+      ;;
+    --ssh-known-hosts)
+      SSH_KNOWN_HOSTS=${2:-}
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || die "run this installer with sudo"
+[[ -f "$MULTICA_CONFIG" ]] || die "--multica-config must name an existing file"
+[[ -f "$SSH_PRIVATE_KEY" ]] || die "--ssh-private-key must name an existing file"
+[[ -f "$SSH_KNOWN_HOSTS" ]] || die "--ssh-known-hosts must name an existing file"
+for command_name in docker git gzip install multica python3 rsync runuser ssh systemctl tar useradd usermod; do
+  command -v "$command_name" >/dev/null 2>&1 \
+    || die "required command not found: $command_name"
+done
+docker compose version >/dev/null || die "docker compose is unavailable"
+getent group docker >/dev/null || die "docker group does not exist"
+
+install -d -m 700 "$CONFIG_ROOT"
+[[ -s "$CONFIG_ROOT/github_token" ]] \
+  || die "install the rotated PAT at $CONFIG_ROOT/github_token before enabling the controller"
+[[ ! -L "$CONFIG_ROOT/github_token" ]] || die "github_token must not be a symbolic link"
+chown root:root "$CONFIG_ROOT/github_token"
+chmod 600 "$CONFIG_ROOT/github_token"
+
+if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+  useradd --system --home-dir "$STATE_ROOT" --create-home --shell /usr/sbin/nologin "$SERVICE_USER"
+fi
+usermod -aG docker "$SERVICE_USER"
+install -d -m 700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$STATE_ROOT" "$STATE_ROOT/state"
+install -d -m 700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$STATE_ROOT/.ssh"
+install -m 600 -o "$SERVICE_USER" -g "$SERVICE_USER" \
+  "$SSH_PRIVATE_KEY" "$STATE_ROOT/.ssh/id_ed25519"
+install -m 600 -o "$SERVICE_USER" -g "$SERVICE_USER" \
+  "$SSH_KNOWN_HOSTS" "$STATE_ROOT/.ssh/known_hosts"
+install -d -m 700 -o "$SERVICE_USER" -g "$SERVICE_USER" \
+  "$STATE_ROOT/.multica/profiles/release-controller"
+install -m 600 -o "$SERVICE_USER" -g "$SERVICE_USER" \
+  "$MULTICA_CONFIG" "$STATE_ROOT/.multica/profiles/release-controller/config.json"
+
+if [[ ! -d "$STATE_ROOT/repository/.git" ]]; then
+  runuser -u "$SERVICE_USER" -- git clone --branch master --single-branch \
+    "$REPOSITORY_URL" "$STATE_ROOT/repository"
+else
+  runuser -u "$SERVICE_USER" -- git -C "$STATE_ROOT/repository" pull --ff-only origin master
+fi
+
+install -m 644 deploy/systemd/agent-gov-release-controller.service \
+  /etc/systemd/system/agent-gov-release-controller.service
+install -m 644 deploy/systemd/agent-gov-release-controller.timer \
+  /etc/systemd/system/agent-gov-release-controller.timer
+if [[ ! -f "$CONFIG_ROOT/controller.env" ]]; then
+  install -m 600 deploy/systemd/agent-gov-release-controller.env.example \
+    "$CONFIG_ROOT/controller.env"
+fi
+
+multica_binary=$(command -v multica)
+install -m 755 "$multica_binary" /usr/local/bin/multica
+install -m 755 "$STATE_ROOT/repository/scripts/releasectl" /usr/local/bin/releasectl
+
+systemctl daemon-reload
+systemctl start agent-gov-release-controller.service
+systemctl enable --now agent-gov-release-controller.timer
+systemctl --no-pager status agent-gov-release-controller.timer

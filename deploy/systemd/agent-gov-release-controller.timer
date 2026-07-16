@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll GitHub for approved AgentGov staging releases every 30 seconds
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=30s
+AccuracySec=1s
+Persistent=true
+Unit=agent-gov-release-controller.service
+
+[Install]
+WantedBy=timers.target

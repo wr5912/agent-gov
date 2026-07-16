@@ -1,9 +1,14 @@
+# IDE 与仓库根本机配置
 .idea
 /.env
+
+# 私有运行环境文件；允许本机存在，但不得提交或由生成物清理命令删除
 docker/.env
 docker/.env.local
 docker/.env.local-debug
 docker/.env.bak*
+
+# 依赖与语言工具缓存
 .venv/
 __pycache__/
 *.pyc
@@ -11,11 +16,15 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .coverage*
+
+# 本地构建、测试证据与工具工作目录
 .data/
 /data/
 /artifacts/
 /mutants/
 /claude-root/
+
+# 旧版仓库内运行卷兼容路径；权威宿主机运行根在仓库外
 docker/volume/claude-root/
 docker/volume/claude-roots/
 docker/volume/claude-roots/*/.bash_history
@@ -47,12 +56,15 @@ docker/volume/main-workspace/.claude/settings.local.json
 docker/volume/main-workspace/.claude/agent-memory-local/
 docker/.runtime-volume-seeds-backups/
 docker/.runtime-volume-seeds-staging/
+
 # 仓库根级 Claude Code 本地私有配置（个人偏好、本机设置，不提交）
 /CLAUDE.local.md
 /.claude/settings.local.json
+
 # Added by code-review-graph
 .code-review-graph/
 temp/
+
 # 编辑器临时/交换文件，不提交
 *.swp
 *.swo

@@ -7,14 +7,22 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
-from test_quality.collection import expand_selectors
-from test_quality.coverage import evaluate_coverage, load_coverage
-from test_quality.evidence import build_evidence, utc_now, validate_evidence, write_evidence
-from test_quality.policy import PolicyValidation, load_quality_policy, selected_lane_nodes, validate_quality_policy
+if __package__:
+    from .test_quality.collection import expand_selectors
+    from .test_quality.coverage import evaluate_coverage, load_coverage
+    from .test_quality.evidence import build_evidence, utc_now, validate_evidence, write_evidence
+    from .test_quality.policy import PolicyValidation, load_quality_policy, selected_lane_nodes, validate_quality_policy
+else:
+    from test_quality.collection import expand_selectors
+    from test_quality.coverage import evaluate_coverage, load_coverage
+    from test_quality.evidence import build_evidence, utc_now, validate_evidence, write_evidence
+    from test_quality.policy import PolicyValidation, load_quality_policy, selected_lane_nodes, validate_quality_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+OWNED_TEST_ARTIFACTS = ("junit.xml", "coverage.json", "evidence.json", "gitconfig")
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,6 +40,30 @@ def parse_args() -> argparse.Namespace:
 
 def _resolve(path: Path) -> Path:
     return (REPO_ROOT / path).resolve() if not path.is_absolute() else path.resolve()
+
+
+def _validate_owned_files(paths: set[Path], artifact_dir: Path) -> None:
+    for path in paths:
+        if path.is_symlink():
+            raise ValueError(f"test artifact must not be a symlink: {path.relative_to(artifact_dir)}")
+        if path.exists() and not path.is_file():
+            raise ValueError(f"test artifact path must be a file: {path.relative_to(artifact_dir)}")
+
+
+def prepare_test_artifact_dir(artifact_dir: Path) -> None:
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    owned = {path for name in OWNED_TEST_ARTIFACTS if (path := artifact_dir / name).exists() or path.is_symlink()}
+    owned.update(path for path in artifact_dir.glob(".coverage*") if path.exists() or path.is_symlink())
+    _validate_owned_files(owned, artifact_dir)
+    for path in owned:
+        path.unlink()
+
+
+def cleanup_coverage_data(artifact_dir: Path) -> None:
+    coverage_files = {path for path in artifact_dir.glob(".coverage*") if path.exists() or path.is_symlink()}
+    _validate_owned_files(coverage_files, artifact_dir)
+    for path in coverage_files:
+        path.unlink()
 
 
 def _selection(args: argparse.Namespace, validation: PolicyValidation) -> tuple[str, ...]:
@@ -84,11 +116,25 @@ def _pytest_command(args: argparse.Namespace, artifact_dir: Path, selection: tup
     return command
 
 
+def _run_pytest(
+    command: list[str],
+    *,
+    artifact_dir: Path,
+    env: dict[str, str],
+) -> tuple[subprocess.CompletedProcess[bytes], datetime, datetime, float]:
+    started_at = utc_now()
+    started = time.monotonic()
+    try:
+        result = subprocess.run(command, cwd=REPO_ROOT, env=env, check=False)
+    finally:
+        cleanup_coverage_data(artifact_dir)
+    return result, started_at, utc_now(), time.monotonic() - started
+
+
 def main() -> int:
     args = parse_args()
     policy_path = _resolve(args.policy)
     artifact_dir = _resolve(args.artifact_dir)
-    artifact_dir.mkdir(parents=True, exist_ok=True)
     policy = load_quality_policy(policy_path)
     validation = validate_quality_policy(policy, repo_root=REPO_ROOT)
     if validation.errors:
@@ -100,14 +146,20 @@ def main() -> int:
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"TEST_LANE_FAIL: {exc}")
         return 1
+    try:
+        prepare_test_artifact_dir(artifact_dir)
+    except (OSError, ValueError) as exc:
+        print(f"TEST_LANE_FAIL: {exc}")
+        return 1
     env = os.environ.copy()
     env["GIT_CONFIG_GLOBAL"] = str(artifact_dir / "gitconfig")
+    env["COVERAGE_FILE"] = str(artifact_dir / ".coverage")
     command = _pytest_command(args, artifact_dir, selection)
-    started_at = utc_now()
-    started = time.monotonic()
-    result = subprocess.run(command, cwd=REPO_ROOT, env=env, check=False)
-    wall_seconds = time.monotonic() - started
-    completed_at = utc_now()
+    try:
+        result, started_at, completed_at, wall_seconds = _run_pytest(command, artifact_dir=artifact_dir, env=env)
+    except (OSError, ValueError) as exc:
+        print(f"TEST_LANE_FAIL: {exc}")
+        return 1
     required = (artifact_dir / "junit.xml", artifact_dir / "coverage.json")
     if not all(path.is_file() for path in required):
         print("TEST_LANE_FAIL: pytest did not produce JUnit and coverage artifacts")

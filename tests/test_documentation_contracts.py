@@ -72,3 +72,18 @@ def test_readme_directory_structure_matches_actual_repo_layout():
     tree_block = structure.split("```text", 1)[1].split("```", 1)[0]
     assert "volume/" not in tree_block
     assert "${HOME}/volume-agent-gov" in structure
+
+
+def test_generated_directory_docs_separate_evidence_runtime_and_dependency_cleanup():
+    readme = _read_repo_text("README.md")
+    governance = _read_repo_text("docs/engineering/测试资产组合治理.md")
+
+    for text in (readme, governance):
+        assert "make clean-generated-dry-run" in text
+        assert "make clean-test-evidence" in text
+        assert "make clean-runtime-artifacts" in text
+        assert "git clean -fdX" in text
+        assert "frontend/node_modules" in text
+        assert "${HOME}/volume-agent-gov" in text
+    assert "results.txt" in governance
+    assert "survivors.diff" in governance

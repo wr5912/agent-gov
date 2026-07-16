@@ -417,6 +417,23 @@ def test_make_up_waits_removes_orphans_and_prints_sanitized_diagnostics() -> Non
     assert "logs --no-color --tail=80" in diagnose_script
 
 
+def test_make_cleanup_targets_separate_generated_evidence_and_runtime_boundaries() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    generated = makefile.split("\nclean-generated:", 1)[1].split("\n\nclean-generated-dry-run:", 1)[0]
+    evidence = makefile.split("\nclean-test-evidence:", 1)[1].split("\n\nclean-test-evidence-dry-run:", 1)[0]
+    runtime = makefile.split("\nclean-runtime-artifacts:", 1)[1].split("\n\nclean-generated:", 1)[0]
+    setup = makefile.split("\nsetup:", 1)[1].split("\n\nbuild:", 1)[0]
+    local_debug = makefile.split("\nlocal-debug-env:", 1)[1].split("\n\nlocal-debug-bootstrap:", 1)[0]
+
+    assert "--scope generated" in generated
+    assert "--scope evidence" not in generated
+    assert "--scope evidence" in evidence
+    assert "cleanup_runtime_artifacts.py" not in generated + evidence
+    assert "cleanup_repository_generated.py" not in runtime
+    assert "chmod 600 docker/.env" in setup
+    assert "chmod 600 docker/.env.local-debug" in local_debug
+
+
 def test_governance_ci_uses_repository_pnpm_version_without_corepack_download() -> None:
     workflow = (REPO_ROOT / ".github/workflows/governance.yml").read_text(encoding="utf-8")
 

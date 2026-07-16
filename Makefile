@@ -67,6 +67,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/runtime_template_renderer.py \
 	scripts/runtime_cleanup.py \
 	scripts/cleanup_runtime_artifacts.py \
+	scripts/cleanup_repository_generated.py \
 	scripts/run_main_flow_tests.py
 
 TEST_ARTIFACT_ROOT ?= artifacts/test-quality
@@ -75,10 +76,11 @@ QUALITY_POLICY ?= tests/quality_policy.json
 GOVERNANCE_BASE_REF ?=
 GOVERNANCE_BASE_REF_ARG := $(if $(strip $(GOVERNANCE_BASE_REF)),--base-ref $(GOVERNANCE_BASE_REF),)
 
-.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test ci-static openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test ci-static openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts clean-generated clean-generated-dry-run clean-test-evidence clean-test-evidence-dry-run
 
 setup:
 	cp -n docker/.env.example docker/.env || true
+	chmod 600 docker/.env
 	@if ! command -v $(UV) >/dev/null 2>&1; then echo "uv is required. Install uv before running make setup." >&2; exit 1; fi
 	$(UV) venv $(VENV) --python 3.11
 	$(UV) pip install --python $(PYTHON) -r requirements.txt
@@ -163,6 +165,7 @@ runtime-clean:
 
 local-debug-env:
 	cp -n docker/.env.local-debug.example docker/.env.local-debug || true
+	chmod 600 docker/.env.local-debug
 
 local-debug-bootstrap: local-debug-env
 	$(PYTHON_RUN) -m app.runtime.service_launcher prepare
@@ -183,6 +186,18 @@ runtime-volume-seeds-clean:
 	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --template-artifacts
 
 clean-runtime-artifacts: runtime-clean local-debug-clean runtime-volume-seeds-clean
+
+clean-generated:
+	$(PYTHON_RUN) scripts/cleanup_repository_generated.py --scope generated
+
+clean-generated-dry-run:
+	$(PYTHON_RUN) scripts/cleanup_repository_generated.py --scope generated --dry-run
+
+clean-test-evidence:
+	$(PYTHON_RUN) scripts/cleanup_repository_generated.py --scope evidence
+
+clean-test-evidence-dry-run:
+	$(PYTHON_RUN) scripts/cleanup_repository_generated.py --scope evidence --dry-run
 
 runtime-volume-seeds-restore:
 	@if [ -z "$(BACKUP)" ]; then echo "BACKUP=<backup-file> is required" >&2; exit 1; fi

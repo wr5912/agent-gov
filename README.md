@@ -465,6 +465,22 @@ make clean-runtime-artifacts
 
 `runtime-volume-seeds-export` 会把 `${HOME}/volume-agent-gov` 中允许导出的配置复制到 staging，完成脱敏和校验后才替换模板，并在成功后清理 staging 和临时备份。API key、MCP header、数据库凭据、IP、PORT、URL、本机路径、`.mcp.local.json`、`.env`、SQLite、日志、transcripts、uploads、worktrees 和 release archives 都不会进入模板。
 
+## 开发工作区生成物
+
+`artifacts/test-quality/` 保存 JUnit、coverage、浏览器截图、容器日志和可信测试证据；本地只在明确执行 `make clean-test-evidence` 时删除，CI artifact 保留 30 天。`mutants/` 是 `mutmut` 固定使用的临时工作目录，mutation 达标且 survivor 明细已写入 artifact 后自动删除，失败时保留用于排查。
+
+```bash
+# 先预览，再清理缓存、前端构建结果、.coverage 和 mutants 工作目录
+make clean-generated-dry-run
+make clean-generated
+
+# 单独预览或删除本地测试证据
+make clean-test-evidence-dry-run
+make clean-test-evidence
+```
+
+`.venv/`、`frontend/node_modules/`、`docker/.env*`、`${HOME}/volume-agent-gov` 和 `docker/volume/` 不属于默认清理范围。`make clean-runtime-artifacts` 只清运行卷备份与模板临时目录，不能替代上述仓库生成物命令；同样不要使用会删除全部 ignored 文件的 `git clean -fdX`。`make setup` 和 `make local-debug-env` 会把私有 env 权限收紧为 `0600`，历史备份应迁出仓库目录保存。
+
 ## subagent 文件格式
 
 示例：`docker/runtime-volume-seeds/main-workspace/.claude/agents/soc-analyst.md`

@@ -289,6 +289,10 @@ compose_up() {
   image_version=$(tr -d '[:space:]' < "$directory/.app-version")
   prepare_runtime_root
   cleanup_leftovers
+  # 调用方以 `set +e` + `compose_up && health_check` 调本函数，errexit 在此失效；
+  # 若让子 shell 隐式返回最后一条语句（ps）的状态，up 的失败会被静默吞掉。
+  # 因此必须显式捕获 up 的结果，ps 仅用于留痕。
+  local up_rc=0
   (
     cd "$directory"
     APP_VERSION="$image_version" docker compose \
@@ -296,11 +300,15 @@ compose_up() {
       -f docker/docker-compose.yml \
       --profile langfuse up -d --wait --wait-timeout 180 \
       --remove-orphans --force-recreate --no-build --pull never
+  ) || up_rc=$?
+  (
+    cd "$directory"
     APP_VERSION="$image_version" docker compose \
       --env-file "$SHARED_ENV" \
       -f docker/docker-compose.yml \
       --profile langfuse ps
-  )
+  ) || true
+  return "$up_rc"
 }
 
 health_check() {
@@ -309,7 +317,8 @@ health_check() {
   host_port=$(expand_runtime_value "$(read_env HOST_PORT 58080)")
   frontend_port=$(expand_runtime_value "$(read_env FRONTEND_HOST_PORT 55173)")
   langfuse_port=$(expand_runtime_value "$(read_env LANGFUSE_HOST_PORT 53000)")
-  python3 - "$host_port" "$frontend_port" "$langfuse_port" <<'PY'
+  local smoke_rc=0
+  python3 - "$host_port" "$frontend_port" "$langfuse_port" <<'PY' || smoke_rc=$?
 from __future__ import annotations
 
 import json
@@ -346,8 +355,10 @@ for name, url, attempts, require_ok_payload in checks:
     else:
         raise SystemExit(f"{name} failed: {url}: {last_error!r}")
 PY
+  # 诊断只用于失败留痕，其成败不得决定体检结论：函数返回值必须来自上面的冒烟检查。
   python3 "$directory/scripts/diagnose_runtime_health.py" \
     --api-base "http://127.0.0.1:${host_port}" --wait-seconds 5 || true
+  return "$smoke_rc"
 }
 
 load_release_images() {
@@ -384,7 +395,9 @@ deploy_release() {
   [[ -d "$directory" ]] || die "release does not exist: $RELEASE_ID"
   ensure_shared_env "$directory"
   bootstrap_legacy_release
-  previous_path=$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)
+  # readlink -e 要求路径每一段都存在：全新目标机上 current 尚未建立时必须得到空串，
+  # 否则 -f 会返回一个不存在的路径且 rc=0，把"首次部署"误判为"有上一版可回滚"。
+  previous_path=$(readlink -e "$CURRENT_LINK" 2>/dev/null || true)
   previous_id=$(release_id_from_path "$previous_path")
 
   if [[ "$previous_path" == "$directory" ]]; then
@@ -439,7 +452,7 @@ rollback_release() {
   target=$(release_dir "$RELEASE_ID")
   [[ -d "$target" ]] || die "rollback target does not exist: $RELEASE_ID"
   ensure_shared_env "$target"
-  current_path=$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)
+  current_path=$(readlink -e "$CURRENT_LINK" 2>/dev/null || true)
   current_id=$(release_id_from_path "$current_path")
   if [[ "$current_path" == "$target" ]]; then
     load_release_images "$target"

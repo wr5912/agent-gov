@@ -61,6 +61,7 @@
 
 ## 工程治理
 
+- [CI/CD 宪法与交付链两阶段整改计划](./engineering/CI-CD宪法与交付链两阶段整改计划.md)：`docs/engineering/CI-CD宪法与交付链两阶段整改计划.md`，待评审、尚未实施的目标整改方案；定义可信 Staging、同一制品、数据恢复、外置信任锚和生产蓝绿准入，不表示当前运行态已具备这些能力
 - [PAT-only 持续交付与 Staging 发布](./engineering/PAT-only持续交付与Staging发布.md)：`docs/engineering/PAT-only持续交付与Staging发布.md`，228 轮询控制器、精确 SHA 发布、凭据边界和 232 自动回滚的当前工程契约
 - [测试资产组合治理](./engineering/测试资产组合治理.md)：`docs/engineering/测试资产组合治理.md`，测试分类、生命周期、执行通道、可信证据、TIA/xdist 晋级和 mutation 的权威工程契约
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`

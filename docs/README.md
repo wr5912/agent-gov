@@ -42,7 +42,10 @@
 
 - [业务 Agent Workspace 包导入与热加载产品工程方案](./业务AgentWorkspace包导入与热加载产品工程方案.md)：
   `docs/业务AgentWorkspace包导入与热加载产品工程方案.md`，定义可信内部 workspace 包导入、同 ID 覆盖、
-  下一 turn 热加载、手工 pytest、Git 审计与人工回滚的目标产品和工程契约
+  下一 turn 热加载、手工 pytest、Git 审计与人工回滚的目标产品和工程契约；workspace 包契约的单一真相源
+- [业务 Agent 工作区资产闭环产品工程方案](./业务Agent工作区资产闭环产品工程方案.md)：
+  `docs/业务Agent工作区资产闭环产品工程方案.md`，定义 workspace 在线导出、从 seed 跨 ID 实例化和
+  离线归档为 seed 的目标产品和工程契约；与导入方案共用同一包形态，构成导出、修改、导入覆盖、归档的资产闭环
 
 ## 四阶段改进治理工作台权威方案
 

@@ -68,8 +68,42 @@ releasectl diagnose staging-232-<12位短SHA>
 releasectl rollback staging-232-<12位短SHA> --approved-by <操作人>
 ```
 
+人工出口（都要求 `--approved-by`，都记入事件审计）：
+
+```bash
+releasectl unquarantine <40位提交SHA> --approved-by <操作人>
+releasectl set-cursor <40位提交SHA> --approved-by <操作人>
+```
+
+`unquarantine` 把被隔离的提交放回 CI 门等待，用于隔离依据已经改变的场景（例如 PR 元数据
+在门禁通过后被编辑）。`set-cursor` 在人工审计后移动发布游标，用于 master 一次前进超过
+一页 compare（250 提交）而控制器要求人工审计的场景。二者都建模在状态机里，自动路径永远
+不会走；在此之前，这两件事只能手改 sqlite。
+
 退出码：`0` 表示健康发布或成功恢复；`1` 表示参数、预检、凭据或传输失败；`2`
 表示新发布失败但旧版本已恢复；`3` 表示发布和恢复均失败。
+
+## 当前版本以目标机为准
+
+控制器记的「当前版本」（`active:<环境>`）是**投影**，机器上的 `current` 符号链接才是事实。
+每轮 poll 会先向目标机查一次真实在跑的版本（`deploy_agent_gov_to_host --remote-status`，
+stdout 是 JSON 契约、日志走 stderr）并对账：
+
+- 不一致 → 记 `active_drift` 事件，并**以机器为准**回填本地记录。
+- 机器明确报告没有 `current`、本地却记着在线版本 → 记 `active_drift`，但**不清空**记录
+  （机器可能正处在部署中途），留给人工裁决。
+- 问不到机器（不可达、非零退出、输出不可解析）→ 记 `active_probe_failed`（带退出码与
+  stderr 摘要）后继续，不打断 poll。一次 ssh 抖动不得让治理面失忆。持续故障只报一次，
+  恢复时报 `active_probe_recovered`；否则 30 秒一条会把 `status` 的最近 50 条事件淹没。
+- 还没有任何受管发布（active 未建立）时不探测：没有可对账的对象，机器上也还没有 helper。
+
+探测是**只读**的：不做部署预检、不同步 helper，只解析 REMOTE_DIR 再读一次 `current`
+（2 次远端往返）。观测不该改写被观测对象——每 30 秒 rsync 一次只为读符号链接，既是无谓写入，
+也会让 rsync 故障被误报成"机器有问题"。
+
+人工回滚会把被换下的 release 原子地置为 `ROLLED_BACK`（`SUCCEEDED → ROLLED_BACK` 是状态机
+里的人工边），而不是裸写 active 指针；poll 也只在 active 尚未建立时初始化它。这三层共同
+保证 `releasectl status` 报的版本就是机器上跑的版本。
 
 每个 release 位于 `<release-root>/releases/<release-id>`，包括精确代码、镜像归档、
 `.app-version` 和 `release.json`。`current` 是指向健康 release 的原子符号链接，

@@ -9,14 +9,20 @@ import sqlite3
 import subprocess
 import sys
 import urllib.parse
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
 
 from agent_gov_release_delivery import flush_outbox
-from agent_gov_release_operations import set_cursor, unquarantine
+from agent_gov_release_operations import (
+    currently_active_release,
+    record_manual_rollback,
+    set_cursor,
+    unquarantine,
+)
+from agent_gov_release_reconcile import reconcile_active_release
 from agent_gov_release_state import (
     ControllerConfig,
     ControllerError,
@@ -26,6 +32,7 @@ from agent_gov_release_state import (
     TransportError,
     controller_lock,
     load_github_token,
+    sanitized_environment,
     utc_now,
 )
 from check_pr_aid import extract_aid_identifiers
@@ -302,14 +309,6 @@ def deploy_command(config: ControllerConfig, row: sqlite3.Row) -> list[str]:
     return command
 
 
-def sanitized_environment(config: ControllerConfig) -> Mapping[str, str]:
-    environment = os.environ.copy()
-    for credential_name in ("GITHUB_TOKEN", "GH_TOKEN", "CREDENTIALS_DIRECTORY"):
-        environment.pop(credential_name, None)
-    environment.update({"DEPLOY_USER": config.deploy_user, "REMOTE_DIR": config.remote_dir})
-    return environment
-
-
 def run_logged(command: Sequence[str], log_path: Path, config: ControllerConfig) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with log_path.open("a", encoding="utf-8") as log_handle:
@@ -580,7 +579,12 @@ def reconcile_head(
             if (
                 ReleaseStatus(existing["status"]) == ReleaseStatus.SUCCEEDED
                 and existing["release_id"]
+                and store.get_metadata(f"active:{config.environment}") is None
             ):
+                # 只在 active 尚未建立时初始化，绝不无条件覆写：否则一次人工回滚会在
+                # 30 秒内被 poll 抹掉——运维刚把 A 换上线，治理面又报成 B。
+                # 人工回滚现在会把该 release 置为 ROLLED_BACK（见 rollback()），
+                # 因此正常情况下也不会再命中这个 SUCCEEDED 分支。
                 store.set_metadata(
                     f"active:{config.environment}", str(existing["release_id"])
                 )
@@ -614,6 +618,9 @@ def poll(config: ControllerConfig) -> None:
         store = StateStore(config.state_dir / "state.db")
         try:
             store.recover_incomplete()
+            # 放在 GitHub 之前：对账的是「本地记录 vs 机器事实」，与 GitHub 无关，
+            # 不该因为 GitHub 挂了就连带跳过。它自身 fail-soft，不会打断 poll。
+            reconcile_active_release(config, store)
             flush_outbox(config, store)
             github = GitHubClient(api_url=config.github_api_url, token=load_github_token())
             validate_repository_policy(config, github)
@@ -671,6 +678,8 @@ def rollback(config: ControllerConfig, release_id: str, approved_by: str) -> int
             ]
             event_id = f"manual-{release_id}-{int(datetime.now(timezone.utc).timestamp())}"
             log_path = config.state_dir / "logs" / f"{event_id}.log"
+            # 必须在跑脚本之前取：脚本一旦成功，机器上的 current 已经换人了。
+            replaced = currently_active_release(config, store, exclude_release_id=release_id)
             exit_code = run_logged(command, log_path, config)
             outcome = "manual_rollback_succeeded" if exit_code == 0 else "manual_rollback_failed"
             store.add_event(
@@ -679,8 +688,17 @@ def rollback(config: ControllerConfig, release_id: str, approved_by: str) -> int
                 str(row["commit_sha"]),
             )
             if exit_code == 0:
-                store.set_metadata(f"active:{config.environment}", release_id)
-            enqueue_release_outbox(config, store, row, outcome)
+                reason = f"manually rolled back to {release_id} by {approved_by}"
+                record_manual_rollback(
+                    config,
+                    store,
+                    replaced=replaced,
+                    activated_id=release_id,
+                    reason=reason,
+                    outbox_items=release_outbox_items(config, row, outcome, reason),
+                )
+            else:
+                enqueue_release_outbox(config, store, row, outcome)
             flush_outbox(config, store)
             return exit_code
         finally:

@@ -16,12 +16,14 @@ from pathlib import Path
 from typing import TypedDict
 
 from agent_gov_release_delivery import flush_outbox
+from agent_gov_release_operations import set_cursor, unquarantine
 from agent_gov_release_state import (
     ControllerConfig,
     ControllerError,
     GitHubClient,
     ReleaseStatus,
     StateStore,
+    TransportError,
     controller_lock,
     load_github_token,
     utc_now,
@@ -153,8 +155,24 @@ def compare_lineage(
 def resolve_pull_request(
     config: ControllerConfig,
     github: GitHubClient,
+    store: StateStore,
     commit_sha: str,
 ) -> PullRequestLink:
+    """解析某提交的 PR 归属；已固化过的直接读快照，不再查 live PR。
+
+    固化是本函数的要点，不是优化：GitHub 允许 PR 合并后继续编辑标题/正文，
+    而 governance.yml 的 `on: pull_request` 默认不含 `edited`，合并后编辑不会重跑门禁。
+    若每次回放都查 live PR，任何人在自己 PR 合并后往正文加一句"参考 AID-99"
+    即可让该提交被永久隔离；又因 validate_lineage 每轮都回放 cursor..head 的
+    **每一个**提交，这个提交会让之后每一个新 head 也验不过——整条发布链死锁。
+    """
+    cached = store.get_commit_link(commit_sha)
+    if cached is not None:
+        return PullRequestLink(
+            number=int(cached["pr_number"]),
+            aid_identifier=str(cached["aid_identifier"]),
+            merged_by=str(cached["merged_by"]),
+        )
     pulls = github.get(github_path(config, f"/commits/{commit_sha}/pulls"))
     if not isinstance(pulls, list):
         raise ControllerError(f"pull-request linkage for {commit_sha} has an unexpected shape")
@@ -185,19 +203,32 @@ def resolve_pull_request(
         raise ControllerError(
             f"PR #{pull.get('number')} must resolve to exactly one AID identifier"
         )
-    return PullRequestLink(
+    link = PullRequestLink(
         number=int(pull["number"]),
         aid_identifier=identifiers[0],
         merged_by=merged_by,
     )
+    # 只固化校验通过的结果：失败（尤其是 TransportError）绝不写快照，
+    # 否则一次网络抖动会被永久记成"这个提交非法"。
+    store.put_commit_link(
+        commit_sha,
+        pr_number=link.number,
+        aid_identifier=link.aid_identifier,
+        merged_by=link.merged_by,
+    )
+    return link
 
 
 def validate_lineage(
     config: ControllerConfig,
     github: GitHubClient,
+    store: StateStore,
     commit_shas: Sequence[str],
 ) -> list[PullRequestLink]:
-    return [resolve_pull_request(config, github, commit_sha) for commit_sha in commit_shas]
+    return [
+        resolve_pull_request(config, github, store, commit_sha)
+        for commit_sha in commit_shas
+    ]
 
 
 def quality_gate(
@@ -468,7 +499,11 @@ def link_head_release(
 ) -> None:
     lineage = compare_lineage(config, github, cursor, head_sha)
     try:
-        links = validate_lineage(config, github, lineage)
+        links = validate_lineage(config, github, store, lineage)
+    except TransportError:
+        # 传输故障只说明"这一次没问到"，不是关于该提交的判定——隔离它会让一次
+        # 网络抖动永久废掉一个合法发布。直接抛出，交给下一轮 poll 重试。
+        raise
     except ControllerError as exc:
         store.discover(head_sha)
         store.transition(head_sha, ReleaseStatus.QUARANTINED, reason=str(exc))
@@ -672,6 +707,16 @@ def build_parser() -> argparse.ArgumentParser:
     rollback_parser = subparsers.add_parser("rollback", help="activate a tracked release")
     rollback_parser.add_argument("release_id")
     rollback_parser.add_argument("--approved-by", required=True)
+    unquarantine_parser = subparsers.add_parser(
+        "unquarantine", help="release a quarantined commit back to the CI gate"
+    )
+    unquarantine_parser.add_argument("commit_sha")
+    unquarantine_parser.add_argument("--approved-by", required=True)
+    set_cursor_parser = subparsers.add_parser(
+        "set-cursor", help="move the release cursor after a manual audit"
+    )
+    set_cursor_parser.add_argument("commit_sha")
+    set_cursor_parser.add_argument("--approved-by", required=True)
     return parser
 
 
@@ -692,6 +737,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return diagnose(config, args.release_id)
         if args.command == "rollback":
             return rollback(config, args.release_id, args.approved_by)
+        if args.command == "unquarantine":
+            return unquarantine(config, args.commit_sha, args.approved_by)
+        if args.command == "set-cursor":
+            return set_cursor(config, args.commit_sha, args.approved_by)
         raise ControllerError(f"unsupported command: {args.command}")
     except ControllerError as exc:
         print(f"release-controller: {exc}", file=sys.stderr)

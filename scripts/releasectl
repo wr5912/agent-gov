@@ -9,6 +9,11 @@ Usage:
   releasectl status
   releasectl diagnose <release-id>
   releasectl rollback <release-id> --approved-by <operator>
+  releasectl unquarantine <commit-sha> --approved-by <operator>
+  releasectl set-cursor <commit-sha> --approved-by <operator>
+
+unquarantine 把被隔离的提交放回 CI 门等待；set-cursor 在人工审计后移动发布游标
+（例如 master 一次前进超过一页 compare 时）。二者都要求 --approved-by 并记入事件审计。
 
 The command delegates to the local PAT-only release controller. It never
 prints or accepts a GitHub token argument.
@@ -24,7 +29,7 @@ case "${1:-}" in
     (( $# == 2 )) || { usage >&2; exit 1; }
     exec python3 "$SCRIPT_DIR/agent_gov_release_controller.py" "$1" "$2"
     ;;
-  rollback)
+  rollback|unquarantine|set-cursor)
     (( $# == 4 )) || { usage >&2; exit 1; }
     [[ "$3" == "--approved-by" ]] || { usage >&2; exit 1; }
     exec python3 "$SCRIPT_DIR/agent_gov_release_controller.py" "$1" "$2" "$3" "$4"

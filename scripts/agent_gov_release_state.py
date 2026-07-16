@@ -20,6 +20,16 @@ class ControllerError(RuntimeError):
     """A fail-closed release controller error."""
 
 
+class TransportError(ControllerError):
+    """GitHub 传输层故障（DNS/超时/连接拒绝/5xx/限流）。
+
+    与业务违规（血缘非法、AID 不唯一、合并者未授权）**必须分流**：业务违规是关于这个
+    提交本身的终局判定，永久隔离是对的；传输故障只说明"这一次没问到"，隔离它会让
+    一次网络抖动永久废掉一个完全合法的发布——而 poll 每 30 秒一轮、等 CI 窗口默认
+    2 小时，期间约 240 轮 × N 次调用，抖一次的概率并不低。
+    """
+
+
 class ReleaseStatus(StrEnum):
     DISCOVERED = "discovered"
     WAITING_CI = "waiting_ci"
@@ -58,7 +68,10 @@ ALLOWED_TRANSITIONS: dict[ReleaseStatus, frozenset[ReleaseStatus]] = {
     ReleaseStatus.ROLLED_BACK: frozenset(),
     ReleaseStatus.FAILED: frozenset(),
     ReleaseStatus.SUPERSEDED: frozenset(),
-    ReleaseStatus.QUARANTINED: frozenset(),
+    # 隔离不是终态，而是"等待人工裁决"：只有 `releasectl unquarantine --approved-by`
+    # 会走这条边，自动路径永远不会。把人工出口**建模进状态机**而不是绕过它，
+    # 否则运维唯一的解封手段就是手改 sqlite。
+    ReleaseStatus.QUARANTINED: frozenset({ReleaseStatus.WAITING_CI}),
 }
 
 
@@ -237,11 +250,16 @@ class GitHubClient:
                 body = response.read()
         except urllib.error.HTTPError as exc:
             body = exc.read(2000).decode("utf-8", "replace")
-            raise ControllerError(
+            # 5xx 与 429 是"这一次没问到"，不是关于该提交的判定；401/403/404 等
+            # 客户端错误说明凭据或路径本身有问题，保持原有的 fail-closed 语义。
+            error = TransportError if exc.code >= 500 or exc.code == 429 else ControllerError
+            raise error(
                 f"GitHub API GET {path} failed with HTTP {exc.code}: {body}"
             ) from exc
         except urllib.error.URLError as exc:
-            raise ControllerError(f"GitHub API GET {path} failed: {exc.reason}") from exc
+            raise TransportError(f"GitHub API GET {path} failed: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise TransportError(f"GitHub API GET {path} timed out") from exc
         return json.loads(body) if body else None
 
 
@@ -276,6 +294,18 @@ class StateStore:
                     release_id TEXT,
                     discovered_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                );
+                -- 血缘快照：某个提交的 PR 归属一旦校验通过就在此固化，之后只读快照。
+                -- GitHub 允许 PR 合并后继续编辑标题/正文，若每次回放都查 live PR，
+                -- 任何人改一下自己已合并 PR 的正文即可让该提交永久隔离，进而让之后
+                -- 每一个新 head 的血缘校验都失败——整条发布链死锁且无解封命令。
+                -- 固化后，发布依据的是"门禁通过那一刻的事实"，与 PR 之后如何编辑无关。
+                CREATE TABLE IF NOT EXISTS commit_links (
+                    commit_sha TEXT PRIMARY KEY,
+                    pr_number INTEGER NOT NULL,
+                    aid_identifier TEXT NOT NULL,
+                    merged_by TEXT NOT NULL,
+                    resolved_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,6 +387,35 @@ class StateStore:
                     utc_now(),
                     commit_sha,
                 ),
+            )
+
+    def get_commit_link(self, commit_sha: str) -> sqlite3.Row | None:
+        """读取某提交已固化的 PR 归属快照；没有则返回 None。"""
+        cursor = self._connection.execute(
+            "SELECT * FROM commit_links WHERE commit_sha = ?", (commit_sha,)
+        )
+        return cursor.fetchone()
+
+    def put_commit_link(
+        self,
+        commit_sha: str,
+        *,
+        pr_number: int,
+        aid_identifier: str,
+        merged_by: str,
+    ) -> None:
+        """固化某提交的 PR 归属。
+
+        只在校验**通过**时调用：失败（含传输故障）绝不固化，否则一次网络抖动
+        就会被永久记成"这个提交非法"。INSERT OR IGNORE 保证首次写入即定论——
+        后续回放读到的永远是门禁通过那一刻的事实。
+        """
+        with self._connection:
+            self._connection.execute(
+                "INSERT OR IGNORE INTO commit_links"
+                "(commit_sha, pr_number, aid_identifier, merged_by, resolved_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (commit_sha, pr_number, aid_identifier, merged_by, utc_now()),
             )
 
     def set_workflow(self, commit_sha: str, run_id: int, workflow_url: str) -> None:

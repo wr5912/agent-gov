@@ -1,0 +1,36 @@
+[Unit]
+Description=AgentGov PAT-only staging release controller
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=90min
+User=agent-gov-release
+Group=agent-gov-release
+SupplementaryGroups=docker
+WorkingDirectory=/var/lib/agent-gov-release-controller/repository
+Environment=HOME=/var/lib/agent-gov-release-controller
+Environment=AGENT_GOV_STATE_DIR=/var/lib/agent-gov-release-controller/state
+Environment=MULTICA_PROFILE=release-controller
+EnvironmentFile=/etc/agent-gov-release-controller/controller.env
+LoadCredential=github_token:/etc/agent-gov-release-controller/github_token
+ExecStartPre=/usr/bin/test -x /var/lib/agent-gov-release-controller/repository/scripts/deploy_agent_gov_to_host
+ExecStart=/usr/bin/python3 /var/lib/agent-gov-release-controller/repository/scripts/agent_gov_release_controller.py poll
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/agent-gov-release-controller
+
+[Install]
+WantedBy=multi-user.target

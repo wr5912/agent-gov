@@ -109,25 +109,26 @@ make container-health-e2e
 部署到 Docker Compose 主机：
 
 ```bash
-scripts/deploy_agent_gov_to_host
-# 或指定目标主机，默认用户 root、默认目录 ~/work/agent-gov
-scripts/deploy_agent_gov_to_host 172.16.112.232
-# 本机部署不走 SSH，默认目录按当前用户解析
-scripts/deploy_agent_gov_to_host localhost
+scripts/deploy_agent_gov_to_host \
+  --preflight-only \
+  --ref <40位master提交SHA> \
+  --host 172.16.112.232 \
+  --environment staging-232
+
+scripts/deploy_agent_gov_to_host \
+  --ref <40位master提交SHA> \
+  --host 172.16.112.232 \
+  --environment staging-232
 ```
 
-该脚本会先校验本地 git `origin` 远端项目名必须是 `agent-gov`，然后把
-`origin/master` 的跟踪代码同步到目标目录。远端目标使用 `root@<host>:~/work/agent-gov`，
-`localhost`、`127.0.0.1` 和 `::1` 目标直接在本机执行，不经过 SSH。
-远端同步代码时会强制归属为 `root:root`，避免保留本地开发用户的数值 UID/GID。
-在本机构建 `VERSION` 对应的 `agent-gov-api`、`agent-gov-ui` 和
-`agent-gov-litellm-sidecar` 镜像，并把项目镜像包和 Langfuse 依赖镜像包写入目标
-`images/` 目录。目标私有 `docker/.env` 会被保留；如果目标尚未
-创建该文件，脚本才会从 `docker/.env.example` 初始化。启动时使用目标 `docker/.env`
-和目标 `${HOME}/volume-agent-gov` 运行态目录，先 `down --remove-orphans` 删除 Compose
-管理的容器，再按目标 `docker/.env` 的 `CONTAINER_NAME_PREFIX` 清理残留容器，最后用
-`--force-recreate --no-build --pull never` 启动包含 Langfuse profile 的全量服务。当前
-Compose 默认容器名前缀是 `agent-gov`，它只是默认值；脚本以目标 `docker/.env` 为准。
+该脚本只接受可从 `origin/master` 到达的完整 SHA，构建 `VERSION-短SHA` 不可变镜像，
+并写入 `releases/<environment>-<短SHA>/release.json`。目标 Compose 选择
+`shared/docker.env`，运行数据继续位于目标 `${HOME}/volume-agent-gov`；私有 env 和运行
+数据都不进入 release。发布通过 `flock` 串行执行，API、UI 或 Langfuse 健康检查失败时
+立即恢复前一个健康 release。SSH 必须命中已确认的 `known_hosts`，不会自动信任新主机。
+
+228 上的 PAT-only 轮询控制器、`releasectl`、systemd 安装和审计契约见
+[PAT-only 持续交付与 Staging 发布](docs/engineering/PAT-only持续交付与Staging发布.md)。
 
 只重启已有部署，不同步代码、不构建镜像：
 

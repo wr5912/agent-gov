@@ -14,8 +14,21 @@ def test_governance_workflow_has_parallel_blocking_lanes_and_same_run_gate() -> 
     text, workflow = _workflow("governance.yml")
     jobs = workflow["jobs"]
 
-    assert {"governance-static", "backend-main-full", "frontend-ui", "quality-gate"} <= set(jobs)
-    assert set(jobs["quality-gate"]["needs"]) == {"governance-static", "backend-main-full", "frontend-ui"}
+    assert {
+        "pull-request-metadata",
+        "governance-static",
+        "backend-main-full",
+        "frontend-ui",
+        "quality-gate",
+    } <= set(jobs)
+    assert set(jobs["quality-gate"]["needs"]) == {
+        "pull-request-metadata",
+        "governance-static",
+        "backend-main-full",
+        "frontend-ui",
+    }
+    assert 'python3 scripts/check_pr_aid.py --event-file "$GITHUB_EVENT_PATH"' in text
+    assert 'test "$METADATA_RESULT" = success' in text
     assert "playwright install --with-deps chromium" in text
     assert "verify:playwright-runtime" in text
     assert "make main-flow-ui-test" in text

@@ -14,6 +14,13 @@
 AgentGov 增加业务 Agent workspace 包导入能力，用于把一个完整、可版本化的 Claude Code
 项目配置接入 AgentGov，并复用既有 Runtime、Feedback Loop 和 Version Governance。
 
+下列决策围绕同一条主线：**导入是一次版本变更，不是一次文件上传。** 一个已经在跑的业务 Agent 有身份、
+有会话、有反馈历史、有版本谱系；替换它的行为包必须像一次提交那样可追溯、可回滚、可归因，否则平台就失去了
+"某条反馈对应哪个版本"这个治理闭环的前提。因此本文的每处约束几乎都能回答同一个问题——
+**出事之后，能不能证明当时跑的是哪一份配置，以及能不能回到上一份。** 这解释了为什么身份由后端拥有而非包内
+声明、为什么覆盖前必须先把 dirty 工作树固化成提交、为什么激活边界是 turn 而不是"立即"、
+以及为什么本地 pytest 结果不被写成平台可信状态。
+
 首版采用以下已确认决策：
 
 - 导入对象是业务 Agent 的 `workspace/` 行为包，不是整个运行卷，也不是 `claude-root/`、`version/`
@@ -167,7 +174,7 @@ workspace/
 │   ├── skills/
 │   ├── rules/
 │   └── commands/
-├── hooks/                             # 可选
+├── hooks/                             # 目录形状可选；pre_tool_guard.py 受管必需，见下
 └── tests/
     ├── unit/                          # 可选，本地确定性测试
     └── remote/                        # 可选，调用 AgentGov API 的行为测试

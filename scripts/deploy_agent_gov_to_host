@@ -23,6 +23,10 @@ Usage:
   scripts/deploy_agent_gov_to_host --preflight-only --ref <SHA> [options]
   scripts/deploy_agent_gov_to_host --rollback <release-id> [options]
   scripts/deploy_agent_gov_to_host --diagnose <release-id> [options]
+  scripts/deploy_agent_gov_to_host --remote-status [options]
+
+--remote-status 把目标机实际在跑的版本以 JSON 打到 stdout（日志走 stderr），
+供控制器对账 active 指针使用。
 
 Options:
   --host <host>              Default: 172.16.112.232
@@ -85,6 +89,10 @@ while (( $# )); do
       MODE="diagnose"
       DIAGNOSE_RELEASE_ID=${2:-}
       shift 2
+      ;;
+    --remote-status)
+      MODE="remote-status"
+      shift
       ;;
     --aid)
       AID_IDENTIFIER=${2:-}
@@ -429,10 +437,16 @@ PY
 
 invoke_remote_helper() {
   local command=$1
-  local release_id=$2
+  # status 不针对某个 release，故 release-id 可选：不传就不下发该参数，
+  # 而不是下发一个空串让远端脚本去猜。
+  local release_id=${2:-}
   local helper="$REMOTE_PATH/shared/bin/agent-gov-release-remote"
-  target_run "$(quote "$helper") $(quote "$command") \
-    --release-root $(quote "$REMOTE_PATH") --release-id $(quote "$release_id")"
+  local remote_command
+  remote_command="$(quote "$helper") $(quote "$command") --release-root $(quote "$REMOTE_PATH")"
+  if [[ -n "$release_id" ]]; then
+    remote_command+=" --release-id $(quote "$release_id")"
+  fi
+  target_run "$remote_command"
 }
 
 prepared_release_state() {
@@ -504,6 +518,23 @@ if [[ "$MODE" == "rollback" ]]; then
   rc=$?
   set -e
   exit "$rc"
+fi
+
+if [[ "$MODE" == "remote-status" ]]; then
+  require_command python3
+  (( LOCAL_TARGET )) || require_command ssh
+  # 只读探测，刻意不做部署预检、也不同步 helper：
+  # - 观测不该改写被观测对象。控制器每 30 秒对账一次，若在这里 rsync，就是每天往目标机
+  #   写 2880 次文件，只为读一个符号链接；而且 rsync 一旦失败，会把"机器好好的"误报成
+  #   探测失败。
+  # - 部署预检查的是 docker/flock/gzip/tar，与读 current 无关；只有 resolve_remote_path
+  #   是必需的（它定出 REMOTE_PATH）。
+  # - helper 由部署安装。机器从没被部署过 → 没有 current 可对账 → 探测失败正是正确答案
+  #   （控制器会记 active_probe_failed 并继续）。
+  # 此路径不调用 log，故 stdout 天然只有 helper 输出的 JSON。
+  resolve_remote_path
+  invoke_remote_helper status
+  exit 0
 fi
 
 if [[ "$MODE" == "diagnose" ]]; then

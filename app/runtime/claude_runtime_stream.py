@@ -209,16 +209,9 @@ async def _emit_query_events(
     try:
         async for msg in messages:
             if isinstance(msg, claude_prompt_suggestions.PromptSuggestionMessage):
-                await event_queue.put(
-                    {
-                        "event": "prompt_suggestion",
-                        "data": {
-                            "suggestion": msg.suggestion,
-                            "run_id": stream_run.request_context.run_id,
-                            "session_id": stream_run.request_context.session.session_id,
-                        },
-                    }
-                )
+                # 原生 CLI 每帧只给一条,但必须与后端生成路径同形状(共用帧构造点),
+                # 否则两条 emitter 会漂成 schema 双轨。
+                await event_queue.put(_prompt_suggestion_frame(stream_run, [msg.suggestion]))
                 continue
             event, text, plain, is_result, result_errors = runtime._track_query_message(
                 msg,
@@ -270,19 +263,30 @@ async def _emit_backend_prompt_suggestion(
     if not isinstance(user_message, str):
         return
     answer = _answer_text_from_state(stream_run.query_state)
-    suggestion = await asyncio.to_thread(runtime.prompt_suggestion_generator.generate, user_message, answer)
-    if not suggestion:
+    suggestions = await asyncio.to_thread(runtime.prompt_suggestion_generator.generate, user_message, answer)
+    if not suggestions:
         return
     await event_queue.put(
-        {
-            "event": "prompt_suggestion",
-            "data": {
-                "suggestion": suggestion,
-                "run_id": stream_run.request_context.run_id,
-                "session_id": stream_run.request_context.session.session_id,
-            },
-        }
+        _prompt_suggestion_frame(stream_run, suggestions),
     )
+
+
+def _prompt_suggestion_frame(stream_run: StreamRun, suggestions: list[str]) -> JsonObject:
+    """建议帧的**唯一**构造点 —— 后端生成与原生 CLI 两条路径共用,避免 schema 双轨。
+
+    形状是**附加式**的:`suggestion` 保留且恒等于 `suggestions[0]`,老客户端(只读
+    `suggestion`)零改动;`suggestions` 是新增的完整候选列表。一帧载完整批次 —— 不发多帧,
+    否则客户端拿不到 batch key(投影层不透传 run_id)、跨轮竞态下会把旧批次与新批次混在一起。
+    """
+    return {
+        "event": "prompt_suggestion",
+        "data": {
+            "suggestion": suggestions[0],
+            "suggestions": list(suggestions),
+            "run_id": stream_run.request_context.run_id,
+            "session_id": stream_run.request_context.session.session_id,
+        },
+    }
 
 
 def _answer_text_from_state(query_state: RuntimeQueryState) -> str:

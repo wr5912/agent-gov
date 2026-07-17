@@ -203,6 +203,10 @@ class AppSettings(BaseSettings):
     # 对本轮对话做一次 LLM 派生。**默认关**(守常规原则),仅本部署经 docker/.env 显式开启。
     enable_backend_prompt_suggestion: bool = Field(default=False, alias="ENABLE_BACKEND_PROMPT_SUGGESTION")
     backend_prompt_suggestion_model: Optional[str] = Field(default=None, alias="BACKEND_PROMPT_SUGGESTION_MODEL")
+    # 每轮至多给几条候选(「最多 N 条」语义:模型给不满就少给,绝不凑数)。
+    # 刻意不用 ge/le:本模块信条是「任何失败都不得影响主 Run」,配置写错值不该崩启动;
+    # 数量在 prompt_suggestion_generator._count() 使用点 clamp 到 1..5。
+    backend_prompt_suggestion_count: int = Field(default=3, alias="BACKEND_PROMPT_SUGGESTION_COUNT")
     # 推理模型(如 deepseek-v4-flash)会先吐 reasoning_content 再吐正文,max_tokens 必须留够
     # 思考预算,否则思考吃光配额、正文为空(finish_reason=length)。
     backend_prompt_suggestion_max_tokens: int = Field(default=1024, alias="BACKEND_PROMPT_SUGGESTION_MAX_TOKENS")

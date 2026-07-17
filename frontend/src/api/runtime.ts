@@ -492,7 +492,7 @@ export interface StreamChatHandlers {
   onEnvelope?: (envelope: StreamEnvelope) => void;
   onSession?: (sessionId: string, sdkSessionId?: string | null) => void;
   onText?: (text: string, raw: unknown) => void;
-  onPromptSuggestion?: (suggestion: string, sessionId: string) => void;
+  onPromptSuggestion?: (suggestions: string[], sessionId: string) => void;
   onResult?: (result: unknown) => void;
   onError?: (message: string, raw?: unknown) => void;
   onDone?: () => void;
@@ -707,9 +707,9 @@ function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers
   }
 
   if (envelope.event === "prompt_suggestion" && isRecord(envelope.data)) {
-    const suggestion = stringOrUndefined(envelope.data.suggestion)?.trim();
+    const suggestions = suggestionList(envelope.data);
     const sessionId = stringOrUndefined(envelope.data.session_id);
-    if (suggestion && sessionId) handlers.onPromptSuggestion?.(suggestion, sessionId);
+    if (suggestions.length && sessionId) handlers.onPromptSuggestion?.(suggestions, sessionId);
     return;
   }
 
@@ -754,6 +754,18 @@ function formatStreamError(data: unknown): string {
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+// 建议帧取候选列表。容忍两种形状：新的 `suggestions: [...]`，以及只带 `suggestion` 的旧帧
+// （归一成单元素）——否则未同步的 emitter 或旧后端会让建议**静默消失**（类型系统抓不到）。
+function suggestionList(data: Record<string, unknown>): string[] {
+  const raw = Array.isArray(data.suggestions) ? data.suggestions : [data.suggestion];
+  const out: string[] = [];
+  for (const item of raw) {
+    const text = stringOrUndefined(item)?.trim();
+    if (text) out.push(text);
+  }
+  return out;
 }
 
 function shouldAppendMessageText(data: Record<string, unknown>): boolean {

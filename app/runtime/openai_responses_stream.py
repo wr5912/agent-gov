@@ -47,6 +47,22 @@ def _str(value: object) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
+def _suggestion_list(data: JsonObject) -> list[str]:
+    """从建议帧取候选列表(逐条 strip、丢空、保序)。
+
+    容忍两种上游形状:新的 `suggestions: [...]`,以及只带 `suggestion` 的旧帧——
+    后者归一成单元素列表,使任何未同步的 emitter 也不会静默丢建议。
+    """
+    raw = data.get("suggestions")
+    items = raw if isinstance(raw, list) else [data.get("suggestion")]
+    out: list[str] = []
+    for item in items:
+        text = _str(item)
+        if text and text.strip():
+            out.append(text.strip())
+    return out
+
+
 def _tool_step_from_raw(raw: object) -> Optional[JsonObject]:
     """从 message.raw 的 content blocks 投影一个工具时间线步（best-effort，dev/观测层）。"""
     if not isinstance(raw, dict):
@@ -213,13 +229,19 @@ class _ResponsesSseProjector:
         # 否则建议永远送不到前端（前端已按 session 存建议、done 即派发后仍继续读流）。
         if not self.control or self.terminal_status == "failed":
             return []
-        suggestion = _str(data.get("suggestion"))
-        if not suggestion or not suggestion.strip():
+        suggestions = _suggestion_list(data)
+        if not suggestions:
             return []
+        # 附加式形状:`suggestion` 保留且恒等 `suggestions[0]`——README/集成指南对第三方
+        # 承诺的 {suggestion, session_id} 字面仍成立,老客户端零改动;`suggestions` 是新增。
         return [
             self._envelope(
                 "agentgov.prompt_suggestion",
-                {"suggestion": suggestion.strip(), "session_id": self.session_id},
+                {
+                    "suggestion": suggestions[0],
+                    "suggestions": suggestions,
+                    "session_id": self.session_id,
+                },
             )
         ]
 

@@ -508,7 +508,7 @@ export default function App() {
               return next;
             });
           },
-          onPromptSuggestion: (suggestion, runtimeSessionId) => promptSuggestion.receive(runtimeSessionId, suggestion),
+          onPromptSuggestion: (suggestions, runtimeSessionId) => promptSuggestion.receive(runtimeSessionId, suggestions),
           onResult: (result) => {
             if (!isRecord(result)) return;
             const runId = typeof result.run_id === "string" ? result.run_id : undefined;
@@ -722,7 +722,7 @@ export default function App() {
             activeSessionId={activeSessionId}
             sessionSidebarOpen={sessionSidebarOpen}
             agentName={currentAgentName}
-            promptSuggestion={promptSuggestion.suggestion}
+            promptSuggestions={promptSuggestion.suggestions}
             onInputChange={promptSuggestion.handleInputChange}
             onUsePromptSuggestion={promptSuggestion.apply}
             onSend={sendMessage}

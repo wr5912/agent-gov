@@ -23,7 +23,7 @@
 
 以下是对上述原则的**受控例外**，只在其明确前提下成立，不得据此把「后端自造 agent 能力」正常化；新增例外必须在此登记：
 
-- **后端直接生成 Prompt Suggestion**（`app/runtime/prompt_suggestion_generator.py`，开关 `ENABLE_BACKEND_PROMPT_SUGGESTION`，**默认关**）。前提：Claude Code 原生 `--prompt-suggestions`（SUGGESTION MODE）指令刻意对「无明显下一步」和「安全话题」沉默，在本部署（全 SOC/安全 Agent + deepseek-v4-flash）实测几乎永远为空，「用 SDK 的」等于「没有」。故后端对本轮对话做一次 LLM 派生（与 `DSPyOutputFormatter` 同类，复用 `model_provider_router`）。边界：不碰 agent loop / 工具 / MCP / hooks；不落库、不当 agent 事实、只作临时 UX 帧；失败一律吞掉不影响主 Run。关掉开关即回退 CLI 原生路径。
+- **后端直接生成 Prompt Suggestion**（`app/runtime/prompt_suggestion_generator.py`，开关 `ENABLE_BACKEND_PROMPT_SUGGESTION`，**默认关**）。前提：Claude Code 原生 `--prompt-suggestions`（SUGGESTION MODE）指令刻意对「无明显下一步」和「安全话题」沉默，在本部署（全 SOC/安全 Agent + deepseek-v4-flash）实测几乎永远为空，「用 SDK 的」等于「没有」。故后端对本轮对话做一次 LLM 派生（与 `DSPyOutputFormatter` 同类，复用 `model_provider_router`），每轮产出**至多 N 条**候选（`BACKEND_PROMPT_SUGGESTION_COUNT`，默认 3，使用点 clamp 到 1..5；绝不凑数），整批一帧下发。边界：不碰 agent loop / 工具 / MCP / hooks；不落库、不当 agent 事实、只作临时 UX 帧；失败一律吞掉不影响主 Run。关掉开关即回退 CLI 原生路径。
 
 ## 项目专属质量策略
 

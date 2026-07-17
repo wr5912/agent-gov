@@ -302,7 +302,7 @@ async function main() {
             { event: "agentgov.session", data: { session_id: sessionId } },
             { event: "response.output_text.delta", data: { delta: "我是 AgentGov 测试助手。" } },
             { event: "agentgov.result", data: { run_id: "mock-run", session_id: sessionId, agent_version_id: "v-mock", agent_activity: { tool_calls: [], tool_results: [], tool_names: [] } } },
-            { event: "agentgov.prompt_suggestion", data: { v: 1, type: "agentgov.prompt_suggestion", run_id: "mock-run", ts: Date.now() / 1000, seq: 4, payload: { suggestion: "继续检查失败路径。", session_id: sessionId } } },
+            { event: "agentgov.prompt_suggestion", data: { v: 1, type: "agentgov.prompt_suggestion", run_id: "mock-run", ts: Date.now() / 1000, seq: 4, payload: { suggestion: "继续检查失败路径。", suggestions: ["继续检查失败路径。", "看一下日志", "换个角度分析"], session_id: sessionId } } },
             { event: "response.completed", data: { response: { status: "completed" } } },
             { event: "agentgov.done", data: { ok: true } },
           ]);
@@ -430,7 +430,13 @@ async function main() {
           const suggestion = page.getByTestId("prompt-suggestion");
           await suggestion.waitFor({ timeout: 8000 });
           const requestsBeforeSuggestionClick = responsesRequestCount;
-          await suggestion.getByRole("button").click();
+          const suggestionChips = suggestion.getByTestId("prompt-suggestion-item");
+          // mock 一帧送 3 条 ⇒ 必须渲染 3 个 chip。不测这条的话,多候选退化回单条也照样绿
+          // (下面的 first() 点击对单条同样成立)。
+          const suggestionChipCount = await suggestionChips.count();
+          const suggestionChipTexts = await suggestionChips.allInnerTexts();
+          // 多候选下容器内有多个 button,必须按 per-chip testid 取,否则 strict-mode violation
+          await suggestionChips.first().click();
           await page.waitForTimeout(100);
           autoPanelChecks = {
             skipped: false,
@@ -438,6 +444,9 @@ async function main() {
             evidenceOpenAfterSend: await page.getByTestId("playground-evidence-panel").isVisible().catch(() => false),
             traceTabAfterSend: await page.getByTestId("evidence-tab-trace").isVisible().catch(() => false),
             autoBottomAfterSend: await scrollDistance(page) <= 24,
+            suggestionRenderedAllCandidates: suggestionChipCount === 3,
+            suggestionChipTextsMatchFrame:
+              suggestionChipTexts.join("|") === "继续检查失败路径。|看一下日志|换个角度分析",
             suggestionFilledInput: await page.getByTestId("chat-composer-input").inputValue() === "继续检查失败路径。",
             suggestionDidNotAutoSend: responsesRequestCount === requestsBeforeSuggestionClick,
             suggestionClearedAfterUse: await page.getByTestId("prompt-suggestion").count() === 0,
@@ -536,6 +545,8 @@ async function main() {
             && autoPanelChecks.evidenceOpenAfterSend
             && autoPanelChecks.traceTabAfterSend
             && autoPanelChecks.autoBottomAfterSend
+            && autoPanelChecks.suggestionRenderedAllCandidates
+            && autoPanelChecks.suggestionChipTextsMatchFrame
             && autoPanelChecks.suggestionFilledInput
             && autoPanelChecks.suggestionDidNotAutoSend
             && autoPanelChecks.suggestionClearedAfterUse

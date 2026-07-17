@@ -11,7 +11,9 @@
   `agentgov.prompt_suggestion` 信封;成功轮里可**晚于 done**(迟到帧),失败轮丢弃。
 - 端到端:真实 runtime.stream → 真实投影,证明「答案完成→done 提前→建议随后」这条真实
   时序下建议仍能到达前端。这一层此前缺失,正是它让「迟到建议被投影丢弃」的回归漏过。
-前端层见 frontend/src/api/promptSuggestion.test.ts(vitest)。
+
+前端层(hook / 组件)**目前没有自动化单测** —— 仓库未引入 vitest;唯一的前端覆盖是
+Playwright `scripts/verify_message_actions_browser.mjs`。此处如实记录,不谎报覆盖。
 """
 
 from __future__ import annotations
@@ -25,7 +27,6 @@ from app.runtime.claude_prompt_suggestions import (
 )
 from app.runtime.openai_responses_stream import iter_responses_sse
 from claude_agent_sdk import ClaudeAgentOptions
-
 
 # ---------------------------------------------------------------- 注入用的假 CLI
 
@@ -298,3 +299,36 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
     assert "agentgov.prompt_suggestion" in sse_events, (
         f"迟到建议被投影丢弃,前端收不到。SSE={sse_events}"
     )
+
+
+def test_layer2_projects_full_candidate_list_with_compat_first_item() -> None:
+    """层②:多候选一帧投影 —— `suggestions` 是完整列表,`suggestion` 恒等首条。
+
+    附加式形状的核心断言:老客户端只读 `suggestion` 就仍拿到最贴切的那条(不是最差的),
+    新客户端读 `suggestions` 拿全部。逐条 strip。
+    """
+    frame = {
+        "event": "prompt_suggestion",
+        "data": {
+            "suggestion": "  跑测试  ",
+            "suggestions": ["  跑测试  ", "看日志", "  提交代码"],
+            "session_id": "sess-9",
+        },
+    }
+    events = _sse_events([_SESSION, _RESULT, frame, _DONE])
+    body = dict(events)["agentgov.prompt_suggestion"]
+    payload = body.get("payload", body)
+
+    assert payload["suggestions"] == ["跑测试", "看日志", "提交代码"]
+    assert payload["suggestion"] == "跑测试" == payload["suggestions"][0]
+
+
+def test_layer2_tolerates_frame_without_suggestions_key() -> None:
+    """层② 兼容:只带 `suggestion` 的旧帧(或未同步的 emitter)归一成单元素,不静默丢。"""
+    frame = {"event": "prompt_suggestion", "data": {"suggestion": "跑测试", "session_id": "sess-9"}}
+    events = _sse_events([_SESSION, _RESULT, frame, _DONE])
+    body = dict(events)["agentgov.prompt_suggestion"]
+    payload = body.get("payload", body)
+
+    assert payload["suggestion"] == "跑测试"
+    assert payload["suggestions"] == ["跑测试"]

@@ -2,18 +2,26 @@ import { Sparkles } from "lucide-react";
 import "./PromptSuggestion.css";
 
 interface PromptSuggestionProps {
-  suggestion?: string;
-  onUse: () => void;
+  suggestions?: string[];
+  onUse: (suggestion: string) => void;
 }
 
-export function PromptSuggestion({ suggestion, onUse }: PromptSuggestionProps) {
-  if (!suggestion) return null;
+export function PromptSuggestion({ suggestions, onUse }: PromptSuggestionProps) {
+  if (!suggestions?.length) return null;
   return (
     <div className="prompt-suggestion" data-testid="prompt-suggestion">
       <span><Sparkles size={14} /> 下一步建议</span>
-      <button type="button" onClick={onUse} title="填入输入框，不会自动发送">
-        {suggestion}
-      </button>
+      {suggestions.map((suggestion) => (
+        <button
+          key={suggestion}
+          type="button"
+          data-testid="prompt-suggestion-item"
+          onClick={() => onUse(suggestion)}
+          title={suggestion}
+        >
+          {suggestion}
+        </button>
+      ))}
     </div>
   );
 }

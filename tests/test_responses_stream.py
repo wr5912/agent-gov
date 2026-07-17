@@ -189,7 +189,13 @@ def test_prompt_suggestion_control_uses_session_context_ids_and_precedes_done() 
     assert names.index("agentgov.prompt_suggestion") < names.index("response.completed")
     assert names.index("agentgov.prompt_suggestion") < names.index("agentgov.done")
     assert suggestion["run_id"] == "run-9"
-    assert suggestion["payload"] == {"suggestion": "继续检查异常路径", "session_id": "sess-9"}
+    # 附加式形状:新增 `suggestions` 完整候选列表,`suggestion` 保留且恒等 `suggestions[0]`
+    # —— 对第三方承诺的 {suggestion, session_id} 字面仍成立,老客户端零改动。
+    assert suggestion["payload"] == {
+        "suggestion": "继续检查异常路径",
+        "suggestions": ["继续检查异常路径"],
+        "session_id": "sess-9",
+    }
 
 
 def test_heartbeat_becomes_sse_comment() -> None:

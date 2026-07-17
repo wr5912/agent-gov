@@ -315,8 +315,11 @@ def test_runtime_emits_backend_owned_suggestion_without_persisting_it(tmp_path, 
     result = next(event for event in events if event["event"] == "result")
     record = store.find_run(run_id=result["data"]["run_id"])
 
+    # 原生 CLI 每帧一条,但帧形状与后端生成路径共用(附加式):`suggestions` 是完整候选列表,
+    # `suggestion` 保留且恒等 `suggestions[0]`。两条 emitter 同形状,不留 schema 双轨。
     assert suggestion["data"] == {
         "suggestion": "下一步检查边界条件",
+        "suggestions": ["下一步检查边界条件"],
         "run_id": result["data"]["run_id"],
         "session_id": "api-session",
     }

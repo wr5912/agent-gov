@@ -27,12 +27,17 @@
   font-weight: 800;
 }
 
+/* 多候选：刻意**保持单行、不换行** —— 输入框上方高度固定不抖；
+   每个 chip 均分剩余宽度并各自省略号截断，全文靠 title 悬停查看。 */
 .prompt-suggestion button {
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
-  padding: 0;
+  padding: 4px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
   color: var(--text);
-  background: transparent;
+  background: #fff;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -40,4 +45,5 @@
 
 .prompt-suggestion button:hover {
   color: #1d4ed8;
+  border-color: #1d4ed8;
 }

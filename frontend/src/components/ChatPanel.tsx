@@ -14,9 +14,9 @@ interface ChatPanelProps {
   activeSessionId?: string;
   sessionSidebarOpen: boolean;
   agentName: string;
-  promptSuggestion?: string;
+  promptSuggestions?: string[];
   onInputChange: (value: string) => void;
-  onUsePromptSuggestion: () => void;
+  onUsePromptSuggestion: (suggestion: string) => void;
   onSend: () => void;
   onStop: () => void;
   onToggleSession: () => void;
@@ -38,7 +38,7 @@ export function ChatPanel({
   activeSessionId,
   sessionSidebarOpen,
   agentName,
-  promptSuggestion,
+  promptSuggestions,
   onInputChange,
   onUsePromptSuggestion,
   onSend,
@@ -136,7 +136,7 @@ export function ChatPanel({
 
       <footer className="composer">
         <div className="composer-input-column">
-          <PromptSuggestion suggestion={promptSuggestion} onUse={onUsePromptSuggestion} />
+          <PromptSuggestion suggestions={promptSuggestions} onUse={onUsePromptSuggestion} />
           <textarea
             data-testid="chat-composer-input"
             value={input}

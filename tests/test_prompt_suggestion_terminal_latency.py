@@ -26,8 +26,8 @@ import time
 
 import pytest
 from app.runtime import claude_prompt_suggestions
-from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.business_agent_workspace import seed_business_agent_workspace
+from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings

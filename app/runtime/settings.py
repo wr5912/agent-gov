@@ -200,6 +200,14 @@ class AppSettings(BaseSettings):
     dspy_output_formatter_timeout_seconds_override: Optional[int] = Field(default=None, alias="DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS")
     dspy_output_formatter_max_retries: int = Field(default=1, alias="DSPY_OUTPUT_FORMATTER_MAX_RETRIES")
     dspy_output_formatter_max_tokens: int = Field(default=8192, alias="DSPY_OUTPUT_FORMATTER_MAX_TOKENS")
+    # 后端直接生成 Prompt Suggestion —— **受控特例**(见 prompt_suggestion_generator.py):
+    # Claude Code 原生 SUGGESTION MODE 在本部署(SOC Agent + deepseek)事实上失效,故后端
+    # 对本轮对话做一次 LLM 派生。**默认关**(守常规原则),仅本部署经 docker/.env 显式开启。
+    enable_backend_prompt_suggestion: bool = Field(default=False, alias="ENABLE_BACKEND_PROMPT_SUGGESTION")
+    backend_prompt_suggestion_model: Optional[str] = Field(default=None, alias="BACKEND_PROMPT_SUGGESTION_MODEL")
+    # 推理模型(如 deepseek-v4-flash)会先吐 reasoning_content 再吐正文,max_tokens 必须留够
+    # 思考预算,否则思考吃光配额、正文为空(finish_reason=length)。
+    backend_prompt_suggestion_max_tokens: int = Field(default=1024, alias="BACKEND_PROMPT_SUGGESTION_MAX_TOKENS")
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
     include_partial_messages: bool = Field(default=False, alias="INCLUDE_PARTIAL_MESSAGES")
     max_turns: int = Field(default=16, alias="MAX_TURNS")

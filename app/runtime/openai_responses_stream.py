@@ -211,7 +211,11 @@ class _ResponsesSseProjector:
         return chunks
 
     def _project_prompt_suggestion(self, data: JsonObject) -> list[str]:
-        if not self.control or self.done_emitted or self.terminal_status is not None:
+        # Prompt Suggestion 是**迟到帧**:runtime 在答案完成时即发 done（避免每轮为可选建议
+        # 白等 3 秒尾随窗口），真正的建议由模型在该轮之后才生成，故它到达时 done 已发出。
+        # 因此这里只在 control 模式外、或该轮**失败**时丢弃；成功轮的 done 之后仍要投影，
+        # 否则建议永远送不到前端（前端已按 session 存建议、done 即派发后仍继续读流）。
+        if not self.control or self.terminal_status == "failed":
             return []
         suggestion = _str(data.get("suggestion"))
         if not suggestion or not suggestion.strip():

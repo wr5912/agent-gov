@@ -35,6 +35,7 @@ from .managed_agent_policy import ManagedAgentPolicyError, require_profile_runti
 from .message_utils import extract_text, message_event_name, to_plain
 from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
+from .prompt_suggestion_generator import PromptSuggestionGenerator
 from .records.source_records import AgentRunRecord
 from .response_disposition_control import response_disposition_fields, trusted_response_disposition_prompt
 from .runtime_activity import RuntimeActivityExtractor
@@ -131,6 +132,9 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         self.langfuse = RuntimeLangfuseClient(settings)
         self.model_provider_router = ModelProviderRouter(settings)
         self.output_formatter = DSPyOutputFormatter(settings, langfuse=self.langfuse, provider_router=self.model_provider_router)
+        self.prompt_suggestion_generator = PromptSuggestionGenerator(
+            settings, provider_router=self.model_provider_router, langfuse=self.langfuse
+        )
         self.job_runner = AgentJobRunner(
             settings=settings,
             profiles=self.profiles,

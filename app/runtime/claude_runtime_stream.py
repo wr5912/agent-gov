@@ -110,14 +110,25 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject
             ) as generation:
                 runtime.langfuse.set_trace_attributes(generation, **stream_run.propagation)
                 event_queue: asyncio.Queue[JsonObject | None] = asyncio.Queue()
+                # 建议来源二选一:后端生成(受控特例,默认)走 SDK 原生 query/client——不加
+                # CLI 的 --prompt-suggestions、也没有 3 秒尾随窗口,建议由 _emit_query_events
+                # 在答案完成后自行派生;关掉后端开关则回退 CLI 原生 SUGGESTION MODE 路径。
+                if runtime.settings.enable_backend_prompt_suggestion:
+                    import claude_agent_sdk
+
+                    query_func: Any = claude_agent_sdk.query
+                    client_factory: Any = claude_agent_sdk.ClaudeSDKClient
+                else:
+                    query_func = claude_prompt_suggestions.query_with_prompt_suggestions
+                    client_factory = claude_prompt_suggestions.PromptSuggestionClaudeClient
                 sdk_task = asyncio.create_task(
                     _run_sdk_query(
                         stream_run,
                         event_queue,
                         root_span,
                         generation,
-                        claude_prompt_suggestions.query_with_prompt_suggestions,
-                        claude_prompt_suggestions.PromptSuggestionClaudeClient,
+                        query_func,
+                        client_factory,
                         ResultMessage,
                     )
                 )
@@ -243,13 +254,51 @@ async def _emit_query_events(
                 await asyncio.to_thread(_persist_stream_run, stream_run)
                 await _publish_result_event(stream_run, event_queue, result_errors)
                 # 答案已完成，立刻收尾：Prompt Suggestion 是可选增强，不得把终态扣在手里。
-                # 交互模式下 CLI 进程还活着、输出流不关闭，若在这里等它的尾随窗口，
-                # 没有建议时每一轮都白等满 3 秒——「停止」按钮挂着、发不出下一句。
-                # 建议若稍后到达，仍会作为迟到帧从这条尚未关闭的流送出（见下方 async for 继续消费，
-                # 且 Responses 投影层已把 prompt_suggestion 豁免于 done 守卫）。
+                # done 提前发出后，建议作为迟到帧从仍打开的流送出（Responses 投影已放行 done 之后
+                # 的建议——见 _project_prompt_suggestion）。
                 await finalize()
+                # 后端派生建议（受控特例）：done 之后再花时间生成，对用户不可见。
+                await _emit_backend_prompt_suggestion(stream_run, event_queue)
     finally:
         await close_async_iterator(messages)
+
+
+async def _emit_backend_prompt_suggestion(
+    stream_run: StreamRun,
+    event_queue: asyncio.Queue[JsonObject | None],
+) -> None:
+    """答案完成后，后端对本轮对话做一次 LLM 派生，产出「用户下一句」建议并 emit。
+
+    受控特例(见 prompt_suggestion_generator.py):CLI 原生 SUGGESTION MODE 在本部署失效，
+    故后端自生成。best-effort——生成失败/为空一律静默,不影响主 Run。
+    """
+    runtime = stream_run.runtime
+    if not runtime.settings.enable_backend_prompt_suggestion:
+        return
+    user_message = stream_run.request_context.prompt
+    if not isinstance(user_message, str):
+        return
+    answer = _answer_text_from_state(stream_run.query_state)
+    suggestion = await asyncio.to_thread(
+        runtime.prompt_suggestion_generator.generate, user_message, answer
+    )
+    if not suggestion:
+        return
+    await event_queue.put(
+        {
+            "event": "prompt_suggestion",
+            "data": {
+                "suggestion": suggestion,
+                "run_id": stream_run.request_context.run_id,
+                "session_id": stream_run.request_context.session.session_id,
+            },
+        }
+    )
+
+
+def _answer_text_from_state(query_state: RuntimeQueryState) -> str:
+    """从本轮 state 里取助手回答文本(供建议 grounding)——与 runtime 取 answer 同源。"""
+    return AgentJobRunner.dedupe_answer_parts(getattr(query_state, "answer_parts", []) or [])
 
 
 async def _publish_result_event(

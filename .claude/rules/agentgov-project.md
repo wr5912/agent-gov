@@ -19,6 +19,12 @@
 - **不重写、不绕过 agent loop**：不重写 Claude Agent loop；工具权限、MCP、hooks、skills、subagents 以 Claude Code 官方配置与原生发现为准，后端不通过 Options 接管。
 - 设计任何「后端自建存储 / schema / 解析」前先自问：这是不是 SDK / agent 已持有或已暴露能力的东西？是则用 agent 的，不造副本。
 
+### 已登记的受控例外
+
+以下是对上述原则的**受控例外**，只在其明确前提下成立，不得据此把「后端自造 agent 能力」正常化；新增例外必须在此登记：
+
+- **后端直接生成 Prompt Suggestion**（`app/runtime/prompt_suggestion_generator.py`，开关 `ENABLE_BACKEND_PROMPT_SUGGESTION`，**默认关**）。前提：Claude Code 原生 `--prompt-suggestions`（SUGGESTION MODE）指令刻意对「无明显下一步」和「安全话题」沉默，在本部署（全 SOC/安全 Agent + deepseek-v4-flash）实测几乎永远为空，「用 SDK 的」等于「没有」。故后端对本轮对话做一次 LLM 派生（与 `DSPyOutputFormatter` 同类，复用 `model_provider_router`）。边界：不碰 agent loop / 工具 / MCP / hooks；不落库、不当 agent 事实、只作临时 UX 帧；失败一律吞掉不影响主 Run。关掉开关即回退 CLI 原生路径。
+
 ## 项目专属质量策略
 
 - 产品不变量：离线模式是产品不变量但始终提供本地化 LLM 模型；必需工作流不得依赖远程服务。

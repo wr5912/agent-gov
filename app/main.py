@@ -4,11 +4,15 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from scripts.bootstrap_runtime_volume import load_runtime_env
 
 from app.openapi_contract import install_openapi_contract
@@ -292,8 +296,11 @@ app = FastAPI(
     title="AgentGov API",
     version=APP_VERSION,
     description="A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    # 文档 UI 资源自托管：默认 docs_url/redoc_url 生成的 HTML 硬依赖公网 CDN
+    # （cdn.jsdelivr.net、fonts.googleapis.com），与「必需工作流不得依赖远程服务」
+    # 冲突，且内网浏览器取不到时页面永远停在空白。改由下方 _STATIC_DOCS_DIR 提供。
+    docs_url=None,
+    redoc_url=None,
     openapi_url="/openapi.json",
     openapi_tags=[
         {"name": "health", "description": "Service status and documentation discovery."},
@@ -312,6 +319,49 @@ app = FastAPI(
     lifespan=lifespan,
     swagger_ui_parameters={"displayRequestDuration": True, "docExpansion": "none"},
 )
+
+# 与 app 包同级发布：容器由 Dockerfile 的 `COPY app /app/app` 一并带入，本机调试直接从
+# 仓库解析，两种模式路径一致，不需要按 RUNTIME_CONTAINER 分叉。
+_STATIC_DOCS_DIR = Path(__file__).resolve().parent / "static" / "docs"
+_STATIC_DOCS_MOUNT = "/static/docs"
+
+app.mount(_STATIC_DOCS_MOUNT, StaticFiles(directory=_STATIC_DOCS_DIR), name="static-docs")
+
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_ui_html() -> HTMLResponse:
+    """自托管 Swagger UI。资源全部走本服务，离线与内网可用。"""
+
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url or "/openapi.json",
+        title=f"{app.title} - Swagger UI",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_js_url=f"{_STATIC_DOCS_MOUNT}/swagger-ui-bundle.js",
+        swagger_css_url=f"{_STATIC_DOCS_MOUNT}/swagger-ui.css",
+        swagger_favicon_url=f"{_STATIC_DOCS_MOUNT}/favicon.png",
+        swagger_ui_parameters=app.swagger_ui_parameters,
+    )
+
+
+@app.get(app.swagger_ui_oauth2_redirect_url or "/docs/oauth2-redirect", include_in_schema=False)
+async def swagger_ui_redirect() -> HTMLResponse:
+    from fastapi.openapi.docs import get_swagger_ui_oauth2_redirect_html
+
+    return get_swagger_ui_oauth2_redirect_html()
+
+
+@app.get("/redoc", include_in_schema=False)
+async def redoc_html() -> HTMLResponse:
+    """自托管 ReDoc。with_google_fonts=False 去掉 fonts.googleapis.com 依赖。"""
+
+    return get_redoc_html(
+        openapi_url=app.openapi_url or "/openapi.json",
+        title=f"{app.title} - ReDoc",
+        redoc_js_url=f"{_STATIC_DOCS_MOUNT}/redoc.standalone.js",
+        redoc_favicon_url=f"{_STATIC_DOCS_MOUNT}/favicon.png",
+        with_google_fonts=False,
+    )
+
 
 app.add_middleware(
     CORSMiddleware,

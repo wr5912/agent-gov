@@ -21,7 +21,7 @@
 
 ## 项目专属质量策略
 
-- 产品不变量：离线模式是产品不变量但始终提供本地化 LLM 模型；必需工作流不得依赖远程服务。真实 API key、MCP header、数据库凭据、本机私有路径和运行态数据不得提交。
+- 产品不变量：离线模式是产品不变量但始终提供本地化 LLM 模型；必需工作流不得依赖远程服务。
 - 开发调试观测面：当前前端调试界面、Playground 证据面板和自托管 Langfuse 只面向开发调试人员，不作为生产安全边界；这些面默认保留完整 prompt、tool input/output、job input/output、raw text 和 trace I/O，不做脱敏、遮蔽或安全摘要，除非用户明确要求生产化整改。该例外不放宽仓库、提交、公开文档和最终回复边界。
 - 兼容边界：公开 API / OpenAPI / 前端生成类型属契约边界；持久化数据默认宿主机根 `${HOME}/volume-agent-gov`，`docker/volume/` 仅作迁移来源或显式兼容路径。
 - 旧设计清理策略：执行“代码质量 > 新设计/框架/架构 > 旧模式兼容或保留”。命中旧 facade、兼容 shim、历史路径、重复实现、schema 双轨、状态分散、过期 API、不可达分支等信号时进入替换旧设计模式，先列删除/迁移/保留清单（按公开 API、配置/env、持久化数据、文档、测试、内部兼容层逐项说明）。
@@ -76,7 +76,8 @@
 - 应用配置文件：约定放 `config/*.yaml` 或 `config/*.json`（当前未创建）。
 - Docker/Compose 入口：`docker/`，`docker/docker-compose.yml`。
 - 持久化数据路径：容器默认 `${HOME}/volume-agent-gov`，本机调试默认 `/tmp/local-debug-volume-agent-gov`；`docker/volume/` 仅迁移来源。
-- 密钥边界：真实 API key、MCP header、数据库凭据、本机私有路径和运行态数据不得提交。涉及 `RUNTIME_CONTAINER`、`RUNTIME_VOLUME_MODE`、上述 env 文件、Docker volume、Langfuse 或治理模型凭据的改动，先按 `.claude/skills/runtime-env-governance/SKILL.md` 做 Consumer x Mode x Boundary 矩阵。
+- 项目源码仓库边界：真实 API key、MCP header、数据库凭据、本机私有路径和运行态数据不得进入 AgentGov 项目源码仓库、公开文档、日志或提交说明。业务 Agent 的 live workspace 与其 per-Agent Git 是敏感运行资产，可按字节保留 `.env`、真实 endpoint、凭据型 header、数据库配置和本机路径；该例外不延伸到项目源码仓库。live workspace 回流 repo seed/builtin 前先在仓库外形成候选，再通过 seed 准入扫描。
+- 涉及 `RUNTIME_CONTAINER`、`RUNTIME_VOLUME_MODE`、上述 env 文件、Docker volume、Langfuse 或治理模型凭据的改动，先按 `.claude/skills/runtime-env-governance/SKILL.md` 做 Consumer x Mode x Boundary 矩阵。
 - `.claude/settings.json` 的 Read deny 只约束内建文件工具；未启用 sandbox 时不能把它当作 Bash/Python 子进程的 OS 级密钥隔离。
 
 ## Claude Code 专项

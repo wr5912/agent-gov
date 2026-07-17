@@ -1,4 +1,5 @@
-"""#27：bootstrap 对 data/business-agents/* 只做存在性对账，绝不覆盖活的优化配置；新 seed Agent 仍渲染。"""
+"""bootstrap 对 data/business-agents/* 只做存在性对账，绝不覆盖活配置或改写新 seed。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,7 +15,7 @@ def _seed_agent(root: Path, agent_id: str, content: str) -> Path:
     return claude_md
 
 
-def test_bootstrap_preserves_optimized_business_agent_and_renders_new_seed(tmp_path: Path) -> None:
+def test_bootstrap_preserves_optimized_business_agent_and_copies_new_seed(tmp_path: Path) -> None:
     seed = tmp_path / "seed"
     root = tmp_path / "root"
     # seed 声明 AAA（卷里已存在、已优化）+ CCC（卷里缺失，开发者新增的预置 Agent）
@@ -28,7 +29,7 @@ def test_bootstrap_preserves_optimized_business_agent_and_renders_new_seed(tmp_p
 
     # AAA 优化配置原样保留（未被 seed 覆盖、未被 repair）
     assert optimized.read_text(encoding="utf-8") == "AAA OPTIMIZED by feedback loop — must NOT be overwritten\n"
-    # CCC（新 seed Agent，卷里缺失）被渲染补全（存在性对账）
+    # CCC（新 seed Agent，卷里缺失）按 seed 原始字节补全（存在性对账）
     ccc = root / "data" / "business-agents" / "CCC" / "workspace" / "CLAUDE.md"
     assert ccc.read_text(encoding="utf-8") == "CCC seed birth config\n"
     # AAA 未出现在 copied（整个 workspace 被保护跳过）。

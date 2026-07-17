@@ -237,7 +237,7 @@
 
 .settings-agent-create {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(170px, 0.75fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 0.9fr) minmax(180px, 0.9fr) auto;
   gap: 12px;
   align-items: end;
   padding: 14px;
@@ -277,7 +277,7 @@
 .settings-agent-table-head,
 .settings-agent-row {
   display: grid;
-  grid-template-columns: minmax(190px, 1.2fr) minmax(180px, 1fr) 150px 104px;
+  grid-template-columns: minmax(170px, 1fr) minmax(160px, 0.9fr) 130px minmax(250px, auto);
   gap: 12px;
   align-items: center;
 }
@@ -341,6 +341,17 @@
 
 .settings-danger-button {
   color: var(--danger);
+}
+
+.settings-agent-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.settings-agent-actions .secondary-button {
+  min-width: 0;
+  padding-inline: 9px;
 }
 
 .settings-runtime-grid {
@@ -445,6 +456,11 @@
   .settings-agent-row {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  .settings-agent-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
 

@@ -73,7 +73,6 @@ COPY VERSION /app/VERSION
 COPY app /app/app
 COPY scripts/bootstrap_runtime_volume.py /app/scripts/bootstrap_runtime_volume.py
 COPY scripts/runtime_cleanup.py /app/scripts/runtime_cleanup.py
-COPY scripts/runtime_template_renderer.py /app/scripts/runtime_template_renderer.py
 COPY docker/runtime-volume-seeds /app/docker/runtime-volume-seeds
 
 RUN mkdir -p /governor-workspace /claude-roots/governor/.claude /data

@@ -36,7 +36,7 @@ def test_seed_renders_placeholders_and_is_idempotent(tmp_path: Path) -> None:
     permissions = settings["permissions"]
     assert "Bash(*)" not in permissions["allow"]
     assert "Bash(*)" in permissions["ask"]
-    assert settings["sandbox"]["enableWeakerNestedSandbox"] is False
+    assert settings["sandbox"]["enableWeakerNestedSandbox"] is True
     # catalog 的 README 不应被播种进 workspace。
     assert not (ws / "README.md").exists()
 

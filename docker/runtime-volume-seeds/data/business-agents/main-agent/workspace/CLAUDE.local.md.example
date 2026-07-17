@@ -12,5 +12,5 @@
 ## 本地偏好
 
 - 所有执行动作默认只做 dry-run。
-- 报告输出到 `/data/outputs`。
+- 报告输出到 `../../../outputs`。
 - 本地测试时可使用 `mcp_servers/*/sample_*.json` 中的样例数据。

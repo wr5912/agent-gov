@@ -24,6 +24,9 @@ if [[ ! -f "$compose_env_file" ]]; then
   echo "Compose env file does not exist: $compose_env_file" >&2
   exit 1
 fi
+compose_env_file=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$compose_env_file")
+export COMPOSE_ENV_FILE="$compose_env_file"
+export AGENT_GOV_COMPOSE_ENV_FILE="$compose_env_file"
 
 free_port() {
   python3 - <<'PY'

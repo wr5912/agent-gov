@@ -39,7 +39,8 @@ jobs:
         run: |
           compose_env="$RUNNER_TEMP/agent-gov-compose.env"
           cp docker/.env.example "$compose_env"
-          printf 'COMPOSE_ENV_FILE=%s\n' "$compose_env" >> "$GITHUB_ENV"
+          printf 'COMPOSE_ENV_FILE=%s\nAGENT_GOV_COMPOSE_ENV_FILE=%s\n' \
+            "$compose_env" "$compose_env" >> "$GITHUB_ENV"
       - name: Real container provider-health acceptance
         run: make container-health-e2e COMPOSE_ENV_FILE="$COMPOSE_ENV_FILE"
       - name: Upload container diagnostics

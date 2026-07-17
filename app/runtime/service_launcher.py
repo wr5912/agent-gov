@@ -37,7 +37,7 @@ def _status_payload(status: RuntimeContractStatus) -> dict[str, object]:
         "valid": status.valid,
         "reason": status.reason,
         "desired_digest": status.desired_digest,
-        "managed_output_digest": status.managed_output_digest,
+        "workspace_validation_digest": status.workspace_validation_digest,
         "receipt_present": status.receipt is not None,
     }
 

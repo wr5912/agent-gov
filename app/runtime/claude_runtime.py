@@ -114,6 +114,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         user_input_service: ClaudeUserInputService | None = None,
         agent_version_maintenance_provider: Callable[[str], bool] | None = None,
         business_profile_resolver: Callable[[Optional[str]], AgentRuntimeProfile | None] | None = None,
+        runtime_env: Mapping[str, str] | None = None,
     ) -> None:
         if settings.enable_file_checkpointing:
             raise RuntimeUnavailableError("ENABLE_FILE_CHECKPOINTING is incompatible with the durable Claude SDK SessionStore")
@@ -124,6 +125,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         self.agent_version_maintenance_provider = agent_version_maintenance_provider
         self.business_profile_resolver = business_profile_resolver
         self.user_input_service = user_input_service
+        self.runtime_env = dict(runtime_env) if runtime_env is not None else dict(os.environ)
         self.profiles = build_profiles(settings)
         self.activity_extractor = RuntimeActivityExtractor()
         self.langfuse = RuntimeLangfuseClient(settings)
@@ -339,7 +341,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             print(f"[WARN] failed to flush Langfuse runtime enrichment: {exc}", flush=True)
 
     def _profile_env(self, profile: AgentRuntimeProfile) -> dict[str, str]:
-        env = dict(os.environ)
+        env = dict(self.runtime_env)
         env.update(self.langfuse.build_env())
         claude_env = self.settings.claude_env
         env.update(claude_env)

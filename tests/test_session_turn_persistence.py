@@ -268,11 +268,12 @@ def test_exact_completion_retry_allows_session_to_advance_to_next_turn(tmp_path)
         current,
         run_id="run-2",
         agent_id="main-agent",
-        attempted_sdk_session_id="sdk-session",
+        new_sdk_session_id="sdk-session",
         sdk_project_key="project-key",
-        request={"agent_version_id": "version-2"},
+        resolve_agent_version_id=lambda: "version-2",
+        request={},
         created_at="2026-07-13T00:02:00+00:00",
-    )
+    ).session
 
     retried = store.finalize_persisted_turn(**kwargs)
 
@@ -384,11 +385,12 @@ def test_exact_abort_retry_allows_session_to_advance_to_next_turn(tmp_path):
         current,
         run_id="run-2",
         agent_id="main-agent",
-        attempted_sdk_session_id="sdk-next",
+        new_sdk_session_id="sdk-next",
         sdk_project_key="project-key",
-        request={"agent_version_id": "version-2"},
+        resolve_agent_version_id=lambda: "version-2",
+        request={},
         created_at="2026-07-13T00:02:00+00:00",
-    )
+    ).session
 
     retried = store.abort_persisted_turn(**kwargs)
 

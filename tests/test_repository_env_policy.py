@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -185,6 +187,93 @@ def test_project_root_env_file_is_forbidden() -> None:
 
 def test_docker_env_local_example_is_not_an_official_entrypoint() -> None:
     assert not (REPO_ROOT / "docker/.env.local.example").exists()
+
+
+def test_clean_checkout_compose_config_uses_the_one_selected_env_file(
+    tmp_path: Path,
+) -> None:
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("docker is unavailable")
+    version = subprocess.run(
+        [docker, "compose", "version"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if version.returncode != 0:
+        pytest.skip("docker compose is unavailable")
+
+    compose_dir = tmp_path / "docker"
+    compose_dir.mkdir()
+    compose_path = compose_dir / "docker-compose.yml"
+    compose_path.write_text(
+        (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    selected_env = tmp_path / "selected-compose.env"
+    selected_env.write_text(
+        (REPO_ROOT / "docker/.env.example").read_text(encoding="utf-8") + "\nAGENT_GOV_CLEAN_CHECKOUT_SENTINEL=selected\n",
+        encoding="utf-8",
+    )
+    assert not (compose_dir / ".env").exists()
+
+    environment = {
+        **os.environ,
+        "AGENT_GOV_COMPOSE_ENV_FILE": str(selected_env),
+        "RUNTIME_VOLUME_SEEDS_HOST_DIR": str(REPO_ROOT / "docker/runtime-volume-seeds"),
+    }
+    result = subprocess.run(
+        [
+            docker,
+            "compose",
+            "--env-file",
+            str(selected_env),
+            "-f",
+            str(compose_path),
+            "config",
+        ],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "AGENT_GOV_CLEAN_CHECKOUT_SENTINEL: selected" in result.stdout
+
+
+def test_make_container_helpers_use_the_selected_compose_env_file() -> None:
+    selected = "/tmp/agent-gov-selected-compose.env"
+    result = subprocess.run(
+        [
+            "make",
+            "-n",
+            "ui-smoke",
+            "langfuse-dirs",
+            "langfuse-smoke",
+            "chat",
+            "container-openapi-check",
+            "up",
+            "smoke",
+            "runtime-clean",
+            f"COMPOSE_ENV_FILE={selected}",
+            "COMPOSE=:",
+            "PYTHON_RUN=:",
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert selected in result.stdout
+    assert "docker/.env" not in result.stdout
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "scripts/smoke.sh" not in makefile
+    assert "scripts/chat.sh" not in makefile
 
 
 def test_official_docker_env_examples_do_not_define_runtime_volume_mode() -> None:
@@ -413,6 +502,10 @@ def test_make_up_waits_removes_orphans_and_prints_sanitized_diagnostics() -> Non
     assert "compose-diagnose" in up_target
     assert "diagnose_runtime_health.py" in up_target
     assert "compose config" not in diagnose_script
+    assert "os.path.abspath(sys.argv[1])" in diagnose_script
+    assert 'export COMPOSE_ENV_FILE="$compose_env_file"' in diagnose_script
+    assert 'export AGENT_GOV_COMPOSE_ENV_FILE="$compose_env_file"' in diagnose_script
+    assert '--env-file "$compose_env_file"' in diagnose_script
     assert "docker inspect" in diagnose_script
     assert "logs --no-color --tail=80" in diagnose_script
 

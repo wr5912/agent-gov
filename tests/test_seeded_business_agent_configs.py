@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
@@ -17,7 +18,8 @@ from scripts.bootstrap_runtime_volume import bootstrap_runtime_volume
 from test_api_execution_optimizer import _load_app
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SEED_ROOT = REPO_ROOT / "docker" / "runtime-volume-seeds" / "data" / "business-agents"
+RUNTIME_SEEDS = REPO_ROOT / "docker" / "runtime-volume-seeds"
+SEED_ROOT = RUNTIME_SEEDS / "data" / "business-agents"
 REVIEW_AGENT_ID = "security-data-standardization-review"
 REVIEW_WORKSPACE = SEED_ROOT / REVIEW_AGENT_ID / "workspace"
 AI_SOC_GAP_AGENT_ID = "ai-soc-gap-analyzer"
@@ -42,7 +44,7 @@ def test_security_data_standardization_review_seed_permissions_are_review_only()
 
     assert permissions.get("ask") == ["Bash(*)", *GENERIC_MCP_MUTATION_RULES]
     assert "mcp__sec-ops-data__*" in permissions["allow"]
-    assert "Write(/data/outputs/security-data-standardization-review/**)" in permissions["allow"]
+    assert "Write(../../../outputs/security-data-standardization-review/**)" in permissions["allow"]
     for forbidden in (
         "mcp__*__*write*",
         "mcp__*__*update*",
@@ -62,7 +64,7 @@ def test_security_data_standardization_review_seed_config_matches_agent_id() -> 
 
     assert f"id: {REVIEW_AGENT_ID}" in agent_yaml
     assert f"profile: {REVIEW_AGENT_ID}" in agent_yaml
-    assert f"/data/business-agents/{REVIEW_AGENT_ID}/workspace" in agent_yaml
+    assert "workspace: ." in agent_yaml
     assert mcp["mcpServers"]["sec-ops-data"]["url"] == "${MCP_SERVER_URL}"
     assert "name: security-data-standardization-review" in skill
     assert "不直接修改生产规则或图谱" in skill
@@ -82,8 +84,8 @@ def test_ai_soc_gap_analyzer_seed_permissions_are_assessment_only() -> None:
     permissions = settings["permissions"]
 
     assert permissions.get("ask") == ["Bash(*)", *GENERIC_MCP_MUTATION_RULES]
-    assert "Read(/data/uploads/**)" in permissions["allow"]
-    assert "Write(/data/outputs/ai-soc-gap-analyzer/**)" in permissions["allow"]
+    assert "Read(../../../uploads/**)" in permissions["allow"]
+    assert "Write(../../../outputs/ai-soc-gap-analyzer/**)" in permissions["allow"]
     for forbidden in (
         "mcp__*__*write*",
         "mcp__*__*update*",
@@ -116,9 +118,25 @@ def test_seeded_sandbox_settings_fail_closed_without_workspace_write_deny() -> N
         permissions = settings["permissions"]
         assert sandbox["failIfUnavailable"] is True, settings_path
         assert sandbox["allowUnsandboxedCommands"] is False, settings_path
-        assert sandbox["enableWeakerNestedSandbox"] is False, settings_path
+        assert sandbox["enableWeakerNestedSandbox"] is True, settings_path
         assert "Edit(./**)" not in permissions.get("deny", []), settings_path
         assert "Write(./**)" not in permissions.get("deny", []), settings_path
+
+
+def test_seeded_agent_descriptors_use_workspace_relative_runtime_paths() -> None:
+    for agent_yaml_path in sorted(SEED_ROOT.glob("*/workspace/agent.yaml")):
+        agent_yaml = agent_yaml_path.read_text(encoding="utf-8")
+
+        assert "workspace: ." in agent_yaml, agent_yaml_path
+        assert "claude_home: ../claude-root/.claude" in agent_yaml, agent_yaml_path
+        assert "data_root: ../../.." in agent_yaml, agent_yaml_path
+        assert "/data" not in agent_yaml, agent_yaml_path
+
+
+def test_seeded_workspace_instructions_and_scripts_do_not_embed_container_data_root() -> None:
+    for path in sorted(item for item in RUNTIME_SEEDS.rglob("*") if item.is_file() and item.name != "README.md"):
+        text = path.read_text(encoding="utf-8")
+        assert re.search(r"(?<![.\w-])/data(?:/|\b)", text) is None, path
 
 
 def test_ai_soc_gap_analyzer_seed_config_matches_agent_id_and_contract() -> None:
@@ -129,7 +147,7 @@ def test_ai_soc_gap_analyzer_seed_config_matches_agent_id_and_contract() -> None
 
     assert f"id: {AI_SOC_GAP_AGENT_ID}" in agent_yaml
     assert f"profile: {AI_SOC_GAP_AGENT_ID}" in agent_yaml
-    assert f"/data/business-agents/{AI_SOC_GAP_AGENT_ID}/workspace" in agent_yaml
+    assert "workspace: ." in agent_yaml
     assert mcp == {"mcpServers": {}}
     assert "name: ai-soc-gap-analysis" in skill
     assert "overall_maturity" in skill
@@ -215,8 +233,8 @@ def test_security_operations_expert_fuses_response_disposal_permissions() -> Non
     assert "mcp__sec-ops__*" in permissions["allow"]
     assert "Edit(./**)" in permissions["allow"]
     assert "Write(./**)" in permissions["allow"]
-    assert "Write(/data/outputs/security-operations-expert/**)" in permissions["allow"]
-    assert "Write(/data/outputs/**)" not in permissions["allow"]
+    assert "Write(../../../outputs/security-operations-expert/**)" in permissions["allow"]
+    assert "Write(../../../outputs/**)" not in permissions["allow"]
 
     assert permissions["ask"] == [
         "mcp__sec-ops__soc_api__create",
@@ -235,7 +253,7 @@ def test_security_operations_expert_fuses_response_disposal_permissions() -> Non
 
     serialized = json.dumps(settings, ensure_ascii=False)
     assert "response-disposal/claude-root" not in serialized
-    assert "Read(/data/business-agents/security-operations-expert/claude-root/.claude.json)" in permissions["deny"]
+    assert "Read(../claude-root/.claude.json)" in permissions["deny"]
     assert "Bash(rm -rf /)" in permissions["deny"]
 
 
@@ -248,7 +266,7 @@ def test_security_operations_expert_config_matches_agent_id_and_response_contrac
 
     assert f"id: {SECOPS_EXPERT_AGENT_ID}" in agent_yaml
     assert f"profile: {SECOPS_EXPERT_AGENT_ID}" in agent_yaml
-    assert f"/data/business-agents/{SECOPS_EXPERT_AGENT_ID}/workspace" in agent_yaml
+    assert "workspace: ." in agent_yaml
     assert "alert_triage" in agent_yaml
     assert "response_case_intake" in agent_yaml
     assert "response-playbook-planning" in agent_yaml
@@ -286,8 +304,8 @@ def test_hitl_required_deployment_contract_and_low_fixes() -> None:
 
     # #4：secops 跨 Agent outputs 读收窄到本 Agent 子路径。
     secops_allow = json.loads((SECOPS_EXPERT_WORKSPACE / ".claude" / "settings.json").read_text(encoding="utf-8"))["permissions"]["allow"]
-    assert "Read(/data/outputs/**)" not in secops_allow
-    assert "Read(/data/outputs/security-operations-expert/**)" in secops_allow
+    assert "Read(../../../outputs/**)" not in secops_allow
+    assert "Read(../../../outputs/security-operations-expert/**)" in secops_allow
 
 
 def test_security_operations_expert_seed_bootstraps_into_registry_for_playground(monkeypatch, tmp_path: Path) -> None:

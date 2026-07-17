@@ -15,5 +15,5 @@ model: inherit
 - 优先使用模板。
 - 不编造统计数据；缺失数据标注为“未获取”。
 - 管理层报告先结论，技术报告保留证据和时间线。
-- 日报必须同时返回聊天正文并写入 `/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`。
+- 日报必须同时返回聊天正文并写入 `../../../outputs/reports/daily-secops-report-YYYY-MM-DD.md`。
 - MCP 工具不可用时，不要反复读取本地配置、样例或历史文件兜底；直接列出数据缺口。

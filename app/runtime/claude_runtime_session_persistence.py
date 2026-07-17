@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from claude_agent_sdk import project_key_for_directory
 
+from .agent_admission import AgentMaintenanceActiveError
 from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
-from .errors import RuntimeFinalizationError
+from .errors import RuntimeFinalizationError, RuntimeUnavailableError
 from .json_types import JsonObject
 from .records.source_records import AgentRunRecord
 from .runtime_db import utc_now
@@ -52,32 +53,35 @@ class RuntimeSessionPersistenceMixin:
             )
 
         run_id = str(uuid.uuid4())
-        attempted_sdk_session_id = session.sdk_session_id or str(uuid.uuid4())
+        new_sdk_session_id = str(uuid.uuid4())
         sdk_project_key = project_key_for_directory(str(profile.workspace_dir))
-        agent_version_id = (
-            agent_version_id_override
-            if agent_version_id_override is not None
-            else await asyncio.to_thread(self._current_agent_version_id, agent_id)
-        )
         created_at = utc_now()
         prompt = self._build_prompt(req)
         intent_request: JsonObject = {
-            "agent_version_id": agent_version_id,
             "alert_id": req.alert_id,
             "case_id": req.case_id,
             "agent_id": agent_id,
             "metadata": req.metadata,
         }
-        session = await asyncio.to_thread(
-            self.session_store.begin_persisted_turn,
-            session,
-            run_id=run_id,
-            agent_id=agent_id,
-            attempted_sdk_session_id=attempted_sdk_session_id,
-            sdk_project_key=sdk_project_key,
-            request=intent_request,
-            created_at=created_at,
-        )
+        try:
+            admission = await asyncio.to_thread(
+                self.session_store.begin_persisted_turn,
+                session,
+                run_id=run_id,
+                agent_id=agent_id,
+                new_sdk_session_id=new_sdk_session_id,
+                sdk_project_key=sdk_project_key,
+                resolve_agent_version_id=(
+                    (lambda: agent_version_id_override) if agent_version_id_override is not None else lambda: self._current_agent_version_id(agent_id)
+                ),
+                request=intent_request,
+                created_at=created_at,
+            )
+        except AgentMaintenanceActiveError as exc:
+            raise RuntimeUnavailableError("Agent version maintenance is in progress; retry after restore completes.") from exc
+        session = admission.session
+        agent_version_id = admission.agent_version_id
+        attempted_sdk_session_id = admission.attempted_sdk_session_id
         telemetry_input = self._request_telemetry_input(req, prompt, session, run_id, agent_version_id)
         return RuntimeRequestContext(
             session=session,

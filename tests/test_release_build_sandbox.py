@@ -1,13 +1,10 @@
 """构建面必须限定在 release 归档内。
 
-背景：`docker compose build` 跑在 **228 控制器**上，那里有 GitHub PAT 和能 SSH 到 232 的
-部署私钥；而构建用的 compose 文件来自**被发布提交自己的归档**。于是合并一个把
-`build.context` 指向控制器 HOME 的 PR，Dockerfile 一句 COPY + RUN curl 就能把 PAT 和
-部署私钥带出去。
+背景：`docker compose build` 跑在人工部署执行机上，而构建用的 compose 文件来自
+**待部署提交自己的归档**。把 `build.context` 指向执行机 HOME 会让构建结果意外携带
+本机私有配置，也会破坏“同一 SHA 对应同一份构建输入”的基本正确性。
 
-这不是「提 PR 的人能 RCE」——合并本来就等于让任意代码部署到 232。但它**静默扩大了
-PAT 的爆炸半径**：设计文档只说「合并 = 发布批准」，没说「合并 = 拿到 PAT + 部署私钥」。
-这道门把构建面收回归档内，让文档里那句边界成为真的。
+这道门只做基础的构建输入边界，不承担生产级供应链安全职责。
 
 范围：只管构建面**伸出归档之外**。归档内的 Dockerfile 想干什么不归这里管——那本就是
 「合并 = 发布」授予的。
@@ -48,25 +45,21 @@ def test_the_real_shipped_compose_passes_the_gate(tmp_path: Path) -> None:
     """
     archive = tmp_path / "archive"
     (archive / "docker").mkdir(parents=True)
-    (archive / "docker" / "docker-compose.yml").write_text(
-        (REPO_ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    (archive / "docker" / "docker-compose.yml").write_text((REPO_ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8"), encoding="utf-8")
 
     assert_build_is_sandboxed(archive / "docker" / "docker-compose.yml", archive, SERVICES)
 
 
-def test_context_pointing_at_the_controller_home_is_rejected(tmp_path: Path) -> None:
-    """**核心用例**：把 build.context 指向控制器 HOME（PAT 与部署私钥所在）必须被拒。
+def test_context_pointing_at_the_deployer_home_is_rejected(tmp_path: Path) -> None:
+    """把 build.context 指向部署执行机 HOME 必须被拒。
 
-    这正是计划里描述的那条路径：
-        build: { context: /var/lib/agent-gov-release-controller, dockerfile: docker/Dockerfile }
-    再在 Dockerfile 里 COPY .ssh/id_ed25519 + RUN curl 外带。
+    该路径不属于精确 commit 归档，放行会让相同 SHA 的构建输入依赖执行机状态。
     """
     archive = tmp_path / "archive"
     archive.mkdir()
     compose = _write_compose(
         archive,
-        {"claude-agent-api": {"build": {"context": "/var/lib/agent-gov-release-controller", "dockerfile": "docker/Dockerfile"}}},
+        {"claude-agent-api": {"build": {"context": "/var/lib/agent-gov-deployer", "dockerfile": "docker/Dockerfile"}}},
     )
 
     with pytest.raises(BuildSandboxViolation, match="归档之外"):
@@ -109,7 +102,7 @@ def test_host_secret_mounts_into_the_build_are_rejected(tmp_path: Path, key: str
     archive.mkdir()
     compose = _write_compose(
         archive,
-        {"claude-agent-api": {"build": {"context": ".", key: ["id=pat,src=/etc/agent-gov-release-controller/github_token"]}}},
+        {"claude-agent-api": {"build": {"context": ".", key: ["id=config,src=/etc/agent-gov-deployer/docker.env"]}}},
     )
 
     with pytest.raises(BuildSandboxViolation, match=f"build.{key}"):
@@ -122,7 +115,7 @@ def test_additional_contexts_outside_the_archive_are_rejected(tmp_path: Path) ->
     archive.mkdir()
     compose = _write_compose(
         archive,
-        {"claude-agent-api": {"build": {"context": ".", "additional_contexts": {"creds": "/etc/agent-gov-release-controller"}}}},
+        {"claude-agent-api": {"build": {"context": ".", "additional_contexts": {"config": "/etc/agent-gov-deployer"}}}},
     )
 
     with pytest.raises(BuildSandboxViolation, match="归档之外"):
@@ -191,9 +184,7 @@ def test_the_cli_exits_nonzero_and_explains_itself(tmp_path: Path) -> None:
     """真实执行 CLI：部署脚本靠退出码拦截，不能只有库函数会抛。"""
     archive = tmp_path / "archive"
     archive.mkdir()
-    compose = _write_compose(
-        archive, {"claude-agent-api": {"build": {"context": "/var/lib/agent-gov-release-controller"}}}
-    )
+    compose = _write_compose(archive, {"claude-agent-api": {"build": {"context": "/var/lib/agent-gov-deployer"}}})
 
     completed = subprocess.run(
         [

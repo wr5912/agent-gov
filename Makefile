@@ -4,17 +4,24 @@ UV ?= uv
 LITELLM_LOCAL_MODEL_COST_MAP ?= True
 PYTHON_RUN ?= LITELLM_LOCAL_MODEL_COST_MAP=$(LITELLM_LOCAL_MODEL_COST_MAP) $(PYTHON)
 COMPOSE_ENV_FILE ?= docker/.env
+export COMPOSE_ENV_FILE
+export AGENT_GOV_COMPOSE_ENV_FILE := $(abspath $(COMPOSE_ENV_FILE))
 COMPOSE ?= docker compose --env-file $(COMPOSE_ENV_FILE) -f docker/docker-compose.yml
 # 版本唯一真相源：根 VERSION 文件。导出给 compose，让镜像 tag ${APP_VERSION} 派生（build/up 自动生效）。
 export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)
 PYTHON_TYPECHECK_TARGETS := \
 	app/openapi_contract.py \
+	app/routers/agent_workspace_packages.py \
 	app/routers/claude_user_input.py \
 	app/routers/conversations.py \
 	app/routers/responses.py \
 	app/runtime/api_auth.py \
 	app/runtime/advisory_lock.py \
+	app/runtime/agent_git_raw_storage.py \
 	app/runtime/agent_job_types.py \
+	app/runtime/agent_workspace_package_schemas.py \
+	app/runtime/business_agent_seed_catalog.py \
+	app/runtime/business_agent_workspace.py \
 	app/runtime/claude_prompt_suggestions.py \
 	app/runtime/claude_runtime_permissions.py \
 	app/runtime/claude_runtime_stream.py \
@@ -36,6 +43,9 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/response_disposition_db.py \
 	app/runtime/response_disposition_stream.py \
 	app/runtime/stores/response_disposition_claim_store.py \
+	app/services/agent_change_set_queries.py \
+	app/services/agent_workspace_package_codec.py \
+	app/services/agent_workspace_packages.py \
 	app/services/improvement_execution_service.py \
 	app/services/improvement_governor_service.py \
 	app/services/workspace_execution_applier.py \
@@ -46,6 +56,10 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/stores/improvement_content_store.py \
 	app/runtime/stores/improvement_store.py \
 	scripts/bootstrap_runtime_volume.py \
+	scripts/agent_gov_ci_relay_store.py \
+	scripts/agent_gov_ci_status_relay.py \
+	scripts/agent_gov_multica.py \
+	scripts/check_pr_aid.py \
 	scripts/check_codex_governance.py \
 	scripts/check_docs_governance.py \
 	scripts/check_orphan_tests.py \
@@ -64,7 +78,10 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/test_quality/models.py \
 	scripts/test_quality/policy.py \
 	scripts/diagnose_runtime_health.py \
-	scripts/runtime_template_renderer.py \
+	scripts/snapshot_legacy_release_controller_audit.py \
+	scripts/verify_agent_gov_ci_evidence.py \
+	scripts/runtime_template_secret_assignments.py \
+	scripts/runtime_template_safety.py \
 	scripts/runtime_cleanup.py \
 	scripts/cleanup_runtime_artifacts.py \
 	scripts/run_main_flow_tests.py
@@ -75,7 +92,7 @@ QUALITY_POLICY ?= tests/quality_policy.json
 GOVERNANCE_BASE_REF ?=
 GOVERNANCE_BASE_REF_ARG := $(if $(strip $(GOVERNANCE_BASE_REF)),--base-ref $(GOVERNANCE_BASE_REF),)
 
-.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test ci-static openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test ci-static openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -92,7 +109,7 @@ up:
 		$(MAKE) --no-print-directory compose-diagnose; \
 		exit 1; \
 	fi
-	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py || true
+	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py --env-file "$(COMPOSE_ENV_FILE)" || true
 
 down:
 	$(COMPOSE) down
@@ -113,7 +130,7 @@ ui-logs:
 	$(COMPOSE) logs -f claude-agent-ui
 
 ui-smoke:
-	@frontend_port=$${FRONTEND_HOST_PORT:-$$(awk -F= '$$1 == "FRONTEND_HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
+	@frontend_port=$${FRONTEND_HOST_PORT:-$$(awk -F= '$$1 == "FRONTEND_HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
 	frontend_url=$${FRONTEND_URL:-http://localhost:$${frontend_port:-55173}}; \
 	i=1; \
 	while [ $$i -le 30 ]; do \
@@ -136,7 +153,7 @@ ui-feedback-smoke:
 	@VERIFY_SCREENSHOT_DIR="$${VERIFY_SCREENSHOT_DIR:-/tmp/agentgov-ui-feedback-smoke}" pnpm --dir frontend run verify:real-container
 
 langfuse-dirs:
-	@runtime_root=$$($(PYTHON_RUN) -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from bootstrap_runtime_volume import resolve_runtime_root; print(resolve_runtime_root(None, Path("docker/.env")).as_posix())'); \
+	@runtime_root=$$($(PYTHON_RUN) -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from bootstrap_runtime_volume import resolve_runtime_root; print(resolve_runtime_root(None, Path(sys.argv[1])).as_posix())' "$(COMPOSE_ENV_FILE)"); \
 	mkdir -p "$$runtime_root/langfuse/postgres" "$$runtime_root/langfuse/clickhouse/data" "$$runtime_root/langfuse/clickhouse/logs" "$$runtime_root/langfuse/redis" "$$runtime_root/langfuse/minio"; \
 	chmod a+rwx "$$runtime_root/langfuse" "$$runtime_root/langfuse/postgres" "$$runtime_root/langfuse/clickhouse" "$$runtime_root/langfuse/clickhouse/data" "$$runtime_root/langfuse/clickhouse/logs" "$$runtime_root/langfuse/redis" "$$runtime_root/langfuse/minio" 2>/dev/null || true
 
@@ -150,7 +167,7 @@ langfuse-logs:
 	$(COMPOSE) --profile langfuse logs -f langfuse-web langfuse-worker
 
 langfuse-smoke:
-	$(PYTHON_RUN) scripts/langfuse_smoke.py --env-file docker/.env
+	$(PYTHON_RUN) scripts/langfuse_smoke.py --env-file "$(COMPOSE_ENV_FILE)"
 
 runtime-bootstrap:
 	$(COMPOSE) run --rm --no-deps claude-agent-api prepare
@@ -159,7 +176,7 @@ runtime-validate:
 	$(COMPOSE) run --rm --no-deps claude-agent-api validate
 
 runtime-clean:
-	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --runtime-artifacts
+	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --env-file "$(COMPOSE_ENV_FILE)" --runtime-artifacts
 
 local-debug-env:
 	cp -n docker/.env.local-debug.example docker/.env.local-debug || true
@@ -176,31 +193,21 @@ local-debug-clean: local-debug-env
 runtime-volume-seeds-scan:
 	$(PYTHON_RUN) scripts/runtime_template_safety.py verify docker/runtime-volume-seeds
 
-runtime-volume-seeds-export:
-	$(PYTHON_RUN) scripts/export_runtime_template.py
-
 runtime-volume-seeds-clean:
 	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --template-artifacts
 
 clean-runtime-artifacts: runtime-clean local-debug-clean runtime-volume-seeds-clean
 
-runtime-volume-seeds-restore:
-	@if [ -z "$(BACKUP)" ]; then echo "BACKUP=<backup-file> is required" >&2; exit 1; fi
-	$(PYTHON_RUN) scripts/restore_runtime_template_backup.py --backup "$(BACKUP)"
-
-runtime-volume-seeds-restore-list:
-	$(PYTHON_RUN) scripts/restore_runtime_template_backup.py --list
-
 smoke:
-	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py --require-ready
+	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py --env-file "$(COMPOSE_ENV_FILE)" --require-ready
 
 compose-diagnose:
 	@bash scripts/compose_diagnose.sh
 
 chat:
-	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_key=$${API_KEY:-$$(awk -F= '$$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
+	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	api_key=$${API_KEY:-$$(awk -F= '$$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
 	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
 	curl -s -X POST "$$api_base/api/chat" \
 		-H 'Content-Type: application/json' \
@@ -220,8 +227,8 @@ openapi-contract-check:
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
 
 container-openapi-check:
-	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
+	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
 	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --base-url "$$api_base" --compare-local --fail
 

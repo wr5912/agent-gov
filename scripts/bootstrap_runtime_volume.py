@@ -6,26 +6,10 @@ import json
 import os
 import re
 import shutil
+import stat
 from collections.abc import Iterable, MutableMapping
 from pathlib import Path
 from typing import TypedDict
-
-try:
-    from scripts.runtime_template_renderer import (
-        RuntimeTemplateRenderContext,
-        build_render_context,
-        is_template_managed_text_file,
-        render_template_file,
-        validate_rendered_config,
-    )
-except ModuleNotFoundError:  # pragma: no cover - direct script execution
-    from runtime_template_renderer import (
-        RuntimeTemplateRenderContext,
-        build_render_context,
-        is_template_managed_text_file,
-        render_template_file,
-        validate_rendered_config,
-    )
 
 DEFAULT_TEMPLATE_DIR = Path("docker/runtime-volume-seeds")
 DEFAULT_ENV_FILE = Path("docker/.env")
@@ -79,7 +63,6 @@ class BootstrapResult(TypedDict):
     copied: list[str]
     skipped_existing: list[str]
     migrated: list[str]
-    validation_errors: list[str]
 
 
 def _repo_root() -> Path:
@@ -165,23 +148,24 @@ def _copy_missing(
     *,
     rel_path: Path,
     dry_run: bool,
-    render_context: RuntimeTemplateRenderContext,
     copied: list[str],
     skipped: list[str],
-    validation_errors: list[str],
 ) -> None:
+    source_mode = src.lstat().st_mode
+    if stat.S_ISLNK(source_mode) or not (stat.S_ISDIR(source_mode) or stat.S_ISREG(source_mode)):
+        raise ValueError(f"Runtime seed entry must be a regular file or directory: {rel_path.as_posix()}")
     # 业务 Agent workspace 是 Git 版本源。只有整个 workspace 不存在时才播种出生配置；
     # 已存在 workspace 不逐文件 fill-missing，避免把版本中有意删除的文件复活。
     parts = rel_path.parts
     is_business_workspace_root = len(parts) == 4 and parts[0] == "data" and parts[1] == "business-agents" and parts[3] == "workspace"
-    if is_business_workspace_root and src.is_dir() and dest.exists():
+    if is_business_workspace_root and stat.S_ISDIR(source_mode) and dest.exists():
         skipped.append(dest.as_posix())
         return
     # governor-workspace 是平台治理配置（治理执行者的 prompt/权限/skill），不是用户在卷里积累的业务优化态，
     # 应始终跟随 seed：每次 bootstrap 从 seed 强制覆盖，使「改 governor 配置→重建」即在现网生效
     # （只覆盖 seed 中存在的文件，卷内私有/会话文件不动；业务 Agent 卷仍走上面的 fill-missing、绝不回灌）。
     overwrite = bool(parts and parts[0] == "governor-workspace")
-    if src.is_dir():
+    if stat.S_ISDIR(source_mode):
         if not dry_run:
             dest.mkdir(parents=True, exist_ok=True)
         for child in sorted(src.iterdir()):
@@ -190,16 +174,10 @@ def _copy_missing(
                 dest / child.name,
                 rel_path=rel_path / child.name,
                 dry_run=dry_run,
-                render_context=render_context,
                 copied=copied,
                 skipped=skipped,
-                validation_errors=validation_errors,
             )
         return
-    content: str | None = None
-    if is_template_managed_text_file(rel_path):
-        content = render_template_file(src.read_text(encoding="utf-8"), rel_path=rel_path, context=render_context)
-        validation_errors.extend(validate_rendered_config(content, rel_path=rel_path, context=render_context))
     if dest.exists() and not overwrite:
         skipped.append(dest.as_posix())
         return
@@ -207,10 +185,7 @@ def _copy_missing(
     if dry_run:
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if content is None:
-        shutil.copy2(src, dest)
-    else:
-        dest.write_text(content, encoding="utf-8")
+    shutil.copy2(src, dest)
 
 
 def _remove_empty_parents(path: Path, *, stop_at: Path) -> None:
@@ -274,17 +249,11 @@ def bootstrap_runtime_volume(
     env: MutableMapping[str, str] | None = None,
     dry_run: bool = False,
 ) -> BootstrapResult:
+    del runtime_volume_mode, env
     copied: list[str] = []
     skipped: list[str] = []
     migrated: list[str] = []
-    validation_errors: list[str] = []
     created_dirs: list[str] = []
-    render_context = build_render_context(
-        mode=runtime_volume_mode,
-        env=env or {},
-        runtime_root=runtime_root,
-    )
-
     for rel in RUNTIME_DATA_DIRS:
         path = runtime_root / rel
         created_dirs.append(path.as_posix())
@@ -304,10 +273,8 @@ def bootstrap_runtime_volume(
                 runtime_root / entry.name,
                 rel_path=Path(entry.name),
                 dry_run=dry_run,
-                render_context=render_context,
                 copied=copied,
                 skipped=skipped,
-                validation_errors=validation_errors,
             )
 
     return {
@@ -315,7 +282,6 @@ def bootstrap_runtime_volume(
         "copied": copied,
         "skipped_existing": skipped,
         "migrated": migrated,
-        "validation_errors": validation_errors,
     }
 
 
@@ -357,7 +323,7 @@ def main() -> int:
                 indent=2,
             )
         )
-    return 1 if result["validation_errors"] else 0
+    return 0
 
 
 if __name__ == "__main__":

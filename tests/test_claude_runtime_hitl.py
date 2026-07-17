@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import shutil
 import threading
 from pathlib import Path
@@ -27,7 +26,6 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
 from app.runtime.stores.response_disposition_claim_store import ResponseDispositionClaimStore
-from scripts.runtime_template_renderer import build_render_context, render_template_file
 
 SOC_EXECUTE_TOOL = "mcp__sec-ops__soc_api__execute"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -47,12 +45,6 @@ def _settings(
     claude_home = claude_root / ".claude"
     seed_workspace = SEED_AGENT_ROOT / agent_id / "workspace"
     shutil.copytree(seed_workspace, workspace)
-    context = build_render_context(mode="local-debug", env=os.environ, runtime_root=tmp_path / "volume")
-    mcp_path = workspace / ".mcp.json"
-    mcp_path.write_text(
-        render_template_file(mcp_path.read_text(encoding="utf-8"), rel_path=Path(".mcp.json"), context=context),
-        encoding="utf-8",
-    )
     settings_path = workspace / ".claude" / "settings.json"
     settings_data = json.loads(settings_path.read_text(encoding="utf-8"))
     if ask_rules is not None:

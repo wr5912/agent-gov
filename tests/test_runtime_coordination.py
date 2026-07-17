@@ -2,22 +2,20 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import stat
 import subprocess
 import sys
 from pathlib import Path
 
-import app.runtime.runtime_initialization as runtime_initialization
 import pytest
 from app.runtime.advisory_lock import advisory_lock
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_paths import business_agent_layout
+from app.runtime.managed_agent_policy import ManagedAgentPolicyError
 from app.runtime.runtime_coordination import (
     RuntimeCoordinationPaths,
     prepare_runtime_contract,
     runtime_contract_status,
 )
-from app.runtime.runtime_initialization import RuntimeInitializationError
 from app.runtime.settings import AppSettings
 
 _GENERIC_MUTATION_ASK = [
@@ -56,7 +54,7 @@ def _template(tmp_path: Path) -> Path:
             "enabled": True,
             "failIfUnavailable": True,
             "autoAllowBashIfSandboxed": False,
-            "enableWeakerNestedSandbox": False,
+            "enableWeakerNestedSandbox": True,
             "allowUnsandboxedCommands": False,
         },
     }
@@ -99,33 +97,36 @@ def _remove_managed_ask(settings: AppSettings, *, commit: bool) -> GitAgentVersi
     return store
 
 
-def test_runtime_receipt_is_idempotent_and_bound_to_environment(tmp_path):
+def test_runtime_receipt_is_idempotent_and_not_bound_to_runtime_endpoint_env(tmp_path):
     settings = _settings(tmp_path)
     template = _template(tmp_path)
 
     first = _prepare(settings, template)
+    receipt_payload = json.loads(RuntimeCoordinationPaths.from_data_dir(settings.data_dir).receipt.read_text(encoding="utf-8"))
     status = runtime_contract_status(settings=settings, template_dir=template, env={})
     second = _prepare(settings, template)
 
+    assert set(receipt_payload) == {
+        "completed_at",
+        "contract",
+        "desired_digest",
+        "runtime_mode",
+        "volume_id",
+    }
     assert status.valid is True
     assert status.reason == "ok"
+    assert status.workspace_validation_digest
     assert second.volume_id == first.volume_id
-    assert (
-        runtime_contract_status(
-            settings=settings,
-            template_dir=template,
-            env={"MCP_SERVER_URL": "http://different.example/mcp"},
-        ).reason
-        == "desired_digest_mismatch"
-    )
-    assert (
-        runtime_contract_status(
-            settings=settings,
-            template_dir=template,
-            env={"CLAUDE_ALLOWED_NETWORK_DOMAINS": "soc.internal"},
-        ).reason
-        == "desired_digest_mismatch"
-    )
+    assert runtime_contract_status(
+        settings=settings,
+        template_dir=template,
+        env={"MCP_SERVER_URL": "http://different.example/mcp"},
+    ).valid
+    assert runtime_contract_status(
+        settings=settings,
+        template_dir=template,
+        env={"CLAUDE_ALLOWED_NETWORK_DOMAINS": "soc.internal"},
+    ).valid
 
 
 def test_runtime_receipt_is_bound_to_local_runtime_root(tmp_path):
@@ -142,61 +143,56 @@ def test_runtime_receipt_is_bound_to_local_runtime_root(tmp_path):
     assert status.reason == "desired_digest_mismatch"
 
 
-def test_clean_historical_workspace_is_migrated_with_git_snapshot(tmp_path):
+def test_clean_historical_workspace_is_not_rewritten_or_recommitted(tmp_path):
     settings = _settings(tmp_path)
     template = _template(tmp_path)
     _prepare(settings, template)
-    expected_hook = (template / "data" / "business-agents" / "main-agent" / "workspace" / "hooks" / "pre_tool_guard.py").read_text(encoding="utf-8")
-    hook_path = settings.main_workspace_dir / "hooks" / "pre_tool_guard.py"
-    hook_path.unlink()
     store = _remove_managed_ask(settings, commit=True)
     historical_head = store.current_commit_sha()
+    settings_path = settings.main_workspace_dir / ".claude" / "settings.json"
+    historical_bytes = settings_path.read_bytes()
 
-    receipt = _prepare(settings, template)
-
-    assert receipt.agent_commits["main-agent"] == store.current_commit_sha()
-    assert store.current_commit_sha() != historical_head
-    assert store.workspace_changes() == []
-    assert hook_path.read_text(encoding="utf-8") == expected_hook
-    assert stat.S_IMODE(hook_path.stat().st_mode) == 0o600
-
-
-def test_managed_policy_migration_failure_restores_historical_git_snapshot(tmp_path, monkeypatch):
-    settings = _settings(tmp_path)
-    template = _template(tmp_path)
     _prepare(settings, template)
-    hook_path = settings.main_workspace_dir / "hooks" / "pre_tool_guard.py"
-    hook_path.unlink()
-    store = _remove_managed_ask(settings, commit=True)
-    historical_head = store.current_commit_sha()
-    real_write = runtime_initialization._write_policy_changes
-
-    def write_then_fail(workspace, changes):
-        real_write(workspace, changes)
-        raise OSError("injected managed migration failure")
-
-    monkeypatch.setattr(runtime_initialization, "_write_policy_changes", write_then_fail)
-
-    with pytest.raises(OSError, match="injected managed migration failure"):
-        _prepare(settings, template)
 
     assert store.current_commit_sha() == historical_head
     assert store.workspace_changes() == []
-    assert not hook_path.exists()
-    assert not (RuntimeCoordinationPaths.from_data_dir(settings.data_dir).root / "migration-journal.json").exists()
+    assert settings_path.read_bytes() == historical_bytes
 
 
-def test_dirty_workspace_blocks_managed_policy_migration(tmp_path):
+def test_invalid_historical_workspace_fails_read_only_validation_without_rewrite(tmp_path):
     settings = _settings(tmp_path)
     template = _template(tmp_path)
     _prepare(settings, template)
-    _remove_managed_ask(settings, commit=False)
+    store = _main_store(settings)
+    historical_head = store.current_commit_sha()
+    settings_path = settings.main_workspace_dir / ".claude" / "settings.json"
+    settings_path.write_text("{", encoding="utf-8")
 
-    with pytest.raises(RuntimeInitializationError, match="Dirty workspace blocks"):
+    with pytest.raises(ManagedAgentPolicyError, match="invalid_settings"):
         _prepare(settings, template)
 
+    assert store.current_commit_sha() == historical_head
+    assert settings_path.read_text(encoding="utf-8") == "{"
+    assert {str(item["path"]) for item in store.workspace_changes()} == {".claude/settings.json"}
 
-def test_open_change_set_blocks_migration_before_head_changes(tmp_path):
+
+def test_dirty_workspace_does_not_block_receipt_refresh_or_get_committed(tmp_path):
+    settings = _settings(tmp_path)
+    template = _template(tmp_path)
+    _prepare(settings, template)
+    store = _remove_managed_ask(settings, commit=False)
+    historical_head = store.current_commit_sha()
+    settings_path = settings.main_workspace_dir / ".claude" / "settings.json"
+    dirty_bytes = settings_path.read_bytes()
+
+    _prepare(settings, template)
+
+    assert store.current_commit_sha() == historical_head
+    assert settings_path.read_bytes() == dirty_bytes
+    assert {str(item["path"]) for item in store.workspace_changes()} == {".claude/settings.json"}
+
+
+def test_open_change_set_does_not_trigger_workspace_migration(tmp_path):
     settings = _settings(tmp_path)
     template = _template(tmp_path)
     _prepare(settings, template)
@@ -210,8 +206,7 @@ def test_open_change_set_blocks_migration_before_head_changes(tmp_path):
             ("agc-open", "main-agent", "draft"),
         )
 
-    with pytest.raises(RuntimeInitializationError, match="Open change sets block"):
-        _prepare(settings, template)
+    _prepare(settings, template)
 
     assert store.current_commit_sha() == historical_head
 

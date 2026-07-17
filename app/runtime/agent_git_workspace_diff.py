@@ -27,16 +27,18 @@ def parse_workspace_changes(
         safe_path = normalize_path(raw_path)
         if not safe_path:
             continue
-        untracked = index_status == "?" and worktree_status == "?"
+        ignored = index_status == "!" and worktree_status == "!"
+        untracked = (index_status == "?" and worktree_status == "?") or ignored
         changes.append(
             {
                 "path": safe_path,
                 "status": workspace_change_status(index_status, worktree_status),
                 "index_status": index_status,
                 "worktree_status": worktree_status,
-                "staged": index_status not in {" ", "?"},
-                "unstaged": worktree_status not in {" ", "?"},
+                "staged": index_status not in {" ", "?", "!"},
+                "unstaged": worktree_status not in {" ", "?", "!"},
                 "untracked": untracked,
+                "ignored": ignored,
                 "discardable": True,
             }
         )
@@ -44,7 +46,7 @@ def parse_workspace_changes(
 
 
 def workspace_change_status(index_status: str, worktree_status: str) -> str:
-    if index_status == "?" and worktree_status == "?":
+    if (index_status, worktree_status) in {("?", "?"), ("!", "!")}:
         return "untracked"
     if "D" in {index_status, worktree_status}:
         return "deleted"

@@ -75,12 +75,13 @@ def _begin_persisted_turn(
         session,
         run_id=run_id,
         agent_id=agent_id,
-        attempted_sdk_session_id=str(uuid.uuid4()),
+        new_sdk_session_id=str(uuid.uuid4()),
         sdk_project_key=f"test-{agent_id}",
+        resolve_agent_version_id=lambda: "test-version",
         request={"message": "test"},
         created_at="2026-07-14T00:00:00+00:00",
         lease_seconds=lease_seconds,
-    )
+    ).session
 
 
 def test_session_owner_is_claimed_once_and_cannot_change(tmp_path):

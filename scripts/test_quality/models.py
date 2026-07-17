@@ -53,7 +53,7 @@ class Capability(StrictModel):
 class Lane(StrictModel):
     id: Identifier
     description: NonEmpty
-    enforcement: Literal["blocking", "shadow", "scheduled", "release"]
+    enforcement: Literal["blocking", "shadow", "scheduled", "manual"]
     triggers: Annotated[list[Literal["pull_request", "push", "schedule", "workflow_dispatch", "release"]], Field(min_length=1)]
 
 

@@ -118,10 +118,10 @@
       "triggers": ["schedule", "workflow_dispatch", "release"]
     },
     {
-      "id": "release-live",
-      "description": "受保护环境中的真实容器、模型、迁移、恢复与回滚验收",
-      "enforcement": "release",
-      "triggers": ["workflow_dispatch", "release"]
+      "id": "container-live-acceptance",
+      "description": "人工触发的真实容器、模型、迁移、恢复与回滚验收，不阻塞持续 CI",
+      "enforcement": "manual",
+      "triggers": ["workflow_dispatch"]
     }
   ],
   "portfolio": {
@@ -136,6 +136,11 @@
           "tests/test_multi_business_agent_governance.py",
           "tests/test_seeded_business_agent_configs.py"
         ],
+        "exclude_selectors": [
+          "tests/test_agent_workspace_frontend_contract.py",
+          "tests/test_agent_workspace_package_operations.py",
+          "tests/test_agent_workspace_packages.py"
+        ],
         "classification": {
           "lifecycle": "KEEP",
           "level": "component",
@@ -148,18 +153,34 @@
         }
       },
       {
+        "id": "agent-workspace-package-suite",
+        "selectors": [
+          "tests/test_agent_workspace_package_operations.py",
+          "tests/test_agent_workspace_packages.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "integration",
+          "purpose": "requirement-acceptance",
+          "owner": "agent-lifecycle",
+          "capabilities": ["agent-lifecycle", "security-boundaries"],
+          "lanes": ["main-full", "nightly-full"],
+          "parallelism": "worker-safe",
+          "resources": ["db", "git", "process"]
+        }
+      },
+      {
         "id": "runtime-platform-suite",
         "selectors": [
           "tests/test_claude*.py",
           "tests/test_config_mapping.py",
+          "tests/test_ci_status_relay*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
           "tests/test_pr_aid_metadata.py",
-          "tests/test_release_controller*.py",
           "tests/test_health*.py",
           "tests/test_import.py",
           "tests/test_logging_config.py",
           "tests/test_model_provider*.py",
-          "tests/test_restart_agent_gov_on_host_script.py",
           "tests/test_runtime*.py",
           "tests/test_schema_self_heal.py",
           "tests/test_sdk*.py",
@@ -225,6 +246,7 @@
       {
         "id": "frontend-contract-suite",
         "selectors": [
+          "tests/test_agent_workspace_frontend_contract.py",
           "tests/test_release_workbench_contract.py",
           "tests/test_test_dataset_frontend_contract.py"
         ],
@@ -274,9 +296,9 @@
           "tests/test_claude*.py",
           "tests/test_config_mapping.py",
           "tests/test_conversations*.py",
+          "tests/test_ci_status_relay*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
           "tests/test_pr_aid_metadata.py",
-          "tests/test_release_controller*.py",
           "tests/test_execution_content_guards.py",
           "tests/test_feedback*.py",
           "tests/test_governor*.py",
@@ -299,7 +321,6 @@
           "tests/test_repository_env_policy.py",
           "tests/test_response_disposition*.py",
           "tests/test_responses*.py",
-          "tests/test_restart_agent_gov_on_host_script.py",
           "tests/test_runtime*.py",
           "tests/test_schema_self_heal.py",
           "tests/test_sdk*.py",
@@ -332,7 +353,7 @@
           "purpose": "requirement-acceptance",
           "owner": "runtime-platform",
           "capabilities": ["runtime-deployment"],
-          "lanes": ["release-live"],
+          "lanes": ["container-live-acceptance"],
           "parallelism": "exclusive",
           "resources": ["docker", "browser", "live-provider", "serial"]
         }
@@ -348,7 +369,7 @@
       "owner": "integrations",
       "risk": "medium",
       "description": "真实 Langfuse OTLP traces/logs 接收端兼容性尚无可执行在线断言",
-      "target_lane": "release-live",
+      "target_lane": "container-live-acceptance",
       "issue": "#58",
       "acceptance": [
         "在受保护 live 环境使用真实鉴权探测 traces 与 logs 端点",
@@ -387,6 +408,77 @@
         "id": "openai-contract",
         "changed_paths": ["app/runtime/openai_*.py", "app/routers/responses.py", "app/routers/conversations.py"],
         "test_selectors": ["tests/test_responses*.py", "tests/test_conversations*.py", "tests/test_openapi*.py"]
+      },
+      {
+        "id": "agent-workspace-package",
+        "changed_paths": [
+          "app/openapi_contract.py",
+          "app/routers/agent_workspace_packages.py",
+          "app/runtime/agent_admission.py",
+          "app/runtime/agent_git_store.py",
+          "app/runtime/agent_git_raw_storage.py",
+          "app/runtime/agent_workspace_package_schemas.py",
+          "app/runtime/session_store.py",
+          "app/services/agent_change_set_queries.py",
+          "app/services/agent_version_maintenance.py",
+          "app/services/agent_workspace_package*.py"
+        ],
+        "test_selectors": [
+          "tests/test_agent_git_store.py",
+          "tests/test_agent_version_maintenance.py",
+          "tests/test_agent_workspace_package_operations.py",
+          "tests/test_agent_workspace_packages.py"
+        ]
+      },
+      {
+        "id": "business-agent-workspace-provisioning",
+        "changed_paths": [
+          "app/routers/agents.py",
+          "app/runtime/agent_governance_schemas.py",
+          "app/runtime/agent_profiles.py",
+          "app/runtime/business_agent_seed_catalog.py",
+          "app/runtime/business_agent_workspace.py",
+          "app/runtime/managed_agent_policy.py",
+          "app/runtime/runtime_coordination.py",
+          "app/runtime/runtime_initialization.py",
+          "app/services/business_agent_provisioning.py",
+          "docker/runtime-volume-seeds/**",
+          "scripts/bootstrap_runtime_volume.py",
+          "scripts/runtime_template_safety*.py"
+        ],
+        "test_selectors": [
+          "tests/test_agent_profiles_category.py",
+          "tests/test_agent_provisioning_saga.py",
+          "tests/test_agent_workspace_packages.py::test_cross_id_seed_creation_copies_bytes_and_rejects_ambiguous_source",
+          "tests/test_bootstrap_business_agent_protection.py",
+          "tests/test_business_agent_templates.py",
+          "tests/test_managed_agent_policy.py",
+          "tests/test_runtime_coordination.py",
+          "tests/test_runtime_template_tools.py",
+          "tests/test_seeded_business_agent_configs.py",
+          "tests/test_workspace_hooks.py"
+        ]
+      },
+      {
+        "id": "agent-workspace-frontend",
+        "changed_paths": [
+          "frontend/package.json",
+          "frontend/src/api/request.ts",
+          "frontend/src/api/runtime.ts",
+          "frontend/src/components/AgentCreate*.tsx",
+          "frontend/src/components/AgentWorkspacePackagePanel.*",
+          "frontend/src/components/SettingsModal.css",
+          "frontend/src/components/SettingsModal.tsx",
+          "frontend/src/components/agentSettingsValidation.ts",
+          "frontend/src/types/api.ts",
+          "frontend/src/types/runtime.ts",
+          "scripts/verify_agent_workspace_settings.mjs"
+        ],
+        "test_selectors": [
+          "tests/test_agent_workspace_frontend_contract.py",
+          "tests/test_agent_workspace_packages.py::test_workspace_package_openapi_documents_binary_multipart_and_export_receipt_headers",
+          "tests/test_openapi_export.py"
+        ]
       },
       {
         "id": "frontend-contract",
@@ -541,10 +633,10 @@
             "tests/test_agent_profiles_category.py::test_governor_build_options_uses_project_discovery_without_policy_injection",
             "tests/test_managed_agent_policy.py::test_seeded_business_agent_workspaces_match_managed_policy",
             "tests/test_managed_agent_policy.py::test_symlinked_hook_parent_is_rejected_without_reading_external_content",
-            "tests/test_agent_governance_publish.py::test_publish_rejects_candidate_that_drifts_managed_pre_tool_guard",
+            "tests/test_agent_governance_publish.py::test_publish_rejects_candidate_with_missing_referenced_hook",
             "tests/test_native_workspace_policy.py::test_native_pre_tool_guard_invalid_input_blocks_with_exit_two",
             "tests/test_native_workspace_policy.py::test_native_pre_tool_guard_ignores_valid_non_bash_events",
-            "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_migrated_with_git_snapshot",
+            "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_not_rewritten_or_recommitted",
             "tests/test_improvement_governor_service.py::test_attribution_accepts_relative_claude_md_evidence",
             "tests/test_improvement_governor_service.py::test_attribution_rejects_path_traversal_evidence",
             "tests/test_improvement_governor_service.py::test_guard_rejection_is_logged_not_silent",
@@ -788,19 +880,19 @@
             "tests/test_seeded_business_agent_configs.py::test_hitl_required_deployment_contract_and_low_fixes",
             "tests/test_agent_registry_store.py::test_lifespan_auto_registers_seeded_business_agents",
             "tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent",
-            "tests/test_bootstrap_business_agent_protection.py::test_bootstrap_preserves_optimized_business_agent_and_renders_new_seed"
+            "tests/test_bootstrap_business_agent_protection.py::test_bootstrap_preserves_optimized_business_agent_and_copies_new_seed"
           ]
         },
         {
           "id": "security_operations_expert_approved_playbook_hitl",
-          "description": "security-operations-expert 只在 RO 认证的 approved_execution 中对精确 soc_api__create/manual 逐次 HITL；execute 与其他 mutation 禁止，历史 workspace 可原子修复并回滚。",
+          "description": "security-operations-expert 只在 RO 认证的 approved_execution 中对精确 soc_api__create/manual 逐次 HITL；execute 与其他 mutation 禁止，历史 workspace 启动时只读校验、不自动改写。",
           "pytest": [
             "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_fuses_response_disposal_permissions",
             "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_config_matches_agent_id_and_response_contract",
             "tests/test_managed_agent_policy.py::test_security_operations_workspace_matches_specialized_managed_policy",
-            "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_migrated_with_git_snapshot",
-            "tests/test_runtime_coordination.py::test_dirty_workspace_blocks_managed_policy_migration",
-            "tests/test_runtime_coordination.py::test_open_change_set_blocks_migration_before_head_changes",
+            "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_not_rewritten_or_recommitted",
+            "tests/test_runtime_coordination.py::test_dirty_workspace_does_not_block_receipt_refresh_or_get_committed",
+            "tests/test_runtime_coordination.py::test_open_change_set_does_not_trigger_workspace_migration",
             "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_requires_ro_for_approved_create_and_manual",
             "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_disabled_hitl_denies_approved_tools_and_execute",
             "tests/test_claude_runtime_hitl.py::test_run_security_operations_expert_denies_all_permission_requests_without_stream_hitl",
@@ -820,6 +912,54 @@
             "tests/test_agent_provisioning_saga.py::test_concurrent_same_agent_id_has_exactly_one_winner",
             "tests/test_agent_provisioning_saga.py::test_startup_recovery_restores_tombstone_and_hides_new_orphan",
             "tests/test_agent_provisioning_saga.py::test_crash_recovery_blocks_partial_workspace_reuse_until_verified_cleanup"
+          ]
+        },
+        {
+          "id": "declared_business_agent_seed_instantiation",
+          "description": "repo 声明 seed 先满足项目仓库准入，再按普通文件字节和权限配置跨 ID 原样实例化；generic template 的身份 token 与保守权限不覆盖声明 seed。",
+          "pytest": [
+            "tests/test_agent_workspace_packages.py::test_cross_id_seed_creation_copies_bytes_and_rejects_ambiguous_source",
+            "tests/test_runtime_template_tools.py::test_runtime_template_safety_warns_for_declared_seed_endpoint_but_blocks_embedded_secret",
+            "tests/test_runtime_template_tools.py::test_runtime_template_safety_keeps_generic_template_endpoints_strict"
+          ]
+        },
+        {
+          "id": "business_agent_workspace_package_round_trip",
+          "description": "live 业务 Agent workspace 可按当前 Git tree 原样导出、导入、CAS 覆盖并以新 commit 恢复；二进制、真实 endpoint 与 workspace 自有 .env 不被改写，危险 tar member 和并发维护被明确拒绝。",
+          "pytest": [
+            "tests/test_agent_workspace_packages.py::test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env",
+            "tests/test_agent_workspace_packages.py::test_workspace_export_restores_exec_tracking_when_existing_git_disabled_filemode",
+            "tests/test_agent_workspace_packages.py::test_workspace_commit_reader_scales_to_ten_thousand_paths_with_one_batch_process",
+            "tests/test_agent_workspace_packages.py::test_workspace_batch_reader_spools_stderr_without_exposing_repository_path",
+            "tests/test_agent_workspace_packages.py::test_workspace_commit_reader_rejects_empty_raw_tree_path_before_blob_read",
+            "tests/test_agent_workspace_packages.py::test_workspace_overwrite_requires_cas_and_restore_creates_new_commit",
+            "tests/test_agent_workspace_packages.py::test_workspace_import_invalidates_sdk_resume_and_next_turn_reads_applied_commit",
+            "tests/test_agent_workspace_packages.py::test_workspace_import_rejects_active_first_turn_without_changing_head",
+            "tests/test_agent_workspace_packages.py::test_workspace_restore_rejects_historical_non_regular_tree_without_changing_head",
+            "tests/test_agent_workspace_packages.py::test_workspace_restore_projects_size_and_session_invalidation_failures_without_changing_head",
+            "tests/test_agent_workspace_packages.py::test_workspace_import_rejects_unsafe_tar_members_without_registering_agent",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_import_rejects_missing_or_invalid_http_multipart_contract",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_package_operation_conflicts_with_active_agent_maintenance",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_package_checks_all_open_change_sets_without_list_window",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_git_bootstrap_failure_is_structured",
+            "tests/test_agent_workspace_package_operations.py::test_new_agent_import_compensates_git_and_registry_when_finalize_fails",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_import_rejects_invalid_configs_and_size_limits_before_mutation",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_export_rejects_symlink_and_oversized_tree_without_advancing_head",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_import_rechecks_lease_immediately_before_activation",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_import_reports_success_after_merge_even_if_lease_release_is_lost",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_import_does_not_activate_when_sdk_session_invalidation_fails",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_import_rejects_file_created_during_session_invalidation",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_import_does_not_overwrite_ignored_file_created_at_merge",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_import_compensates_git_and_session_mapping_when_activation_commit_fails",
+            "tests/test_agent_version_maintenance.py::test_activation_guard_serializes_runtime_admission_until_side_effect_finishes",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_export_unstages_original_dirty_state_when_snapshot_commit_fails",
+            "tests/test_agent_workspace_package_operations.py::test_workspace_export_cleans_artifact_and_restores_dirty_state_when_release_is_lost",
+            "tests/test_agent_workspace_packages.py::test_workspace_package_openapi_documents_binary_multipart_and_export_receipt_headers",
+            "tests/test_agent_git_store.py::test_git_store_snapshots_raw_bytes_and_exec_bit_despite_repository_attributes",
+            "tests/test_agent_workspace_frontend_contract.py::test_settings_workspace_flow_exposes_source_receipt_restore_and_failure_details"
+          ],
+          "ui_scripts": [
+            "verify:agent-workspace-settings"
           ]
         }
       ]

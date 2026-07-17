@@ -150,8 +150,7 @@ def _runtime(tmp_path) -> ClaudeRuntime:
     )
     workspace = settings.main_workspace_dir
     seed_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
-    # 托管策略校验要求 workspace 的 .mcp.json 与种子一致，否则流会以
-    # managed_policy_drift 直接失败——那样本文件就会「因错误的原因变红」。
+    # 使用真实 endpoint fixture，覆盖 Claude Runtime 对 live workspace 原样配置的读取。
     (workspace / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}, indent=2)
         + "\n",

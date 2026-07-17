@@ -84,6 +84,7 @@ def test_governor_workspace_owns_read_only_policy() -> None:
     assert {"Write(/**)", "Edit(/**)", "Bash(*)"} <= set(permissions["deny"])
     assert policy["sandbox"]["enabled"] is True
     assert policy["sandbox"]["failIfUnavailable"] is True
+    assert policy["sandbox"]["enableWeakerNestedSandbox"] is True
 
 
 def test_governor_build_options_uses_project_discovery_without_policy_injection() -> None:

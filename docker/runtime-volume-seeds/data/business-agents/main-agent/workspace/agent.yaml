@@ -17,14 +17,15 @@ capabilities:
   - ocsf_stix_threat_modeling
 
 paths:
-  workspace: /data/business-agents/main-agent/workspace
-  claude_home: /data/business-agents/main-agent/claude-root/.claude
-  data_root: /data
-  sessions: /data/sessions
-  transcripts: /data/transcripts
-  uploads: /data/uploads
-  outputs: /data/outputs
-  agent_memory: /data/agent-memory
+  # 以下路径均以 workspace 为基准，容器与本机调试使用同一份 seed。
+  workspace: .
+  claude_home: ../claude-root/.claude
+  data_root: ../../..
+  sessions: ../../../sessions
+  transcripts: ../../../transcripts
+  uploads: ../../../uploads
+  outputs: ../../../outputs
+  agent_memory: ../../../agent-memory
 
 mcp:
   default_transport: http
@@ -58,9 +59,9 @@ approval_policy:
   require_evidence: true
 
 observability:
-  hook_audit_log: /data/transcripts/claude-hook-audit.jsonl
-  response_plan_dir: /data/outputs/response-plans
-  report_dir: /data/outputs/reports
+  hook_audit_log: ../../../transcripts/claude-hook-audit.jsonl
+  response_plan_dir: ../../../outputs/response-plans
+  report_dir: ../../../outputs/reports
 
 extension_points:
   add_mcp_server: .mcp.json

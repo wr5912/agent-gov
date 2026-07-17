@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import io
 import json
 import sys
-import tarfile
 from pathlib import Path
 
 import pytest
@@ -13,12 +11,22 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-import restore_runtime_template_backup as restore_module  # noqa: E402
 from bootstrap_runtime_volume import LOCAL_DEBUG_RUNTIME_VOLUME_ROOT, bootstrap_runtime_volume, resolve_runtime_root  # noqa: E402
-from export_runtime_template import _create_backup, export_runtime_template  # noqa: E402
-from restore_runtime_template_backup import restore_backup  # noqa: E402
 from runtime_cleanup import cleanup_runtime_artifacts  # noqa: E402
 from runtime_template_safety import sanitize_path, scan_path  # noqa: E402
+
+
+def test_runtime_template_safety_scan_is_read_only(tmp_path):
+    template = tmp_path / "template"
+    mcp_path = template / "data" / "business-agents" / "support-agent" / "workspace" / ".mcp.json"
+    mcp_path.parent.mkdir(parents=True)
+    original = b'{"mcpServers":{"support":{"url":"https://user:secret@support.example/mcp"}}}\n'
+    mcp_path.write_bytes(original)
+
+    findings = scan_path(template)
+
+    assert any(finding.severity == "high" for finding in findings)
+    assert mcp_path.read_bytes() == original
 
 
 def test_runtime_template_safety_sanitizes_network_and_secret_values(tmp_path):
@@ -64,53 +72,6 @@ def test_runtime_template_safety_sanitizes_network_and_secret_values(tmp_path):
     assert scan_path(template) == []
 
 
-def test_export_runtime_template_excludes_private_runtime_state_and_cleans_artifacts(tmp_path):
-    runtime_root = tmp_path / "runtime"
-    workspace = runtime_root / "main-workspace"
-    workspace.mkdir(parents=True)
-    (workspace / ".mcp.json").write_text('{"mcpServers":{"soc":{"type":"http","url":"http://10.0.0.2:58001/mcp"}}}', encoding="utf-8")
-    (workspace / "agent.yaml").write_text(
-        f"paths:\n  workspace: {workspace}\n  claude_home: {runtime_root / 'claude-roots' / 'main' / '.claude'}\n  data_root: {runtime_root / 'data'}\n",
-        encoding="utf-8",
-    )
-    (workspace / ".mcp.local.json").write_text('{"mcpServers":{"soc":{"url":"http://10.0.0.3:58001/mcp"}}}', encoding="utf-8")
-    (workspace / ".env").write_text("API_KEY=secret\n", encoding="utf-8")
-    (workspace / ".git").mkdir()
-    (workspace / ".git" / "config").write_text("[remote]\n", encoding="utf-8")
-    (runtime_root / "data").mkdir()
-    (runtime_root / "data" / "runtime.sqlite3").write_text("sqlite", encoding="utf-8")
-
-    template_dir = tmp_path / "template"
-    template_dir.mkdir()
-    (template_dir / "README.md").write_text("old", encoding="utf-8")
-    backup_dir = tmp_path / "backups"
-    staging_dir = tmp_path / "staging"
-
-    result = export_runtime_template(
-        runtime_root=runtime_root,
-        template_dir=template_dir,
-        backup_dir=backup_dir,
-        staging_root=staging_dir,
-    )
-
-    assert result["ok"] is True
-    assert result["backup"] is None
-    assert not backup_dir.exists()
-    assert not staging_dir.exists()
-    assert (template_dir / "README.md").exists()
-    assert not (template_dir / "main-workspace" / ".mcp.local.json").exists()
-    assert not (template_dir / "main-workspace" / ".env").exists()
-    assert not (template_dir / "main-workspace" / ".git" / "config").exists()
-    assert not (template_dir / "data" / "runtime.sqlite3").exists()
-    mcp = json.loads((template_dir / "main-workspace" / ".mcp.json").read_text(encoding="utf-8"))
-    assert mcp["mcpServers"]["soc"]["url"] == "${MCP_SERVER_URL}"
-    agent = (template_dir / "main-workspace" / "agent.yaml").read_text(encoding="utf-8")
-    assert "workspace: /main-workspace" in agent
-    assert "claude_home: /claude-roots/main/.claude" in agent
-    assert "data_root: /data" in agent
-    assert "${HOST_PATH}" not in agent
-
-
 def test_cleanup_runtime_artifacts_removes_backups_without_runtime_data(tmp_path):
     runtime_root = tmp_path / "runtime"
     workspace = runtime_root / "main-workspace"
@@ -151,6 +112,27 @@ def test_cleanup_runtime_artifacts_removes_backups_without_runtime_data(tmp_path
     assert private_mcp.exists()
 
 
+def test_cleanup_runtime_artifacts_removes_retired_template_tool_artifacts(tmp_path):
+    template_dir = tmp_path / "docker" / "runtime-volume-seeds"
+    template_dir.mkdir(parents=True)
+    (template_dir / "README.md").write_text("current\n", encoding="utf-8")
+    retired_artifacts = [
+        template_dir.parent / ".runtime-volume-seeds-backups",
+        template_dir.parent / ".runtime-volume-seeds-staging",
+        template_dir.parent / ".runtime-volume-seeds.restore",
+        template_dir.parent / ".runtime-volume-seeds.before-restore",
+        template_dir.parent / ".runtime-volume-seeds.old-20260608T000000Z",
+    ]
+    for path in retired_artifacts:
+        path.mkdir()
+
+    result = cleanup_runtime_artifacts(template_dir=template_dir)
+
+    assert set(result["removed"]) == {path.as_posix() for path in retired_artifacts}
+    assert all(not path.exists() for path in retired_artifacts)
+    assert (template_dir / "README.md").read_text(encoding="utf-8") == "current\n"
+
+
 def test_runtime_template_safety_rejects_unrenderable_host_path_placeholder(tmp_path):
     template = tmp_path / "template"
     workspace = template / "main-workspace"
@@ -160,6 +142,258 @@ def test_runtime_template_safety_rejects_unrenderable_host_path_placeholder(tmp_
     findings = scan_path(template)
 
     assert any(finding.kind == "unrenderable_placeholder" and finding.severity == "high" for finding in findings)
+
+
+def test_runtime_template_safety_allows_mode_neutral_sandbox_domains_only_in_settings(tmp_path):
+    template = tmp_path / "template"
+    settings_path = template / "data" / "business-agents" / "main-agent" / "workspace" / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "sandbox": {
+                    "network": {
+                        "allowedDomains": [
+                            "localhost",
+                            "127.0.0.1",
+                            "host.docker.internal",
+                            "*.internal",
+                            "*.corp",
+                        ]
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert scan_path(template) == []
+    assert sanitize_path(template)["changed"] == []
+
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    settings["permissions"] = {"allow": ["host.docker.internal"]}
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    assert any(finding.kind == "local_host" for finding in scan_path(template))
+
+
+def test_runtime_template_safety_warns_for_declared_seed_endpoint_but_blocks_embedded_secret(tmp_path):
+    template = tmp_path / "template"
+    mcp_path = template / "data" / "business-agents" / "support-agent" / "workspace" / ".mcp.json"
+    mcp_path.parent.mkdir(parents=True)
+    mcp_path.write_text(
+        json.dumps({"mcpServers": {"support": {"type": "http", "url": "http://support.internal:58001/mcp"}}}),
+        encoding="utf-8",
+    )
+
+    findings = scan_path(template)
+
+    assert any(finding.kind == "endpoint_url" and finding.severity == "medium" for finding in findings)
+    assert any(finding.kind == "internal_domain" and finding.severity == "medium" for finding in findings)
+    assert not any(finding.severity == "high" for finding in findings)
+
+    mcp_path.write_text(
+        json.dumps({"mcpServers": {"support": {"type": "http", "url": "https://user:secret@support.example/mcp"}}}),
+        encoding="utf-8",
+    )
+
+    findings = scan_path(template)
+
+    assert any(finding.kind == "secret" and finding.severity == "high" for finding in findings)
+
+
+def test_runtime_template_safety_blocks_common_repo_secret_and_private_path_shapes(tmp_path):
+    template = tmp_path / "template"
+    workspace = template / "data" / "business-agents" / "support-agent" / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "credentials.txt").write_text(
+        "\n".join(
+            (
+                "github_pat_" + "EXAMPLE12345678901234567890",
+                "ghp_" + "EXAMPLE12345678901234567890",
+                "-----BEGIN " + "PRIVATE KEY-----",
+                "postgresql://user:" + "example-password@database.example/db",
+                "/root/.config/private-tool/config.json",
+                r"C:\Users\example-user\private-tool\config.json",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (workspace / "credentials.json").write_text(
+        json.dumps(
+            {
+                "headers": {
+                    "X-Api-Key": "example-key-value",
+                    "Authorization": "Basic example-credential",
+                },
+                "database": {"password": "example-password"},
+                "allowed": {"api_key": "${API_KEY}"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "credentials.yaml").write_text(
+        '"Authorization": "Basic yaml-example-credential"\ndatabase:\n  "password": yaml-example-password\nallowed:\n  api_key: ${API_KEY}\n',
+        encoding="utf-8",
+    )
+
+    findings = scan_path(template)
+
+    high_kinds = {finding.kind for finding in findings if finding.severity == "high"}
+    assert {"secret", "private_key", "host_path"} <= high_kinds
+    structured_paths = {finding.snippet for finding in findings if finding.message.startswith("credential-bearing structured")}
+    assert {
+        "headers.X-Api-Key=<VALUE>",
+        "headers.Authorization=<VALUE>",
+        "database.password=<VALUE>",
+    } <= structured_paths
+    assert "allowed.api_key=<VALUE>" not in structured_paths
+    assert all("EXAMPLE12345678901234567890" not in finding.snippet for finding in findings)
+    assert all("example-password" not in finding.snippet for finding in findings)
+
+
+@pytest.mark.parametrize("suffix", [".js", ".ts"])
+def test_runtime_template_safety_scans_utf8_text_without_suffix_allowlist(tmp_path, suffix):
+    template = tmp_path / "template"
+    workspace = template / "data" / "business-agents" / "support-agent" / "workspace"
+    workspace.mkdir(parents=True)
+    source_path = workspace / f"client{suffix}"
+    source_path.write_text(
+        (
+            'export const api_key = "example-runtime-secret";\n'
+            'export const client = {"apiKey": "plain-object-secret", '
+            '"Authorization": "Basic object-credential"};\n'
+            'process.env["API_KEY"] = "process-env-secret";\n'
+            'config["apiKey"] = "config-secret";\n'
+            'headers["Authorization"] = "Basic header-credential";\n'
+            'export const computed = {["api_key"]: "computed-secret"};\n'
+        ),
+        encoding="utf-8",
+    )
+
+    findings = scan_path(template)
+
+    secret_findings = [
+        finding for finding in findings if finding.path.endswith(f"workspace/client{suffix}") and finding.kind == "secret" and finding.severity == "high"
+    ]
+    assert len(secret_findings) >= 6
+    for secret in (
+        "example-runtime-secret",
+        "plain-object-secret",
+        "object-credential",
+        "process-env-secret",
+        "config-secret",
+        "header-credential",
+        "computed-secret",
+    ):
+        assert all(secret not in finding.snippet for finding in findings)
+
+
+def test_runtime_template_safety_skips_nul_binary_content(tmp_path):
+    template = tmp_path / "template"
+    workspace = template / "data" / "business-agents" / "support-agent" / "workspace"
+    workspace.mkdir(parents=True)
+    binary_path = workspace / "asset.bin"
+    binary_path.write_bytes(b"\x00api_key=example-runtime-secret")
+
+    findings = scan_path(template)
+
+    assert not any(finding.path.endswith("workspace/asset.bin") for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "file_name",
+    [
+        "runtime.db-journal",
+        "runtime.db-shm",
+        "runtime.db-wal",
+        "runtime.sqlite-journal",
+        "runtime.sqlite-shm",
+        "runtime.sqlite-wal",
+        "runtime.sqlite3-journal",
+        "runtime.sqlite3-shm",
+        "runtime.sqlite3-wal",
+    ],
+)
+def test_runtime_template_safety_rejects_sqlite_sidecars(tmp_path, file_name):
+    template = tmp_path / "template"
+    workspace = template / "main-workspace"
+    workspace.mkdir(parents=True)
+    sidecar_path = workspace / file_name
+    sidecar_path.write_bytes(b"runtime database state")
+
+    findings = scan_path(template)
+
+    assert any(finding.path == f"main-workspace/{file_name}" and finding.kind == "forbidden_path" and finding.severity == "high" for finding in findings)
+
+
+def test_runtime_template_safety_warns_for_declared_seed_wide_allow_rules(tmp_path):
+    template = tmp_path / "template"
+    settings_path = template / "data" / "business-agents" / "support-agent" / "workspace" / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "permissions": {
+                    "allow": [
+                        "Bash(*)",
+                        "mcp__*__*",
+                        "mcp__support__*",
+                        "Bash(pwd)",
+                    ]
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_path(template)
+
+    warnings = [finding for finding in findings if finding.kind == "wide_permission"]
+    assert {finding.snippet for finding in warnings} == {
+        "Bash(*)",
+        "mcp__*__*",
+        "mcp__support__*",
+    }
+    assert all(finding.severity == "medium" for finding in warnings)
+    assert not any(finding.severity == "high" for finding in findings)
+
+
+def test_runtime_template_safety_and_bootstrap_reject_seed_symlinks(tmp_path):
+    template = tmp_path / "template"
+    workspace = template / "data" / "business-agents" / "support-agent" / "workspace"
+    workspace.mkdir(parents=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    linked = workspace / "linked.txt"
+    linked.symlink_to(outside)
+
+    findings = scan_path(template)
+
+    assert any(finding.path.endswith("workspace/linked.txt") and finding.kind == "unsafe_file_type" and finding.severity == "high" for finding in findings)
+    with pytest.raises(ValueError, match="regular file or directory"):
+        bootstrap_runtime_volume(
+            runtime_root=tmp_path / "runtime",
+            template_dir=template,
+        )
+
+
+def test_runtime_template_safety_keeps_generic_template_endpoints_strict(tmp_path):
+    template = tmp_path / "template"
+    mcp_path = template / "templates" / "business-agent" / "general" / ".mcp.json"
+    mcp_path.parent.mkdir(parents=True)
+    mcp_path.write_text(
+        json.dumps({"mcpServers": {"support": {"type": "http", "url": "https://support.example/mcp"}}}),
+        encoding="utf-8",
+    )
+
+    findings = scan_path(template)
+
+    assert any(finding.kind == "endpoint_url" and finding.severity == "high" for finding in findings)
 
 
 def test_runtime_template_safety_rejects_backup_artifacts(tmp_path):
@@ -212,145 +446,31 @@ def test_bootstrap_runtime_volume_migrates_legacy_agent_governance_dirs(tmp_path
     assert result["migrated"]
 
 
-def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):
-    template = tmp_path / "template"
-    workspace_template = template / "main-workspace"
-    settings_template = workspace_template / ".claude"
-    settings_template.mkdir(parents=True)
-    (workspace_template / ".mcp.json").write_text(
-        json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "${MCP_SERVER_URL}"}}}),
-        encoding="utf-8",
-    )
-    (settings_template / "settings.json").write_text(
-        json.dumps(
-            {
-                "permissions": {"allow": ["Write(/data/outputs/**)"], "deny": ["Read(/claude-roots/main/.claude.json)"]},
-                "hooks": {"PreToolUse": [{"hooks": [{"command": 'python "$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py"'}]}]},
-                "sandbox": {
-                    "filesystem": {"allowWrite": ["/data/outputs"], "denyRead": ["/claude-roots/main/.claude.json"]},
-                    "network": {"allowedDomains": ["${SERVICE_HOST}", "${INTERNAL_DOMAIN}"]},
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    agents_dir = settings_template / "agents"
-    commands_dir = settings_template / "commands"
-    skill_dir = settings_template / "skills" / "report-generation"
-    agents_dir.mkdir(parents=True)
-    commands_dir.mkdir(parents=True)
-    skill_dir.mkdir(parents=True)
-    (agents_dir / "report-writer.md").write_text(
-        "日报写入 `/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`。\n",
-        encoding="utf-8",
-    )
-    (commands_dir / "generate-report.md").write_text(
-        "生成报告到 `/data/outputs/reports`。\n",
-        encoding="utf-8",
-    )
-    (skill_dir / "SKILL.md").write_text(
-        "报告输出目录：`/data/outputs/reports`。\n",
-        encoding="utf-8",
-    )
-    server_dir = workspace_template / "mcp_servers" / "report_template_mcp"
-    server_dir.mkdir(parents=True)
-    (server_dir / "server.py").write_text(
-        'REPORT_TEMPLATE_DIR = "/main-workspace/templates/reports"\nREPORT_OUTPUT_DIR = "/data/outputs/reports"\n',
-        encoding="utf-8",
-    )
-    (workspace_template / "agent.yaml").write_text("paths:\n  workspace: /main-workspace\n  data_root: /data\n", encoding="utf-8")
-    runtime_root = tmp_path / "local-debug-runtime"
-    env = {
-        "MAIN_WORKSPACE_DIR": str(runtime_root / "main-workspace"),
-        "MAIN_CLAUDE_ROOT": str(runtime_root / "claude-roots" / "main"),
-        "DATA_DIR": str(runtime_root / "data"),
-        "MCP_SERVER_URL": "http://localhost:58001/mcp",
-    }
-
-    result = bootstrap_runtime_volume(
-        runtime_root=runtime_root,
-        template_dir=template,
-        runtime_volume_mode="local-debug",
-        env=env,
-    )
-
-    mcp = json.loads((runtime_root / "main-workspace" / ".mcp.json").read_text(encoding="utf-8"))
-    settings = json.loads((runtime_root / "main-workspace" / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    agent = (runtime_root / "main-workspace" / "agent.yaml").read_text(encoding="utf-8")
-    report_writer = (runtime_root / "main-workspace" / ".claude" / "agents" / "report-writer.md").read_text(encoding="utf-8")
-    report_command = (runtime_root / "main-workspace" / ".claude" / "commands" / "generate-report.md").read_text(encoding="utf-8")
-    report_skill = (runtime_root / "main-workspace" / ".claude" / "skills" / "report-generation" / "SKILL.md").read_text(encoding="utf-8")
-    report_server = (runtime_root / "main-workspace" / "mcp_servers" / "report_template_mcp" / "server.py").read_text(encoding="utf-8")
-    assert result["validation_errors"] == []
-    assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:58001/mcp"
-    assert str(runtime_root / "data" / "outputs") in settings["permissions"]["allow"][0]
-    assert str(runtime_root / "claude-roots" / "main" / ".claude.json") in settings["permissions"]["deny"][0]
-    assert settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == 'python "$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py"'
-    assert settings["sandbox"]["network"]["allowedDomains"] == ["localhost", "127.0.0.1", "host.docker.internal", "*.internal", "*.corp"]
-    assert settings["sandbox"]["enableWeakerNestedSandbox"] is False
-    assert f"workspace: {runtime_root / 'main-workspace'}" in agent
-    assert "data_root: /data\n" not in agent
-    assert f"`{runtime_root / 'data' / 'outputs' / 'reports' / 'daily-secops-report-YYYY-MM-DD.md'}`" in report_writer
-    assert f"`{runtime_root / 'data' / 'outputs' / 'reports'}`" in report_command
-    assert f"`{runtime_root / 'data' / 'outputs' / 'reports'}`" in report_skill
-    assert f'"{runtime_root / "main-workspace" / "templates" / "reports"}"' in report_server
-    assert f'"{runtime_root / "data" / "outputs" / "reports"}"' in report_server
-
-
-def test_bootstrap_runtime_volume_renders_response_disposal_mcp_urls(tmp_path):
+@pytest.mark.parametrize("runtime_mode", ["container", "local-debug"])
+def test_bootstrap_runtime_volume_copies_seed_bytes_without_rendering(tmp_path, runtime_mode):
     template = tmp_path / "template"
     workspace_template = template / "data" / "business-agents" / "response-disposal" / "workspace"
-    workspace_template.mkdir(parents=True)
-    (workspace_template / ".mcp.json").write_text(
-        json.dumps(
-            {
-                "mcpServers": {
-                    "sec-ops-data": {"type": "http", "url": "${MCP_SERVER_URL}"},
-                    "sec-ops": {"type": "http", "url": "${SEC_OPS_MCP_URL}"},
-                    "soc-playbook-query": {"type": "http", "url": "${SOC_PLAYBOOK_QUERY_MCP_URL}"},
-                    "soc-playbook-execution": {"type": "http", "url": "${SOC_PLAYBOOK_EXECUTION_MCP_URL}"},
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    runtime_root = tmp_path / "runtime"
+    settings_template = workspace_template / ".claude"
+    settings_template.mkdir(parents=True)
+    mcp_bytes = b'{"mcpServers":{"soc":{"type":"http","url":"${MCP_SERVER_URL}"}}}\n'
+    settings_bytes = b'{"sandbox":{"network":{"allowedDomains":["localhost","*.internal"]}}}\n'
+    binary_bytes = b"\x00\xffseed-bytes"
+    (workspace_template / ".mcp.json").write_bytes(mcp_bytes)
+    (settings_template / "settings.json").write_bytes(settings_bytes)
+    (workspace_template / "asset.bin").write_bytes(binary_bytes)
+    runtime_root = tmp_path / runtime_mode
 
-    result = bootstrap_runtime_volume(
+    bootstrap_runtime_volume(
         runtime_root=runtime_root,
         template_dir=template,
-        runtime_volume_mode="local-debug",
-        env={
-            "MCP_SERVER_URL": "http://localhost:58001/mcp",
-            "SEC_OPS_MCP_URL": "http://localhost:58003/mcp",
-            "SOC_PLAYBOOK_QUERY_MCP_URL": "http://localhost:58002/mcp",
-        },
+        runtime_volume_mode=runtime_mode,
+        env={"MCP_SERVER_URL": "http://should-not-be-rendered.example/mcp"},
     )
 
-    mcp = json.loads((runtime_root / "data" / "business-agents" / "response-disposal" / "workspace" / ".mcp.json").read_text(encoding="utf-8"))
-    assert result["validation_errors"] == []
-    assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:58001/mcp"
-    assert mcp["mcpServers"]["sec-ops"]["url"] == "http://localhost:58003/mcp"
-    assert mcp["mcpServers"]["soc-playbook-query"]["url"] == "http://localhost:58002/mcp"
-    assert mcp["mcpServers"]["soc-playbook-execution"]["url"] == "http://localhost:58001/mcp"
-
-
-def test_bootstrap_runtime_volume_keeps_container_paths_in_container_mode(tmp_path):
-    template = tmp_path / "template"
-    workspace_template = template / "main-workspace"
-    agents_dir = workspace_template / ".claude" / "agents"
-    agents_dir.mkdir(parents=True)
-    (agents_dir / "report-writer.md").write_text(
-        "日报写入 `/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`。\n",
-        encoding="utf-8",
-    )
-    runtime_root = tmp_path / "container-runtime"
-
-    result = bootstrap_runtime_volume(runtime_root=runtime_root, template_dir=template, runtime_volume_mode="container", env={})
-
-    report_writer = (runtime_root / "main-workspace" / ".claude" / "agents" / "report-writer.md").read_text(encoding="utf-8")
-    assert result["validation_errors"] == []
-    assert "`/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`" in report_writer
+    copied_workspace = runtime_root / "data" / "business-agents" / "response-disposal" / "workspace"
+    assert (copied_workspace / ".mcp.json").read_bytes() == mcp_bytes
+    assert (copied_workspace / ".claude" / "settings.json").read_bytes() == settings_bytes
+    assert (copied_workspace / "asset.bin").read_bytes() == binary_bytes
 
 
 def test_resolve_runtime_root_uses_local_debug_mode_default(tmp_path):
@@ -358,207 +478,3 @@ def test_resolve_runtime_root_uses_local_debug_mode_default(tmp_path):
     env_file.write_text("", encoding="utf-8")
 
     assert resolve_runtime_root(None, env_file) == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
-
-
-def _write_runtime_backup(path: Path, sizes: list[int]) -> None:
-    with tarfile.open(path, "w:gz") as archive:
-        for index, size in enumerate(sizes):
-            payload = bytes([index % 256]) * size
-            member = tarfile.TarInfo(f"template/file-{index}.txt")
-            member.size = size
-            archive.addfile(member, io.BytesIO(payload))
-
-
-def test_restore_runtime_template_backup_creates_pre_restore_backup(tmp_path):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "README.md").write_text("before", encoding="utf-8")
-    backup_dir = tmp_path / "backups"
-    backup_path = _create_backup(template, backup_dir)
-    assert backup_path is not None
-    (template / "README.md").write_text("changed", encoding="utf-8")
-
-    restored = restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
-
-    assert restored["ok"] is True
-    assert restored["pre_restore_backup"] is not None
-    assert Path(restored["pre_restore_backup"]).is_file()
-    assert Path(restored["pre_restore_backup"]).parent == backup_dir
-    assert (template / "README.md").read_text(encoding="utf-8") == "before"
-
-
-def test_restore_runtime_template_backup_rejects_symlink_member(tmp_path):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "README.md").write_text("current", encoding="utf-8")
-    backup_dir = tmp_path / "backups"
-    backup_path = tmp_path / "symlink.tar.gz"
-    outside = tmp_path / "outside"
-    outside.mkdir()
-
-    with tarfile.open(backup_path, "w:gz") as archive:
-        link = tarfile.TarInfo("template/escape")
-        link.type = tarfile.SYMTYPE
-        link.linkname = outside.as_posix()
-        archive.addfile(link)
-        payload = b"escaped"
-        file_member = tarfile.TarInfo("template/escape/payload.txt")
-        file_member.size = len(payload)
-        archive.addfile(file_member, io.BytesIO(payload))
-
-    with pytest.raises(ValueError, match="unsupported tar member type"):
-        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
-
-    assert not (outside / "payload.txt").exists()
-    assert (template / "README.md").read_text(encoding="utf-8") == "current"
-    assert not backup_dir.exists()
-
-
-def test_restore_runtime_template_backup_rejects_hardlink_member(tmp_path):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "README.md").write_text("current", encoding="utf-8")
-    backup_dir = tmp_path / "backups"
-    backup_path = tmp_path / "hardlink.tar.gz"
-    outside = tmp_path / "outside.txt"
-    outside.write_text("unchanged", encoding="utf-8")
-
-    with tarfile.open(backup_path, "w:gz") as archive:
-        link = tarfile.TarInfo("template/linked.txt")
-        link.type = tarfile.LNKTYPE
-        link.linkname = outside.as_posix()
-        archive.addfile(link)
-
-    with pytest.raises(ValueError, match="unsupported tar member type"):
-        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
-
-    assert outside.read_text(encoding="utf-8") == "unchanged"
-    assert (template / "README.md").read_text(encoding="utf-8") == "current"
-    assert not backup_dir.exists()
-
-
-def test_restore_runtime_template_backup_rejects_excess_member_count(tmp_path, monkeypatch):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "README.md").write_text("current", encoding="utf-8")
-    backup_path = tmp_path / "too-many-members.tar.gz"
-    _write_runtime_backup(backup_path, [0, 0, 0])
-    monkeypatch.setattr(restore_module, "MAX_TAR_MEMBERS", 2)
-
-    backup_dir = tmp_path / "backups"
-    with pytest.raises(ValueError, match="member count budget"):
-        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
-
-    assert (template / "README.md").read_text(encoding="utf-8") == "current"
-    assert not backup_dir.exists()
-
-
-@pytest.mark.parametrize(
-    ("limit_name", "limit", "sizes", "message"),
-    [
-        ("MAX_TAR_MEMBER_BYTES", 4, [5], "declared byte budget"),
-        ("MAX_TAR_DECLARED_BYTES", 6, [4, 4], "total declared byte budget"),
-    ],
-)
-def test_restore_runtime_template_backup_rejects_declared_byte_budgets(
-    tmp_path,
-    monkeypatch,
-    limit_name,
-    limit,
-    sizes,
-    message,
-):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "README.md").write_text("current", encoding="utf-8")
-    backup_path = tmp_path / "declared-budget.tar.gz"
-    _write_runtime_backup(backup_path, sizes)
-    monkeypatch.setattr(restore_module, limit_name, limit)
-
-    backup_dir = tmp_path / "backups"
-    with pytest.raises(ValueError, match=message):
-        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
-
-    assert (template / "README.md").read_text(encoding="utf-8") == "current"
-    assert not backup_dir.exists()
-
-
-def test_restore_runtime_template_backup_rechecks_actual_member_bytes(tmp_path, monkeypatch):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "README.md").write_text("current", encoding="utf-8")
-    backup_path = tmp_path / "actual-member-budget.tar.gz"
-    _write_runtime_backup(backup_path, [1])
-    monkeypatch.setattr(restore_module, "MAX_TAR_MEMBER_BYTES", 4)
-    monkeypatch.setattr(tarfile.TarFile, "extractfile", lambda self, member: io.BytesIO(b"12345"))
-
-    backup_dir = tmp_path / "backups"
-    with pytest.raises(ValueError, match="extracted byte budget"):
-        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
-
-    assert (template / "README.md").read_text(encoding="utf-8") == "current"
-    assert not backup_dir.exists()
-
-
-def test_restore_runtime_template_backup_rechecks_total_actual_bytes(tmp_path, monkeypatch):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "README.md").write_text("current", encoding="utf-8")
-    backup_path = tmp_path / "actual-total-budget.tar.gz"
-    _write_runtime_backup(backup_path, [3, 3])
-    monkeypatch.setattr(restore_module, "MAX_TAR_EXTRACTED_BYTES", 5)
-
-    backup_dir = tmp_path / "backups"
-    with pytest.raises(ValueError, match="total extracted byte budget"):
-        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
-
-    assert (template / "README.md").read_text(encoding="utf-8") == "current"
-    assert not backup_dir.exists()
-
-
-def test_restore_runtime_template_backup_rejects_compressed_archive_budget_before_backup(tmp_path, monkeypatch):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "README.md").write_text("current", encoding="utf-8")
-    backup_path = tmp_path / "oversized.tar.gz"
-    backup_path.write_bytes(b"12345")
-    backup_dir = tmp_path / "backups"
-    monkeypatch.setattr(restore_module, "MAX_TAR_ARCHIVE_BYTES", 4)
-
-    with pytest.raises(ValueError, match="compressed byte budget"):
-        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
-
-    assert not backup_dir.exists()
-    assert (template / "README.md").read_text(encoding="utf-8") == "current"
-
-@pytest.mark.parametrize(
-    ("limit_name", "limit", "member_name", "message"),
-    [
-        ("MAX_TAR_MEMBER_NAME_BYTES", 12, "template/name-is-too-long.txt", "name exceeds byte budget"),
-        ("MAX_TAR_PATH_DEPTH", 2, "template/a/b/payload.txt", "path exceeds depth budget"),
-    ],
-)
-def test_restore_runtime_template_backup_rejects_member_path_budgets(
-    tmp_path,
-    monkeypatch,
-    limit_name,
-    limit,
-    member_name,
-    message,
-):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "README.md").write_text("current", encoding="utf-8")
-    backup_path = tmp_path / "path-budget.tar.gz"
-    with tarfile.open(backup_path, "w:gz") as archive:
-        member = tarfile.TarInfo(member_name)
-        member.size = 1
-        archive.addfile(member, io.BytesIO(b"x"))
-    backup_dir = tmp_path / "backups"
-    monkeypatch.setattr(restore_module, limit_name, limit)
-
-    with pytest.raises(ValueError, match=message):
-        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
-
-    assert not backup_dir.exists()
-    assert (template / "README.md").read_text(encoding="utf-8") == "current"

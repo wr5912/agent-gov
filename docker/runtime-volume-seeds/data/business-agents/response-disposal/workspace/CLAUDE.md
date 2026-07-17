@@ -95,7 +95,7 @@
 - 明确标注：事实（工具/证据返回）、推断（分析结论，标注置信度）、建议、待确认。
 - 区分 `execution_completed` 与 `effect_achieved`，不得混同。
 - 证据不足时输出 `insufficient_information` / `needs_human_review`，不臆造目标、动作或结果。
-- 处置档案默认写入 `/data/outputs/response/`。
+- 处置档案默认写入 `../../../outputs/response/`。
 
 ## 7. 数据治理
 

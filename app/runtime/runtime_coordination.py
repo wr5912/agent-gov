@@ -13,22 +13,7 @@ from typing import Any, Protocol
 from app.runtime.advisory_lock import AdvisoryLockLease
 from app.runtime.runtime_initialization import prepare_runtime, runtime_root_for_data_dir, validate_runtime_policy
 
-RECEIPT_CONTRACT = "agent-gov-runtime-contract/v1"
-_RELEVANT_ENV_KEYS = (
-    "DATA_DIR",
-    "MAIN_WORKSPACE_DIR",
-    "GOVERNOR_WORKSPACE_DIR",
-    "MAIN_CLAUDE_ROOT",
-    "GOVERNOR_CLAUDE_ROOT",
-    "CLAUDE_ALLOWED_NETWORK_DOMAINS",
-    "MCP_SERVER_URL",
-    "SEC_OPS_MCP_URL",
-    "SOC_OPS_QUERY_MCP_URL",
-    "SOC_PLAYBOOK_QUERY_MCP_URL",
-    "SOC_PLAYBOOK_EXECUTION_MCP_URL",
-    "SOC_PLAYBOOK_EXECUTION_RESULT_QUERY_MCP_URL",
-    "SOC_PLAYBOOK_REGISTRY_MCP_URL",
-)
+RECEIPT_CONTRACT = "agent-gov-runtime-contract/v3"
 
 
 class CoordinationSettings(Protocol):
@@ -67,18 +52,16 @@ class RuntimeCoordinationPaths:
 class RuntimeReceipt:
     contract: str
     desired_digest: str
-    managed_output_digest: str
     runtime_mode: str
     volume_id: str
     completed_at: str
-    agent_commits: Mapping[str, str]
 
 
 @dataclass(frozen=True)
 class RuntimeContractStatus:
     valid: bool
     desired_digest: str
-    managed_output_digest: str
+    workspace_validation_digest: str
     reason: str
     receipt: RuntimeReceipt | None
 
@@ -94,7 +77,6 @@ def _contract_source_files(repo_root: Path) -> list[Path]:
     files = [path for path in (repo_root / "app").rglob("*.py") if "__pycache__" not in path.parts]
     for relative in (
         "scripts/bootstrap_runtime_volume.py",
-        "scripts/runtime_template_renderer.py",
         "scripts/runtime_cleanup.py",
         "VERSION",
     ):
@@ -111,6 +93,7 @@ def desired_runtime_digest(
     runtime_root: Path,
     env: Mapping[str, str],
 ) -> str:
+    del env
     repo_root = Path(__file__).resolve().parents[2]
     hasher = hashlib.sha256()
     hasher.update(RECEIPT_CONTRACT.encode("utf-8"))
@@ -123,11 +106,6 @@ def desired_runtime_digest(
     hasher.update(b"\0runtime_root=")
     hasher.update(runtime_root.resolve().as_posix().encode("utf-8"))
     hasher.update(b"\0")
-    for key in _RELEVANT_ENV_KEYS:
-        hasher.update(key.encode("utf-8"))
-        hasher.update(b"=")
-        hasher.update(str(env.get(key, "")).encode("utf-8"))
-        hasher.update(b"\0")
     return hasher.hexdigest()
 
 
@@ -172,17 +150,12 @@ def read_runtime_receipt(paths: RuntimeCoordinationPaths) -> RuntimeReceipt | No
         return None
     try:
         payload = json.loads(paths.receipt.read_text(encoding="utf-8"))
-        commits = payload.get("agent_commits")
-        if not isinstance(commits, dict):
-            return None
         return RuntimeReceipt(
             contract=str(payload["contract"]),
             desired_digest=str(payload["desired_digest"]),
-            managed_output_digest=str(payload["managed_output_digest"]),
             runtime_mode=str(payload["runtime_mode"]),
             volume_id=str(payload["volume_id"]),
             completed_at=str(payload["completed_at"]),
-            agent_commits={str(key): str(value) for key, value in commits.items()},
         )
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
@@ -203,6 +176,8 @@ def runtime_contract_status(
         env=env,
     )
     compliant, output_digest, _ = validate_runtime_policy(settings=settings, template_dir=template_dir, env=env)
+    if not compliant:
+        return RuntimeContractStatus(False, desired, output_digest, "workspace_validation_failed", read_runtime_receipt(paths))
     receipt = read_runtime_receipt(paths)
     if receipt is None:
         return RuntimeContractStatus(False, desired, output_digest, "receipt_missing_or_invalid", None)
@@ -214,8 +189,6 @@ def runtime_contract_status(
         return RuntimeContractStatus(False, desired, output_digest, "runtime_mode_mismatch", receipt)
     if receipt.volume_id != _read_volume_id(paths):
         return RuntimeContractStatus(False, desired, output_digest, "runtime_volume_mismatch", receipt)
-    if not compliant or receipt.managed_output_digest != output_digest:
-        return RuntimeContractStatus(False, desired, output_digest, "managed_policy_drift", receipt)
     return RuntimeContractStatus(True, desired, output_digest, "ok", receipt)
 
 
@@ -231,7 +204,7 @@ def prepare_runtime_contract(
         raise RuntimeCoordinationError("Runtime preparation requires the exclusive runtime phase lease")
     paths.root.mkdir(parents=True, exist_ok=True)
     volume_id = _ensure_volume_id(paths)
-    preparation = prepare_runtime(
+    prepare_runtime(
         settings=settings,
         template_dir=template_dir,
         env=env,
@@ -245,11 +218,9 @@ def prepare_runtime_contract(
             runtime_root=runtime_root_for_data_dir(settings.data_dir),
             env=env,
         ),
-        managed_output_digest=preparation.managed_output_digest,
         runtime_mode=settings.runtime_volume_mode,
         volume_id=volume_id,
         completed_at=datetime.now(timezone.utc).isoformat(),
-        agent_commits=preparation.agent_commits,
     )
     _atomic_write(
         paths.receipt,

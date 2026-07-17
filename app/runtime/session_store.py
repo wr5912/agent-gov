@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm import Session
 
 from . import session_turn_lease
 from .agent_admission import claim_runtime_admission, lease_expires_at
@@ -14,7 +16,12 @@ from .errors import SessionConflictError
 from .json_types import JsonObject
 from .records.source_records import AgentRunRecord
 from .runtime_db import SessionRecordModel, SessionTurnIntentModel, make_session_factory, runtime_db_path_from_data_dir, utc_now
-from .sdk_session_store import discard_staged_entries, promote_staged_entries
+from .sdk_session_store import (
+    clear_inactive_sdk_sessions_for_agent_in_transaction,
+    discard_staged_entries,
+    parse_sdk_store_import_marker,
+    promote_staged_entries,
+)
 from .session_turn_persistence import (
     TurnIntentSpec,
     add_running_turn_intent,
@@ -49,6 +56,13 @@ class LocalSession:
     sdk_project_key: Optional[str] = None
     sdk_store_ready_at: Optional[str] = None
     sdk_store_migration_error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class PersistedTurnAdmission:
+    session: LocalSession
+    agent_version_id: Optional[str]
+    attempted_sdk_session_id: str
 
 
 @dataclass(frozen=True)
@@ -184,18 +198,19 @@ class LocalSessionStore:
         *,
         run_id: str,
         agent_id: str,
-        attempted_sdk_session_id: str,
+        new_sdk_session_id: str,
         sdk_project_key: str,
+        resolve_agent_version_id: Callable[[], Optional[str]],
         request: JsonObject,
         created_at: str,
         lease_seconds: float | None = None,
-    ) -> LocalSession:
+    ) -> PersistedTurnAdmission:
         """原子获取 Agent/session admission，并创建唯一 running intent。"""
         clean_run_id = run_id.strip()
-        clean_sdk_session_id = attempted_sdk_session_id.strip()
+        clean_new_sdk_session_id = new_sdk_session_id.strip()
         clean_project_key = sdk_project_key.strip()
-        if not clean_run_id or not clean_sdk_session_id or not clean_project_key:
-            raise ValueError("run_id, attempted_sdk_session_id, and sdk_project_key are required")
+        if not clean_run_id or not clean_new_sdk_session_id or not clean_project_key:
+            raise ValueError("run_id, new_sdk_session_id, and sdk_project_key are required")
 
         # 先幂等收口旧的过期 intent；新的 claim+intent 本身仍在下方同一事务完成。
         reconcile_expired_turn_transactions(self.Session, session_id=session.session_id)
@@ -205,13 +220,15 @@ class LocalSessionStore:
         expires_at = session_turn_lease.turn_lease_expires_at(effective_lease_seconds)
         now = utc_now()
         with self.Session.begin() as db:
+            generation = claim_runtime_admission(db, agent_id=agent_id, now=now)
             record = db.get(SessionRecordModel, session.session_id)
             if record is None:
                 self._raise_conflict(record, session, agent_id=agent_id)
             assert record is not None
             if record.agent_id != agent_id:
                 self._raise_conflict(record, session, agent_id=agent_id)
-            if record.turns != session.turns or record.sdk_session_id != session.sdk_session_id:
+            mapping_was_invalidated = session.sdk_session_id is not None and record.sdk_session_id is None
+            if record.turns != session.turns or (record.sdk_session_id != session.sdk_session_id and not mapping_was_invalidated):
                 self._raise_conflict(record, session, agent_id=agent_id)
             if record.active_run_id is not None:
                 prior_intent = db.get(SessionTurnIntentModel, record.active_run_id)
@@ -226,7 +243,8 @@ class LocalSessionStore:
                 record.active_run_expires_at = None
                 record.active_run_generation = 0
 
-            generation = claim_runtime_admission(db, agent_id=agent_id, now=now)
+            agent_version_id = resolve_agent_version_id()
+            attempted_sdk_session_id = record.sdk_session_id or clean_new_sdk_session_id
             record.active_run_id = clean_run_id
             record.active_run_expires_at = expires_at
             record.active_run_generation = generation
@@ -238,14 +256,19 @@ class LocalSessionStore:
                     session_id=record.session_id,
                     agent_id=agent_id,
                     source_sdk_session_id=record.sdk_session_id,
-                    attempted_sdk_session_id=clean_sdk_session_id,
+                    attempted_sdk_session_id=attempted_sdk_session_id,
                     sdk_project_key=clean_project_key,
                     base_turns=record.turns,
+                    agent_version_id=agent_version_id,
                     request=dict(request),
                     created_at=created_at,
                 ),
             )
-            return self._to_session(record)
+            return PersistedTurnAdmission(
+                session=self._to_session(record),
+                agent_version_id=agent_version_id,
+                attempted_sdk_session_id=attempted_sdk_session_id,
+            )
 
     def renew_turn(
         self,
@@ -420,7 +443,7 @@ class LocalSessionStore:
             if record.active_run_id:
                 raise SessionConflictError(f"Session {session_id} has an active turn and cannot be migrated")
             current_marker = record.sdk_store_migration_error or ""
-            active_claim = _parse_sdk_store_import_marker(current_marker)
+            active_claim = parse_sdk_store_import_marker(current_marker)
             if active_claim is not None:
                 old_token, old_expires_at = active_claim
                 if old_expires_at > current:
@@ -515,7 +538,7 @@ class LocalSessionStore:
                 updated_at=next_updated_at,
             )
         )
-        import_claim = _parse_sdk_store_import_marker(session.sdk_store_migration_error or "")
+        import_claim = parse_sdk_store_import_marker(session.sdk_store_migration_error or "")
         with self.Session.begin() as db:
             result = db.execute(statement)
             if result.rowcount != 1:
@@ -526,6 +549,55 @@ class LocalSessionStore:
             if record is None:  # pragma: no cover - guarded by rowcount
                 raise SessionConflictError(f"Session {session.session_id} disappeared while invalidating SDK state")
             return self._to_session(record)
+
+    def clear_inactive_sdk_sessions_for_agent(self, *, agent_id: str) -> int:
+        """Invalidate every inactive SDK mapping owned by one business Agent."""
+        normalized_agent_id = agent_id.strip()
+        if not normalized_agent_id:
+            raise ValueError("agent_id is required to invalidate SDK sessions")
+        self.require_no_active_turns_for_agent(agent_id=normalized_agent_id)
+        with self.Session.begin() as db:
+            return self.clear_inactive_sdk_sessions_for_agent_in_transaction(
+                db,
+                agent_id=normalized_agent_id,
+            )
+
+    def clear_inactive_sdk_sessions_for_agent_in_transaction(
+        self,
+        db: Session,
+        *,
+        agent_id: str,
+    ) -> int:
+        """Invalidate SDK mappings inside an admission-serialized write transaction."""
+        return clear_inactive_sdk_sessions_for_agent_in_transaction(
+            db,
+            agent_id=agent_id,
+        )
+
+    def require_no_active_turns_for_agent(self, *, agent_id: str) -> None:
+        normalized_agent_id = agent_id.strip()
+        if not normalized_agent_id:
+            raise ValueError("agent_id is required to inspect active turns")
+        with self.Session() as db:
+            session_ids = list(
+                db.scalars(
+                    select(SessionRecordModel.session_id).where(
+                        SessionRecordModel.agent_id == normalized_agent_id,
+                    )
+                ).all()
+            )
+        for session_id in session_ids:
+            reconcile_expired_turn_transactions(self.Session, session_id=session_id)
+        with self.Session() as db:
+            records = list(
+                db.scalars(
+                    select(SessionRecordModel).where(
+                        SessionRecordModel.agent_id == normalized_agent_id,
+                    )
+                ).all()
+            )
+            if any(self._record_has_active_run(record) for record in records):
+                raise SessionConflictError(f"Agent {normalized_agent_id} has an active session turn")
 
     def list(self) -> list[LocalSession]:
         with self.Session() as db:
@@ -540,7 +612,7 @@ class LocalSessionStore:
                 return False
             if record.active_run_id:
                 raise SessionConflictError(f"Session {session_id} has an active turn and cannot be deleted")
-            import_claim = _parse_sdk_store_import_marker(record.sdk_store_migration_error or "")
+            import_claim = parse_sdk_store_import_marker(record.sdk_store_migration_error or "")
             if import_claim is not None:
                 discard_staged_entries(db, run_id=import_claim[0])
             db.delete(record)
@@ -622,13 +694,3 @@ class LocalSessionStore:
             sdk_store_ready_at=record.sdk_store_ready_at,
             sdk_store_migration_error=record.sdk_store_migration_error,
         )
-
-
-def _parse_sdk_store_import_marker(marker: str) -> tuple[str, str] | None:
-    prefix = "migration_running:"
-    if not marker.startswith(prefix):
-        return None
-    token, separator, expires_at = marker[len(prefix) :].partition(":")
-    if not separator or not token or not expires_at:
-        return None
-    return token, expires_at

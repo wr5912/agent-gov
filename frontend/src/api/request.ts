@@ -119,6 +119,45 @@ export async function requestJson<T>(config: RuntimeClientConfig, path: string, 
   throw lastError instanceof Error ? lastError : new Error("Request failed");
 }
 
+export async function requestBlob(
+  config: RuntimeClientConfig,
+  path: string,
+  init?: RuntimeRequestInit,
+): Promise<{ blob: Blob; headers: Headers }> {
+  const { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...fetchInit } = init || {};
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort("timeout"), timeoutMs);
+  const abortFromCaller = () => controller.abort(fetchInit.signal?.reason || "aborted");
+  if (fetchInit.signal?.aborted) {
+    window.clearTimeout(timeoutId);
+    throw new Error("Request was aborted");
+  }
+  fetchInit.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  try {
+    const response = await fetch(makeUrl(config, path), {
+      ...fetchInit,
+      signal: controller.signal,
+      headers: {
+        ...authHeaders(config),
+        ...(fetchInit.headers || {}),
+      },
+    });
+    if (!response.ok) {
+      throw new Error((await readError(response)) || `${response.status} ${response.statusText}`);
+    }
+    return { blob: await response.blob(), headers: response.headers };
+  } catch (error) {
+    if (fetchInit.signal?.aborted) throw new Error("Request was aborted");
+    if (controller.signal.reason === "timeout") {
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s`);
+    }
+    throw error instanceof Error ? error : new Error(String(error));
+  } finally {
+    window.clearTimeout(timeoutId);
+    fetchInit.signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -126,8 +165,10 @@ function delay(ms: number): Promise<void> {
 export async function readError(res: Response): Promise<string> {
   try {
     const json = await res.json();
-    if (typeof json?.detail === "string") return json.detail;
-    if (typeof json?.message === "string") return json.message;
+    const errorCode = typeof json?.error_code === "string" ? json.error_code : undefined;
+    const withCode = (detail: string) => errorCode ? `[${errorCode}] ${detail}` : detail;
+    if (typeof json?.detail === "string") return withCode(json.detail);
+    if (typeof json?.message === "string") return withCode(json.message);
     if (Array.isArray(json?.detail)) {
       // F11：FastAPI 校验错误 detail 是 [{loc, msg, type}, ...]，拼"字段名: msg"成可读句子而非吐原始 JSON。
       const parts = (json.detail as unknown[])
@@ -141,13 +182,13 @@ export async function readError(res: Response): Promise<string> {
           return null;
         })
         .filter(Boolean);
-      if (parts.length) return parts.join("；");
+      if (parts.length) return withCode(parts.join("；"));
     }
     if (json?.detail && typeof json.detail === "object") {
-      if (typeof json.detail.message === "string") return json.detail.message;
-      if (typeof json.detail.error === "string") return json.detail.error;
+      if (typeof json.detail.message === "string") return withCode(json.detail.message);
+      if (typeof json.detail.error === "string") return withCode(json.detail.error);
     }
-    return `${res.status} ${res.statusText}`.trim() || JSON.stringify(json);
+    return withCode(`${res.status} ${res.statusText}`.trim() || JSON.stringify(json));
   } catch {
     try {
       return await res.text();

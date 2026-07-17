@@ -384,6 +384,26 @@ def test_profile_env_marks_backend_owned_workspace_trusted(tmp_path):
     assert state["projects"][profile.workspace_dir.as_posix()]["hasTrustDialogAccepted"] is True
 
 
+def test_profile_env_inherits_selected_runtime_env_instead_of_process_env(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("MCP_SERVER_URL", "http://process-env.example/mcp")
+    runtime = ClaudeRuntime(
+        settings,
+        LocalSessionStore(settings.session_dir),
+        runtime_env={
+            "MCP_SERVER_URL": "http://selected-env.example/mcp",
+            "SELECTED_RUNTIME_MARKER": "selected",
+        },
+    )
+
+    env = runtime._profile_env(runtime.profiles["main-agent"])
+
+    assert env["MCP_SERVER_URL"] == "http://selected-env.example/mcp"
+    assert env["SELECTED_RUNTIME_MARKER"] == "selected"
+    assert env["HOME"] == str(settings.main_claude_root)
+    assert env["DATA_DIR"] == str(settings.data_dir)
+
+
 def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch):
     seen = {}
 

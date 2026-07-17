@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from .agent_paths import InvalidAgentId, business_agent_layout, business_agents_root, validate_agent_id
+from .business_agent_seed_catalog import declared_business_agent_ids
 from .settings import AppSettings
 
 
@@ -135,16 +136,10 @@ def seed_business_agent_ids() -> frozenset[str]:
     用于区分 seed（声明式基线，禁删）与用户创建（可 tombstone 删除）的业务 Agent（#26）。
     seed 目录是「出生配置」声明源，与运行卷的活配置无关（卷配置被反馈优化闭环修改、不可覆盖）。
     """
-    seed_root = Path(__file__).resolve().parents[2] / "docker" / "runtime-volume-seeds" / "data" / "business-agents"
-    if seed_root.is_symlink() or not seed_root.is_dir():
-        return frozenset()
     ids: set[str] = set()
-    for child in sorted(seed_root.iterdir()):
-        workspace = child / "workspace"
-        if child.is_symlink() or not child.is_dir() or workspace.is_symlink() or not workspace.is_dir():
-            continue
+    for raw_agent_id in declared_business_agent_ids():
         try:
-            ids.add(validate_agent_id(child.name))
+            ids.add(validate_agent_id(raw_agent_id))
         except InvalidAgentId:
             continue
     return frozenset(ids)

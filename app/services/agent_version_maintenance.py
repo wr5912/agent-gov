@@ -3,8 +3,9 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from types import TracebackType
+from typing import TypeVar
 
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.runtime.agent_admission import (
     AgentMaintenanceClaim,
@@ -14,10 +15,12 @@ from app.runtime.agent_admission import (
     is_maintenance_active,
     release_maintenance,
     renew_maintenance,
+    run_maintenance_activation_guard,
 )
 
 DEFAULT_MAINTENANCE_LEASE_SECONDS = 300.0
 DEFAULT_MAINTENANCE_HEARTBEAT_SECONDS = 30.0
+_T = TypeVar("_T")
 
 
 class AgentVersionMaintenanceCoordinator:
@@ -52,6 +55,7 @@ class AgentVersionMaintenanceLease:
         self._thread: threading.Thread | None = None
         self._failure: Exception | None = None
         self._claim_lock = threading.Lock()
+        self._closed = False
 
     @property
     def claim(self) -> AgentMaintenanceClaim:
@@ -84,16 +88,33 @@ class AgentVersionMaintenanceLease:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool:
+        self.close(validate_claim=exc is None)
+        return False
+
+    def close(self, *, validate_claim: bool) -> None:
+        """Stop heartbeats and release the claim.
+
+        Callers that already crossed an irreversible side-effect boundary may
+        set ``validate_claim=False`` so a late lease-loss signal cannot turn an
+        applied operation into a misleading failure response.
+        """
+        if self._closed:
+            return
+        self._closed = True
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=self._coordinator.heartbeat_seconds + 1.0)
         claim = self.claim
-        released = release_maintenance(self._coordinator.session_factory, claim)
-        if exc is None:
+        try:
+            released = release_maintenance(self._coordinator.session_factory, claim)
+        except Exception:
+            if validate_claim:
+                raise
+            return
+        if validate_claim:
             self.check()
             if not released:
                 raise AgentMaintenanceClaimLost(f"Agent {claim.agent_id} maintenance claim was lost before release")
-        return False
 
     def check(self) -> None:
         if self._failure is not None:
@@ -104,6 +125,19 @@ class AgentVersionMaintenanceLease:
         assert_maintenance_claim_active(
             self._coordinator.session_factory,
             self.claim,
+        )
+
+    def run_activation_guard(
+        self,
+        activate: Callable[[Session], _T],
+        compensate: Callable[[], None],
+    ) -> _T:
+        self.check()
+        return run_maintenance_activation_guard(
+            self._coordinator.session_factory,
+            self.claim,
+            activate,
+            compensate,
         )
 
     def _heartbeat(self) -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import scripts.diagnose_runtime_health as diagnose_runtime_health
 
 
@@ -66,3 +68,25 @@ def test_diagnose_does_not_blame_provider_when_api_liveness_is_unreachable(monke
     assert "API: unhealthy" in output
     assert "当前不能归因于外部模型 provider" in output
     assert "这不是镜像启动失败" not in output
+
+
+def test_main_reads_api_defaults_from_the_selected_compose_env(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    selected_env = tmp_path / "selected.env"
+    selected_env.write_text("HOST_PORT=61234\n", encoding="utf-8")
+    monkeypatch.setenv("COMPOSE_ENV_FILE", str(selected_env))
+    monkeypatch.delenv("HOST_PORT", raising=False)
+    monkeypatch.delenv("API_BASE", raising=False)
+    monkeypatch.setattr(sys, "argv", ["diagnose_runtime_health.py"])
+
+    def fake_diagnose(*, api_base: str, wait_seconds: float, require_ready: bool) -> int:
+        assert api_base == "http://localhost:61234"
+        assert wait_seconds == 0
+        assert require_ready is False
+        return 0
+
+    monkeypatch.setattr(diagnose_runtime_health, "diagnose", fake_diagnose)
+
+    assert diagnose_runtime_health.main() == 0

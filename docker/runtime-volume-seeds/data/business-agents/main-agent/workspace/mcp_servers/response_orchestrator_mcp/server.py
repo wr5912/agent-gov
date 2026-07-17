@@ -11,10 +11,12 @@ from typing import Any, Literal
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("response-orchestrator")
+WORKSPACE_DIR = Path(os.getenv("CLAUDE_WORKSPACE", str(Path(__file__).resolve().parents[2])))
+DATA_DIR = Path(os.getenv("DATA_DIR", str(WORKSPACE_DIR.parents[2])))
 
 
 def _plan_dir() -> Path:
-    p = Path(os.getenv("RESPONSE_PLAN_DIR", "/data/outputs/response-plans"))
+    p = Path(os.getenv("RESPONSE_PLAN_DIR", str(DATA_DIR / "outputs" / "response-plans")))
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -66,18 +68,21 @@ def dry_run_action(plan_id: str) -> dict[str, Any]:
         {"name": "has_rollback", "passed": bool(plan.get("rollback_plan"))},
         {"name": "has_validation", "passed": bool(plan.get("validation_plan"))},
     ]
-    return {"ok": all(c["passed"] for c in checks), "mode": "dry-run", "plan_id": plan_id, "checks": checks, "would_execute": plan.get("action_type"), "targets": plan.get("targets")}
+    return {
+        "ok": all(c["passed"] for c in checks),
+        "mode": "dry-run",
+        "plan_id": plan_id,
+        "checks": checks,
+        "would_execute": plan.get("action_type"),
+        "targets": plan.get("targets"),
+    }
 
 
 @mcp.tool()
 def execute_approved_action(plan_id: str, approval_id: str, approver: str) -> dict[str, Any]:
     """Execute an approved action. Disabled by default; wire this to SOAR/EDR in production."""
     if not _execution_enabled():
-        return {
-            "executed": False,
-            "reason": "execution_disabled",
-            "message": "RESPONSE_EXECUTION_ENABLED=false。当前环境只允许生成计划和 dry-run。"
-        }
+        return {"executed": False, "reason": "execution_disabled", "message": "RESPONSE_EXECUTION_ENABLED=false。当前环境只允许生成计划和 dry-run。"}
     path = _plan_dir() / f"{plan_id}.json"
     if not path.exists():
         return {"executed": False, "error": "plan_not_found", "plan_id": plan_id}
@@ -91,7 +96,7 @@ def execute_approved_action(plan_id: str, approval_id: str, approver: str) -> di
         "executed_at": datetime.now(timezone.utc).isoformat(),
         "action_type": plan.get("action_type"),
         "targets": plan.get("targets"),
-        "provider": "placeholder"
+        "provider": "placeholder",
     }
     return execution_record
 

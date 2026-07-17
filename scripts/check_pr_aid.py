@@ -23,14 +23,16 @@ def extract_aid_identifiers(*values: str) -> list[str]:
 
 
 def validate_pull_request_metadata(head_ref: str, title: str, body: str) -> str:
-    identifiers = extract_aid_identifiers(head_ref, title, body)
-    if len(identifiers) != 1:
-        rendered = ", ".join(identifiers) if identifiers else "none"
-        raise ValueError(
-            "pull request branch, title, and body must reference exactly one unique "
-            f"AID-N identifier; found: {rendered}"
-        )
-    return identifiers[0]
+    head_identifiers = extract_aid_identifiers(head_ref)
+    if len(head_identifiers) != 1:
+        rendered = ", ".join(head_identifiers) if head_identifiers else "none"
+        raise ValueError(f"pull request head branch must reference exactly one unique AID-N identifier; found: {rendered}")
+    identifier = head_identifiers[0]
+    metadata_identifiers = extract_aid_identifiers(title, body)
+    conflicts = [value for value in metadata_identifiers if value != identifier]
+    if conflicts:
+        raise ValueError(f"AID-N identifiers in pull request title and body must match head branch identifier {identifier}; found: {', '.join(conflicts)}")
+    return identifier
 
 
 def values_from_event(path: Path) -> tuple[str, str, str] | None:
@@ -47,7 +49,7 @@ def values_from_event(path: Path) -> tuple[str, str, str] | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Require exactly one Multica AID in PR metadata")
+    parser = argparse.ArgumentParser(description="Require one stable current AID work-item identifier in the PR head branch")
     parser.add_argument("--event-file", type=Path)
     parser.add_argument("--head-ref", default="")
     parser.add_argument("--title", default="")
@@ -70,7 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         print(f"::error::{exc}")
         return 1
-    print(f"Validated Multica trace identifier: {identifier}")
+    print(f"Validated current work-item trace identifier: {identifier}")
     return 0
 
 

@@ -16,7 +16,7 @@ allowed-tools:
 业务 Agent 的 `agent_id` 由本次 job 的输入上下文给出。其 workspace 固定在：
 
 ```
-/data/business-agents/<agent_id>/workspace/
+../data/business-agents/<agent_id>/workspace/
 ├── CLAUDE.md                      # 系统 prompt / 角色定义
 ├── .claude/settings.json          # 权限（allow/ask/deny）、hooks、defaultMode
 ├── .mcp.json                      # MCP server 清单与连接方式

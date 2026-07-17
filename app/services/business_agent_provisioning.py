@@ -26,6 +26,8 @@ def provision_business_agent(
     template_id: str,
     plan: WorkspaceTemplatePlan | None = None,
     validate_workspace: Callable[[Path], None] | None = None,
+    finalize_workspace: Callable[[Path], None] | None = None,
+    rollback_workspace_finalization: Callable[[Path], bool] | None = None,
 ) -> AgentRegistryRecord:
     """Coordinate preflight, DB reservation, FS apply and DB finalization."""
     try:
@@ -51,10 +53,18 @@ def provision_business_agent(
         )
         if validate_workspace is not None:
             validate_workspace(workspace_dir)
+        if finalize_workspace is not None:
+            finalize_workspace(workspace_dir)
         store.renew_business_agent_provision(reservation)
         return store.finalize_business_agent(reservation)
     except Exception as exc:
-        cleanup_complete = _rollback_after_failure(journal, exc)
+        finalization_cleanup_complete = True
+        if rollback_workspace_finalization is not None:
+            try:
+                finalization_cleanup_complete = rollback_workspace_finalization(workspace_dir)
+            except Exception:
+                finalization_cleanup_complete = False
+        cleanup_complete = _rollback_after_failure(journal, exc) and finalization_cleanup_complete
         # New and recovery-marked attempts own an initially absent root. A remaining
         # root is therefore unknown residue. Normal tombstone reuse may preserve its
         # pre-existing workspace when the owned-path rollback completed.

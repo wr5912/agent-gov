@@ -10,7 +10,12 @@ import pytest
 from app.runtime.agent_paths import business_agent_layout
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.agent_registry_db import AgentRegistryModel
-from app.runtime.business_agent_workspace import WorkspaceSafetyError, prepare_business_agent_workspace
+from app.runtime.business_agent_seed_catalog import declared_business_agent_ids
+from app.runtime.business_agent_workspace import (
+    WorkspaceSafetyError,
+    prepare_business_agent_workspace,
+    prepare_declared_business_agent_workspace,
+)
 from app.runtime.errors import ConflictError, NotFoundError
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.settings import AppSettings
@@ -362,6 +367,40 @@ def test_template_preflight_rejects_symlink(monkeypatch, tmp_path: Path) -> None
 
     with pytest.raises(WorkspaceSafetyError):
         prepare_business_agent_workspace(agent_id="soc-ops", name="SOC", template_id="general")
+
+
+def test_declared_seed_cross_id_plan_preserves_all_file_bytes(monkeypatch, tmp_path: Path) -> None:
+    # 这里只验证 catalog -> live 的原样复制；repo 准入分级由 runtime_template_safety 专项测试覆盖。
+    seed_root = tmp_path / "seeds"
+    workspace = seed_root / "data" / "business-agents" / "source-agent" / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "CLAUDE.md").write_bytes(b"# {{AGENT_ID}}\n")
+    (workspace / ".mcp.json").write_bytes(b'{"mcpServers":{"live":{"type":"http","url":"http://live.internal/mcp"}}}\n')
+    (workspace / "asset.bin").write_bytes(b"\x00\xfflive-workspace")
+    (workspace / "README.md").write_bytes(b"workspace-owned readme\n")
+    monkeypatch.setenv("RUNTIME_VOLUME_SEEDS_DIR", str(seed_root))
+
+    plan = prepare_declared_business_agent_workspace(
+        source_agent_id="source-agent",
+    )
+
+    assert plan is not None
+    assert plan.template_id == "declared:source-agent"
+    entries = {entry.relative_path.as_posix(): entry.content for entry in plan.entries}
+    assert entries == {
+        ".mcp.json": b'{"mcpServers":{"live":{"type":"http","url":"http://live.internal/mcp"}}}\n',
+        "CLAUDE.md": b"# {{AGENT_ID}}\n",
+        "README.md": b"workspace-owned readme\n",
+        "asset.bin": b"\x00\xfflive-workspace",
+    }
+
+
+def test_declared_seed_catalog_filters_invalid_agent_directory_names(tmp_path: Path) -> None:
+    seed_root = tmp_path / "seeds"
+    for agent_id in ("valid-agent", "invalid agent", "bad@id"):
+        (seed_root / "data" / "business-agents" / agent_id / "workspace").mkdir(parents=True)
+
+    assert declared_business_agent_ids(seed_root=seed_root) == frozenset({"valid-agent"})
 
 
 def test_startup_recovery_restores_tombstone_and_hides_new_orphan(tmp_path: Path) -> None:

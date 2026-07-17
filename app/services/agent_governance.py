@@ -25,7 +25,11 @@ from app.runtime.runtime_db_base import begin_sqlite_write_transaction
 from app.runtime.state_machines import validate_transition
 from app.runtime.stores.feedback_eval_store import EvalRunReviewPlan
 from app.runtime.stores.feedback_store import FeedbackStore
-from app.services.agent_change_set_provisioner import ChangeSetProvisionConflict, ChangeSetSource, provision_change_set
+from app.services.agent_change_set_provisioner import (
+    ChangeSetProvisionConflict,
+    ChangeSetSource,
+    provision_change_set_under_maintenance,
+)
 from app.services.agent_change_set_worktree_lifecycle import (
     abandon_change_set_and_cleanup,
     execute_worktree_cleanup,
@@ -245,11 +249,11 @@ class AgentGovernanceService(AgentRegressionMixin):
         source: ChangeSetSource | None = None,
     ) -> JsonObject:
         agent_id = self._normalize_agent_id(agent_id)
-        store = self._store_for(agent_id)
         try:
-            provisioned_id = provision_change_set(
+            provisioned_id = provision_change_set_under_maintenance(
                 session_factory=self.feedback_store.Session,
-                store=store,
+                version_maintenance=self.version_maintenance,
+                store_for=self._store_for,
                 agent_id=agent_id,
                 execution_job_id=execution_job_id,
                 base_commit_sha=base_commit_sha,
@@ -259,7 +263,7 @@ class AgentGovernanceService(AgentRegressionMixin):
                 change_set_id=change_set_id,
                 source=source,
             )
-        except (AgentGitError, ChangeSetProvisionConflict) as exc:
+        except (AgentAdmissionError, AgentGitError, ChangeSetProvisionConflict) as exc:
             raise AgentGovernanceError(409, f"Failed to create Agent change set worktree: {exc}") from exc
         created = self.get_change_set(provisioned_id)
         if created is None:

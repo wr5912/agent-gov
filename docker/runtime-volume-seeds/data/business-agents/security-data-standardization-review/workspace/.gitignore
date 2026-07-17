@@ -2,13 +2,7 @@
 CLAUDE.local.md
 .claude/settings.local.json
 
-# Runtime data
-../data/sessions/*
-../data/transcripts/*
-../data/uploads/*
-../data/outputs/*
-../data/agent-memory/*
-!../data/**/.gitkeep
+# 运行态数据位于 workspace 外部；workspace Git 无需也无法忽略仓库根之外的路径。
 
 # Secrets
 .env

@@ -9,10 +9,11 @@ import yaml
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("security-kb")
+WORKSPACE_DIR = Path(os.getenv("CLAUDE_WORKSPACE", str(Path(__file__).resolve().parents[2])))
 
 
 def _load_kb() -> list[dict[str, Any]]:
-    path = Path(os.getenv("SECURITY_KB_FILE", "/data/business-agents/main-agent/workspace/mcp_servers/security_kb_mcp/kb.yaml"))
+    path = Path(os.getenv("SECURITY_KB_FILE", str(WORKSPACE_DIR / "mcp_servers" / "security_kb_mcp" / "kb.yaml")))
     data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {"items": []}
     return data.get("items", [])
 
@@ -24,10 +25,7 @@ def search_kb(query: str, tags: list[str] | None = None, limit: int = 10) -> dic
     tag_set = {t.lower() for t in tags or []}
     results = []
     for item in _load_kb():
-        haystack = " ".join([
-            str(item.get("id", "")), str(item.get("title", "")),
-            " ".join(item.get("tags", [])), str(item.get("content", ""))
-        ]).lower()
+        haystack = " ".join([str(item.get("id", "")), str(item.get("title", "")), " ".join(item.get("tags", [])), str(item.get("content", ""))]).lower()
         item_tags = {str(t).lower() for t in item.get("tags", [])}
         if q and q not in haystack:
             continue

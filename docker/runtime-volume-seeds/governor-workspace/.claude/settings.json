@@ -22,7 +22,7 @@
     "enabled": true,
     "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
-    "enableWeakerNestedSandbox": false,
+    "enableWeakerNestedSandbox": true,
     "filesystem": {
       "allowWrite": [],
       "denyRead": []

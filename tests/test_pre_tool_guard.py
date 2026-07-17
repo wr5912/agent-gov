@@ -77,14 +77,14 @@ def test_daily_report_scoped_low_risk_permissions_are_direct_allow():
     perms = json.loads(SETTINGS.read_text(encoding="utf-8"))["permissions"]
     sandbox_fs = json.loads(SETTINGS.read_text(encoding="utf-8"))["sandbox"]["filesystem"]
 
-    assert "Write(/data/outputs/**)" in perms["allow"]
-    assert "Write(/data/reports/**)" in perms["allow"]
+    assert "Write(../../../outputs/**)" in perms["allow"]
+    assert "Write(../../../reports/**)" in perms["allow"]
     assert "Bash(date *)" in perms["allow"]
     assert "Bash(pwd)" in perms["allow"]
-    assert "Bash(mkdir -p /data/reports/**)" in perms["allow"]
+    assert "Bash(mkdir -p ../../../reports/**)" in perms["allow"]
     assert "Bash(*)" not in perms["allow"]
     assert "Bash(*)" in perms.get("ask", [])
-    assert "/data/reports" in sandbox_fs["allowWrite"]
+    assert "../../../reports" in sandbox_fs["allowWrite"]
 
 
 def test_response_disposal_execution_mcp_is_ask_not_allow():

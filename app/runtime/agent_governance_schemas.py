@@ -8,20 +8,33 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class AgentCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     agent_id: Optional[str] = None
     # 创建时基于的模板（catalog 子目录名）；缺省用 general。未知值 → 422。
     template_id: Optional[str] = Field(default=None)
+    source_seed_id: Optional[str] = Field(
+        default=None,
+        description="Declared business-Agent seed id to copy byte-for-byte. Mutually exclusive with template_id.",
+    )
+
+    @model_validator(mode="after")
+    def validate_workspace_source(self) -> AgentCreateRequest:
+        if self.template_id is not None and self.source_seed_id is not None:
+            raise ValueError("template_id and source_seed_id are mutually exclusive")
+        return self
 
 
 class BusinessAgentTemplatesResponse(BaseModel):
     """业务 Agent 创建模板 catalog（可选 template_id 列表）。"""
 
     templates: list[str]
+    seed_agent_ids: list[str] = Field(default_factory=list)
 
 
 class AgentSummaryResponse(BaseModel):

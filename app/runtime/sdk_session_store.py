@@ -277,6 +277,69 @@ def discard_staged_entries(db: Session, *, run_id: str, discarded_at: str | None
     return int(result.rowcount)
 
 
+def parse_sdk_store_import_marker(marker: str) -> tuple[str, str] | None:
+    prefix = "migration_running:"
+    if not marker.startswith(prefix):
+        return None
+    token, separator, expires_at = marker[len(prefix) :].partition(":")
+    if not separator or not token or not expires_at:
+        return None
+    return token, expires_at
+
+
+def clear_inactive_sdk_sessions_for_agent_in_transaction(
+    db: Session,
+    *,
+    agent_id: str,
+    now: str | None = None,
+) -> int:
+    """Invalidate one Agent's inactive SDK mappings in the caller's transaction."""
+    normalized_agent_id = agent_id.strip()
+    if not normalized_agent_id:
+        raise ValueError("agent_id is required to invalidate SDK sessions")
+    current = now or utc_now()
+    records = list(
+        db.scalars(
+            select(SessionRecordModel).where(
+                SessionRecordModel.agent_id == normalized_agent_id,
+            )
+        ).all()
+    )
+    if any(record.active_run_id and (not record.active_run_expires_at or record.active_run_expires_at > current) for record in records):
+        raise SessionConflictError(f"Agent {normalized_agent_id} has an active session turn")
+    sdk_records = [record for record in records if record.sdk_session_id is not None]
+    for record in sdk_records:
+        import_claim = parse_sdk_store_import_marker(record.sdk_store_migration_error or "")
+        if import_claim is not None:
+            discard_staged_entries(db, run_id=import_claim[0])
+    if not sdk_records:
+        return 0
+    result = db.execute(
+        update(SessionRecordModel)
+        .where(
+            SessionRecordModel.agent_id == normalized_agent_id,
+            SessionRecordModel.sdk_session_id.is_not(None),
+            or_(
+                SessionRecordModel.active_run_id.is_(None),
+                and_(
+                    SessionRecordModel.active_run_expires_at.is_not(None),
+                    SessionRecordModel.active_run_expires_at <= current,
+                ),
+            ),
+        )
+        .values(
+            sdk_session_id=None,
+            sdk_project_key=None,
+            sdk_store_ready_at=None,
+            sdk_store_migration_error=None,
+            updated_at=current,
+        )
+    )
+    if result.rowcount != len(sdk_records):
+        raise SessionConflictError(f"Agent {normalized_agent_id} SDK session set changed during invalidation")
+    return len(sdk_records)
+
+
 def _required_key_part(value: object, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"SessionStore {name} must be a non-empty string")

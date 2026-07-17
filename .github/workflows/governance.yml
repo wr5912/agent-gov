@@ -2,14 +2,11 @@ name: governance
 
 on:
   pull_request:
-    # 默认只有 opened/synchronize/reopened，不含 edited；而 check_pr_aid.py 校验的是
-    # PR 标题/正文里的 AID。少了 edited，改标题或正文不会重跑门禁。
-    # 注意这只是治标：发布器侧的治本是把血缘快照固化进 commit_links 表
-    # （见 agent_gov_release_controller.resolve_pull_request），不再依赖 live PR。
+    # 当前工作项适配器使用 AID-N；head branch 是稳定权威，标题/正文如含 AID 也必须一致。
+    # 保留 edited，避免后改标题/正文绕过一致性门。
     types: [opened, synchronize, reopened, edited]
   push:
     branches:
-      - main
       - master
 
 permissions:
@@ -22,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Require exactly one Multica AID trace
+      - name: Require exactly one AID work-item trace
         run: python3 scripts/check_pr_aid.py --event-file "$GITHUB_EVENT_PATH"
 
   governance-static:

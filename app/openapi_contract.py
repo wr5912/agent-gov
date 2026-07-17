@@ -162,6 +162,12 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
         return {404, 422}
     if path == "/api/agent-config-file":
         return {403, 404, 409, 413, 415, 422}
+    if path == "/api/agent-registry/{agent_id}/workspace/import":
+        return {411, 413, 415, 503}
+    if path == "/api/agent-registry/{agent_id}/workspace/export":
+        return {413}
+    if path == "/api/agent-registry/{agent_id}/workspace/restore":
+        return {413, 503}
     if path == "/api/settings/openai-compat-agent" and method == "put":
         return {400, 404, 422}
     if path == "/api/sessions/{session_id}/messages":

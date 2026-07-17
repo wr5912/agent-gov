@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import copy
 import os
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy_agent_gov_to_host"
 REMOTE_HELPER = REPO_ROOT / "scripts" / "agent_gov_release_remote"
-RELEASECTL = REPO_ROOT / "scripts" / "releasectl"
-INSTALLER = REPO_ROOT / "scripts" / "install_agent_gov_release_controller"
+CI_EVIDENCE_VERIFIER = REPO_ROOT / "scripts" / "verify_agent_gov_ci_evidence.py"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from verify_agent_gov_ci_evidence import (  # noqa: E402
+    EvidenceConfig,
+    EvidenceError,
+    verify_ci_evidence,
+)
 
 
 def text_of(path: Path) -> str:
@@ -16,7 +26,7 @@ def text_of(path: Path) -> str:
 
 
 def test_release_shell_entrypoints_are_executable_and_have_valid_syntax() -> None:
-    for script in (DEPLOY_SCRIPT, REMOTE_HELPER, RELEASECTL, INSTALLER):
+    for script in (DEPLOY_SCRIPT, REMOTE_HELPER):
         assert os.access(script, os.X_OK), f"not executable: {script}"
         result = subprocess.run(
             ["bash", "-n", str(script)],
@@ -26,6 +36,15 @@ def test_release_shell_entrypoints_are_executable_and_have_valid_syntax() -> Non
             text=True,
         )
         assert result.returncode == 0, f"{script}: {result.stderr}"
+
+
+def test_parallel_restart_entrypoint_is_retired_in_favour_of_idempotent_deploy() -> None:
+    text = text_of(DEPLOY_SCRIPT)
+    remote = text_of(REMOTE_HELPER)
+
+    assert not (REPO_ROOT / "scripts/restart_agent_gov_on_host").exists()
+    assert "Reusing committed immutable release" in text
+    assert "already current; reconciling Compose state" in remote
 
 
 def test_deploy_reads_the_controller_source_clone_and_exact_master_sha() -> None:
@@ -49,14 +68,15 @@ def test_deploy_pins_ssh_and_installs_a_stable_remote_helper() -> None:
     assert "StrictHostKeyChecking=accept-new" not in text
     assert "UserKnownHostsFile=${SSH_KNOWN_HOSTS_FILE}" in text
     assert "AGENT_GOV_REMOTE_HELPER" in text
-    assert 'sync_remote_helper' in text
-    assert 'shared/bin/agent-gov-release-remote' in text
+    assert "sync_remote_helper" in text
+    assert "shared/bin/agent-gov-release-remote" in text
     assert 'invoke_remote_helper rollback "$ROLLBACK_RELEASE_ID"' in text
     assert 'invoke_remote_helper diagnose "$DIAGNOSE_RELEASE_ID"' in text
 
 
 def test_deploy_keeps_release_metadata_and_images_immutable_without_github_secrets() -> None:
     text = text_of(DEPLOY_SCRIPT)
+    verifier = text_of(CI_EVIDENCE_VERIFIER)
 
     assert 'RELEASE_ID="${ENVIRONMENT}-${SHORT_SHA}"' in text
     assert 'IMAGE_VERSION="${VERSION}-${SHORT_SHA}"' in text
@@ -66,26 +86,41 @@ def test_deploy_keeps_release_metadata_and_images_immutable_without_github_secre
     assert '"$REMOTE_PATH/releases/$RELEASE_ID"' in text
     assert '"$REMOTE_PATH/shared/docker.env"' in text
     assert '"repository": repository' in text
+    assert '"aid_identifier": aid' in text
     assert '"commit_sha": sha' in text
+    assert '"pr_number": int(pr_number)' in text
+    assert '"workflow_url": workflow_url' in text
+    assert '"ci_evidence": json.loads(ci_evidence_json)' in text
     assert '"image_digests": images' in text
     assert "project-images.tar.gz" in text
     assert "dependency-images.tar.gz" in text
     assert "sha256sum" in text
     assert "prepared_release_state" in text
-    assert 'PREPARED_STATE=$(prepared_release_state)' in text
+    assert "PREPARED_STATE=$(prepared_release_state)" in text
     assert "Reusing committed immutable release" in text
+    assert "verify_ci_evidence" in text
+    assert '$(quote "$AID_IDENTIFIER") $(quote "$PR_NUMBER") $(quote "$WORKFLOW_URL")' in text
+    assert '"aid_identifier": expected_aid' in text
+    assert '"pr_number": int(expected_pr_number)' in text
+    assert '"workflow_url": expected_workflow_url' in text
+    assert 'ci_evidence = manifest.get("ci_evidence")' in text
+    assert '"quality_gate": "success"' in text
+    assert 'for key in ("workflow_run_id", "workflow_attempt")' in text
     assert "hasher.update(chunk)" in text
     assert "read_bytes()" not in text
     assert "GITHUB_TOKEN" not in text
     assert "GH_TOKEN" not in text
+    assert "GITHUB_TOKEN" not in verifier
+    assert "GH_TOKEN" not in verifier
 
 
 def test_remote_helper_restores_archived_images_and_checks_readiness() -> None:
     text = text_of(REMOTE_HELPER)
 
-    assert 'flock -n 9' in text
+    assert "flock -n 9" in text
     assert 'RELEASES_DIR="$RELEASE_ROOT/releases"' in text
     assert 'SHARED_ENV="$SHARED_DIR/docker.env"' in text
+    assert 'export AGENT_GOV_COMPOSE_ENV_FILE="$SHARED_ENV"' in text
     assert "atomic_current_link" in text
     assert 'load_release_images "$previous_path"' in text
     assert 'load_release_images "$target"' in text
@@ -118,6 +153,17 @@ def test_target_private_runtime_env_fails_closed_instead_of_using_an_example() -
     assert "private Compose env is missing" in remote
 
 
+def test_deploy_selects_one_complete_env_for_compose_interpolation_and_services() -> None:
+    deploy = text_of(DEPLOY_SCRIPT)
+    remote = text_of(REMOTE_HELPER)
+
+    assert 'AGENT_GOV_COMPOSE_ENV_FILE="$LOCAL_COMPOSE_ENV_PATH"' in deploy
+    assert '--env-file "$LOCAL_COMPOSE_ENV_PATH"' in deploy
+    assert "os.path.abspath(sys.argv[1])" in deploy
+    assert 'export COMPOSE_ENV_FILE="$SHARED_ENV"' in remote
+    assert 'export AGENT_GOV_COMPOSE_ENV_FILE="$SHARED_ENV"' in remote
+
+
 def test_invalid_ref_fails_locally_without_transport_or_network(tmp_path: Path) -> None:
     source = tmp_path / "source"
     subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
@@ -138,7 +184,13 @@ def test_invalid_ref_fails_locally_without_transport_or_network(tmp_path: Path) 
     environment["AGENT_GOV_SOURCE_REPO_DIR"] = str(source)
 
     result = subprocess.run(
-        ["bash", str(DEPLOY_SCRIPT), "--ref", "not-a-sha", "--preflight-only"],
+        [
+            "bash",
+            str(DEPLOY_SCRIPT),
+            "--ref",
+            "not-a-sha",
+            "--preflight-only",
+        ],
         cwd=REPO_ROOT,
         env=environment,
         check=False,
@@ -148,3 +200,336 @@ def test_invalid_ref_fails_locally_without_transport_or_network(tmp_path: Path) 
 
     assert result.returncode == 1
     assert "lowercase full 40-character commit SHA" in result.stderr
+    assert "--aid is required" not in result.stderr
+
+
+def test_deployment_requires_complete_ci_trace_before_network_or_transport(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "remote",
+            "add",
+            "origin",
+            "https://github.test/wr5912/agent-gov.git",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    environment = {**os.environ, "AGENT_GOV_SOURCE_REPO_DIR": str(source)}
+    base = ["bash", str(DEPLOY_SCRIPT), "--ref", "0" * 40]
+
+    missing_aid = subprocess.run(
+        base,
+        cwd=REPO_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    missing_pr = subprocess.run(
+        [*base, "--aid", "AID-16"],
+        cwd=REPO_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    missing_workflow = subprocess.run(
+        [*base, "--aid", "AID-16", "--pr-number", "42"],
+        cwd=REPO_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert missing_aid.returncode == 1
+    assert "--aid is required for deployment" in missing_aid.stderr
+    assert "--pr-number is required for deployment" in missing_pr.stderr
+    assert "--workflow-url is required for deployment" in missing_workflow.stderr
+
+
+def test_deployment_rejects_malformed_trace_before_fetch(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "remote",
+            "add",
+            "origin",
+            "https://github.test/wr5912/agent-gov.git",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    environment = {**os.environ, "AGENT_GOV_SOURCE_REPO_DIR": str(source)}
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(DEPLOY_SCRIPT),
+            "--ref",
+            "0" * 40,
+            "--aid",
+            "not-an-aid",
+            "--pr-number",
+            "42",
+            "--workflow-url",
+            "https://github.test/actions/runs/1",
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "invalid AID identifier" in result.stderr
+
+
+def test_deployment_rejects_workflow_url_from_another_repository_before_fetch(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "remote",
+            "add",
+            "origin",
+            "https://github.test/wr5912/agent-gov.git",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    environment = {**os.environ, "AGENT_GOV_SOURCE_REPO_DIR": str(source)}
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(DEPLOY_SCRIPT),
+            "--ref",
+            "0" * 40,
+            "--aid",
+            "AID-16",
+            "--pr-number",
+            "42",
+            "--workflow-url",
+            "https://github.com/another/project/actions/runs/1",
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "workflow URL must belong to wr5912/agent-gov" in result.stderr
+
+
+def test_deployment_rejects_origin_repository_with_same_project_name(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "remote",
+            "add",
+            "origin",
+            "https://github.test/another/agent-gov.git",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    environment = {**os.environ, "AGENT_GOV_SOURCE_REPO_DIR": str(source)}
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(DEPLOY_SCRIPT),
+            "--ref",
+            "0" * 40,
+            "--preflight-only",
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "git origin repository must be wr5912/agent-gov" in result.stderr
+
+
+class FakeGitHub:
+    def __init__(self, responses: dict[str, object]) -> None:
+        self.responses = responses
+        self.calls: list[str] = []
+
+    def get(self, path: str) -> object:
+        self.calls.append(path)
+        if path not in self.responses:
+            raise AssertionError(f"unexpected GitHub path: {path}")
+        return self.responses[path]
+
+
+def valid_evidence_fixture() -> tuple[EvidenceConfig, dict[str, object]]:
+    repository = "wr5912/agent-gov"
+    commit_sha = "a" * 40
+    run_id = 901
+    attempt = 2
+    pr_number = 42
+    config = EvidenceConfig(
+        repository=repository,
+        commit_sha=commit_sha,
+        aid_identifier="AID-16",
+        pr_number=pr_number,
+        workflow_url=f"https://github.com/{repository}/actions/runs/{run_id}/attempts/{attempt}",
+    )
+    responses: dict[str, object] = {
+        f"/repos/{repository}/actions/runs/{run_id}": {
+            "id": run_id,
+            "run_attempt": attempt,
+            "event": "push",
+            "head_branch": "master",
+            "head_sha": commit_sha,
+            "status": "completed",
+            "conclusion": "success",
+            "path": ".github/workflows/governance.yml@refs/heads/master",
+            "repository": {"full_name": repository},
+        },
+        f"/repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100": {
+            "jobs": [
+                {
+                    "name": "quality-gate",
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+            ]
+        },
+        f"/repos/{repository}/commits/{commit_sha}/pulls?per_page=100": [
+            {
+                "number": pr_number,
+                "merged_at": "2026-07-16T00:00:00Z",
+                "merge_commit_sha": commit_sha,
+                "base": {"ref": "master"},
+            }
+        ],
+        f"/repos/{repository}/pulls/{pr_number}": {
+            "number": pr_number,
+            "state": "closed",
+            "merged_at": "2026-07-16T00:00:00Z",
+            "merge_commit_sha": commit_sha,
+            "base": {"ref": "master"},
+            "head": {"ref": "feature/AID-16-ci-evidence"},
+            "title": "Verify staging deployment evidence",
+            "body": "",
+        },
+    }
+    return config, responses
+
+
+def test_deployment_ci_evidence_binds_successful_master_run_pr_and_aid() -> None:
+    config, responses = valid_evidence_fixture()
+    github = FakeGitHub(responses)
+
+    evidence = verify_ci_evidence(config, github)
+
+    assert evidence.commit_sha == config.commit_sha
+    assert evidence.workflow_run_id == 901
+    assert evidence.workflow_attempt == 2
+    assert evidence.quality_gate == "success"
+    assert evidence.pr_number == config.pr_number
+    assert evidence.aid_identifier == config.aid_identifier
+    assert len(github.calls) == 4
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("conclusion", "failure", "workflow run conclusion mismatch"),
+        ("head_sha", "b" * 40, "workflow run head_sha mismatch"),
+        ("event", "pull_request", "workflow run event mismatch"),
+        ("path", ".github/workflows/other.yml", "workflow file mismatch"),
+    ],
+)
+def test_deployment_ci_evidence_rejects_wrong_workflow_run(
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    config, original = valid_evidence_fixture()
+    responses = copy.deepcopy(original)
+    run = responses["/repos/wr5912/agent-gov/actions/runs/901"]
+    assert isinstance(run, dict)
+    run[field] = value
+
+    with pytest.raises(EvidenceError, match=message):
+        verify_ci_evidence(config, FakeGitHub(responses))
+
+
+def test_deployment_ci_evidence_rejects_failed_quality_gate() -> None:
+    config, original = valid_evidence_fixture()
+    responses = copy.deepcopy(original)
+    jobs = responses["/repos/wr5912/agent-gov/actions/runs/901/attempts/2/jobs?per_page=100"]
+    assert isinstance(jobs, dict)
+    job_list = jobs["jobs"]
+    assert isinstance(job_list, list)
+    job = job_list[0]
+    assert isinstance(job, dict)
+    job["conclusion"] = "failure"
+
+    with pytest.raises(EvidenceError, match="quality-gate job is not successful"):
+        verify_ci_evidence(config, FakeGitHub(responses))
+
+
+def test_deployment_ci_evidence_rejects_unrelated_pr_or_aid() -> None:
+    config, original = valid_evidence_fixture()
+    unrelated_pr = copy.deepcopy(original)
+    pulls = unrelated_pr[f"/repos/wr5912/agent-gov/commits/{config.commit_sha}/pulls?per_page=100"]
+    assert isinstance(pulls, list)
+    pull = pulls[0]
+    assert isinstance(pull, dict)
+    pull["number"] = 43
+    with pytest.raises(EvidenceError, match="exactly the supplied pull request"):
+        verify_ci_evidence(config, FakeGitHub(unrelated_pr))
+
+    wrong_aid = copy.deepcopy(original)
+    pull_detail = wrong_aid["/repos/wr5912/agent-gov/pulls/42"]
+    assert isinstance(pull_detail, dict)
+    pull_detail["head"] = {"ref": "feature/AID-17-ci-evidence"}
+    with pytest.raises(EvidenceError, match="pull request AID mismatch"):
+        verify_ci_evidence(config, FakeGitHub(wrong_aid))
+
+
+def test_deployment_ci_evidence_rejects_workflow_attempt_substitution() -> None:
+    config, responses = valid_evidence_fixture()
+    substituted = EvidenceConfig(
+        repository=config.repository,
+        commit_sha=config.commit_sha,
+        aid_identifier=config.aid_identifier,
+        pr_number=config.pr_number,
+        workflow_url="https://github.com/wr5912/agent-gov/actions/runs/901/attempts/1",
+    )
+
+    with pytest.raises(EvidenceError, match="workflow run attempt mismatch"):
+        verify_ci_evidence(substituted, FakeGitHub(responses))

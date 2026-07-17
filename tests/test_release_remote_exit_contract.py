@@ -1,11 +1,10 @@
 """agent_gov_release_remote 的退出码契约测试——真正执行 bash，不是 grep 源码。
 
-存在理由：控制器的状态机完全建立在这个退出码契约之上
-（0=健康 / 2=已回滚 / 3=部署与回滚都失败，见 agent_gov_release_controller.execute_release）。
-在此之前，部署脚本侧只有 `bash -n` 语法检查和对源码文本的 grep 断言，
-控制器侧又把 run_logged 整个 monkeypatch 成 0/2/42——**契约两侧各自对着自己的假设断言，
-中间没有任何一处验证 bash 真的会那样返回**。P0（health_check 因尾随 `|| true` 恒返回 0）
-与 readlink -f 误判（无上一版时 exit 1 而非 3）都是从这个洞溜进来的。
+存在理由：人工部署入口需要稳定区分
+0=健康、2=部署失败但已自动恢复、3=部署与恢复均失败。仅做 `bash -n`
+或源码 grep 无法证明真实执行分支会返回这些退出码。P0（health_check 因尾随
+`|| true` 恒返回 0）与 readlink -f 误判（无上一版时 exit 1 而非 3）
+都是从这个验证缺口溜进来的。
 
 因此这里的测试必须真的 spawn 脚本、真的走完 deploy_release 的分支。
 外部依赖用 PATH 注入的替身隔离：
@@ -104,9 +103,7 @@ def _make_release(root: Path, release_id: str) -> Path:
     ).stdout
     (directory / "images" / "app.tar.gz.sha256").write_text(checksum, encoding="utf-8")
 
-    (directory / "docker" / "docker-compose.yml").write_text(
-        "services: {}\n", encoding="utf-8"
-    )
+    (directory / "docker" / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
     # compose_up 从这里读镜像 tag
     (directory / ".app-version").write_text("3.0.0-exitcontract\n", encoding="utf-8")
     # health_check 末尾的诊断步骤会调它；它带 || true，但文件必须存在
@@ -181,9 +178,7 @@ def _run_deploy(
     docker_log.touch()
 
     _write_exec(bin_dir / "docker", _DOCKER_STUB)
-    _write_exec(
-        bin_dir / "python3", _PYTHON_STUB.replace("__SMOKE_MARKER__", SMOKE_MARKER)
-    )
+    _write_exec(bin_dir / "python3", _PYTHON_STUB.replace("__SMOKE_MARKER__", SMOKE_MARKER))
 
     real_python = shutil.which("python3") or sys.executable
     env = {
@@ -211,9 +206,7 @@ def _run_deploy(
     )
 
 
-def test_healthy_deploy_exits_zero_and_points_current_at_release(
-    release_root: Path, tmp_path: Path
-) -> None:
+def test_healthy_deploy_exits_zero_and_points_current_at_release(release_root: Path, tmp_path: Path) -> None:
     directory = _make_release(release_root, "staging-232-aaaaaaaaaaaa")
 
     result = _run_deploy(release_root, "staging-232-aaaaaaaaaaaa", tmp_path)
@@ -223,9 +216,7 @@ def test_healthy_deploy_exits_zero_and_points_current_at_release(
     assert json.loads((directory / "release.json").read_text())["status"] == "succeeded"
 
 
-def test_smoke_failure_rolls_back_to_previous_and_exits_two(
-    release_root: Path, tmp_path: Path
-) -> None:
+def test_smoke_failure_rolls_back_to_previous_and_exits_two(release_root: Path, tmp_path: Path) -> None:
     """体检失败必须回滚并返回 2。
 
     这条在修复前会失败（拿到 0 并把坏版本标成 succeeded）——
@@ -236,13 +227,10 @@ def test_smoke_failure_rolls_back_to_previous_and_exits_two(
     broken = _make_release(release_root, "staging-232-bbbbbbbbbbbb")
 
     # 第 1 次冒烟 = 新版本（不健康）；第 2 次 = 回滚目标（健康）
-    result = _run_deploy(
-        release_root, "staging-232-bbbbbbbbbbbb", tmp_path, smoke_fail_seq="1"
-    )
+    result = _run_deploy(release_root, "staging-232-bbbbbbbbbbbb", tmp_path, smoke_fail_seq="1")
 
     assert result.returncode == 2, (
-        "体检失败必须返回 2（已回滚）。拿到 0 说明 health_check 又把冒烟失败吞掉了。\n"
-        f"stdout={result.stdout}\nstderr={result.stderr}"
+        f"体检失败必须返回 2（已回滚）。拿到 0 说明 health_check 又把冒烟失败吞掉了。\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     # 坏版本不得成为 current
     assert (release_root / "current").resolve() == previous.resolve()
@@ -250,25 +238,18 @@ def test_smoke_failure_rolls_back_to_previous_and_exits_two(
     assert manifest["status"] == "rolled_back"
 
 
-def test_first_deploy_failure_without_previous_exits_three(
-    release_root: Path, tmp_path: Path
-) -> None:
+def test_first_deploy_failure_without_previous_exits_three(release_root: Path, tmp_path: Path) -> None:
     """全新目标机（无 current）首次部署失败必须返回 3，而不是含义不明的 1。
 
     这条在修复前会失败（拿到 1）——因为 `readlink -f` 对尚不存在的 current
     仍返回非空路径，把"首次部署"误判为"有上一版可回滚"，
     进而 load_release_images 找不到归档而 die。
-    控制器把 exit 1 当作"含义不明"→ 退回 WAITING_CI → 每 30 秒无限重试。
+    exit 1 也无法让人工部署入口准确区分是否已完成自动恢复。
     """
     _make_release(release_root, "staging-232-cccccccccccc")
     assert not (release_root / "current").exists()
 
-    result = _run_deploy(
-        release_root, "staging-232-cccccccccccc", tmp_path, compose_up_rc=1
-    )
+    result = _run_deploy(release_root, "staging-232-cccccccccccc", tmp_path, compose_up_rc=1)
 
-    assert result.returncode == 3, (
-        "无上一版时部署失败必须返回 3（FAILED）。拿到 1 会被控制器判为含义不明并无限重试。\n"
-        f"stdout={result.stdout}\nstderr={result.stderr}"
-    )
+    assert result.returncode == 3, f"无上一版时部署失败必须返回 3（FAILED），不能退化为含义不明的 1。\nstdout={result.stdout}\nstderr={result.stderr}"
     assert not (release_root / "current").exists()

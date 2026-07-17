@@ -3,7 +3,6 @@ import {
   ExternalLink,
   KeyRound,
   Loader2,
-  Plus,
   Save,
   Trash2,
   Wrench,
@@ -23,6 +22,9 @@ import {
   type OpenAICompatAgentConfig,
 } from "../api/runtime";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
+import { AgentCreateForm } from "./AgentCreateForm";
+import { AgentWorkspacePackagePanel } from "./AgentWorkspacePackagePanel";
+import { validateAgentId } from "./agentSettingsValidation";
 import "./SettingsModal.css";
 
 // 四阶段改进治理 §2 平台设置：业务 Agent 管理 / Developer·Debug（纯配置）。
@@ -39,16 +41,6 @@ const SETTINGS_TABS: { key: SettingsTab; label: string; eyebrow: string; descrip
   { key: "developer", label: "Developer", eyebrow: "Runtime", description: "配置本浏览器连接的 Runtime 与调试入口。", Icon: Wrench },
 ];
 type SettingsTab = "agents" | "developer";
-
-// F7：业务 Agent ID 客户端校验，与后端 agent_paths `^[A-Za-z0-9._-]+$` 一致；留空合法（自动生成）。
-const AGENT_ID_RE = /^[A-Za-z0-9._-]+$/;
-function validateAgentId(id: string): string | undefined {
-  if (!id) return undefined;
-  if (id === "." || id === ".." || !AGENT_ID_RE.test(id)) {
-    return "仅允许字母、数字、点、下划线、连字符（留空将自动生成）。";
-  }
-  return undefined;
-}
 
 interface SettingsModalProps {
   open: boolean;
@@ -71,13 +63,16 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [newId, setNewId] = useState("");
   const [templates, setTemplates] = useState<string[]>([]);
   const [templateId, setTemplateId] = useState("");
+  const [seedAgentIds, setSeedAgentIds] = useState<string[]>([]);
+  const [sourceSeedId, setSourceSeedId] = useState("");
   const [agentsLoading, setAgentsLoading] = useState(false);
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | undefined>();
   const [idError, setIdError] = useState<string | undefined>();
   const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
   const [openaiCompat, setOpenaiCompat] = useState<OpenAICompatAgentConfig | null>(null);
   const [openaiCompatSel, setOpenaiCompatSel] = useState("main-agent");
-  const busy = pending !== null; // 全局禁用沿用（防并发），具体进行中的控件再叠加 spinner/aria-busy。
+  const busy = pending !== null || workspaceBusy;
 
   const activeTabMeta = useMemo(() => SETTINGS_TABS.find((tab) => tab.key === activeTab) ?? SETTINGS_TABS[0], [activeTab]);
   const openaiCompatOptions = useMemo(() => ["main-agent", ...agents.map((agent) => agent.agent_id)], [agents]);
@@ -124,10 +119,12 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
       .then((res) => {
         const list = res.templates ?? [];
         setTemplates(list);
+        setSeedAgentIds(res.seed_agent_ids ?? []);
         setTemplateId((prev) => prev || (list.includes("general") ? "general" : list[0] ?? "general"));
       })
       .catch(() => {
         setTemplates([]);
+        setSeedAgentIds([]);
         setTemplateId("general");
       });
   }, [open, config]);
@@ -175,7 +172,12 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
     setIdError(idErr);
     if (!name || busy || idErr) return;
     void run(async () => {
-      const res = await createBusinessAgent(config, { name, agent_id: id || undefined, template_id: templateId || undefined });
+      const res = await createBusinessAgent(config, {
+        name,
+        agent_id: id || undefined,
+        template_id: sourceSeedId ? undefined : templateId || undefined,
+        source_seed_id: sourceSeedId || undefined,
+      });
       setNewName("");
       setNewId("");
       setIdError(undefined);
@@ -183,6 +185,15 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
       await reloadAgents();
       onAgentsChanged();
     }, "create");
+  };
+
+  const handleCreateSourceChange = (value: string) => {
+    if (value.startsWith("seed:")) {
+      setSourceSeedId(value.slice("seed:".length));
+      return;
+    }
+    setSourceSeedId("");
+    setTemplateId(value.slice("template:".length) || "general");
   };
 
   const handleLifecycle = (agentId: string, status: string) => {
@@ -260,29 +271,35 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
 
             {activeTab === "agents" ? (
               <section className="settings-section settings-section-agents" data-testid="settings-section-agents" role="tabpanel">
-                <form className="settings-agent-create" data-testid="settings-agent-create" onSubmit={(e) => { e.preventDefault(); handleCreate(); }}>
-                  <label>
-                    <span>名称</span>
-                    <input className="settings-input" data-testid="settings-agent-create-name" placeholder="新业务 Agent 名称" value={newName} maxLength={120} disabled={busy} aria-required="true" onChange={(e) => setNewName(e.target.value)} />
-                  </label>
-                  {/* F14：仅当 catalog 多于一个模板时展示选择器；单模板（general）/拉取失败时隐藏并默认 general。 */}
-                  {templates.length > 1 ? (
-                    <label>
-                      <span>模板</span>
-                      <select className="settings-input" data-testid="settings-agent-create-template" value={templateId} disabled={busy} onChange={(e) => setTemplateId(e.target.value)}>
-                        {templates.map((t) => <option key={t} value={t}>{t}</option>)}
-                      </select>
-                    </label>
-                  ) : null}
-                  <label>
-                    <span>Agent ID</span>
-                    <input className="settings-input" data-testid="settings-agent-create-id" placeholder="可选，留空自动生成" value={newId} disabled={busy} aria-describedby="settings-agent-id-help" aria-invalid={!!idError} onChange={(e) => { setNewId(e.target.value); setIdError(validateAgentId(e.target.value.trim())); }} />
-                    <small id="settings-agent-id-help" className={idError ? "settings-field-error" : "settings-field-help"} data-testid="settings-agent-id-help">{idError || "仅字母、数字、点、下划线、连字符；留空将自动生成。"}</small>
-                  </label>
-                  <button className="primary-button" type="submit" data-testid="settings-agent-create-submit" disabled={busy || !newName.trim() || !!idError} aria-busy={pending === "create"}>
-                    {pending === "create" ? <><Loader2 size={15} className="settings-spin" />创建中…</> : <><Plus size={15} />创建</>}
-                  </button>
-                </form>
+                <AgentCreateForm
+                  name={newName}
+                  agentId={newId}
+                  idError={idError}
+                  templates={templates}
+                  templateId={templateId}
+                  seedAgentIds={seedAgentIds}
+                  sourceSeedId={sourceSeedId}
+                  busy={busy}
+                  creating={pending === "create"}
+                  onNameChange={setNewName}
+                  onAgentIdChange={(value) => {
+                    setNewId(value);
+                    setIdError(validateAgentId(value.trim()));
+                  }}
+                  onSourceChange={handleCreateSourceChange}
+                  onSubmit={handleCreate}
+                />
+
+                <AgentWorkspacePackagePanel
+                  config={config}
+                  agents={agents}
+                  externalBusy={pending !== null}
+                  reloadAgents={reloadAgents}
+                  onAgentsChanged={onAgentsChanged}
+                  onBusyChange={setWorkspaceBusy}
+                  onError={setError}
+                  onSuccess={setSuccessMsg}
+                />
 
                 <div className="settings-agent-table" data-testid="settings-agent-table">
                   <div className="settings-agent-table-head" aria-hidden="true">
@@ -295,7 +312,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                     {agentsLoading ? (
                       <div className="empty-state" data-testid="settings-agent-loading">加载中…</div>
                     ) : !agents.length ? (
-                      error ? null : <div className="empty-state">暂无业务 Agent。</div>
+                      error ? null : <div className="empty-state" data-testid="settings-agent-empty">暂无业务 Agent。</div>
                     ) : agents.map((agent) => {
                       const isMain = agent.agent_id === "main-agent"; // F4：样板基线不可删除/生命周期固定
                       const isArchived = agent.status === "archived"; // F3：归档为终态，禁止再转移
@@ -310,9 +327,12 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                         <select className="select" data-testid="settings-agent-lifecycle" aria-label={`${agent.name} 生命周期`} aria-busy={pending === `lifecycle:${agent.agent_id}`} value={agent.status} disabled={busy || isMain || isArchived} title={isMain ? "样板基线生命周期固定" : isArchived ? "已归档为终态" : undefined} onChange={(e) => handleLifecycle(agent.agent_id, e.target.value)}>
                           {LIFECYCLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                         </select>
-                        <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy || isSeed} aria-busy={pending === `delete:${agent.agent_id}`} title={isMain ? "样板基线不可删除" : isSeed ? "seed 声明式基线不可删除，去 seed 源移除" : undefined} onClick={() => handleDelete(agent.agent_id)}>
-                          {pending === `delete:${agent.agent_id}` ? <><Loader2 size={14} className="settings-spin" />删除中…</> : <><Trash2 size={14} />删除</>}
-                        </button>
+                        <div className="settings-agent-actions">
+                          <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy || isSeed} aria-busy={pending === `delete:${agent.agent_id}`} title={isMain ? "样板基线不可删除" : isSeed ? "seed 声明式基线不可删除，去 seed 源移除" : undefined} onClick={() => handleDelete(agent.agent_id)}>
+                            {pending === `delete:${agent.agent_id}` ? <Loader2 size={14} className="settings-spin" /> : <Trash2 size={14} />}
+                            <span>删除</span>
+                          </button>
+                        </div>
                       </div>
                       );
                     })}

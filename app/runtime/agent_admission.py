@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import TypeVar
 
 from sqlalchemy import exists, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -14,6 +16,15 @@ from app.runtime.runtime_db import (
     SessionTurnIntentModel,
     utc_now,
 )
+from app.runtime.sdk_session_store import (
+    clear_inactive_sdk_sessions_for_agent_in_transaction,
+)
+
+_T = TypeVar("_T")
+_WORKSPACE_MAPPING_INVALIDATION_KINDS = {
+    "workspace_import",
+    "workspace_restore",
+}
 
 
 class AgentAdmissionError(RuntimeError):
@@ -55,11 +66,14 @@ def claim_runtime_admission(db: Session, *, agent_id: str, now: str | None = Non
     """Fence one runtime turn against maintenance in the caller's session transaction."""
     current = now or utc_now()
     state = _lock_state(db, agent_id=agent_id, now=current)
-    _clear_expired_maintenance(state, now=current)
+    _clear_expired_maintenance(
+        db,
+        state,
+        agent_id=agent_id,
+        now=current,
+    )
     if state.maintenance_token:
-        raise AgentMaintenanceActiveError(
-            f"Agent {agent_id} maintenance {state.maintenance_kind or 'operation'} is in progress"
-        )
+        raise AgentMaintenanceActiveError(f"Agent {agent_id} maintenance {state.maintenance_kind or 'operation'} is in progress")
     generation = int(state.generation or 0) + 1
     state.generation = generation
     state.updated_at = current
@@ -79,12 +93,15 @@ def acquire_maintenance(
     expires_at = lease_expires_at(lease_seconds, now=current)
     with session_factory.begin() as db:
         state = _lock_state(db, agent_id=agent_id, now=current)
-        _clear_expired_maintenance(state, now=current)
+        _clear_expired_maintenance(
+            db,
+            state,
+            agent_id=agent_id,
+            now=current,
+        )
         _clear_expired_runs(db, agent_id=agent_id, now=current)
         if state.maintenance_token:
-            raise AgentMaintenanceActiveError(
-                f"Agent {agent_id} maintenance {state.maintenance_kind or 'operation'} is already in progress"
-            )
+            raise AgentMaintenanceActiveError(f"Agent {agent_id} maintenance {state.maintenance_kind or 'operation'} is already in progress")
         active_run = db.scalar(
             select(SessionRecordModel.active_run_id)
             .where(
@@ -172,16 +189,45 @@ def assert_maintenance_claim_active(
     current = now or utc_now()
     with session_factory() as db:
         state = db.get(AgentAdmissionStateModel, claim.agent_id)
-        if (
-            state is None
-            or state.maintenance_token != claim.token
-            or state.maintenance_generation != claim.generation
-            or not state.maintenance_expires_at
-            or state.maintenance_expires_at <= current
-        ):
-            raise AgentMaintenanceClaimLost(
-                f"Agent {claim.agent_id} maintenance claim was lost or expired before side effect"
-            )
+        _require_active_maintenance_claim(state, claim=claim, now=current)
+
+
+def run_maintenance_activation_guard(
+    session_factory: sessionmaker,
+    claim: AgentMaintenanceClaim,
+    activate: Callable[[Session], _T],
+    compensate: Callable[[], None],
+    *,
+    now: str | None = None,
+) -> _T:
+    """Serialize one short local activation against runtime admission.
+
+    The Git activation intentionally runs while holding the same SQLite write
+    barrier used by ``claim_runtime_admission``. Therefore either a new turn
+    wins first and invalidates this claim, or this activation completes before
+    that turn can be admitted.
+    """
+    with session_factory() as db:
+        db.begin()
+        activated = False
+        try:
+            state = _lock_state(db, agent_id=claim.agent_id, now=now or utc_now())
+            _require_active_maintenance_claim(state, claim=claim, now=now or utc_now())
+            result = activate(db)
+            activated = True
+            db.commit()
+        except Exception:
+            compensation_error: Exception | None = None
+            if activated:
+                try:
+                    compensate()
+                except Exception as exc:  # noqa: BLE001 - preserve both failure causes
+                    compensation_error = exc
+            db.rollback()
+            if compensation_error is not None:
+                raise AgentAdmissionError(f"Agent {claim.agent_id} activation failed and Git compensation did not complete") from compensation_error
+            raise
+        return result
 
 
 def is_maintenance_active(session_factory: sessionmaker, *, agent_id: str, now: str | None = None) -> bool:
@@ -225,9 +271,7 @@ def _lock_state(db: Session, *, agent_id: str, now: str) -> AgentAdmissionStateM
     )
     # This no-op write is the cross-process SQLite serialization point for this transaction.
     db.execute(
-        update(AgentAdmissionStateModel)
-        .where(AgentAdmissionStateModel.agent_id == clean_agent_id)
-        .values(generation=AgentAdmissionStateModel.generation)
+        update(AgentAdmissionStateModel).where(AgentAdmissionStateModel.agent_id == clean_agent_id).values(generation=AgentAdmissionStateModel.generation)
     )
     state = db.get(AgentAdmissionStateModel, clean_agent_id)
     if state is None:  # pragma: no cover - insert/select are in one write transaction
@@ -235,14 +279,45 @@ def _lock_state(db: Session, *, agent_id: str, now: str) -> AgentAdmissionStateM
     return state
 
 
-def _clear_expired_maintenance(state: AgentAdmissionStateModel, *, now: str) -> None:
+def _clear_expired_maintenance(
+    db: Session,
+    state: AgentAdmissionStateModel,
+    *,
+    agent_id: str,
+    now: str,
+) -> None:
     if not state.maintenance_token or not state.maintenance_expires_at or state.maintenance_expires_at > now:
         return
+    if state.maintenance_kind in _WORKSPACE_MAPPING_INVALIDATION_KINDS:
+        # Expiry cannot reveal whether a crashed worker crossed the Git activation
+        # boundary. A fresh SDK session is the conservative recovery for both
+        # pre-merge and post-merge crashes.
+        clear_inactive_sdk_sessions_for_agent_in_transaction(
+            db,
+            agent_id=agent_id,
+            now=now,
+        )
     state.maintenance_token = None
     state.maintenance_kind = None
     state.maintenance_owner_id = None
     state.maintenance_expires_at = None
     state.updated_at = now
+
+
+def _require_active_maintenance_claim(
+    state: AgentAdmissionStateModel | None,
+    *,
+    claim: AgentMaintenanceClaim,
+    now: str,
+) -> None:
+    if (
+        state is None
+        or state.maintenance_token != claim.token
+        or state.maintenance_generation != claim.generation
+        or not state.maintenance_expires_at
+        or state.maintenance_expires_at <= now
+    ):
+        raise AgentMaintenanceClaimLost(f"Agent {claim.agent_id} maintenance claim was lost or expired before side effect")
 
 
 def _clear_expired_runs(db: Session, *, agent_id: str, now: str) -> None:

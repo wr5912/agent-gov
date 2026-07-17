@@ -1,4 +1,4 @@
-import { authHeaders, makeUrl, readError, requestJson } from "./request";
+import { authHeaders, makeUrl, readError, requestBlob, requestJson } from "./request";
 import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
 export { defaultRuntimeConfig, isLegacyDockerApiBase } from "./request";
 export * from "./feedback";
@@ -39,6 +39,9 @@ import type {
   SessionInfo,
   SkillInfo,
   StreamEnvelope,
+  WorkspaceImportResponse,
+  WorkspaceRestoreRequest,
+  WorkspaceRestoreResponse,
 } from "../types/runtime";
 import { isRecord } from "../utils/records";
 
@@ -142,6 +145,81 @@ export function createBusinessAgent(config: RuntimeClientConfig, payload: AgentC
   });
 }
 
+export interface WorkspaceImportPayload {
+  package: File;
+  name?: string;
+  expectedCurrentCommitSha?: string;
+  reason?: string;
+}
+
+export interface WorkspaceExportFile {
+  blob: Blob;
+  filename: string;
+  commitSha: string;
+  packageSha256: string;
+  treeSha256: string;
+}
+
+function responseFilename(headers: Headers): string | undefined {
+  const disposition = headers.get("content-disposition") || "";
+  const utf8Match = disposition.match(/filename\*=utf-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1].trim());
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return plainMatch?.[1]?.trim();
+}
+
+export async function exportBusinessAgentWorkspace(
+  config: RuntimeClientConfig,
+  agentId: string,
+): Promise<WorkspaceExportFile> {
+  const { blob, headers } = await requestBlob(
+    config,
+    `/api/agent-registry/${encodeURIComponent(agentId)}/workspace/export`,
+    { method: "POST", timeoutMs: 120_000 },
+  );
+  return {
+    blob,
+    filename: responseFilename(headers) || `${agentId}-workspace.tar.gz`,
+    commitSha: headers.get("x-agent-commit-sha") || "",
+    packageSha256: headers.get("x-workspace-package-sha256") || "",
+    treeSha256: headers.get("x-workspace-tree-sha256") || "",
+  };
+}
+
+export function importBusinessAgentWorkspace(
+  config: RuntimeClientConfig,
+  agentId: string,
+  payload: WorkspaceImportPayload,
+) {
+  const body = new FormData();
+  body.append("package", payload.package);
+  if (payload.name) body.append("name", payload.name);
+  if (payload.expectedCurrentCommitSha) body.append("expected_current_commit_sha", payload.expectedCurrentCommitSha);
+  if (payload.reason) body.append("reason", payload.reason);
+  return requestJson<WorkspaceImportResponse>(
+    config,
+    `/api/agent-registry/${encodeURIComponent(agentId)}/workspace/import`,
+    { method: "POST", body, timeoutMs: 120_000 },
+  );
+}
+
+export function restoreBusinessAgentWorkspace(
+  config: RuntimeClientConfig,
+  agentId: string,
+  payload: WorkspaceRestoreRequest,
+) {
+  return requestJson<WorkspaceRestoreResponse>(
+    config,
+    `/api/agent-registry/${encodeURIComponent(agentId)}/workspace/restore`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      timeoutMs: 120_000,
+    },
+  );
+}
+
 export function setBusinessAgentLifecycle(config: RuntimeClientConfig, agentId: string, status: string) {
   return requestJson<AgentSummary>(config, `/api/agent-registry/${encodeURIComponent(agentId)}/lifecycle`, {
     method: "POST",
@@ -235,8 +313,9 @@ export function snapshotAgentRepository(config: RuntimeClientConfig, payload: Ag
   });
 }
 
-export function getCurrentAgentRef(config: RuntimeClientConfig) {
-  return requestJson<AgentGitRef>(config, "/api/agent-repository/current");
+export function getCurrentAgentRef(config: RuntimeClientConfig, agentId?: string) {
+  const query = agentId ? `?${new URLSearchParams({ agent_id: agentId }).toString()}` : "";
+  return requestJson<AgentGitRef>(config, `/api/agent-repository/current${query}`);
 }
 
 export function getAgentChangeSets(config: RuntimeClientConfig) {

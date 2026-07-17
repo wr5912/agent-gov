@@ -303,10 +303,10 @@ def test_change_set_and_release_carry_agent_id_and_filter(tmp_path):
     assert governance.list_releases(agent_id="biz-other") == []
 
 
-def test_publish_rejects_candidate_that_drifts_managed_mcp_server(tmp_path):
+def test_publish_accepts_candidate_with_real_mcp_endpoint(tmp_path):
     governance, store = _governance(tmp_path)
     original_head = store.current_commit_sha()
-    change_set = governance.create_change_set(title="invalid managed MCP", operator="tester")
+    change_set = governance.create_change_set(title="real MCP endpoint", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
     mcp_path = worktree / ".mcp.json"
     mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
@@ -319,20 +319,23 @@ def test_publish_rejects_candidate_that_drifts_managed_mcp_server(tmp_path):
         execution_job_id="job-invalid-policy",
     )
 
-    with pytest.raises(AgentGovernanceError, match="Managed Agent policy rejected"):
-        governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
+    published = governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
 
-    assert store.current_commit_sha() == original_head
+    assert published is not None
+    assert store.current_commit_sha() != original_head
+    assert json.loads((store.repository_dir / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["sec-ops-data"]["url"] == (
+        "http://unapproved.example/mcp"
+    )
 
 
-def test_publish_rejects_candidate_that_drifts_managed_pre_tool_guard(tmp_path):
+def test_publish_rejects_candidate_with_missing_referenced_hook(tmp_path):
     governance, store = _governance(tmp_path)
     original_head = store.current_commit_sha()
     change_set = governance.create_change_set(title="invalid managed hook", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
     hook_path = worktree / "hooks" / "pre_tool_guard.py"
-    hook_path.write_text("# unsafe replacement\n", encoding="utf-8")
-    candidate = store.commit_worktree(worktree, message="drift managed hook")
+    hook_path.unlink()
+    candidate = store.commit_worktree(worktree, message="remove referenced hook")
     committed = governance.mark_candidate_committed(
         str(change_set["change_set_id"]),
         candidate_commit_sha=candidate,
@@ -343,6 +346,39 @@ def test_publish_rejects_candidate_that_drifts_managed_pre_tool_guard(tmp_path):
         governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
 
     assert store.current_commit_sha() == original_head
+
+
+def test_publish_accepts_candidate_with_custom_referenced_hook(tmp_path):
+    governance, store = _governance(tmp_path)
+    change_set = governance.create_change_set(title="custom managed hook", operator="tester")
+    worktree = Path(str(change_set["worktree_path"]))
+    settings_path = worktree / ".claude" / "settings.json"
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    settings.setdefault("hooks", {}).setdefault("PostToolUse", []).append(
+        {
+            "matcher": "Write",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": 'python "$CLAUDE_PROJECT_DIR/hooks/custom_audit.py"',
+                }
+            ],
+        }
+    )
+    settings_path.write_text(json.dumps(settings), encoding="utf-8")
+    custom_hook = worktree / "hooks" / "custom_audit.py"
+    custom_hook.write_text("# custom managed hook\n", encoding="utf-8")
+    candidate = store.commit_worktree(worktree, message="add custom referenced hook")
+    committed = governance.mark_candidate_committed(
+        str(change_set["change_set_id"]),
+        candidate_commit_sha=candidate,
+        execution_job_id="job-custom-hook-policy",
+    )
+
+    published = governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
+
+    assert published is not None
+    assert (store.repository_dir / "hooks" / "custom_audit.py").is_file()
 
 
 def test_business_agent_version_chain_is_isolated_from_main(tmp_path):

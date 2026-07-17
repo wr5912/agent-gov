@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
-from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from scripts.bootstrap_runtime_volume import load_runtime_env
-from scripts.runtime_template_renderer import build_render_context
 
-from app.runtime.agent_paths import InvalidAgentId, business_agent_layout
+from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
+from app.runtime.business_agent_seed_catalog import declared_business_agent_ids
 from app.runtime.business_agent_workspace import (
     DEFAULT_TEMPLATE_ID,
     InvalidDeclaredBusinessAgentSeed,
@@ -19,7 +16,7 @@ from app.runtime.business_agent_workspace import (
     prepare_declared_business_agent_workspace,
 )
 from app.runtime.errors import ConflictError
-from app.runtime.managed_agent_policy import ManagedAgentPolicyError, require_runtime_workspace_policy
+from app.runtime.managed_agent_policy import ManagedAgentPolicyError, plan_workspace_policy, raise_for_policy_violations
 from app.runtime.schemas import (
     AgentCreateRequest,
     AgentDeleteResponse,
@@ -61,36 +58,43 @@ def _resolve_template_id(raw: str | None) -> str:
     return template_id
 
 
+def _resolve_source_seed_id(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    try:
+        source_seed_id = validate_agent_id(raw)
+    except InvalidAgentId as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if source_seed_id not in declared_business_agent_ids():
+        raise HTTPException(status_code=422, detail=f"Unknown source_seed_id: {source_seed_id!r}")
+    return source_seed_id
+
+
 def _register_and_seed_agent(req: AgentCreateRequest, settings: AppSettings, store: AgentRegistryStore) -> AgentSummaryResponse:
     """Stage, validate, version, atomically install, then register a business Agent."""
-    template_id = _resolve_template_id(req.template_id)
+    source_seed_id = _resolve_source_seed_id(req.source_seed_id)
+    template_id = _resolve_template_id(req.template_id) if source_seed_id is None else f"declared:{source_seed_id}"
     agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
     try:
         # 缺陷③：agent_id 直接作路径段，business_agent_layout 收敛了防穿越校验，非法 → 422。
         workspace_dir = business_agent_layout(settings.data_dir, agent_id).workspace
     except InvalidAgentId as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    env = dict(load_runtime_env(settings.settings_env_file)) if settings.settings_env_file else dict(os.environ)
-    runtime_root = Path("/") if settings.data_dir.resolve() == Path("/data") else settings.data_dir.resolve().parent
     try:
-        render_context = build_render_context(mode=settings.runtime_volume_mode, env=env, runtime_root=runtime_root)
         plan = (
             prepare_declared_business_agent_workspace(
-                agent_id=agent_id,
-                name=req.name,
-                runtime_volume_mode=settings.runtime_volume_mode,
-                env=env,
-                runtime_root=runtime_root,
+                source_agent_id=source_seed_id or agent_id,
             )
             if req.template_id is None
             else None
         )
+        if source_seed_id is not None and plan is None:
+            raise InvalidDeclaredBusinessAgentSeed(f"Declared workspace seed does not exist: {source_seed_id}")
         if plan is None:
             plan = prepare_business_agent_workspace(
                 agent_id=agent_id,
                 name=req.name,
                 template_id=template_id,
-                render_context=render_context,
             )
         record = provision_business_agent(
             store=store,
@@ -99,13 +103,7 @@ def _register_and_seed_agent(req: AgentCreateRequest, settings: AppSettings, sto
             workspace_dir=workspace_dir,
             template_id=template_id,
             plan=plan,
-            validate_workspace=lambda workspace: require_runtime_workspace_policy(
-                workspace=workspace,
-                agent_id=agent_id,
-                runtime_mode=settings.runtime_volume_mode,
-                env=env,
-                runtime_root=runtime_root,
-            ),
+            validate_workspace=lambda workspace: raise_for_policy_violations(plan_workspace_policy(workspace=workspace, agent_id=agent_id).violations),
         )
         return _summary(record)
     except (InvalidDeclaredBusinessAgentSeed, WorkspaceSafetyError, ManagedAgentPolicyError) as exc:
@@ -142,7 +140,10 @@ def create_agents_router(
         summary="List business agent creation templates (catalog)",
     )
     async def list_templates() -> BusinessAgentTemplatesResponse:
-        return BusinessAgentTemplatesResponse(templates=list_business_agent_templates())
+        return BusinessAgentTemplatesResponse(
+            templates=list_business_agent_templates(),
+            seed_agent_ids=sorted(declared_business_agent_ids()),
+        )
 
     @router.post(
         "/agent-registry",

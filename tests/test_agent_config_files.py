@@ -114,15 +114,17 @@ def test_agent_config_file_rejects_invalid_json_and_stale_sha(tmp_path: Path) ->
     )
     assert wrong_shape.status_code == 422
 
+    stdio_content = '{"mcpServers": {"demo": {"type": "stdio", "command": "node"}}}'
     stdio = client.put(
         "/api/agent-config-file",
         params={"agent_id": TEST_AGENT_ID, "path": ".mcp.json"},
         json={
-            "content": '{"mcpServers": {"demo": {"type": "stdio", "command": "node"}}}',
+            "content": stdio_content,
             "expected_sha256": None,
         },
     )
-    assert stdio.status_code == 422
+    assert stdio.status_code == 200
+    assert (workspace / ".mcp.json").read_text(encoding="utf-8") == stdio_content
 
     stale = client.put(
         "/api/agent-config-file",

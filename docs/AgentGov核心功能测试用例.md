@@ -43,7 +43,7 @@
 | 治理边界与审批 | 高风险变更需人工或外部系统确认，不绕过责任边界 | AGV-041, AGV-042 |
 | 治理成熟度路径 | main agent 样板、多业务 Agent、场景包、跨 Agent 方法论沉淀 | AGV-043, AGV-044, AGV-045 |
 | 典型落地场景 | 安全运营只是典型场景之一，平台不绑定单一行业 | AGV-046 |
-| 产品边界 | AgentGov 负责治理能力，外部系统负责业务界面、权限、生产系统、高风险动作责任和通用协作流转 | AGV-047, AGV-048, AGV-049 |
+| 产品边界 | AgentGov 负责治理能力，外部系统负责业务界面、权限、生产系统和高风险动作责任；当前不建设通用协作模型 | AGV-047, AGV-048, AGV-049 |
 | OpenAI 兼容主路径 | Responses-first 接口可承载 Playground 主运行、会话恢复、外部 API 集成，并保留原生 Chat 兼容面 | AGV-050 |
 
 ## 核心功能测试套件
@@ -115,7 +115,7 @@
 
 - 前端支持 Playground、改进治理工作台（当前实现可表现为迁移前反馈工作台）、评估和版本治理视图等治理观察能力。
 - 文档明确外部业务系统承载最终用户业务界面和生产流程。
-- 文档明确 AgentGov 不提供通用协作看板，也不替代 Multica、Jira、GitHub Issues 等协作平台。
+- 文档明确 AgentGov 当前不提供通用协作看板；Multica 当前只服务本仓库持续 CI。
 - 高风险业务动作不由 AgentGov 前端绕过外部系统审批。
 
 证据要求：README、前端页面或用户流程截图。
@@ -140,11 +140,13 @@
 
 - 新 Agent 具有稳定身份和配置。
 - Agent 定义能作为后续运行、反馈、评估和版本治理的归属对象。
-- 配置不泄露 API key、MCP header 或本机私有路径。
+- generic template 与 repo 声明 seed 不泄露 API key、凭据型 MCP header 或本机私有路径。
+- live workspace 与 per-Agent Git 可原样保存业务运行所需私有配置，平台导入、导出和摘要不得
+  在日志或回执中回显正文。
 
-证据要求：Agent 定义记录、配置摘要和安全脱敏检查结果。
+证据要求：Agent 定义记录、配置摘要、live workspace 原样往返证据和 repo seed 准入扫描结果。
 
-自动验收：`tests/test_agent_registry_store.py::test_create_business_agent_endpoint_registers_and_lists`（POST 创建得稳定身份并进注册表归属对象集合）、`tests/test_agent_registry_store.py::test_business_agent_workspace_scaffolds_safe_config_container`（创建即得完整可编辑配置面 CLAUDE.md/system prompt + .claude/settings.json/skills·tools + .mcp.json/MCP，且不泄露 API key/MCP header/本机私有路径）、`tests/test_agent_registry_store.py::test_initialize_business_agent_workspace_is_idempotent_and_preserves_edits`（配置幂等保留用户编辑）。边界说明：配置面采用与 main agent 一致的 SDK 原生文件（运行业务 Agent 时 cwd=workspace 真实加载）；模型参数用平台默认模型（离线不变量提供本地化模型），暂不做 per-agent 模型凭据配置以免引入凭据泄露面。
+自动验收：`tests/test_agent_registry_store.py::test_create_business_agent_endpoint_registers_and_lists`（POST 创建得稳定身份并进注册表归属对象集合）、`tests/test_agent_registry_store.py::test_business_agent_workspace_scaffolds_safe_config_container`（generic scaffold 得到完整可编辑配置面，且不携带项目仓库禁入值）、`tests/test_agent_registry_store.py::test_initialize_business_agent_workspace_is_idempotent_and_preserves_edits`（配置幂等保留用户编辑）、`tests/test_agent_workspace_packages.py::test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env`（live workspace 私有配置与二进制原样往返）、`tests/test_runtime_template_tools.py::test_runtime_template_safety_warns_for_declared_seed_endpoint_but_blocks_embedded_secret`（repo seed 对秘密硬阻断、普通 endpoint 仅提示）。边界说明：配置面采用与 main agent 一致的 SDK 原生文件（运行业务 Agent 时 cwd=workspace 真实加载）；模型参数用平台默认模型（离线不变量提供本地化模型），暂不做 per-agent 模型凭据配置以免引入第二套模型凭据来源。
 
 ### AGV-005 业务 Agent 与治理 Agent 边界清晰
 
@@ -164,7 +166,7 @@
 
 - 业务 Agent 是被治理对象。
 - 治理 Agent 是闭环流程的执行者。
-- 受治理业务 Agent 可以作为外部协作成员参与任务流转，治理 Agent 默认不作为协作成员暴露。
+- 业务 Agent 是被治理对象，治理 Agent 是平台内部的闭环执行者；当前不预设二者在后期协作系统中的成员模型。
 - 治理 Agent 的输出不直接变成生产事实，必须经过后端校验、评估和版本治理。
 
 证据要求：governor profile、输入输出、Trace 和最终投影记录。
@@ -971,18 +973,18 @@ change set 会阻断发布；`tests/test_typed_dataset_eval_runs.py::test_runner
 
 目标来源：核心目标 7、产品边界。
 
-前置条件：存在外部业务系统或模拟 webhook。
+前置条件：存在外部业务系统集成场景。
 
 测试步骤：
 
-1. 外部业务系统或协作平台通过 API 提交任务、上下文或反馈。
+1. 外部业务系统通过 API 提交上下文、运行请求或反馈。
 2. AgentGov 返回治理结果、建议或候选变更。
-3. 高风险业务动作由外部系统确认，协作状态由外部协作平台流转。
+3. 高风险业务动作由外部系统确认。
 
 成功标准：
 
 - AgentGov 不接管外部系统的用户、角色、审批和生产动作责任。
-- AgentGov 不接管外部协作平台的 issue、任务、看板、协作成员和状态流转。
+- AgentGov 当前不额外建立 issue、任务、看板、协作成员和状态流转模型。
 - 外部系统能追踪 AgentGov 的运行和建议。
 - 高风险动作不会由 Agent 自动绕过审批执行。
 
@@ -1096,19 +1098,24 @@ change set 会阻断发布；`tests/test_typed_dataset_eval_runs.py::test_runner
 
 测试步骤：
 
-1. 查询配置摘要、导出包、仓库文件或公开文档。
-2. 检查是否出现真实密钥、header 或本机私有路径。
+1. 分别查询配置摘要、live workspace 原样导出包、repo seed/template 和公开文档。
+2. 检查 live 包是否保持原字节且按敏感资产交付，仓库与公开输出是否出现真实密钥、凭据型
+   header 或本机私有路径。
 3. 对受保护 API 使用错误凭据请求。
 
 成功标准：
 
-- 真实密钥、MCP header、数据库凭据和本机私有路径不会进入仓库、提交说明、公开文档或导出模板。
+- 真实密钥、凭据型 MCP header、数据库凭据和本机私有路径不会进入项目仓库、提交说明、
+  公开文档或 generic template。
+- live workspace 导出包是精确敏感资产，可包含这些运行值；它不能被误称为“安全脱敏模板”，
+  也不能在日志、错误详情或公开摘要中回显。
+- 声明 seed 的普通 endpoint、内网地址与专用权限只提示复核，不被静默改写；真正秘密仍阻断 CI。
 - 当前前端调试界面和自托管 Langfuse 属开发调试面，可展示完整 prompt、tool input/output、job input/output、raw text 和 trace I/O，不作为生产安全边界。
 - 错误凭据被拒绝。
 
-证据要求：仓库/env 示例检查结果、调试观测面边界说明和 401 响应。
+证据要求：workspace 包 digest/commit、repo seed 扫描结果、调试观测面边界说明和 401 响应。
 
-自动验收（示例凭据不泄露）：`tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key`；前端/Langfuse 完整调试观测由运行时和 UI 验收覆盖。
+自动验收：`tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key`、`tests/test_agent_workspace_packages.py::test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env`、`tests/test_runtime_template_tools.py::test_runtime_template_safety_warns_for_declared_seed_endpoint_but_blocks_embedded_secret`、`tests/test_runtime_template_tools.py::test_runtime_template_safety_keeps_generic_template_endpoints_strict`；前端/Langfuse 完整调试观测由运行时和 UI 验收覆盖。
 
 ### AGV-043 第一阶段 main agent 样板闭环
 
@@ -1224,7 +1231,7 @@ change set 会阻断发布；`tests/test_typed_dataset_eval_runs.py::test_runner
 成功标准：
 
 - AgentGov 不复制外部业务系统的信息架构。
-- AgentGov 不复制 Multica、Jira、GitHub Issues 等协作平台的看板、issue 生命周期和成员管理。
+- AgentGov 当前不复制通用协作看板、issue 生命周期和成员管理。
 - 生产处置动作不由 AgentGov 自行承担最终责任。
 - 外部系统可以审计 AgentGov 的建议和运行记录。
 
@@ -1256,31 +1263,31 @@ change set 会阻断发布；`tests/test_typed_dataset_eval_runs.py::test_runner
 
 自动验收：`tests/test_agv_acceptance.py::test_agv_003_048_frontend_is_debug_observation_boundary`。
 
-### AGV-049 外部协作平台对接晚于核心治理稳定
+### AGV-049 多智能体协作平台选型晚于核心治理稳定
 
 状态：`current`
 
 目标来源：产品边界、治理成熟度路径。
 
-前置条件：存在 AgentGov 产品路线说明和外部协作平台集成设想。
+前置条件：存在 AgentGov 产品路线说明和后期多智能体协作设想。
 
 测试步骤：
 
-1. 阅读目标愿景使命、执行计划和 README。
-2. 检查 Multica、Jira、GitHub Issues 等外部协作平台是否只作为协作系统边界或长期生态集成方向出现。
-3. 检查近期阶段是否仍聚焦 AgentGov 自身 Runtime、反馈闭环、归因优化、评估回归、版本治理、多业务 Agent 治理和资产 Registry。
-4. 检查是否把深度外部协作平台对接排在至少三个产品大版本稳定之后。
+1. 阅读目标愿景使命、README 和当前 CI 工程契约。
+2. 检查当前 Multica 是否只用于 `agent-gov` 仓库持续 CI 通知。
+3. 检查近期阶段是否聚焦 AgentGov 本身、智能体开发和反馈优化闭环。
+4. 检查多智能体协作平台是否明确留到核心能力稳定且出现真实需求后重新选型，且没有提前锁定 Multica 或脑补协作模型。
 
 成功标准：
 
-- AgentGov 当前目标不包含通用协作看板、issue 同步、assignee 映射、squad 管理或 Multica adapter。
-- 外部协作平台负责任务流转和状态协作，AgentGov 负责受治理业务 Agent 的运行、治理和版本化交付。
-- 治理 Agent 不作为外部协作成员暴露。
-- Multica 等外部协作平台深度对接被明确归入长期生态集成阶段，不阻断前三个产品大版本的核心治理能力打磨。
+- Multica 当前只用于 `agent-gov` 仓库持续 CI 的 AID 通知和研发协作会话。
+- 当前产品不包含通用协作看板、issue/task 生命周期、成员、assignee 或 squad 模型。
+- 当前重点明确是 AgentGov 平台、智能体开发和反馈优化闭环。
+- 核心能力稳定且出现真实需求后才重新选择多智能体协作方案；Multica 只是候选，不是承诺，当前不定义固定版本门槛、任务分配、成员或状态模型。
 
 证据要求：目标愿景使命、执行计划、README 或后续集成设计中的阶段说明。
 
-自动验收：`tests/test_agv_acceptance.py::test_agv_049_external_collaboration_integration_is_deferred_long_term_stage`（校验文档边界声明满足四条成功标准：①当前目标不含通用协作看板/issue 同步/squad 管理/Multica adapter；②外部协作平台负责任务流转、AgentGov 负责受治理业务 Agent 的运行/治理/版本化交付；③治理 Agent 默认不作为协作成员暴露；④Multica 等深度对接明确归入长期生态集成阶段（执行计划阶段 5，启动条件为至少完成三个产品大版本），不阻断前三个产品大版本核心治理）。本用例的成功标准是"边界纪律"——外部协作平台深度对接被显式 deferred、不提前拉起即为达成；实现该集成反而违反本用例。
+自动验收：`tests/test_agv_acceptance.py::test_agv_049_collaboration_platform_selection_is_deferred_while_multica_ci_is_current`。该验收同时约束两条边界：当前 Multica 只服务仓库 CI；后期多智能体协作在真实需求出现后重新选型，不预先锁定 Multica。
 
 ### AGV-050 OpenAI Responses-first 接口替代原生 Chat 主路径
 

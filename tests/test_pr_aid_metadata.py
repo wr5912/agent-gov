@@ -25,11 +25,24 @@ def test_extract_aid_normalizes_case_and_deduplicates_occurrences() -> None:
     ) == ["AID-16"]
 
 
+def test_validate_pull_request_metadata_uses_head_branch_as_stable_authority() -> None:
+    assert (
+        validate_pull_request_metadata(
+            "aid-16-work",
+            "AID-016: keep CI visible",
+            "Implements aid-16",
+        )
+        == "AID-16"
+    )
+    assert validate_pull_request_metadata("aid-16-work", "No identifier here", "") == "AID-16"
+
+
 @pytest.mark.parametrize(
     ("head_ref", "title", "body"),
     [
-        ("feature/no-trace", "missing trace", ""),
+        ("feature/no-trace", "AID-16 exists only in title", ""),
         ("aid-16-work", "AID-17 wrong task", ""),
+        ("aid-16-aid-17-work", "conflicting branch", ""),
         ("AID-16x", "not a boundary", ""),
     ],
 )
@@ -38,7 +51,7 @@ def test_validate_pull_request_metadata_rejects_missing_or_ambiguous_ids(
     title: str,
     body: str,
 ) -> None:
-    with pytest.raises(ValueError, match="exactly one unique"):
+    with pytest.raises(ValueError, match="head branch|must match"):
         validate_pull_request_metadata(head_ref, title, body)
 
 

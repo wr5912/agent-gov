@@ -330,6 +330,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-registry/{agent_id}/workspace/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export the current live business-Agent workspace */
+        post: operations["export_workspace_api_agent_registry__agent_id__workspace_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-registry/{agent_id}/workspace/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create or overwrite a business Agent from an exact workspace package */
+        post: operations["import_workspace_api_agent_registry__agent_id__workspace_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-registry/{agent_id}/workspace/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore a historical workspace tree as a new Git commit */
+        post: operations["restore_workspace_api_agent_registry__agent_id__workspace_restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-releases": {
         parameters: {
             query?: never;
@@ -2043,6 +2094,11 @@ export interface components {
             agent_id?: string | null;
             /** Name */
             name: string;
+            /**
+             * Source Seed Id
+             * @description Declared business-Agent seed id to copy byte-for-byte. Mutually exclusive with template_id.
+             */
+            source_seed_id?: string | null;
             /** Template Id */
             template_id?: string | null;
         };
@@ -2834,6 +2890,8 @@ export interface components {
          * @description 业务 Agent 创建模板 catalog（可选 template_id 列表）。
          */
         BusinessAgentTemplatesResponse: {
+            /** Seed Agent Ids */
+            seed_agent_ids?: string[];
             /** Templates */
             templates: string[];
         };
@@ -5075,6 +5133,70 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** WorkspaceImportResponse */
+        WorkspaceImportResponse: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "created" | "overwritten" | "unchanged";
+            /**
+             * Activation Mode
+             * @default next_turn
+             * @constant
+             */
+            activation_mode: "next_turn";
+            agent: components["schemas"]["AgentSummaryResponse"];
+            /** Current Commit Sha */
+            current_commit_sha: string;
+            /** Package Sha256 */
+            package_sha256: string;
+            /** Previous Commit Sha */
+            previous_commit_sha?: string | null;
+            /** Rollback Target Commit Sha */
+            rollback_target_commit_sha?: string | null;
+            /** Tree Sha256 */
+            tree_sha256: string;
+        };
+        /** WorkspaceRestoreRequest */
+        WorkspaceRestoreRequest: {
+            /**
+             * Expected Current Commit Sha
+             * @description Current workspace HEAD used as an optimistic concurrency guard.
+             */
+            expected_current_commit_sha: string;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Target Commit Sha
+             * @description Historical workspace commit whose tree will be restored.
+             */
+            target_commit_sha: string;
+        };
+        /** WorkspaceRestoreResponse */
+        WorkspaceRestoreResponse: {
+            /**
+             * Action
+             * @default restored
+             * @constant
+             */
+            action: "restored";
+            /**
+             * Activation Mode
+             * @default next_turn
+             * @constant
+             */
+            activation_mode: "next_turn";
+            agent: components["schemas"]["AgentSummaryResponse"];
+            /** Current Commit Sha */
+            current_commit_sha: string;
+            /** Previous Commit Sha */
+            previous_commit_sha: string;
+            /** Restored Tree Commit Sha */
+            restored_tree_commit_sha: string;
+            /** Rollback Target Commit Sha */
+            rollback_target_commit_sha: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -6440,6 +6562,298 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    export_workspace_api_agent_registry__agent_id__workspace_export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current Git-backed workspace package. */
+            200: {
+                headers: {
+                    /** @description Download filename. */
+                    "Content-Disposition"?: string;
+                    /** @description Exported full Git commit SHA. */
+                    "X-Agent-Commit-SHA"?: string;
+                    /** @description SHA-256 of the returned .tar.gz bytes. */
+                    "X-Workspace-Package-SHA256"?: string;
+                    /** @description SHA-256 of sorted path/mode/content workspace entries. */
+                    "X-Workspace-Tree-SHA256"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": unknown;
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Requested editable payload is too large. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    import_workspace_api_agent_registry__agent_id__workspace_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** @description Required when overwriting an existing Agent. */
+                    expected_current_commit_sha?: string;
+                    /** @description Required only for a new Agent. */
+                    name?: string;
+                    /**
+                     * Format: binary
+                     * @description A .tar.gz archive with exactly one workspace/ root.
+                     */
+                    package: string;
+                    /** @description Optional overwrite commit message. */
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceImportResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Length Required */
+            411: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Requested editable payload is too large. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested editable payload uses an unsupported media or text encoding. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Configured runtime or model/agent target is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    restore_workspace_api_agent_registry__agent_id__workspace_restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceRestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRestoreResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Requested editable payload is too large. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Configured runtime or model/agent target is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
         };

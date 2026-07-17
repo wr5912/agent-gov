@@ -2,8 +2,7 @@
 CLAUDE.local.md
 .claude/settings.local.json
 
-# 运行态数据（sessions/transcripts/uploads/outputs/agent-memory）在 /data 下、不在本 workspace 子树内，
-# gitignore 无法用 ../ 跳出目录，故不在此声明；运行卷不入 git。
+# 运行态数据位于 workspace 外部；workspace Git 无需也无法忽略仓库根之外的路径。
 
 # Secrets
 .env

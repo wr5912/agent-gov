@@ -46,6 +46,8 @@ RELEASE_ROOT=$(python3 -c 'import os, sys; print(os.path.abspath(os.path.expandu
 RELEASES_DIR="$RELEASE_ROOT/releases"
 SHARED_DIR="$RELEASE_ROOT/shared"
 SHARED_ENV="$SHARED_DIR/docker.env"
+export COMPOSE_ENV_FILE="$SHARED_ENV"
+export AGENT_GOV_COMPOSE_ENV_FILE="$SHARED_ENV"
 CURRENT_LINK="$RELEASE_ROOT/current"
 LOCK_FILE="$RELEASE_ROOT/.deploy.lock"
 

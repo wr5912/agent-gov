@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager, suppress
 from typing import Optional
 
@@ -15,6 +16,7 @@ from app.routers.agent_change_set_regression import create_agent_change_set_regr
 from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
+from app.routers.agent_workspace_packages import create_agent_workspace_packages_router
 from app.routers.agents import create_agents_router
 from app.routers.assets import create_assets_router
 from app.routers.catalog import create_catalog_router
@@ -65,7 +67,7 @@ from app.services.workspace_execution_applier import WorkspaceExecutionApplier
 from app.version import APP_VERSION
 
 settings = get_settings()
-runtime_env = dict(load_runtime_env(settings.settings_env_file)) if settings.settings_env_file else {}
+runtime_env = dict(load_runtime_env(settings.settings_env_file)) if settings.settings_env_file else dict(os.environ)
 configure_runtime_logging(settings.log_level)
 logger = logging.getLogger("uvicorn.error")
 session_store = LocalSessionStore(settings.session_dir)
@@ -95,7 +97,14 @@ claude_user_input_service = ClaudeUserInputService(
     timeout_seconds=settings.hitl_timeout_seconds,
     response_disposition_claim_store=response_disposition_claim_store,
 )
-runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store, user_input_service=claude_user_input_service)
+runtime = ClaudeRuntime(
+    settings,
+    session_store,
+    feedback_store,
+    agent_version_store,
+    user_input_service=claude_user_input_service,
+    runtime_env=runtime_env,
+)
 feedback_store.set_langfuse_trace_fetcher(runtime.fetch_langfuse_trace)
 agent_governance = AgentGovernanceService(
     feedback_store=feedback_store,
@@ -310,6 +319,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[
+        "Content-Disposition",
+        "X-Agent-Commit-SHA",
+        "X-Workspace-Package-SHA256",
+        "X-Workspace-Tree-SHA256",
+    ],
 )
 
 register_error_handlers(app)
@@ -429,6 +444,15 @@ app.include_router(
         feedback_store=feedback_store,
         improvement_store=improvement_store,
         agent_governance=agent_governance,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_agent_workspace_packages_router(
+        settings=settings,
+        agent_registry_store=agent_registry_store,
+        agent_governance=agent_governance,
+        session_store=session_store,
         require_api_key=require_api_key,
     )
 )

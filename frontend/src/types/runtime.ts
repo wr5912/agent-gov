@@ -28,6 +28,9 @@ type OpenApiAgentConfigFileUpdateResponse = components["schemas"]["AgentConfigFi
 type OpenApiAgentRepositoryDiscardChangesRequest = components["schemas"]["AgentRepositoryDiscardChangesRequest"];
 type OpenApiAgentRepositorySnapshotRequest = components["schemas"]["AgentRepositorySnapshotRequest"];
 type OpenApiAgentRepositoryStatusResponse = components["schemas"]["AgentRepositoryStatusResponse"];
+type OpenApiWorkspaceImportResponse = components["schemas"]["WorkspaceImportResponse"];
+type OpenApiWorkspaceRestoreRequest = components["schemas"]["WorkspaceRestoreRequest"];
+type OpenApiWorkspaceRestoreResponse = components["schemas"]["WorkspaceRestoreResponse"];
 type OpenApiChatRequest = components["schemas"]["ChatRequest"];
 type OpenApiClaudeUserInputDecisionRequest = components["schemas"]["ClaudeUserInputDecisionRequest"];
 type OpenApiClaudeUserInputDecisionResponse = components["schemas"]["ClaudeUserInputDecisionResponse"];
@@ -96,6 +99,9 @@ export type AgentRunRecord = OpenApiAgentRunResponse;
 export type AgentConfigFileResponse = OpenApiAgentConfigFileResponse;
 export type AgentConfigFileUpdateRequest = OpenApiAgentConfigFileUpdateRequest;
 export type AgentConfigFileUpdateResponse = OpenApiAgentConfigFileUpdateResponse;
+export type WorkspaceImportResponse = OpenApiWorkspaceImportResponse;
+export type WorkspaceRestoreRequest = OpenApiWorkspaceRestoreRequest;
+export type WorkspaceRestoreResponse = OpenApiWorkspaceRestoreResponse;
 
 export type ChatRequest = OpenApiChatRequest;
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional, Protocol
 
 from app.runtime.advisory_lock import advisory_lock
+from app.runtime.agent_git_raw_storage import RawGitStorageError, configure_raw_git_storage
 from app.runtime.agent_git_workspace_diff import (
     MAX_FILE_DIFF_BYTES,
     parse_workspace_changes,
@@ -95,7 +96,7 @@ class GitAgentVersionStore:
             self._configure_repo(self.repository_dir)
             self._write_info_exclude(self.repository_dir)
             if not self._has_head(self.repository_dir):
-                self._git(["add", "-A", "--", "."], cwd=self.repository_dir)
+                self._stage_complete_workspace(self.repository_dir)
                 if self._has_staged_changes(self.repository_dir):
                     self._git(["commit", "-m", "Initialize main agent configuration"], cwd=self.repository_dir)
                 else:
@@ -161,7 +162,7 @@ class GitAgentVersionStore:
     ) -> JsonObject:
         with self._mutation_guard():
             self._ensure_repo_ready()
-            self._git(["add", "-A", "--", "."], cwd=self.repository_dir)
+            self._stage_complete_workspace(self.repository_dir)
             if self._has_staged_changes(self.repository_dir):
                 self._git(["commit", "-m", note or reason], cwd=self.repository_dir)
             commit_sha = self._current_commit_sha_no_bootstrap() or ""
@@ -182,7 +183,7 @@ class GitAgentVersionStore:
             if tracked_paths:
                 self._git(["restore", "--staged", "--", *tracked_paths], cwd=self.repository_dir, check=False)
                 self._git(["restore", "--worktree", "--", *tracked_paths], cwd=self.repository_dir, check=False)
-            self._git(["clean", "-fd", "--", *requested], cwd=self.repository_dir, check=False)
+            self._git(["clean", "-fdx", "--", *requested], cwd=self.repository_dir, check=False)
             remaining = {str(item["path"]) for item in self._workspace_changes()} & set(requested)
             if remaining:
                 raise AgentGitError(f"Failed to discard workspace changes: {', '.join(sorted(remaining))}")
@@ -317,7 +318,7 @@ class GitAgentVersionStore:
         with self._mutation_guard():
             self._configure_repo(worktree_path)
             self._write_info_exclude(worktree_path)
-            self._git(["add", "-A", "--", "."], cwd=worktree_path)
+            self._stage_complete_workspace(worktree_path)
             if self._has_staged_changes(worktree_path):
                 self._git(["commit", "-m", message], cwd=worktree_path)
             commit = self._git(["rev-parse", "HEAD"], cwd=worktree_path).strip()
@@ -583,7 +584,10 @@ class GitAgentVersionStore:
                 yield
 
     def _workspace_changes(self) -> list[JsonObject]:
-        raw = self._git(["status", "--porcelain=v1", "--untracked-files=all", "--no-renames"], cwd=self.repository_dir)
+        raw = self._git(
+            ["status", "--porcelain=v1", "--untracked-files=all", "--no-renames", "--ignored"],
+            cwd=self.repository_dir,
+        )
         return parse_workspace_changes(raw, normalize_path=self._safe_relative_path)
 
     def _requested_dirty_paths(self, paths: list[str], current: dict[str, JsonObject]) -> list[str]:
@@ -625,6 +629,13 @@ class GitAgentVersionStore:
         self._ensure_safe_directory(cwd)
         self._git(["config", "user.name", self.git_user_name], cwd=cwd)
         self._git(["config", "user.email", self.git_user_email], cwd=cwd)
+        try:
+            configure_raw_git_storage(
+                cwd,
+                run_git=lambda args, repository: self._git(args, cwd=repository),
+            )
+        except RawGitStorageError as exc:
+            raise AgentGitError(str(exc)) from exc
 
     def _ensure_safe_directory(self, cwd: Path) -> None:
         safe_path = str(cwd.resolve())
@@ -664,6 +675,10 @@ class GitAgentVersionStore:
 
     def _has_head(self, cwd: Path) -> bool:
         return bool(self._git(["rev-parse", "--verify", "HEAD"], cwd=cwd, check=False).strip())
+
+    def _stage_complete_workspace(self, cwd: Path) -> None:
+        self._git(["add", "-A", "-f", "--", "."], cwd=cwd)
+        self._git(["add", "--renormalize", "--ignore-errors", "--", "."], cwd=cwd)
 
     def _has_staged_changes(self, cwd: Path) -> bool:
         proc = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=str(cwd), check=False)

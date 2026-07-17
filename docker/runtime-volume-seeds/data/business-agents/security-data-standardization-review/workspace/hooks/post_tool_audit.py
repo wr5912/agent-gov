@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 payload = json.load(sys.stdin)
-data_dir = Path(os.getenv("DATA_DIR", "/data"))
+workspace_dir = Path(__file__).resolve().parent.parent
+data_dir = Path(os.getenv("DATA_DIR", str(workspace_dir.parents[2])))
 log_path = Path(os.getenv("CLAUDE_HOOK_AUDIT_LOG", str(data_dir / "transcripts" / "claude-hook-audit.jsonl")))
 log_path.parent.mkdir(parents=True, exist_ok=True)
 

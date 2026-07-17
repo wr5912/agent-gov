@@ -155,7 +155,11 @@ make codex-guard
 - 宿主机进程自动选择本机调试 env，容器由 Compose 注入 `RUNTIME_CONTAINER=1` 选择容器 env。
 - 本机 API 内的治理模型任务不复用交互式 Claude `/login`；真实运行前私有 env 必须提供
   `MODEL_PROVIDER_API_KEY`，但真实值不得进入仓库、日志、文档、提交说明或最终回复。
-- API key、MCP header、数据库凭据、本机私有路径、运行态 SQLite 和私有日志不得提交。
+- API key、MCP header、数据库凭据、本机私有路径、运行态 SQLite 和私有日志不得进入
+  AgentGov 项目源码仓库、公开文档、日志、提交说明或最终回复。
+- 业务 Agent 的 live workspace 与其 per-Agent Git 是敏感运行资产，可按字节保留 `.env`、
+  真实 endpoint、凭据型 header、数据库配置和本机路径；该例外不延伸到项目源码仓库。
+  live workspace 回流 repo seed/builtin 前必须先在仓库外形成候选，再通过 seed 准入扫描。
 - 当前 Playground、调试 UI 和自托管 Langfuse 是开发观测面，可保留完整 prompt/tool/governance/trace
   I/O；该例外不放宽仓库和对外输出边界。
 - 修改 env 选择、路径、模型凭据或 Langfuse 地址时，同步 README、示例、policy 测试和启动日志。

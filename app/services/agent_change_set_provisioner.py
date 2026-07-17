@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from app.runtime.agent_git_store import GitAgentVersionStore, GitWorktreeRef
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import AgentChangeSetEventModel, AgentChangeSetModel, utc_now
+from app.services.agent_version_maintenance import AgentVersionMaintenanceCoordinator
 
 _CHANGE_SET_ID_PATTERN = re.compile(r"agc-[0-9a-fA-F-]{8,64}\Z")
 
@@ -24,6 +25,48 @@ class ChangeSetSource:
     improvement_id: str
     attribution_id: str | None = None
     attribution_status: str | None = None
+
+
+def provision_change_set_under_maintenance(
+    *,
+    session_factory: sessionmaker,
+    version_maintenance: AgentVersionMaintenanceCoordinator,
+    store_for: Callable[[str], GitAgentVersionStore],
+    agent_id: str,
+    execution_job_id: str | None,
+    base_commit_sha: str | None,
+    title: str | None,
+    note: str | None,
+    operator: str,
+    change_set_id: str | None,
+    source: ChangeSetSource | None = None,
+) -> str:
+    lease = version_maintenance.lease(
+        agent_id=agent_id,
+        kind="change_set_create",
+        owner_id=f"change-set:{change_set_id or execution_job_id or uuid.uuid4().hex}",
+    )
+    acquired = False
+    try:
+        lease.__enter__()
+        acquired = True
+        store = store_for(agent_id)
+        lease.assert_active()
+        return provision_change_set(
+            session_factory=session_factory,
+            store=store,
+            agent_id=agent_id,
+            execution_job_id=execution_job_id,
+            base_commit_sha=base_commit_sha,
+            title=title,
+            note=note,
+            operator=operator,
+            change_set_id=change_set_id,
+            source=source,
+        )
+    finally:
+        if acquired:
+            lease.close(validate_claim=False)
 
 
 def provision_change_set(

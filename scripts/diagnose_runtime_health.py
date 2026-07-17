@@ -13,8 +13,7 @@ JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dic
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 
-def _env_value(key: str) -> str | None:
-    path = Path("docker/.env")
+def _env_value(path: Path, key: str) -> str | None:
     if not path.exists():
         return None
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -88,14 +87,23 @@ def diagnose(*, api_base: str, wait_seconds: float, require_ready: bool) -> int:
 
 
 def main() -> int:
-    host_port = os.getenv("HOST_PORT") or _env_value("HOST_PORT") or "58080"
-    default_api_base = os.getenv("API_BASE") or _env_value("API_BASE") or f"http://localhost:{host_port}"
     parser = argparse.ArgumentParser(description="Print API liveness and cached model provider readiness.")
-    parser.add_argument("--api-base", default=default_api_base)
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=Path(os.getenv("COMPOSE_ENV_FILE") or "docker/.env"),
+    )
+    parser.add_argument("--api-base")
     parser.add_argument("--wait-seconds", type=float, default=0)
     parser.add_argument("--require-ready", action="store_true")
     args = parser.parse_args()
-    return diagnose(api_base=args.api_base, wait_seconds=args.wait_seconds, require_ready=args.require_ready)
+    host_port = os.getenv("HOST_PORT") or _env_value(args.env_file, "HOST_PORT") or "58080"
+    api_base = args.api_base or os.getenv("API_BASE") or _env_value(args.env_file, "API_BASE") or f"http://localhost:{host_port}"
+    return diagnose(
+        api_base=api_base,
+        wait_seconds=args.wait_seconds,
+        require_ready=args.require_ready,
+    )
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "verify:playwright-runtime": "cd .. && node scripts/verify_playwright_runtime.mjs",
+    "verify:agent-workspace-settings": "cd .. && node scripts/verify_agent_workspace_settings.mjs",
     "verify:design-parity": "cd .. && node scripts/verify_improvement_ui_design_parity.mjs",
     "verify:real-container": "cd .. && node scripts/verify_improvement_ui_real_container.mjs",
     "verify:improvement-decision": "cd .. && node scripts/verify_improvement_decision_ui.mjs",

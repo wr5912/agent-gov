@@ -18,12 +18,13 @@ capabilities:
   - scoring_json_generation
 
 paths:
-  workspace: /data/business-agents/ai-soc-gap-analyzer/workspace
-  claude_home: /data/business-agents/ai-soc-gap-analyzer/claude-root/.claude
-  data_root: /data
-  uploads: /data/uploads
-  outputs: /data/outputs
-  transcripts: /data/transcripts
+  # 以下路径均以 workspace 为基准，容器与本机调试使用同一份 seed。
+  workspace: .
+  claude_home: ../claude-root/.claude
+  data_root: ../../..
+  uploads: ../../../uploads
+  outputs: ../../../outputs
+  transcripts: ../../../transcripts
 
 mcp:
   default_transport: http
@@ -38,7 +39,7 @@ assessment_model:
   evidence_first: true
   require_traceable_evidence: true
   do_not_update_formal_score_on_failed_input: true
-  output_dir: /data/outputs/ai-soc-gap-analyzer
+  output_dir: ../../../outputs/ai-soc-gap-analyzer
 
 field_ownership:
   backend_owned:
@@ -62,7 +63,7 @@ field_ownership:
     - ui_summary
 
 observability:
-  assessment_output_dir: /data/outputs/ai-soc-gap-analyzer
+  assessment_output_dir: ../../../outputs/ai-soc-gap-analyzer
 
 extension_points:
   add_mcp_server: .mcp.json

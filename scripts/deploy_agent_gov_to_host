@@ -6,17 +6,23 @@ DEFAULT_HOST="172.16.112.232"
 DEFAULT_REMOTE_DIR="~/work/agent-gov"
 DEFAULT_ENVIRONMENT="staging-232"
 EXPECTED_GIT_REMOTE_PROJECT="agent-gov"
+EXPECTED_GIT_BRANCH="master"
+EXPECTED_WORKFLOW_FILE=".github/workflows/governance.yml"
 COMPOSE_FILE="docker/docker-compose.yml"
 LOCAL_COMPOSE_ENV_FILE="${LOCAL_COMPOSE_ENV_FILE:-docker/.env}"
 SOURCE_REPO_DIR="${AGENT_GOV_SOURCE_REPO_DIR:-$ROOT_DIR}"
 SOURCE_REPOSITORY="${AGENT_GOV_REPOSITORY:-wr5912/agent-gov}"
 REMOTE_HELPER="${AGENT_GOV_REMOTE_HELPER:-$ROOT_DIR/scripts/agent_gov_release_remote}"
+CI_EVIDENCE_VERIFIER="$ROOT_DIR/scripts/verify_agent_gov_ci_evidence.py"
 
 usage() {
   cat <<'USAGE'
 Usage:
   scripts/deploy_agent_gov_to_host \
     --ref <40-character-master-SHA> \
+    --aid <AID-N> \
+    --pr-number <number> \
+    --workflow-url <successful-quality-gate-url> \
     [--host 172.16.112.232] \
     [--environment staging-232]
 
@@ -26,14 +32,14 @@ Usage:
   scripts/deploy_agent_gov_to_host --remote-status [options]
 
 --remote-status 把目标机实际在跑的版本以 JSON 打到 stdout（日志走 stderr），
-供控制器对账 active 指针使用。
+供人工联调和故障诊断使用。
 
 Options:
   --host <host>              Default: 172.16.112.232
   --environment <name>      Default: staging-232
-  --aid <AID-N>             Optional trace identifier; the controller supplies it.
-  --pr-number <number>       Optional pull request number.
-  --workflow-url <url>       Optional successful quality-gate URL.
+  --aid <AID-N>             Required deployment trace identifier.
+  --pr-number <number>       Required deployment pull request number.
+  --workflow-url <url>       Required successful master quality-gate URL.
 
 Environment:
   DEPLOY_USER                SSH user, default root.
@@ -44,8 +50,9 @@ Environment:
   AGENT_GOV_REPOSITORY       GitHub owner/repository written to release metadata.
   AGENT_GOV_REMOTE_HELPER    External remote helper; defaults inside this module.
 
-The deploy path requires an exact full SHA reachable from origin/master. It
-builds immutable SHA-tagged images, writes release.json, deploys through a
+The deploy path requires an exact full SHA reachable from origin/master and
+verifies its public GitHub workflow, quality-gate, merged PR, and AID evidence.
+It builds immutable SHA-tagged images, writes release.json, deploys through a
 serialized remote helper, and immediately restores the previous healthy
 release if health validation fails. GitHub credentials are never read here.
 USAGE
@@ -196,24 +203,52 @@ validate_release_id() {
 }
 
 validate_trace_arguments() {
+  [[ "$SOURCE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+    || die "invalid AGENT_GOV_REPOSITORY: $SOURCE_REPOSITORY"
   if [[ -n "$AID_IDENTIFIER" && ! "$AID_IDENTIFIER" =~ ^AID-[0-9]+$ ]]; then
     die "invalid AID identifier: $AID_IDENTIFIER"
   fi
   if [[ -n "$PR_NUMBER" && ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
     die "invalid pull request number: $PR_NUMBER"
   fi
+  if [[ -n "$WORKFLOW_URL" ]]; then
+    local workflow_prefix="https://github.com/${SOURCE_REPOSITORY}/actions/runs/"
+    [[ "$WORKFLOW_URL" == "$workflow_prefix"* ]] \
+      || die "workflow URL must belong to $SOURCE_REPOSITORY"
+    local workflow_path=${WORKFLOW_URL#"$workflow_prefix"}
+    [[ "$workflow_path" =~ ^[0-9]+(/attempts/[0-9]+)?/?$ ]] \
+      || die "invalid workflow run URL: $WORKFLOW_URL"
+  fi
+}
+
+require_deploy_trace_arguments() {
+  [[ -n "$AID_IDENTIFIER" ]] || die "--aid is required for deployment"
+  [[ -n "$PR_NUMBER" ]] || die "--pr-number is required for deployment"
+  [[ -n "$WORKFLOW_URL" ]] || die "--workflow-url is required for deployment"
 }
 
 validate_git_origin_project() {
-  local remote_url remote_project
+  local remote_url remote_repository
   remote_url=$(git -C "$SOURCE_REPO_DIR" remote get-url origin 2>/dev/null) \
     || die "git origin remote is required in $SOURCE_REPO_DIR"
   remote_url=${remote_url%/}
-  remote_project=${remote_url##*/}
-  remote_project=${remote_project##*:}
-  remote_project=${remote_project%.git}
-  [[ "$remote_project" == "$EXPECTED_GIT_REMOTE_PROJECT" ]] \
-    || die "git origin project must be $EXPECTED_GIT_REMOTE_PROJECT, got ${remote_project:-<empty>}"
+  remote_url=${remote_url%.git}
+  case "$remote_url" in
+    *://*)
+      remote_repository=${remote_url#*://}
+      remote_repository=${remote_repository#*/}
+      ;;
+    *:*)
+      remote_repository=${remote_url#*:}
+      ;;
+    *)
+      die "git origin must be a GitHub repository URL, got $remote_url"
+      ;;
+  esac
+  [[ "${remote_repository##*/}" == "$EXPECTED_GIT_REMOTE_PROJECT" ]] \
+    || die "git origin project must be $EXPECTED_GIT_REMOTE_PROJECT, got ${remote_repository##*/}"
+  [[ "$remote_repository" == "$SOURCE_REPOSITORY" ]] \
+    || die "git origin repository must be $SOURCE_REPOSITORY, got ${remote_repository:-<empty>}"
 }
 
 resolve_exact_master_sha() {
@@ -225,6 +260,23 @@ resolve_exact_master_sha() {
   [[ "$resolved" == "$REF_SHA" ]] || die "--ref did not resolve exactly to $REF_SHA"
   git -C "$SOURCE_REPO_DIR" merge-base --is-ancestor "$REF_SHA" origin/master \
     || die "commit is not reachable from origin/master: $REF_SHA"
+}
+
+verify_ci_evidence() {
+  [[ -f "$CI_EVIDENCE_VERIFIER" ]] \
+    || die "CI evidence verifier not found: $CI_EVIDENCE_VERIFIER"
+  log "Verifying successful CI, merged PR, and AID evidence for $REF_SHA"
+  if ! CI_EVIDENCE_JSON=$(python3 "$CI_EVIDENCE_VERIFIER" \
+      --repository "$SOURCE_REPOSITORY" \
+      --ref "$REF_SHA" \
+      --aid "$AID_IDENTIFIER" \
+      --pr-number "$PR_NUMBER" \
+      --workflow-url "$WORKFLOW_URL" \
+      --branch "$EXPECTED_GIT_BRANCH" \
+      --workflow-file "$EXPECTED_WORKFLOW_FILE"); then
+    die "deployment trace is not backed by successful CI evidence"
+  fi
+  log "Verified CI evidence: $CI_EVIDENCE_JSON"
 }
 
 resolve_remote_path() {
@@ -383,7 +435,7 @@ write_release_metadata() {
   done
   python3 - "$manifest" "$RELEASE_ID" "$AID_IDENTIFIER" "$SOURCE_REPOSITORY" \
     "$REF_SHA" "$IMAGE_VERSION" "$ENVIRONMENT" "$DEPLOY_HOST" "$PR_NUMBER" \
-    "$WORKFLOW_URL" "${image_args[@]}" <<'PY'
+    "$WORKFLOW_URL" "$CI_EVIDENCE_JSON" "${image_args[@]}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -401,6 +453,7 @@ from datetime import datetime, timezone
     host,
     pr_number,
     workflow_url,
+    ci_evidence_json,
     *image_pairs,
 ) = sys.argv[1:]
 images = {}
@@ -409,15 +462,16 @@ for pair in image_pairs:
     images[name] = digest
 payload = {
     "release_id": release_id,
-    "aid_identifier": aid or None,
+    "aid_identifier": aid,
     "repository": repository,
     "commit_sha": sha,
     "image_version": image_version,
     "image_digests": images,
     "environment": environment,
     "host": host,
-    "pr_number": int(pr_number) if pr_number else None,
-    "workflow_url": workflow_url or None,
+    "pr_number": int(pr_number),
+    "workflow_url": workflow_url,
+    "ci_evidence": json.loads(ci_evidence_json),
     "status": "prepared",
     "created_at": datetime.now(timezone.utc).isoformat(),
 }
@@ -452,7 +506,9 @@ invoke_remote_helper() {
 prepared_release_state() {
   local release_path="$REMOTE_PATH/releases/$RELEASE_ID"
   target_run "python3 - $(quote "$release_path") $(quote "$REF_SHA") \
-    $(quote "$SOURCE_REPOSITORY") $(quote "$ENVIRONMENT")" <<'PY'
+    $(quote "$SOURCE_REPOSITORY") $(quote "$ENVIRONMENT") \
+    $(quote "$AID_IDENTIFIER") $(quote "$PR_NUMBER") $(quote "$WORKFLOW_URL") \
+    $(quote "$EXPECTED_WORKFLOW_FILE")" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -461,7 +517,15 @@ import sys
 from pathlib import Path
 
 release = Path(sys.argv[1])
-expected_sha, expected_repository, expected_environment = sys.argv[2:]
+(
+    expected_sha,
+    expected_repository,
+    expected_environment,
+    expected_aid,
+    expected_pr_number,
+    expected_workflow_url,
+    expected_workflow_file,
+) = sys.argv[2:]
 manifest_path = release / "release.json"
 if not manifest_path.is_file():
     print("absent")
@@ -474,12 +538,38 @@ expected = {
     "commit_sha": expected_sha,
     "repository": expected_repository,
     "environment": expected_environment,
+    "aid_identifier": expected_aid,
+    "pr_number": int(expected_pr_number),
+    "workflow_url": expected_workflow_url,
 }
 for key, value in expected.items():
     if manifest.get(key) != value:
         raise SystemExit(
             f"committed release {release.name} has conflicting {key}: "
             f"{manifest.get(key)!r} != {value!r}"
+        )
+ci_evidence = manifest.get("ci_evidence")
+if not isinstance(ci_evidence, dict):
+    raise SystemExit(f"committed release {release.name} has invalid ci_evidence")
+expected_ci = {
+    "repository": expected_repository,
+    "commit_sha": expected_sha,
+    "workflow_file": expected_workflow_file,
+    "quality_gate": "success",
+    "pr_number": int(expected_pr_number),
+    "aid_identifier": expected_aid,
+}
+for key, value in expected_ci.items():
+    if ci_evidence.get(key) != value:
+        raise SystemExit(
+            f"committed release {release.name} has conflicting ci_evidence.{key}: "
+            f"{ci_evidence.get(key)!r} != {value!r}"
+        )
+for key in ("workflow_run_id", "workflow_attempt"):
+    value = ci_evidence.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise SystemExit(
+            f"committed release {release.name} has invalid ci_evidence.{key}"
         )
 version_path = release / ".app-version"
 if not version_path.is_file() or version_path.read_text(encoding="utf-8").strip() != manifest.get(
@@ -549,6 +639,9 @@ if [[ "$MODE" == "diagnose" ]]; then
 fi
 
 [[ -n "$REF_SHA" ]] || die "--ref is required"
+if [[ "$MODE" == "deploy" ]]; then
+  require_deploy_trace_arguments
+fi
 for command_name in git python3; do require_command "$command_name"; done
 if (( LOCAL_TARGET )); then
   require_command rsync
@@ -557,6 +650,9 @@ else
 fi
 validate_git_origin_project
 resolve_exact_master_sha
+if [[ "$MODE" == "deploy" ]]; then
+  verify_ci_evidence
+fi
 target_preflight
 
 SHORT_SHA=${REF_SHA:0:12}
@@ -607,13 +703,14 @@ if [[ ! -f "$LOCAL_COMPOSE_ENV_PATH" ]]; then
   LOCAL_COMPOSE_ENV_PATH="$TMP_DIR/docker/.env.example"
   log "$LOCAL_COMPOSE_ENV_FILE is absent; selecting the exact commit docker/.env.example for build interpolation"
 fi
+LOCAL_COMPOSE_ENV_PATH=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$LOCAL_COMPOSE_ENV_PATH")
 
-log "Consumer x Mode x Boundary: target containers select shared/docker.env; runtime data remains on the target; GitHub credentials remain in the controller"
+log "Consumer x Mode x Boundary: target containers select shared/docker.env; runtime data remains on the target; the CI relay never invokes this deployment path"
 
-# 构建跑在控制器上（PAT 与部署私钥所在），而这份 compose 来自被发布的提交本身。
-# 先确认它没把构建面伸出 release 归档——否则合并一个把 build.context 指向控制器 HOME
-# 的 PR，就能把 PAT 和部署私钥打包外带。
-# 门取自 $SOURCE_REPO_DIR（控制器自己的工作树）而非 $TMP_DIR（被发布提交的归档）：
+# 构建跑在人工部署执行机上，而这份 compose 来自待部署提交本身。
+# 先确认它没把构建面伸出 release 归档——否则把 build.context 指向部署执行机 HOME
+# 的 PR，就能把执行机上的私有配置打包进镜像。
+# 门取自 $SOURCE_REPO_DIR（部署执行机的工作树）而非 $TMP_DIR（被部署提交的归档）：
 # 部署只做 fetch + archive，从不 checkout 工作树，所以这里跑的是**安装时的版本**，
 # 被发布的提交改不动它。若改用归档里那份，恶意 PR 一个提交就能把 compose 和门一起换掉。
 BUILD_SERVICES=(agent-gov-litellm-sidecar claude-agent-api claude-agent-ui)
@@ -624,7 +721,9 @@ python3 "$SOURCE_REPO_DIR/scripts/assert_release_build_is_sandboxed.py" \
   || die "released commit tries to build outside its own release archive"
 
 log "Building immutable project images for $IMAGE_VERSION"
-APP_VERSION="$IMAGE_VERSION" docker compose \
+APP_VERSION="$IMAGE_VERSION" \
+AGENT_GOV_COMPOSE_ENV_FILE="$LOCAL_COMPOSE_ENV_PATH" \
+docker compose \
   --env-file "$LOCAL_COMPOSE_ENV_PATH" -f "$TMP_DIR/$COMPOSE_FILE" build \
   "${BUILD_SERVICES[@]}"
 

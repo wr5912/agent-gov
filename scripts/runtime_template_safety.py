@@ -9,23 +9,15 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict
+from urllib.parse import parse_qsl, urlsplit
 
-TEXT_SUFFIXES = {
-    "",
-    ".cfg",
-    ".conf",
-    ".env",
-    ".example",
-    ".gitignore",
-    ".json",
-    ".md",
-    ".py",
-    ".sh",
-    ".toml",
-    ".txt",
-    ".yaml",
-    ".yml",
-}
+import yaml
+
+from runtime_template_secret_assignments import (
+    SECRET_ASSIGN_RE,
+    secret_assignment_key,
+    secret_assignment_value,
+)
 
 FORBIDDEN_DIR_NAMES = {
     ".git",
@@ -61,47 +53,87 @@ FORBIDDEN_FILE_NAMES = {
     "settings.local.json",
 }
 
+SQLITE_DATABASE_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+SQLITE_SIDECAR_SUFFIXES = tuple(
+    f"{database_suffix}{sidecar_suffix}" for database_suffix in SQLITE_DATABASE_SUFFIXES for sidecar_suffix in ("-journal", "-shm", "-wal")
+)
+
 FORBIDDEN_SUFFIXES = {
     ".bak",
     ".backup",
-    ".db",
     ".key",
     ".log",
     ".pem",
-    ".sqlite",
-    ".sqlite3",
+    *SQLITE_DATABASE_SUFFIXES,
+    *SQLITE_SIDECAR_SUFFIXES,
 }
 
 SECRET_KEY_RE = re.compile(
     r"(api[_-]?key|(?<![A-Za-z])token(?!s?[A-Za-z])|secret|password|passwd|credential|authorization|auth[_-]?header|private[_-]?key|encryption[_-]?key|salt)",
     re.IGNORECASE,
 )
+JSON_SECRET_KEY_RE = re.compile(
+    r"(?:^|[_.-])(?:api[_.-]?key|token|access[_.-]?token|refresh[_.-]?token|secret|password|passwd|credential|authorization|auth[_.-]?header|private[_.-]?key)(?:$|[_.-])",
+    re.IGNORECASE,
+)
 ENDPOINT_KEY_RE = re.compile(
     r"(^|[_-])(url|uri|endpoint|host|hostname|ip|bind[_-]?ip|port|connection[_-]?url|base[_-]?url)($|[_-])",
     re.IGNORECASE,
 )
-URL_RE = re.compile(r"\bhttps?://[^\s\"'`<>),}]+")
+SCHEME_URL_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'`<>),}]+")
 IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 INTERNAL_DOMAIN_RE = re.compile(r"\b(?:[A-Za-z0-9_-]+\.)+(?:internal|corp)\b|(?<!\S)\*\.(?:internal|corp)\b")
+ALLOWED_DOMAINS_BLOCK_RE = re.compile(r'"allowedDomains"\s*:\s*\[(?P<body>.*?)\]', re.DOTALL)
+JSON_STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-HOME_PATH_RE = re.compile(r"(?<![\w/])(?:/home/[^/\s\"']+|/Users/[^/\s\"']+|~)(?:/[^\s\"']*)?")
-TOKEN_VALUE_RE = re.compile(r"\b(?:sk|pk|ak|rk|xoxb|ghp|glpat)-[A-Za-z0-9_\-]{8,}\b", re.IGNORECASE)
-BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{6,}\b", re.IGNORECASE)
-SECRET_ASSIGN_RE = re.compile(
-    r"(?P<key>[A-Za-z0-9_.-]*(?:api[_-]?key|(?<![A-Za-z])token(?!s?[A-Za-z])|secret|password|credential|authorization|auth[_-]?header)[A-Za-z0-9_.-]*)"
-    r"(?P<sep>\s*[:=]\s*)"
-    r"(?P<quote>[\"']?)"
-    r"(?P<value>[^\"'\s,}#]+)",
+HOME_PATH_RE = re.compile(
+    r"(?<![\w/])(?:/home/[^/\s\"']+|/Users/[^/\s\"']+|/root|~)(?:/[^\s\"']*)?"
+    r"|(?<![A-Za-z0-9_])[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^\\/\s\"']+(?:[\\/][^\s\"']*)?",
     re.IGNORECASE,
 )
-
-ALLOWED_URL_PREFIXES = (
-    "https://json.schemastore.org/",
+TOKEN_VALUE_RE = re.compile(
+    r"\b(?:"
+    r"(?:sk|pk|ak|rk|xox[a-z]?|glpat)[_-][A-Za-z0-9][A-Za-z0-9_-]{7,}"
+    r"|gh[pousr]_[A-Za-z0-9]{16,}"
+    r"|github_pat_[A-Za-z0-9_]{16,}"
+    r"|AKIA[0-9A-Z]{16}"
+    r")\b",
+    re.IGNORECASE,
 )
+BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{6,}\b", re.IGNORECASE)
+PRIVATE_KEY_BLOCK_RE = re.compile(
+    r"-----BEGIN (?:(?:RSA|DSA|EC|OPENSSH) )?PRIVATE KEY-----"
+    r"|-----BEGIN PGP PRIVATE KEY BLOCK-----",
+    re.IGNORECASE,
+)
+ALLOWED_URL_PREFIXES = ("https://json.schemastore.org/",)
+ENVIRONMENT_URL_SCHEMES = {
+    "amqp",
+    "amqps",
+    "http",
+    "https",
+    "jdbc",
+    "mariadb",
+    "mongodb",
+    "mongodb+srv",
+    "mysql",
+    "postgres",
+    "postgresql",
+    "redis",
+    "rediss",
+    "s3",
+}
 
 PLACEHOLDER_RE = re.compile(r"(\$\{[A-Z0-9_]+\}|<REPLACE_WITH_[A-Z0-9_]+>|replace-me|change-me|placeholder)", re.IGNORECASE)
 UNRENDERABLE_PLACEHOLDERS = {"${HOST_PATH}"}
 DOC_IPV4_NETWORKS = tuple(ipaddress.ip_network(value) for value in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"))
+MODE_NEUTRAL_SANDBOX_DOMAINS = {
+    "localhost",
+    "127.0.0.1",
+    "host.docker.internal",
+    "*.internal",
+    "*.corp",
+}
 
 
 @dataclass(frozen=True)
@@ -126,18 +158,16 @@ def _repo_relative(path: Path, root: Path) -> str:
         return path.as_posix()
 
 
-def _is_text_file(path: Path) -> bool:
-    if path.suffix in TEXT_SUFFIXES or path.name in {".mcp.json", ".worktreeinclude"}:
-        return True
-    return path.name.endswith(".example")
-
-
 def _safe_read_text(path: Path) -> str | None:
-    if not _is_text_file(path):
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if b"\x00" in raw:
         return None
     try:
-        return path.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, OSError):
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
         return None
 
 
@@ -147,6 +177,13 @@ def _is_placeholder(value: str) -> bool:
 
 def _is_allowed_url(url: str) -> bool:
     return url.startswith(ALLOWED_URL_PREFIXES) or _is_placeholder(url)
+
+
+def _is_environment_url(url: str) -> bool:
+    try:
+        return urlsplit(url).scheme.lower() in ENVIRONMENT_URL_SCHEMES
+    except ValueError:
+        return False
 
 
 def _ipv4(value: str) -> ipaddress.IPv4Address | None:
@@ -202,6 +239,8 @@ def _placeholder_for_endpoint(key: str, value: str) -> str:
         return "${REDIS_HOST}"
     if "postgres" in context or "database" in context or "clickhouse" in context:
         return "${DATABASE_URL}"
+    if any(value in context for value in ("mysql", "mariadb", "mongodb", "jdbc")):
+        return "${DATABASE_URL}"
     if "port" in key.lower():
         return "${SERVICE_PORT}"
     if "host" in key.lower() or "ip" in key.lower():
@@ -210,19 +249,47 @@ def _placeholder_for_endpoint(key: str, value: str) -> str:
 
 
 def _redact_snippet(line: str) -> str:
-    redacted = URL_RE.sub("<URL>", line)
+    redacted = SCHEME_URL_RE.sub("<URL>", line)
     redacted = IPV4_RE.sub("<IP>", redacted)
     redacted = EMAIL_RE.sub("<EMAIL>", redacted)
+    redacted = HOME_PATH_RE.sub("<PATH>", redacted)
     redacted = BEARER_RE.sub("Bearer <TOKEN>", redacted)
     redacted = TOKEN_VALUE_RE.sub("<TOKEN>", redacted)
-    redacted = SECRET_ASSIGN_RE.sub(lambda match: f"{match.group('key')}{match.group('sep')}<VALUE>", redacted)
+    redacted = PRIVATE_KEY_BLOCK_RE.sub("<PRIVATE_KEY>", redacted)
+    redacted = SECRET_ASSIGN_RE.sub(
+        lambda match: f"{secret_assignment_key(match)}{match.group('sep')}<VALUE>",
+        redacted,
+    )
     return redacted.strip()[:180]
 
 
 def _is_prebuilt_agent_workspace_seed(parts: tuple[str, ...]) -> bool:
-    """预制业务 Agent 的配置种子 data/business-agents/<id>/workspace/ 是合法模板源；
-    其余 data/ 内容（runtime.sqlite3/sessions/claude-root/version 等）仍属运行态、禁止入模板。"""
+    """仅 data/business-agents/<id>/workspace/ 是合法预制 workspace seed。"""
     return len(parts) >= 4 and parts[0] == "data" and parts[1] == "business-agents" and parts[3] == "workspace"
+
+
+def _is_declared_business_agent_seed(rel_path: str) -> bool:
+    return _is_prebuilt_agent_workspace_seed(Path(rel_path).parts)
+
+
+def _environment_bound_severity(rel_path: str) -> str:
+    return "medium" if _is_declared_business_agent_seed(rel_path) else "high"
+
+
+def _environment_bound_message(rel_path: str, strict_message: str) -> str:
+    if not _is_declared_business_agent_seed(rel_path):
+        return strict_message
+    return "declared seed keeps this value byte-for-byte; review whether it is intentionally builtin or should use deployment config"
+
+
+def _url_contains_secret(url: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return True
+    return any(SECRET_KEY_RE.search(key) and value and not _is_placeholder(value) for key, value in parse_qsl(parsed.query, keep_blank_values=True))
 
 
 def _forbidden_reason(rel: Path) -> str | None:
@@ -249,16 +316,30 @@ def _forbidden_reason(rel: Path) -> str | None:
 
 def iter_files(root: Path) -> Iterable[Path]:
     for path in sorted(root.rglob("*")):
-        if path.is_file():
+        if not path.is_symlink() and path.is_file():
             yield path
 
 
 def scan_path(root: Path) -> list[Finding]:
     root = root.resolve()
     findings: list[Finding] = []
-    for file_path in iter_files(root):
+    for file_path in sorted(root.rglob("*")):
         rel = file_path.relative_to(root)
         rel_text = rel.as_posix()
+        if file_path.is_symlink():
+            findings.append(
+                Finding(
+                    rel_text,
+                    0,
+                    "unsafe_file_type",
+                    "high",
+                    "symbolic links are forbidden in repository templates and seeds",
+                    "",
+                )
+            )
+            continue
+        if not file_path.is_file():
+            continue
         reason = _forbidden_reason(rel)
         if reason:
             findings.append(Finding(rel_text, 0, "forbidden_path", "high", reason, ""))
@@ -266,12 +347,119 @@ def scan_path(root: Path) -> list[Finding]:
         text = _safe_read_text(file_path)
         if text is None:
             continue
+        if file_path.suffix in {".json", ".yaml", ".yml"} or file_path.name in {
+            ".mcp.json",
+            "settings.json",
+        }:
+            findings.extend(_scan_structured_secret_values(rel_text, text))
+        findings.extend(_scan_declared_seed_wide_permissions(rel_text, text))
+        mode_neutral_domain_lines = _mode_neutral_sandbox_domain_lines(rel_text, text)
         for line_number, line in enumerate(text.splitlines(), start=1):
-            findings.extend(_scan_line(rel_text, line_number, line))
+            findings.extend(
+                _scan_line(
+                    rel_text,
+                    line_number,
+                    line,
+                    mode_neutral_domain=line_number in mode_neutral_domain_lines,
+                )
+            )
     return findings
 
 
-def _scan_line(rel_path: str, line_number: int, line: str) -> list[Finding]:
+def _json_secret_value_present(value: object) -> bool:
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip()) and not _is_placeholder(value)
+    if isinstance(value, (list, dict)):
+        return bool(value)
+    return True
+
+
+def _structured_key_line(text: str, key: str) -> int:
+    match = re.search(
+        rf"(?m)^\s*[\"']?{re.escape(key)}[\"']?\s*:",
+        text,
+    )
+    return text.count("\n", 0, match.start()) + 1 if match else 0
+
+
+def _scan_structured_secret_values(rel_path: str, text: str) -> list[Finding]:
+    try:
+        payload = json.loads(text) if Path(rel_path).suffix == ".json" or rel_path.endswith(".mcp.json") else yaml.safe_load(text)
+    except (json.JSONDecodeError, yaml.YAMLError):
+        return []
+
+    findings: list[Finding] = []
+
+    def visit(value: object, path: tuple[str, ...]) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                key_text = str(key)
+                item_path = (*path, key_text)
+                if JSON_SECRET_KEY_RE.search(key_text) and _json_secret_value_present(item):
+                    findings.append(
+                        Finding(
+                            rel_path,
+                            _structured_key_line(text, key_text),
+                            "secret",
+                            "high",
+                            "credential-bearing structured fields must use an empty value or deployment placeholder",
+                            f"{'.'.join(item_path)}=<VALUE>",
+                        )
+                    )
+                visit(item, item_path)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, (*path, str(index)))
+
+    visit(payload, ())
+    return findings
+
+
+def _scan_declared_seed_wide_permissions(rel_path: str, text: str) -> list[Finding]:
+    if not _is_declared_business_agent_seed(rel_path) or not rel_path.endswith("/.claude/settings.json"):
+        return []
+    try:
+        settings = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    permissions = settings.get("permissions") if isinstance(settings, dict) else None
+    allowed = permissions.get("allow") if isinstance(permissions, dict) else None
+    if not isinstance(allowed, list):
+        return []
+
+    findings: list[Finding] = []
+    for rule in allowed:
+        if not isinstance(rule, str):
+            continue
+        is_wide_bash = rule == "Bash(*)"
+        is_wide_mcp = rule.startswith("mcp__") and rule.endswith("__*")
+        if not is_wide_bash and not is_wide_mcp:
+            continue
+        encoded_rule = json.dumps(rule)
+        position = text.find(encoded_rule)
+        line_number = text.count("\n", 0, position) + 1 if position >= 0 else 0
+        findings.append(
+            Finding(
+                rel_path,
+                line_number,
+                "wide_permission",
+                "medium",
+                "declared seed keeps this broad allow rule byte-for-byte; review whether the builtin scope is intentional",
+                rule,
+            )
+        )
+    return findings
+
+
+def _scan_line(
+    rel_path: str,
+    line_number: int,
+    line: str,
+    *,
+    mode_neutral_domain: bool = False,
+) -> list[Finding]:
     findings: list[Finding] = []
     for placeholder in sorted(UNRENDERABLE_PLACEHOLDERS):
         if placeholder in line:
@@ -285,33 +473,164 @@ def _scan_line(rel_path: str, line_number: int, line: str) -> list[Finding]:
                     _redact_snippet(line),
                 )
             )
-    for match in URL_RE.finditer(line):
+    findings.extend(_scan_line_urls(rel_path, line_number, line))
+    findings.extend(
+        _scan_line_environment(
+            rel_path,
+            line_number,
+            line,
+            mode_neutral_domain=mode_neutral_domain,
+        )
+    )
+    findings.extend(_scan_line_sensitive_values(rel_path, line_number, line))
+    return findings
+
+
+def _scan_line_urls(
+    rel_path: str,
+    line_number: int,
+    line: str,
+) -> list[Finding]:
+    findings: list[Finding] = []
+    for match in SCHEME_URL_RE.finditer(line):
         value = match.group(0)
         if _is_allowed_url(value):
             continue
-        findings.append(Finding(rel_path, line_number, "endpoint_url", "high", "URL or endpoint must be injected by deployment config", _redact_snippet(line)))
+        if _url_contains_secret(value):
+            findings.append(
+                Finding(
+                    rel_path,
+                    line_number,
+                    "secret",
+                    "high",
+                    "URL userinfo or secret query values must not be stored in repository templates or seeds",
+                    _redact_snippet(line),
+                )
+            )
+            continue
+        if not _is_environment_url(value):
+            continue
+        findings.append(
+            Finding(
+                rel_path,
+                line_number,
+                "endpoint_url",
+                _environment_bound_severity(rel_path),
+                _environment_bound_message(rel_path, "URL or endpoint must be injected by deployment config"),
+                _redact_snippet(line),
+            )
+        )
+    return findings
+
+
+def _scan_line_environment(
+    rel_path: str,
+    line_number: int,
+    line: str,
+    *,
+    mode_neutral_domain: bool,
+) -> list[Finding]:
+    findings: list[Finding] = []
     for match in IPV4_RE.finditer(line):
         value = match.group(0)
         address = _ipv4(value)
         if address is None or _is_doc_ip(address):
             continue
-        if _is_private_or_local_ip(address):
-            findings.append(Finding(rel_path, line_number, "private_ip", "high", "private, local, or environment-bound IP must not be stored in templates", _redact_snippet(line)))
-    if "localhost" in line or "host.docker.internal" in line:
-        findings.append(Finding(rel_path, line_number, "local_host", "high", "local host names must be deployment placeholders in templates", _redact_snippet(line)))
-    if INTERNAL_DOMAIN_RE.search(line):
-        findings.append(Finding(rel_path, line_number, "internal_domain", "high", "internal domains must be deployment placeholders in templates", _redact_snippet(line)))
+        if _is_private_or_local_ip(address) and not mode_neutral_domain:
+            findings.append(
+                Finding(
+                    rel_path,
+                    line_number,
+                    "private_ip",
+                    _environment_bound_severity(rel_path),
+                    _environment_bound_message(rel_path, "private, local, or environment-bound IP must not be stored in templates"),
+                    _redact_snippet(line),
+                )
+            )
+    if ("localhost" in line or "host.docker.internal" in line) and not mode_neutral_domain:
+        findings.append(
+            Finding(
+                rel_path,
+                line_number,
+                "local_host",
+                _environment_bound_severity(rel_path),
+                _environment_bound_message(rel_path, "local host names must be deployment placeholders in templates"),
+                _redact_snippet(line),
+            )
+        )
+    if INTERNAL_DOMAIN_RE.search(line) and not mode_neutral_domain:
+        findings.append(
+            Finding(
+                rel_path,
+                line_number,
+                "internal_domain",
+                _environment_bound_severity(rel_path),
+                _environment_bound_message(rel_path, "internal domains must be deployment placeholders in templates"),
+                _redact_snippet(line),
+            )
+        )
+    return findings
+
+
+def _scan_line_sensitive_values(
+    rel_path: str,
+    line_number: int,
+    line: str,
+) -> list[Finding]:
+    findings: list[Finding] = []
     if EMAIL_RE.search(line):
-        findings.append(Finding(rel_path, line_number, "email", "medium", "email/account values should not be stored in reusable templates", _redact_snippet(line)))
+        findings.append(
+            Finding(rel_path, line_number, "email", "medium", "email/account values should not be stored in reusable templates", _redact_snippet(line))
+        )
     if HOME_PATH_RE.search(line):
         findings.append(Finding(rel_path, line_number, "host_path", "high", "host-specific paths must not be stored in templates", _redact_snippet(line)))
     has_secret_assignment = any(
-        not match.group("value").startswith(("$", "<")) and not _is_placeholder(match.group("value"))
+        not secret_assignment_value(match).startswith(("$", "<")) and not _is_placeholder(secret_assignment_value(match))
         for match in SECRET_ASSIGN_RE.finditer(line)
     )
+    if PRIVATE_KEY_BLOCK_RE.search(line):
+        findings.append(
+            Finding(
+                rel_path, line_number, "private_key", "high", "private key material must not be stored in repository templates or seeds", _redact_snippet(line)
+            )
+        )
     if TOKEN_VALUE_RE.search(line) or BEARER_RE.search(line) or has_secret_assignment:
         findings.append(Finding(rel_path, line_number, "secret", "high", "secret-like values must be placeholders", _redact_snippet(line)))
     return findings
+
+
+def _mode_neutral_sandbox_domain_lines(rel_path: str, text: str) -> set[int]:
+    if not rel_path.endswith("/.claude/settings.json"):
+        return set()
+    try:
+        settings = json.loads(text)
+    except json.JSONDecodeError:
+        return set()
+    sandbox = settings.get("sandbox") if isinstance(settings, dict) else None
+    network = sandbox.get("network") if isinstance(sandbox, dict) else None
+    domains = network.get("allowedDomains") if isinstance(network, dict) else None
+    approved = {value for value in domains if isinstance(value, str) and value in MODE_NEUTRAL_SANDBOX_DOMAINS} if isinstance(domains, list) else set()
+    if not approved:
+        return set()
+
+    lines: set[int] = set()
+    for block in ALLOWED_DOMAINS_BLOCK_RE.finditer(text):
+        body = block.group("body")
+        try:
+            block_domains = json.loads(f"[{body}]")
+        except json.JSONDecodeError:
+            continue
+        if block_domains != domains:
+            continue
+        body_offset = block.start("body")
+        for token in JSON_STRING_RE.finditer(body):
+            try:
+                value = json.loads(token.group(0))
+            except json.JSONDecodeError:
+                continue
+            if value in approved:
+                lines.add(text.count("\n", 0, body_offset + token.start()) + 1)
+    return lines
 
 
 def sanitize_path(root: Path) -> SanitizeResult:
@@ -350,12 +669,27 @@ def _sanitize_file(root: Path, file_path: Path) -> bool:
     return True
 
 
-def _sanitize_json_value(value: object, key: str, rel_path: str) -> object:
+def _sanitize_json_value(
+    value: object,
+    key: str,
+    rel_path: str,
+    json_path: tuple[str, ...] = (),
+) -> object:
     if isinstance(value, dict):
-        return {item_key: _sanitize_json_value(item_value, item_key, rel_path) for item_key, item_value in value.items()}
+        return {
+            item_key: _sanitize_json_value(
+                item_value,
+                item_key,
+                rel_path,
+                (*json_path, item_key),
+            )
+            for item_key, item_value in value.items()
+        }
     if isinstance(value, list):
-        return [_sanitize_json_value(item, key, rel_path) for item in value]
+        return [_sanitize_json_value(item, key, rel_path, json_path) for item in value]
     if isinstance(value, str):
+        if rel_path.endswith("/.claude/settings.json") and json_path == ("sandbox", "network", "allowedDomains") and value in MODE_NEUTRAL_SANDBOX_DOMAINS:
+            return value
         if key == "$schema" and _is_allowed_url(value):
             return value
         if _is_sample_path(rel_path) and _ipv4(value):
@@ -364,7 +698,7 @@ def _sanitize_json_value(value: object, key: str, rel_path: str) -> object:
                 return value
             if address and _is_private_or_local_ip(address):
                 return "192.0.2.10"
-        if SECRET_KEY_RE.search(key) and not _is_placeholder(value):
+        if JSON_SECRET_KEY_RE.search(key) and not _is_placeholder(value):
             return _placeholder_for_key(key)
         if ENDPOINT_KEY_RE.search(key) and not _is_placeholder(value):
             return _placeholder_for_endpoint(key, value)
@@ -378,14 +712,16 @@ def _sanitize_text(text: str, rel_path: str) -> str:
     sample = _is_sample_path(rel_path)
 
     def replace_secret(match: re.Match[str]) -> str:
-        value = match.group("value")
+        value = secret_assignment_value(match)
         if value.startswith(("$", "<")) or _is_placeholder(value):
             return match.group(0)
-        return f"{match.group('key')}{match.group('sep')}{match.group('quote')}{_placeholder_for_key(match.group('key'))}"
+        raw_value = match.group("raw_value")
+        quote = raw_value[0] if raw_value[:1] in {'"', "'"} else ""
+        return f"{secret_assignment_key(match)}{match.group('sep')}{quote}{_placeholder_for_key(match.group('key'))}{quote}"
 
     def replace_url(match: re.Match[str]) -> str:
         value = match.group(0)
-        if _is_allowed_url(value):
+        if _is_allowed_url(value) or (not _url_contains_secret(value) and not _is_environment_url(value)):
             return value
         return _placeholder_for_endpoint("", value)
 
@@ -401,7 +737,7 @@ def _sanitize_text(text: str, rel_path: str) -> str:
     sanitized = SECRET_ASSIGN_RE.sub(replace_secret, text)
     sanitized = BEARER_RE.sub("Bearer ${AUTH_TOKEN}", sanitized)
     sanitized = TOKEN_VALUE_RE.sub("${API_KEY}", sanitized)
-    sanitized = URL_RE.sub(replace_url, sanitized)
+    sanitized = SCHEME_URL_RE.sub(replace_url, sanitized)
     sanitized = IPV4_RE.sub(replace_ip, sanitized)
     sanitized = sanitized.replace("host.docker.internal", "${SERVICE_HOST}")
     sanitized = sanitized.replace("localhost", "${SERVICE_HOST}")
@@ -433,7 +769,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sanitize":
         result = sanitize_path(args.path)
         findings = scan_path(args.path)
-        print(json.dumps({"sanitize": result, "verify_ok": not any(f.severity == "high" for f in findings), "findings": [asdict(f) for f in findings]}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {"sanitize": result, "verify_ok": not any(f.severity == "high" for f in findings), "findings": [asdict(f) for f in findings]},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 1 if any(f.severity == "high" for f in findings) else 0
     if args.command == "verify":
         findings = scan_path(args.path)

@@ -25,6 +25,7 @@ class TurnIntentSpec:
     attempted_sdk_session_id: str
     sdk_project_key: str
     base_turns: int
+    agent_version_id: str | None
     request: JsonObject
     created_at: str
 
@@ -40,7 +41,10 @@ def add_running_turn_intent(db: Any, spec: TurnIntentSpec) -> None:
             sdk_project_key=spec.sdk_project_key,
             base_turns=spec.base_turns,
             status="running",
-            request_json=dict(spec.request),
+            request_json={
+                **spec.request,
+                "agent_version_id": spec.agent_version_id,
+            },
             error_json={},
             created_at=spec.created_at,
             updated_at=spec.created_at,

@@ -4,7 +4,11 @@ set -u
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
-COMPOSE=(docker compose --env-file docker/.env -f docker/docker-compose.yml)
+compose_env_file=${COMPOSE_ENV_FILE:-docker/.env}
+compose_env_file=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$compose_env_file")
+export COMPOSE_ENV_FILE="$compose_env_file"
+export AGENT_GOV_COMPOSE_ENV_FILE="$compose_env_file"
+COMPOSE=(docker compose --env-file "$compose_env_file" -f docker/docker-compose.yml)
 echo "=== Compose service state ==="
 "${COMPOSE[@]}" ps --all || true
 
@@ -18,7 +22,7 @@ fi
 echo "=== Runtime health diagnosis ==="
 python_bin=.venv/bin/python
 [[ -x "$python_bin" ]] || python_bin=python3
-"$python_bin" scripts/diagnose_runtime_health.py 2>&1 || true
+"$python_bin" scripts/diagnose_runtime_health.py --env-file "$compose_env_file" 2>&1 || true
 
 echo "=== Relevant service logs ==="
 "${COMPOSE[@]}" logs --no-color --tail=80 claude-agent-api agent-gov-litellm-sidecar claude-agent-ui 2>&1 || true

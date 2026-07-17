@@ -9,14 +9,16 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("report-template")
+WORKSPACE_DIR = Path(os.getenv("CLAUDE_WORKSPACE", str(Path(__file__).resolve().parents[2])))
+DATA_DIR = Path(os.getenv("DATA_DIR", str(WORKSPACE_DIR.parents[2])))
 
 
 def _template_dir() -> Path:
-    return Path(os.getenv("REPORT_TEMPLATE_DIR", "/data/business-agents/main-agent/workspace/templates/reports"))
+    return Path(os.getenv("REPORT_TEMPLATE_DIR", str(WORKSPACE_DIR / "templates" / "reports")))
 
 
 def _output_dir() -> Path:
-    p = Path(os.getenv("REPORT_OUTPUT_DIR", "/data/outputs/reports"))
+    p = Path(os.getenv("REPORT_OUTPUT_DIR", str(DATA_DIR / "outputs" / "reports")))
     p.mkdir(parents=True, exist_ok=True)
     return p
 

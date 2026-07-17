@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """校验被发布提交自带的 compose，其 build 段没有把构建面伸出 release 归档之外。
 
-**为什么需要这道门**：`docker compose build` 跑在 **228 控制器**上，而 228 上有
-GitHub PAT（`/etc/agent-gov-release-controller/github_token`）和能 SSH 到 232 的
-部署私钥。构建用的 compose 文件却来自**被发布提交自己的归档**——也就是说，合并一个
-把 `build.context` 指向控制器 HOME 的 PR，Dockerfile 里一句 `COPY` + `RUN curl`
-就能把 PAT 和部署私钥带出去。
+**为什么需要这道门**：`docker compose build` 跑在人工部署执行机上，构建用的
+compose 文件来自**待部署提交自己的归档**。如果 `build.context` 指向执行机 HOME，
+Dockerfile 就能把本机私有配置意外打进镜像。
 
-这不是「提 PR 的人能 RCE」：合并本来就等于让任意代码部署到 232。但它**静默扩大了
-PAT 的爆炸半径**——设计文档只说了「合并 = 发布批准」，没说「合并 = 拿到 PAT + 232 的
-部署私钥」。这道门把构建面收回归档内，让文档里那句边界成为真的。
+这道基础检查只把构建输入限定在精确 commit 归档内，避免部署结果依赖执行机上的
+额外文件；它不承担生产级供应链安全职责。
 
 范围：只管**构建面伸出归档之外**。归档内的 Dockerfile 想干什么不归这里管
 （那本就是「合并 = 发布」授予的）。
@@ -77,10 +74,7 @@ def _service_violations(name: str, build: Any, archive_root: Path, compose_dir: 
     violations: list[str] = []
     for key in _HOST_SECRET_KEYS:
         if build.get(key):
-            violations.append(
-                f"service {name}: build.{key} 会把宿主机凭据挂进构建过程，"
-                f"而构建跑在持有 PAT 与部署私钥的控制器上"
-            )
+            violations.append(f"service {name}: build.{key} 会把宿主机凭据挂进构建过程，而构建输入必须限定在待部署 commit 归档内")
 
     # compose 语义：context 相对 compose 文件所在目录；dockerfile 相对 context。
     # 按错的基准目录判定，会把 `context: ..`（= 归档根，真实 compose 就这么写）
@@ -91,17 +85,11 @@ def _service_violations(name: str, build: Any, archive_root: Path, compose_dir: 
         if not isinstance(raw_context, str):
             violations.append(f"service {name}: build.context 必须是字符串，实为 {raw_context!r}")
         elif _is_remote(raw_context):
-            violations.append(
-                f"service {name}: build.context={raw_context!r} 是远程来源；"
-                f"构建面必须限定在被发布的代码内，且远程来源会破坏不可变发布"
-            )
+            violations.append(f"service {name}: build.context={raw_context!r} 是远程来源；构建面必须限定在被发布的代码内，且远程来源会破坏不可变发布")
         else:
             resolved_context = _resolve(compose_dir, raw_context)
             if not _within(archive_root, resolved_context):
-                violations.append(
-                    f"service {name}: build.context={raw_context!r} 解析后落在 release 归档之外；"
-                    f"构建面必须限定在被发布的代码内"
-                )
+                violations.append(f"service {name}: build.context={raw_context!r} 解析后落在 release 归档之外；构建面必须限定在被发布的代码内")
             elif resolved_context is not None:
                 context = resolved_context
 
@@ -110,10 +98,7 @@ def _service_violations(name: str, build: Any, archive_root: Path, compose_dir: 
         if not isinstance(dockerfile, str):
             violations.append(f"service {name}: build.dockerfile 必须是字符串，实为 {dockerfile!r}")
         elif not _within(archive_root, _resolve(context, dockerfile)):
-            violations.append(
-                f"service {name}: build.dockerfile={dockerfile!r} 解析后落在 release 归档之外；"
-                f"构建面必须限定在被发布的代码内"
-            )
+            violations.append(f"service {name}: build.dockerfile={dockerfile!r} 解析后落在 release 归档之外；构建面必须限定在被发布的代码内")
 
     extra = build.get("additional_contexts")
     entries: list[str] = []
@@ -123,9 +108,7 @@ def _service_violations(name: str, build: Any, archive_root: Path, compose_dir: 
         entries = [str(item).split("=", 1)[-1] for item in extra]
     for entry in entries:
         if _is_remote(entry) or not _within(archive_root, _resolve(compose_dir, entry)):
-            violations.append(
-                f"service {name}: build.additional_contexts 指向 {entry!r}，落在 release 归档之外"
-            )
+            violations.append(f"service {name}: build.additional_contexts 指向 {entry!r}，落在 release 归档之外")
     return violations
 
 

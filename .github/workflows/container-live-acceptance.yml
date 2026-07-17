@@ -1,0 +1,101 @@
+name: container-live-acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  container-live-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: container-live-acceptance
+    env:
+      UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+      MODEL_PROVIDER_API_URL: ${{ secrets.MODEL_PROVIDER_API_URL }}
+      MODEL_PROVIDER_API_KEY: ${{ secrets.MODEL_PROVIDER_API_KEY }}
+      API_KEY: ${{ secrets.CONTAINER_LIVE_API_KEY }}
+      FRONTEND_RUNTIME_API_KEY: ${{ secrets.CONTAINER_LIVE_API_KEY }}
+      HOST_RUNTIME_VOLUME_ROOT: ${{ runner.temp }}/agent-gov-live-runtime
+      VERIFY_SCREENSHOT_DIR: ${{ github.workspace }}/artifacts/test-quality/container-live-acceptance
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Require live acceptance configuration
+        run: |
+          test -n "$MODEL_PROVIDER_API_URL" || { echo "::error::container-live-acceptance environment lacks MODEL_PROVIDER_API_URL"; exit 1; }
+          test -n "$MODEL_PROVIDER_API_KEY" || { echo "::error::container-live-acceptance environment lacks MODEL_PROVIDER_API_KEY"; exit 1; }
+          test -n "$API_KEY" || { echo "::error::container-live-acceptance environment lacks CONTAINER_LIVE_API_KEY"; exit 1; }
+      - name: Install test dependencies
+        run: |
+          uv venv .venv --python 3.11
+          uv pip install --python .venv/bin/python -r requirements.txt
+          pnpm --dir frontend install --frozen-lockfile
+          pnpm --dir frontend exec playwright install --with-deps chromium
+      - name: Create ephemeral runtime and Compose env
+        run: |
+          compose_env="$RUNNER_TEMP/agent-gov-live.env"
+          cp docker/.env.example "$compose_env"
+          COMPOSE_ENV_PATH="$compose_env" python - <<'PY'
+          import os
+          from pathlib import Path
+
+          def dotenv_literal(value: str) -> str:
+              return "'" + value.replace("'", "\\'") + "'"
+
+          path = Path(os.environ["COMPOSE_ENV_PATH"])
+          overrides = {
+              "API_KEY": os.environ["API_KEY"],
+              "FRONTEND_RUNTIME_API_KEY": os.environ["FRONTEND_RUNTIME_API_KEY"],
+              "MODEL_PROVIDER_API_KEY": os.environ["MODEL_PROVIDER_API_KEY"],
+              "MODEL_PROVIDER_API_URL": os.environ["MODEL_PROVIDER_API_URL"],
+          }
+          if any("\n" in value or "\r" in value for value in overrides.values()):
+              raise SystemExit("container-live-acceptance secrets must be single-line values")
+          found: set[str] = set()
+          output: list[str] = []
+          for line in path.read_text(encoding="utf-8").splitlines():
+              key = line.split("=", 1)[0]
+              if key in overrides:
+                  output.append(f"{key}={dotenv_literal(overrides[key])}")
+                  found.add(key)
+              else:
+                  output.append(line)
+          missing = sorted(set(overrides) - found)
+          if missing:
+              raise SystemExit(f"Compose env template lacks required keys: {', '.join(missing)}")
+          path.write_text("\n".join(output) + "\n", encoding="utf-8")
+          PY
+          mkdir -p "$HOST_RUNTIME_VOLUME_ROOT"
+          printf 'COMPOSE_ENV_FILE=%s\nAGENT_GOV_COMPOSE_ENV_FILE=%s\n' \
+            "$compose_env" "$compose_env" >> "$GITHUB_ENV"
+      - name: Build and start real container stack
+        run: |
+          trap 'make down COMPOSE_ENV_FILE="$COMPOSE_ENV_FILE"' EXIT
+          make build COMPOSE_ENV_FILE="$COMPOSE_ENV_FILE"
+          make up COMPOSE_ENV_FILE="$COMPOSE_ENV_FILE"
+          make container-live-test COMPOSE_ENV_FILE="$COMPOSE_ENV_FILE"
+          RUNTIME_UI_BASE=http://localhost:55173 \
+          RUNTIME_API_BASE=http://localhost:58080 \
+          RUNTIME_API_KEY="$API_KEY" \
+          pnpm --dir frontend run verify:openai-responses-container
+      - name: Upload live UI evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: container-live-acceptance-${{ github.run_attempt }}
+          path: artifacts/test-quality/container-live-acceptance
+          if-no-files-found: warn
+          retention-days: 30

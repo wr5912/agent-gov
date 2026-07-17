@@ -6,7 +6,7 @@
 
 1. 先读“权威入口”，明确产品边界、术语和验收锚点。
 2. 需要理解当前代码和运行态时，读“当前实现基线”。
-3. 需要评审尚未落地的单项产品能力时，读“产品能力目标方案”。
+3. 需要理解业务 Agent workspace 资产闭环时，读“当前实现基线”中的对应工程契约。
 4. 需要评审四阶段改进治理目标方案时，读“四阶段改进治理工作台权威方案”。
 5. 需要落地工程质量、GSD 或治理硬门时，读“工程治理”。
 6. 需要追溯旧评审、旧补充方案或治理反思时，读“归档入口”。
@@ -34,18 +34,12 @@
 
 - [反馈闭环当前实现基线](./反馈闭环当前实现基线.md)：`docs/反馈闭环当前实现基线.md`
 - [反馈闭环长期回归治理升级方案](./反馈闭环长期回归资产升级方案.md)：`docs/反馈闭环长期回归资产升级方案.md`
-
-## 产品能力目标方案
-
-这些文档定义尚未落地的单项产品能力。实现完成前不能据此推断当前 API、UI 或运行容器已提供对应功能；
-字段级当前契约仍以 OpenAPI 为准。
-
 - [业务 Agent Workspace 包导入与热加载产品工程方案](./业务AgentWorkspace包导入与热加载产品工程方案.md)：
-  `docs/业务AgentWorkspace包导入与热加载产品工程方案.md`，定义可信内部 workspace 包导入、同 ID 覆盖、
-  下一 turn 热加载、手工 pytest、Git 审计与人工回滚的目标产品和工程契约；workspace 包契约的单一真相源
+  `docs/业务AgentWorkspace包导入与热加载产品工程方案.md`，定义 workspace 原样导入、同 ID 覆盖、
+  下一 turn 生效、Git 审计与恢复的当前产品工程契约；字段级真相源仍是 OpenAPI
 - [业务 Agent 工作区资产闭环产品工程方案](./业务Agent工作区资产闭环产品工程方案.md)：
-  `docs/业务Agent工作区资产闭环产品工程方案.md`，定义 workspace 在线导出、从 seed 跨 ID 实例化和
-  离线归档为 seed 的目标产品和工程契约；与导入方案共用同一包形态，构成导出、修改、导入覆盖、归档的资产闭环
+  `docs/业务Agent工作区资产闭环产品工程方案.md`，定义 workspace 在线导出、seed 跨 ID 原样实例化、
+  原生环境变量解析和离线归档为 seed 的当前产品工程契约
 
 ## 四阶段改进治理工作台权威方案
 
@@ -64,8 +58,8 @@
 
 ## 工程治理
 
-- [CI/CD 宪法与交付链两阶段整改计划](./engineering/CI-CD宪法与交付链两阶段整改计划.md)：`docs/engineering/CI-CD宪法与交付链两阶段整改计划.md`，待评审、尚未实施的目标整改方案；定义可信 Staging、同一制品、数据恢复、外置信任锚和生产蓝绿准入，不表示当前运行态已具备这些能力
-- [PAT-only 持续交付与 Staging 发布](./engineering/PAT-only持续交付与Staging发布.md)：`docs/engineering/PAT-only持续交付与Staging发布.md`，228 轮询控制器、精确 SHA 发布、凭据边界和 232 自动回滚的当前工程契约
+- [AgentGov 工程宪法与当前交付边界](./engineering/CI-CD宪法与交付链两阶段整改计划.md)：`docs/engineering/CI-CD宪法与交付链两阶段整改计划.md`，定义价值优先、workspace 原样、repo seed 分级准入、机器事实、单一 CI/部署入口和最小充分论证等稳定原则
+- [Multica 持续 CI 与联调环境部署](./engineering/Multica持续CI与联调环境部署.md)：`docs/engineering/Multica持续CI与联调环境部署.md`，定义 GitHub CI 终态进入 Multica AID/研发协作会话，以及人工精确 SHA 部署到联调环境的当前可执行契约
 - [测试资产组合治理](./engineering/测试资产组合治理.md)：`docs/engineering/测试资产组合治理.md`，测试分类、生命周期、执行通道、可信证据、TIA/xdist 晋级和 mutation 的权威工程契约
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`
 - [GSD长程重构阶段清单](./engineering/GSD长程重构阶段清单.md)：`docs/engineering/GSD长程重构阶段清单.md`

@@ -110,22 +110,26 @@ def test_agv_037_047_governance_scope_not_business_ownership(monkeypatch, tmp_pa
     assert "高风险动作的人工确认" in boundary
 
 
-def test_agv_049_external_collaboration_integration_is_deferred_long_term_stage() -> None:
-    """AGV-049 外部协作平台对接晚于核心治理稳定：当前不含通用协作/Multica adapter，治理 Agent 不作协作成员暴露，深度对接归长期生态阶段（三个产品大版本后）。"""
+def test_agv_049_collaboration_platform_selection_is_deferred_while_multica_ci_is_current() -> None:
+    """AGV-049 当前 Multica 只服务 CI，智能体协作留到核心能力稳定后。"""
     vision = _read("docs/项目目标愿景使命.md")
     readme = _read("README.md")
 
-    # 成功标准①：当前目标不含通用协作看板/issue 同步/squad 管理/Multica adapter。
-    assert "不提供通用协作看板" in vision and "不替代 Multica" in vision
+    # 当前产品不预埋通用协作领域模型。
+    assert "不提供通用协作看板" in vision
     assert "通用协作看板、issue/task 生命周期、协作成员管理、squad 管理" in vision  # 明列为不属于能力边界
-    assert "不提供通用协作看板" in readme
-    # 成功标准②：外部平台负责任务流转，AgentGov 负责受治理业务 Agent 的运行/治理/版本化交付。
-    assert "外部协作平台负责 issue、任务、看板" in vision
-    assert "受治理业务 Agent 的运行、反馈、归因、优化、评估和版本演进" in vision
-    # 成功标准③：治理 Agent 默认不作为外部协作成员暴露。
-    assert "治理 Agent 默认不作为协作成员暴露" in vision
-    # 成功标准④：Multica 等深度对接明确归入长期生态集成阶段，不阻断前三个产品大版本。
-    assert "不作为前三个产品大版本的主目标" in vision
-    assert "完成至少三个产品大版本后，再启动与 Multica" in vision
-    assert "长期生态集成阶段" in vision
-    assert "完成至少三个产品大版本后" in vision
+    assert "本期不建设产品内的通用协作模型" in readme
+
+    # 当前 Multica 只用于 agent-gov 仓库 CI。
+    assert "Multica 当前只用于 `agent-gov` 仓库持续 CI" in vision
+    assert "Multica 当前只用于 `agent-gov` 仓库的持续 CI 通知" in readme
+    assert "不定义智能体之间如何协作" in vision
+
+    # 后期多智能体协作重新选型，Multica 不是既定路线，也不预设任务分配模型。
+    assert "不属于当前阶段目标" in vision
+    assert "Multica 只是候选之一，不是既定技术路线" in vision
+    assert "重新做协作平台选型" in vision
+    assert "不预先定义任务分配" in vision
+    assert "至少三个产品大版本" not in vision
+    assert "不承诺后期一定采用某个平台" in readme
+    assert "当前重点是把智能体开发与反馈优化闭环做强" in vision

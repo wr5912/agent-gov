@@ -26,14 +26,15 @@ capabilities:
   - playbook_execution_submission
 
 paths:
-  workspace: /data/business-agents/security-operations-expert/workspace
-  claude_home: /data/business-agents/security-operations-expert/claude-root/.claude
-  data_root: /data
-  sessions: /data/sessions
-  transcripts: /data/transcripts
-  uploads: /data/uploads
-  outputs: /data/outputs
-  agent_memory: /data/agent-memory
+  # 以下路径均以 workspace 为基准，容器与本机调试使用同一份 seed。
+  workspace: .
+  claude_home: ../claude-root/.claude
+  data_root: ../../..
+  sessions: ../../../sessions
+  transcripts: ../../../transcripts
+  uploads: ../../../uploads
+  outputs: ../../../outputs
+  agent_memory: ../../../agent-memory
 
 mcp:
   default_transport: http
@@ -62,7 +63,7 @@ subagents:
 operational_model:
   evidence_first: true
   distinguish_fact_inference_action: true
-  default_output_dir: /data/outputs/security-operations-expert
+  default_output_dir: ../../../outputs/security-operations-expert
   investigation_scopes:
     - alert
     - incident
@@ -109,9 +110,9 @@ approval_policy:
 # AGENTGOV:SECURITY-APPROVAL:END
 
 observability:
-  hook_audit_log: /data/transcripts/claude-hook-audit.jsonl
-  output_dir: /data/outputs/security-operations-expert
-  response_case_dir: /data/outputs/security-operations-expert/response
+  hook_audit_log: ../../../transcripts/claude-hook-audit.jsonl
+  output_dir: ../../../outputs/security-operations-expert
+  response_case_dir: ../../../outputs/security-operations-expert/response
 
 extension_points:
   add_mcp_server: .mcp.json

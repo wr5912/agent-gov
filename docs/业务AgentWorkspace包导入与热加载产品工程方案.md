@@ -1,932 +1,198 @@
 # 业务 Agent Workspace 包导入与热加载产品工程方案
 
-> 文档角色：产品能力目标方案，面向产品、架构、后端、前端、测试和运维共同评审。
+> 文档状态：当前产品工程契约。公开字段仍以 OpenAPI 为单一真相源。
 >
-> 实现状态：本文定义目标产品契约和实施边界，不表示当前 OpenAPI、设置页或运行时已经提供该能力。
-> 当前可用接口仍以运行容器 `/openapi.json` 和 [AgentGov 集成指南](./AgentGov集成指南.md) 为准。
->
-> 权威关系：业务 Agent、版本治理和资产术语服从
-> [项目目标愿景使命](./项目目标愿景使命.md) 与
-> [AgentGov 术语与版本边界](./AgentGov术语与版本边界.md)；本文不改变四阶段改进治理工作台主流程。
+> 本文依据
+> [AgentGov 工程宪法 2.1、2.6、2.7](./engineering/CI-CD宪法与交付链两阶段整改计划.md)
+> 定义“原样导入、Git 版本化、下一 turn 生效、可恢复”的最小闭环。复杂安全旧稿见
+> [归档](./archive/design/业务AgentWorkspace包导入与热加载产品工程方案_复杂安全旧稿.md)。
 
-## 1. 决策摘要
+## 1. 裁决与理由
 
-AgentGov 增加业务 Agent workspace 包导入能力，用于把一个完整、可版本化的 Claude Code
-项目配置接入 AgentGov，并复用既有 Runtime、Feedback Loop 和 Version Governance。
+| 裁决 | 最小事实依据 | 本期不做 | 验证与退出条件 |
+| --- | --- | --- | --- |
+| workspace 普通文件原样导入 | live workspace 才是 Agent 实际行为资产，平台改写会让上传包与 Git commit 不一致 | endpoint 脱敏、身份字段改写、内容扫描 | 导出后导入，tree digest 与文件字节一致 |
+| 导入同步完成 | 单个业务 Agent workspace 规模有明确资源上限，无需引入 job/operation 状态机 | 异步队列、导入历史 API、十一状态状态机 | API 在一次请求内完成或完整失败 |
+| per-Agent Git 是版本事实 | 当前运行、反馈和评估已经绑定 `agent_version_id` | 第二套 import active-version 字段 | 成功响应返回实际 Git commit，下一 turn 读取同一 commit |
+| 首版只做基础输入保护 | 当前调用者是持有 API Key 的内部开发者，核心风险是半成品和文件系统越界 | 包签名、发布者 RBAC、杀毒、第三方代码沙箱 | 公网、多租户、客户敏感数据、合规或真实攻击发生时重审 |
 
-下列决策围绕同一条主线：**导入是一次版本变更，不是一次文件上传。** 一个已经在跑的业务 Agent 有身份、
-有会话、有反馈历史、有版本谱系；替换它的行为包必须像一次提交那样可追溯、可回滚、可归因，否则平台就失去了
-"某条反馈对应哪个版本"这个治理闭环的前提。因此本文的每处约束几乎都能回答同一个问题——
-**出事之后，能不能证明当时跑的是哪一份配置，以及能不能回到上一份。** 这解释了为什么身份由后端拥有而非包内
-声明、为什么覆盖前必须先把 dirty 工作树固化成提交、为什么激活边界是 turn 而不是"立即"、
-以及为什么本地 pytest 结果不被写成平台可信状态。
+导入不恢复 conversation、SDK session、run、feedback、EvalRun、Langfuse、数据库或
+`claude-root`。已有 API session id 保留；成功激活前按 Agent 批量清除其 inactive
+`sdk_session_id` 映射，使下一 turn 建立新的 SDK session 并读取新的 workspace commit。
 
-首版采用以下已确认决策：
+## 2. Workspace 包
 
-- 导入对象是业务 Agent 的 `workspace/` 行为包，不是整个运行卷，也不是 `claude-root/`、`version/`
-  或 runtime data 的备份包。
-- `agent_id` 是唯一身份。同 ID 覆盖既有业务 Agent；同名但不同 ID 创建为独立业务 Agent。
-- 覆盖适用于 `main-agent`、其他 seed-origin 业务 Agent 和用户创建 Agent；治理 Agent `governor`
-  永远不属于该入口。
-- 覆盖采用“立即激活”策略：包通过结构、安全和受管策略校验后即替换当前 workspace；测试不作为
-  导入硬门，也不触发自动回滚。
-- 覆盖前必须把当前受管 workspace 固化为 Git 提交；导入内容形成独立提交，并提供可审计的人工回滚。
-- 热加载发生在 turn 边界。运行中的 turn 不变；下一 turn 重新从当前 workspace 加载 project settings、
-  prompt、skills、subagents、rules、hooks、commands 和 MCP 配置。
-- 既有会话保留 AgentGov conversation、SDK session 和 transcript；下一 turn 的语义是“旧会话事实 +
-  新 workspace 配置”，不清空或伪造新会话。
-- workspace 可以携带可选的 pytest 测试资产。平台服务端不执行上传的 Python；开发者在本地手工调用
-  AgentGov API 验证已激活的精确 commit，并根据结果决定是否回滚。
-- 首版面向持有平台 API Key 的可信内部开发者。安全解包、敏感信息扫描和受管策略仍是硬门，但包签名、
-  发布者 RBAC、杀毒和第三方不可信代码沙箱属于后续产品化增强。
-
-该能力是 AGV-004、AGV-031、AGV-036、AGV-042 和 AGV-044 的增强，不创建脱离现有治理闭环的
-第二套 Agent、版本或测试体系。
-
-## 2. 产品目标与非目标
-
-### 2.1 产品目标
-
-1. **低成本接入**：开发者能把已有 Claude Code workspace 作为完整行为包接入 AgentGov，不必在 UI
-   中逐项重建 prompt、skill、subagent、hook 和 MCP 配置。
-2. **稳定身份**：导入、运行、反馈、评估和版本始终归属同一个 `agent_id`，包内声明不能篡改平台身份。
-3. **即时生效**：导入后无需重启 API 或重建容器，下一 turn 使用新 workspace。
-4. **可恢复**：任何覆盖都有导入前 Git 锚点、导入提交、审计回执和受并发保护的人工回滚。
-5. **安全失败**：非法压缩包、敏感文件、越界路径、不受管配置、活跃 turn 和版本候选冲突均明确失败，
-   不留下半成品。
-6. **可验证**：测试与被测 commit 精确绑定，测试失败不会被展示成导入失败，也不会被误记为平台评估通过。
-7. **可演进**：首版的 API、领域对象、状态机和审计模型允许后续增加签名、权限、异步处理和平台化验证，
-   不需要推翻导入主契约。
-
-### 2.2 非目标
-
-- 不导入或恢复 SDK transcript、conversation、run、feedback、EvalRun、release archive 或 Langfuse 数据。
-- 不把 workspace 包当作 Docker volume 备份，不修改 `docker/runtime-volume-seeds/`。
-- 不在 API 进程中执行包内 pytest、安装包内依赖或联网下载依赖。
-- 不把本地 pytest 结果伪造为 AgentGov `TestDataset` / `EvalRun` 结果。
-- 不做运行中途的文件热替换，不保证一个已经开始的 turn 切换配置。
-- 不用导入入口自动发布、拒绝或放弃既有 change set。
-- 不为首版引入通用插件市场、第三方分发市场或跨租户共享。
-
-## 3. 治理对象与所有权
-
-### 3.1 治理对象矩阵
-
-| 维度 | 结论 |
-| --- | --- |
-| 被治理对象 | 一个注册表业务 Agent 的 Git 受管 workspace 行为包 |
-| 治理执行者 | 后端确定性校验、Git 版本事务、Runtime 维护栅栏和人工回滚 |
-| 不参与者 | `governor` 不解析、不生成、不批准导入包，也不输出 backend-owned 字段 |
-| 资产类型 | prompt/skill/hook/MCP/test 属执行资产；commit 属版本资产；import receipt 属审计资产 |
-| 生命周期 | 导入不新增第二套 Agent 生命周期；新 Agent 创建为 active，既有 Agent 保留原 lifecycle |
-| 反馈归属 | 后续 run、feedback、EvalRun 和 release 继续按 `agent_id + agent_version_id` 归属 |
-| 当前实现边界 | 已有模板创建、per-Agent Git、维护栅栏和下一 turn 项目配置发现；没有上传、导入回执和 workspace 测试入口 |
-| 目标能力边界 | 安全上传、完整替换、下一 turn 激活、手工测试、审计和回滚 |
-
-### 3.2 字段所有权矩阵
-
-| 所有者 | 字段或内容 | 规则 |
-| --- | --- | --- |
-| 后端 | `import_id`、`agent_id`、registry status/origin、workspace 路径、package/tree digest、commit SHA、操作状态、时间戳、authenticated actor、审计结果 | 由鉴权、路由、注册表、Git 和运行态确定，不接受包内权威值 |
-| 调用者 | `name`、`operator` 标签、`reason`、`Idempotency-Key`、上传文件 | 必须经鉴权、长度和格式校验；共享 API Key 模式下的 operator 只是调用者声明，不能替代授权身份 |
-| workspace 包 | `CLAUDE.md`、`.claude/**`、`.mcp.json`、hooks、commands、skills、subagents、tests 等行为资产 | 只在 workspace 受管边界内生效；不含下一行列出的受管区段 |
-| 受管策略（后端） | seed 声明的 MCP server 条目、安全运营专家 Agent 的受管 marker 区段、`pre_tool_guard` 模板内容 | 位于包文件内部但不属包所有者；导入器按该 Agent 的 seed 基线校验，漂移即 `422`，不静默改写调用者内容 |
-| Runtime | 当前 turn 的 `agent_version_id`、SDK session、run/session/trace 关联 | turn 准入后读取当前 commit，导入服务不得伪造 |
-| HTTP 边界 | 导入响应、结构化错误、安全 findings、测试提示 | 只投影必要字段，不回显包内容、密钥或宿主私有路径 |
-
-包内 `agent.yaml` 默认只是 workspace 描述文件。若包含 ID/name，导入器在 staging 中用后端选定值归一化；
-包内 lifecycle、origin、测试通过声明和 commit 字段一律忽略或拒绝，不进入注册表。
-
-该默认对安全运营专家 Agent 不成立：它的 `agent.yaml` 不是描述文件，而是携带后端所有的审批契约——受管策略强制
-校验其中的 profile 标识、审批阶段字段和提案副作用策略，并要求受管 marker 区段完整。同理，`CLAUDE.md` 与
-`.claude/**` 整体属包所有者，但这些文件**内部**的受管 marker 区段属后端所有，导入器按 seed 基线校验，
-不接受包内改写。
-
-### 3.3 闭环归属
-
-```text
-workspace package
-  -> import operation / safety evidence
-  -> business Agent + applied commit
-  -> Runtime run / SDK session / trace
-  -> feedback / attribution / optimization
-  -> TestDataset / EvalRun / change set
-  -> release / rollback
-  -> Agent asset Registry
-```
-
-导入是业务 Agent 接入与版本变更入口，不替代后续反馈、评估和发布闭环。导入后的每次运行继续记录
-精确 `agent_version_id`，从而能证明某条反馈和测试结果对应哪个导入版本。
-
-## 4. 用户旅程与交互设计
-
-### 4.1 新 Agent 导入
-
-1. 用户进入“设置 → 业务 Agent → 导入 workspace 包”。
-2. 选择 `.tar.gz`，填写 `agent_id`、名称、操作人和原因。
-3. UI 明确显示“将创建新业务 Agent”，并展示包大小、测试目录是否存在和安全边界说明。
-4. 用户提交导入。后端完成 staging、校验、隐藏 registry reservation、workspace 安装和初始 Git commit。
-5. 全部完成后 Agent 才进入注册表可见状态，默认 lifecycle 为 active。
-6. UI 刷新全局 Agent catalog，展示当前 commit、手工 pytest 命令和“尚未产生行为验证证据”。
-
-### 4.2 同 ID 覆盖
-
-1. 用户输入已经存在的 `agent_id`，UI 显示目标 Agent、origin、lifecycle、当前 commit 和覆盖警告。
-2. UI 查询该 Agent 的未终结 change set。存在候选时阻止提交，列出 ID/status，并提供前往版本治理、拒绝、
-   放弃等现有动作。平台不替用户自动处理候选。
-3. 用户解决候选后重新提交。后端在真正替换前再次校验，消除 UI 查询与执行之间的竞态。
-4. 后端提交当前 dirty 受管树，完整替换受管资产，再提交导入版本。
-5. UI 展示 previous/applied commit、变更文件摘要、下一 turn 生效说明和人工回滚按钮。
-
-### 4.3 手工验证与回滚
-
-1. 用户在本地解开的源 workspace 中运行 `tests/remote` pytest。
-2. pytest 使用导入回执中的 `agent_id` 和 applied commit 调用 `/v1/responses`。
-3. 测试先断言响应的 `agent_version_id` 等于 applied commit，再验证业务输出、错误、工具活动和多轮行为。
-4. 测试通过时，用户保留当前版本；首版不向平台回传或伪造“已通过”状态。
-5. 测试失败时，用户查看 pytest 证据并主动点击回滚，填写操作人和原因。
-6. 后端仅在当前 HEAD 仍等于该导入 commit 时恢复旧树；存在后续版本时返回冲突，引导用户进入版本治理处理。
-
-### 4.4 动作、副作用与审计
-
-| 用户动作 | 业务产物 | API 副作用 | 状态副作用 | 审计记录 |
-| --- | --- | --- | --- | --- |
-| 导入新 ID | 业务 Agent、初始 import commit、import receipt | 创建隐藏 reservation，安装并 finalize | 新 Agent 进入 active | digest、commit、actor/operator、reason、时间和校验摘要 |
-| 覆盖同 ID | import commit、import receipt | 提交旧树并替换当前 workspace | 保留既有 Agent lifecycle/origin | previous/applied commit、变更摘要和冲突检查 |
-| 运行 pytest | 本地测试报告 | 通过 `/v1/responses` 运行 Agent | 不修改 import 或 EvalRun 状态 | 平台保留正常 run/trace；pytest 报告由开发者持有 |
-| 人工回滚 | tree 变化时生成 rollback commit，并更新 receipt | 恢复旧 Git tree 和可回滚的名称元数据 | Agent lifecycle 不变 | actor/operator、reason、被回滚 import、前后 commit |
-| 处理候选 | 既有 change set/release 产物 | 调用现有发布、拒绝或放弃 API | 按既有状态机推进 | 复用 change set/release event |
-
-## 5. Workspace 包契约
-
-### 5.1 包格式
-
-首版只接受 gzip 压缩的 tar 包，且必须恰好包含一个 `workspace/` 根目录：
+媒体类型固定为 `.tar.gz`，解压后必须恰好包含一个顶层目录：
 
 ```text
 workspace/
-├── CLAUDE.md
-├── agent.yaml                         # 可选，身份字段由后端归一化
-├── .mcp.json                          # 受管必需，内容按 Agent 而定
-├── .claude/
-│   ├── settings.json
-│   ├── agents/
-│   ├── skills/
-│   ├── rules/
-│   └── commands/
-├── hooks/                             # 目录形状可选；pre_tool_guard.py 受管必需，见下
-└── tests/
-    ├── unit/                          # 可选，本地确定性测试
-    └── remote/                        # 可选，调用 AgentGov API 的行为测试
-        ├── conftest.py
-        └── test_*.py
+  CLAUDE.md
+  .mcp.json
+  .claude/
+  hooks/
+  commands/
+  tests/
+  ...任意其他普通文件
 ```
 
-包不声明 `schema_version`。首版只有一种明确媒体类型和目录契约，没有多版本运行时或历史包迁移需求；
-未来真正出现并行包协议时再引入版本协商，避免预先制造双轨 schema。
+`workspace/` 内普通文件由包所有者负责，平台逐字节保留：
 
-上面的目录树只描述形状，不是完整的必需文件清单。受管必需文件按 `agent_id` 动态确定，由受管 workspace 策略
-的 per-Agent 路径解析决定，无法由一棵静态树枚举：
+- 允许文本和二进制；
+- 允许 `.env`、真实 endpoint、本机路径、MCP header 和凭据形态内容；
+- 不修改 `agent.yaml`、`CLAUDE.md`、settings、MCP、hook、skill 或 subagent；
+- 包内 ID/name/status/origin 不成为平台身份事实。
+- 空目录不进入 per-Agent Git，也不承诺在导出后保留。
 
-- 基线三件套 `.claude/settings.json`、`.mcp.json`、`hooks/pre_tool_guard.py` 对所有业务 Agent 必需，缺失即拒绝。
-  `.mcp.json` 不是可选文件：受管策略以必填方式读取它，缺失会在导入校验期直接判 `required_file_missing`。
-- seed-origin Agent 额外要求其 seed 声明的 MCP server 条目按名称、type 和 url 原样存在。各 Agent 的 seed 声明
-  互不相同，既有 seed 中既有声明多个 server 的，也有声明为空的；携带空 `mcpServers` 的包会在这些 Agent 上
-  判 `managed_mcp_server_drift`，而不是判文件缺失。
-- 安全运营专家 Agent 额外要求 `agent.yaml`、`CLAUDE.md` 和 `threat-response-disposition` skill 文档中的
-  受管 marker 区段存在且未被篡改。
+平台身份只来自路由和 registry。新建 Agent 的 name 来自请求字段；覆盖既有 Agent 时 registry
+name、origin 和 lifecycle 不变。
 
-首版不为此新增预检接口。开发者按上述规则打包；若包不满足，导入返回 `422 WORKSPACE_POLICY_REJECTED`，
-findings 指名缺失或漂移的相对路径与 rule id，据此修包重试。
+这里的“原样”止于 live workspace 与其 per-Agent Git 边界，不代表上传包可原样提交到
+`docker/runtime-volume-seeds/`。repo generic template 与声明 seed/builtin 是源码仓库资产，
+仍须满足“不提交真实密钥、私有 header、数据库凭据和本机私有路径”的仓库边界。导入包内权限
+配置也原样保留，不因 generic template 采用保守权限而被平台改写。
 
-### 5.2 完整替换语义
+## 3. 基础输入保护
 
-完整替换针对“Git 受管树”，不是对 workspace 目录执行无差别删除：
+首版保留会直接造成未授权访问、资源耗尽或文件系统破坏的低成本保护：
 
-- 导入前先把所有允许受管但尚未提交的文件纳入 pre-import snapshot。
-- 导入包中缺失的旧 prompt、skill、subagent、rule、hook、command、MCP、test 和普通配置文件全部删除。
-- `.git/`、本地私有覆盖、密钥、缓存和运行态工件不属于受管树，不被包覆盖，也不进入 snapshot。
-- rollback 恢复受管树和允许回滚的 registry 名称，不修改本地私有文件、SDK 状态或运行数据。
+- `/api/*` Bearer API Key；
+- 压缩包最大 64 MiB；
+- 单成员最大 64 MiB；
+- 解压总量最大 256 MiB；
+- 最多 10,000 个成员；
+- 单个 PAX/GNU tar 元数据记录最大 64 KiB，并在 `tarfile` 解析前流式预检；
+- 单路径最大 4 KiB，路径深度最大 32；
+- 拒绝绝对路径、`..`、NUL、非 UTF-8 路径、重复项以及文件/目录前缀冲突；
+- 拒绝 symlink、hardlink、device、FIFO、socket；
+- 拒绝任何 `.git` 成员；
+- 已存在的 `.mcp.json`、`.claude/settings.json` 必须是合法 JSON；
+- 错误、日志和回执不得回显包正文。
 
-必须集中定义并复用 protected/excluded policy，至少覆盖：
+不执行上传包中的 Python、测试、安装脚本或网络请求。包内测试只作为开发者本地资产。
 
-- `.git/`
-- `.env` 及非 example 的 `.env.*`
-- `secrets/`
-- `CLAUDE.local.md`
-- `.claude/settings.local.json`
-- `.mcp.local.json`
-- `.claude.json`
-- `.cache/`、`.pytest_cache/`、`.mypy_cache/`、`.ruff_cache/`、`.venv/`、`__pycache__/`
-- `dist/`、`node_modules/`、字节码和 runtime outputs
+## 4. 公开 API
 
-example 文件可以作为受管文档资产存在，但不得包含真实凭据、真实内网地址、本机路径或账号信息。若受保护文件
-已经被 Git 跟踪，导入 fail closed，要求先完成安全处置，不能把它再次提交到 pre-import snapshot。
+### 4.1 导入
 
-### 5.3 安全限额和内容规则
+```text
+POST /api/agent-registry/{agent_id}/workspace/import
+Content-Type: multipart/form-data
+```
 
-首版复用现有 runtime template 安全基线：
+字段：
 
-| 限制 | 值 |
+| 字段 | 规则 |
 | --- | --- |
-| 压缩包大小 | 64 MiB |
-| 单成员声明/解压大小 | 64 MiB |
-| 总声明/解压大小 | 256 MiB |
-| 成员数量 | 10,000 |
-| 单路径字节数 | 4 KiB |
-| 路径深度 | 32 |
+| `package` | 必填 `.tar.gz` |
+| `name` | 目标 Agent 不存在时必填；已存在时不修改 name |
+| `expected_current_commit_sha` | 覆盖已有 Agent 时必填；用于 CAS |
+| `reason` | 可选说明，不进入 workspace |
 
-安全解包必须拒绝：
-
-- 绝对路径、`..`、空路径、NUL、目标越出 staging root。
-- symlink、hardlink、device、FIFO、socket 和其他非普通文件/目录成员。
-- 重复成员、目录/文件冲突、Unicode 或大小写归一化后冲突。
-- 声明大小与实际解压大小不一致、压缩炸弹和超限输入。
-- `.git`、runtime data、release/worktree、Claude root、数据库、日志和私有配置。
-- 非 UTF-8 或首版 text workspace 契约不支持的二进制内容。
-- API key、Bearer token、private key、密码、MCP header、本机私有路径和未参数化真实 endpoint。
-
-文件权限仅保留普通读写和必要 executable 位，清除 setuid、setgid、sticky 等危险位。安全扫描采用 reject-only；
-除 backend-owned 身份字段外，不静默修改调用者业务内容。
-
-## 6. 热加载与会话语义
-
-### 6.1 激活边界
-
-Runtime 每个 turn 重新解析业务 Agent profile，并以目标 workspace 为 `cwd`、以 project settings 为配置来源。
-因此目标契约不是“重启 Runtime”，而是：
-
-| 场景 | 行为 |
-| --- | --- |
-| 导入前已经开始的 turn | 固定使用启动该 turn 时的 commit，不做中途替换 |
-| 导入完成后的新会话 | 使用 applied commit 和新 workspace |
-| 导入完成后的既有会话下一 turn | resume 原 SDK session，同时加载 applied commit 的 project 配置 |
-| 导入期间到达的新 turn | 维护栅栏返回可重试 `409` |
-| 导入时已有活跃 turn | 导入返回 `409`，不等待、不强杀运行 |
-
-所有 workspace 切换类结果统一表达：
+成功响应：
 
 ```json
 {
-  "activation_mode": "next_turn",
-  "existing_session_action": "resume"
-}
-```
-
-移除内部和公开投影中误导性的 `requires_runtime_restart=true`。不保留同义兼容字段，避免调用方同时维护
-“需要重启”和“下一 turn 生效”两套相互冲突的判断。
-
-移除范围要按真实暴露面理解，不要高估：该字段在四处硬编码为真、没有取假分支，因此不携带任何信息；其中
-publish 路径的同名字段在进入响应前即被丢弃，另有一处所属函数已无调用者。它只经由 restore 与 rollback
-两条路由以未类型化透传的方式到达调用方，在 OpenAPI 中不是具名属性，前端生成类型只有索引签名。因此这次
-移除不产生 OpenAPI schema 变更，前端生成类型重新生成为零 diff。
-
-移除代码不等于移除公开投影：该字段已随 git result 落库到 release payload 与 operation result 的 JSON 列，
-历史行会继续通过 release 查询接口吐出旧字段。必须同时给出投影过滤或数据回填方案，并按真实历史数据验证，
-否则“移除公开投影”不成立。
-
-### 6.2 版本事实
-
-turn 准入、版本读取和 session run intent 必须属于同一个 fencing 语义：
-
-1. Runtime 先声明本 Agent 的 turn admission。
-2. admission 成功后读取当前 Git HEAD，写入 run 的 `agent_version_id`。
-3. 导入维护租约只能在没有活跃 turn 时取得，并阻止新的 turn admission。
-4. Git/DB 副作用完成并释放维护租约后，新 turn 才能读取新 HEAD。
-
-这保证测试从 `/v1/responses` 看到的版本与实际 project discovery 使用的 workspace 一致。
-
-## 7. 公开 API 设计
-
-### 7.1 导入
-
-`POST /api/agent-workspace-imports`
-
-- 媒体类型：`multipart/form-data`
-- 鉴权：沿用 `/api/*` Bearer API Key；首版定义为可信内部管理能力。
-- Header：必填 `Idempotency-Key`，同 key + 同 package/agent 返回同一结果；同 key 不同输入返回 `409`。
-- Form fields：
-  - `package`：`.tar.gz` 文件。
-  - `agent_id`：必填，平台唯一身份。
-  - `name`：新 Agent 必填，覆盖时可选；提供时更新展示名。
-  - `operator`：当前共享 API Key 模式下必填的操作者标签；审计 actor 仍由后端按认证凭据生成。
-  - `reason`：必填操作原因。
-
-审计记录同时保留 backend-owned actor 与调用者声明的 operator 标签。未来引入用户/RBAC 身份后，actor 直接来自
-认证 principal，operator 标签可以退化为显示说明，不改变 import receipt 的主体归属。
-
-成功响应使用 typed response model，核心字段为：
-
-```json
-{
-  "import_id": "agi_...",
-  "status": "completed",
-  "action": "overwritten",
+  "action": "created",
   "agent": {
     "agent_id": "customer-support",
     "name": "Customer Support",
     "status": "active",
     "origin": "user"
   },
-  "package_sha256": "...",
-  "tree_sha256": "...",
-  "previous_commit_sha": "...",
-  "applied_commit_sha": "...",
-  "rollback_available": true,
-  "activation_mode": "next_turn",
-  "existing_session_action": "resume",
-  "tests": {
-    "remote_tests_present": true,
-    "manual_command": "python -m pytest workspace/tests/remote",
-    "expected_commit_sha": "..."
-  },
-  "warnings": []
+  "previous_commit_sha": null,
+  "current_commit_sha": "40-character-sha",
+  "package_sha256": "sha256",
+  "tree_sha256": "sha256",
+  "rollback_target_commit_sha": null,
+  "activation_mode": "next_turn"
 }
 ```
 
-`action` 的公开取值固定为：
+`action` 只有：
 
-- `created`：创建新 Agent 和初始 commit。
-- `overwritten`：workspace tree 发生变化并形成 import commit。
-- `metadata_updated`：workspace tree 相同，只更新允许的 registry 名称。
-- `unchanged`：tree 和允许的 registry 元数据均无变化，不创建空 commit。
+- `created`：新建 registry Agent、workspace 和初始 Git commit；
+- `overwritten`：既有 tree 被新 commit 替换；
+- `unchanged`：导入 tree 与当前 tree 相同，不制造空 commit。
 
-### 7.2 查询与回滚
+不新增 `import_id`、operation 查询、幂等表或持久化导入状态。相同 tree 重试自然返回
+`unchanged`。
 
-- `GET /api/agent-workspace-imports?agent_id=<id>&status=<status>&limit=<n>`：查询导入历史。
-  `agent_id` 与 `status` 均为可选等值过滤，`limit` 沿用既有治理列表的默认 100、下限 1、上限 500 边界，
-  按创建时间倒序返回裸列表，不引入 offset、cursor 或 total 信封——与既有 release、change set 列表保持同一形状。
-  `status` 过滤是必要的：导入状态机有八个状态，缺少该过滤时调用方只能全量拉取后自行筛选。
-- `GET /api/agent-workspace-imports/{import_id}`：查询一次操作的校验、Git 和回滚结果。
-- `POST /api/agent-workspace-imports/{import_id}/rollback`：请求体包含 `operator`、`reason`、
-  `expected_current_commit_sha`。
-
-查询响应只投影用户可见的 receipt 事实，必须屏蔽 claim token、claim generation、claim 到期时间等内部协调字段。
-既有架构刻意区分“内部协调与幂等表”和“用户可见治理历史”，前者零 API 暴露；本方案让同一条 operation 记录
-同时承担协调证据与用户 receipt，因此屏蔽责任落在响应投影层，复用既有的内部字段隐藏投影约定，不新造一套。
-
-回滚约束：
-
-- 仅 `completed + overwritten/metadata_updated` 且尚未回滚的操作可回滚。
-- 当前 HEAD 必须等于 applied commit；否则返回 `409 IMPORT_HEAD_CHANGED`。
-- `overwritten` 回滚创建新 commit 恢复 previous tree，不使用破坏历史的分支重写。
-- `metadata_updated` 只恢复 previous name，不制造空 Git commit。除校验当前 HEAD 与 receipt 记录一致外，
-  必须校验当前 registry name 仍等于本次 receipt 记录的 requested name；不等则返回 `409 IMPORT_METADATA_CHANGED`。
-  仅用 HEAD 给 name 做 CAS 是错的：`metadata_updated` 按定义 tree 不变、HEAD 恒定，等于用常量做乐观锁，
-  对并发 name 写入零保护；name 是注册表列且无版本令牌，只能用值型 CAS 保护。
-- 重复同一回滚请求返回同一 receipt；不同回滚输入争抢时只有一个获胜。
-- 新建 Agent 不通过 import rollback 删除，继续使用已有 Agent 删除/影响面流程。
-
-### 7.3 冲突与错误投影
-
-| HTTP | error code | 用户动作 |
-| --- | --- | --- |
-| 409 | `AGENT_TURN_ACTIVE` | 等当前 turn 完成后重试 |
-| 409 | `AGENT_MAINTENANCE_ACTIVE` | 等维护完成后重试 |
-| 409 | `UNRESOLVED_CHANGE_SETS` | 查看结构化 change set 列表并发布、拒绝或放弃 |
-| 409 | `IMPORT_HEAD_CHANGED` | 刷新当前版本，进入版本治理决定恢复方式 |
-| 409 | `IMPORT_METADATA_CHANGED` | 该 Agent 名称已被更晚的导入变更，查看最新 receipt 后再决定 |
-| 409 | `AGENT_NOT_IMPORTABLE` | 处理 archived/tombstone/incomplete provisioning 状态 |
-| 409 | `IDEMPOTENCY_KEY_REUSED` | 同一 `Idempotency-Key` 收到不同输入，换新 key 或复用原请求结果 |
-| 413 | `PACKAGE_TOO_LARGE` | 缩小包并移除构建/运行工件 |
-| 415 | `UNSUPPORTED_PACKAGE_MEDIA_TYPE` | 使用 `.tar.gz` workspace 包 |
-| 422 | `PACKAGE_STRUCTURE_INVALID` | 修复根目录、成员或编码 |
-| 422 | `PACKAGE_SECURITY_REJECTED` | 根据脱敏 findings 删除敏感/越界内容 |
-| 422 | `WORKSPACE_POLICY_REJECTED` | 按 findings 指名的相对路径补齐或修正受管必需文件 |
-
-错误响应必须包含 `detail`、`error_code`、`import_id`（已建立操作记录时）、可执行 `action` 和经过脱敏的
-findings。不得回显文件正文、token、header、宿主绝对路径或完整内部异常栈。
-
-`WORKSPACE_POLICY_REJECTED` 的 findings 必须逐条给出相对路径与 rule id，至少区分 `required_file_missing`
-与 `managed_mcp_server_drift`。受管必需文件按 Agent 而定（见 5.1），调用者无法从包契约本身推断缺什么，
-因此 findings 是唯一可执行的修复依据；只回“修复受管策略”而不指名路径不构成可执行动作。
-
-### 7.4 相关公开契约收口
-
-- `GET /api/agent-change-sets` 增加 `agent_id` 过滤，UI 和导入服务使用同一终态集合判断冲突。
-- 手工创建 change set 的请求显式携带 `agent_id`，删除隐式落到 `main-agent` 的新调用路径。
-- 导入、publish、restore 和 rollback 统一使用下一 turn 激活字段。
-- OpenAPI 是 response schema 的单一真相源，前端类型从 OpenAPI 生成，不手写第二套导入 DTO。
-- 首版不新增输出 `schema_version`；SQLite row、领域 record 和 HTTP response 分开建模，不因字段相似互相继承。
-
-## 8. 领域模型与状态机
-
-### 8.1 WorkspaceImportOperation
-
-持久化操作至少包含：
-
-- 身份：`import_id`、`idempotency_key`、`agent_id`、`action`。
-- 调用证据：authenticated actor、调用者声明的 operator 标签、`reason`、脱敏后的源文件名。
-- 内容证据：`package_sha256`、`tree_sha256`、受管文件数、测试目录存在性。
-- Git 证据：`previous_commit_sha`、`applied_commit_sha`、`rollback_commit_sha`。
-- registry 证据：previous/requested name、origin/lifecycle 快照。
-- 协调证据：claim token/generation/expiry、当前 status、失败 code/detail。
-- 时间：created/updated/completed/rolled_back 时间。
-
-不持久化上传包正文、文件正文、API key、MCP header 或测试输出全文。校验摘要只保留 finding 类型、严重度、
-相对路径和可公开说明。
-
-### 8.2 状态机
-
-合法状态和完整转移表集中在项目状态机模块；所有写入通过统一 transition helper：
+### 4.2 恢复
 
 ```text
-received -> validating -> ready -> applying -> git_applied -> completed
-    |           |          |          |
-    +-----------+----------+----------+-> failed
-
-completed -> rollback_reserved -> rollback_git_applied -> rolled_back
-                         |
-                         +-> rollback_failed
+POST /api/agent-registry/{agent_id}/workspace/restore
 ```
 
-完整转移如下：
+请求：
 
-| 当前状态 | 允许的下一状态 |
-| --- | --- |
-| `received` | `validating`、`failed` |
-| `validating` | `ready`、`failed` |
-| `ready` | `applying`、`failed` |
-| `applying` | `git_applied`、`failed` |
-| `git_applied` | `completed` |
-| `completed` | `rollback_reserved`，且仅限 action 支持回滚、HEAD 仍匹配时 |
-| `failed` | `validating`，且仅限相同输入、可证明没有 Git/registry 副作用时 |
-| `rollback_reserved` | `rollback_git_applied`、`rollback_failed` |
-| `rollback_git_applied` | `rolled_back` |
-| `rollback_failed` | `rollback_reserved`，且仅限重新验证 CAS 和无未对账副作用时 |
-| `rolled_back` | 无 |
-
-约束：
-
-- `failed` 可在同一个 `Idempotency-Key`、相同输入和可证明无副作用时重新进入 validating；否则新建 import。
-- `git_applied` 和 `rollback_git_applied` 不允许转入通用失败态；Git 副作用已经存在时必须保持可恢复状态，
-  直至 DB/registry 对账完成。
-- `completed` 是可查询的稳定导入结果，`rolled_back` 是终态；`rollback_failed` 只有在重新证明当前 HEAD 和
-  副作用边界后才允许重试。
-- crash 后通过 operation row + Git HEAD + registry reservation 对账，不根据临时目录猜测成功。对账不得依赖
-  commit metadata：per-Agent commit message 是自由文本、没有 trailer 契约，且 git author 是固定的机器人身份，
-  commit 里不存在可反查的 import 标识。`import_id` 与 commit 的关联只存在于 operation row 的 commit SHA 列。
-- 非法转移、重复竞争、过期 claim 和副作用部分完成均有负向测试。
-
-### 8.3 三层模型边界
-
-| 边界 | 模型职责 |
-| --- | --- |
-| DB row | 表达完整持久化列、claim 和恢复所需不变量 |
-| Domain record | 表达导入服务内部的 typed operation、package plan、validation result、Git result |
-| API response | 只公开调用者需要的状态、证据、warnings 和安全错误 |
-
-内部主流程不传递裸 `dict` / `JsonObject`。JSON 只在 SQLite JSON 列、HTTP、日志和观测边界生成。
-
-## 9. 架构设计
-
-### 9.1 组件边界
-
-```text
-Agent Workspace Import Router
-        |
-        v
-AgentWorkspaceImportService -------------- WorkspaceImportStore
-        |                                         |
-        +--> WorkspacePackageReader               +--> SQLite operation/audit
-        |        |
-        |        +--> archive limits / safe extraction
-        |
-        +--> WorkspaceImportPolicy
-        |        |
-        |        +--> secrets / path / managed policy / typed findings
-        |
-        +--> AgentVersionMaintenanceCoordinator
-        |
-        +--> WorkspaceImportGitTransaction ------ per-Agent Git repository
-        |
-        +--> AgentRegistryStore ----------------- hidden create/finalize or metadata update
+```json
+{
+  "target_commit_sha": "导入前或其他历史 commit",
+  "expected_current_commit_sha": "当前 commit",
+  "reason": "restore previous workspace"
+}
 ```
 
-职责规则：
-
-- Router 只处理鉴权、multipart、typed request/response 和领域错误映射。
-- `WorkspacePackageReader` 是纯输入边界，产出不可变 `WorkspacePackagePlan`，不操作 registry 或 Git。
-- `WorkspaceImportPolicy` 统一包安全、受保护路径和最终 workspace 策略，scripts 只作为薄 CLI 包装。
-- Application service 编排 DB/FS/Git saga，不持有 tar 解析和 Git 命令细节。
-- Git transaction 只操作当前 Agent 的受管 tree，要求显式 expected HEAD，并返回 typed result。
-- Import store 负责状态转移、幂等键和恢复查询，不执行文件系统副作用。
-- Runtime 继续通过 registry/profile resolver 和 Claude SDK project discovery 加载配置，不引入配置缓存或第二套 loader。
-- profile 解析是**无文件系统副作用**的只读投影：它读取注册表与磁盘事实，不写入、不补齐、不复活 workspace 文件。
-  workspace 物化只发生在 Agent 创建路径和导入 saga 内。当前 `resolve_business_profile` 在 turn 主路径上调用
-  `initialize_business_agent_workspace` 违反该约束，按 9.4 删除清单处理。
-
-### 9.2 架构阈值处理
-
-当前相关区域已经接近项目阈值：
-
-- `app/runtime/agent_git_store.py` 约 760 行。
-- `app/runtime/business_agent_workspace.py` 约 700 行。
-- `app/runtime/claude_runtime.py` 约 740 行。
-- `frontend/src/App.tsx` 约 800 行。
-
-实现前先进行职责拆分：
-
-- 从 Git store 抽出通用 Git command/working-tree 事务基础设施，使 import transaction 不访问私有方法，也不把原文件推过 800 行。
-- 把安全 tar 的解压侧限额与成员校验从 restore 脚本搬到公共模块供导入服务复用。这是搬家不是去重：内容扫描
-  已经是公共库并已被 export 脚本 import，安全 tar 只在 restore 脚本里存在一份且只有解压侧，两个脚本之间
-  没有重复实现可抽。搬迁时保持单一实现，不在应用层复制第二套限额和正则。
-- 导入路由、应用服务、持久化 store、schema 和状态机分模块，不塞入 `agents.py` 或中心治理 service。
-- 设置页使用独立 `AgentWorkspaceImportPanel` 和 hook；`App.tsx` 只复用既有 catalog refresh，不增加业务流程。
-- 同一 protected path、终态 change set、operation status 和 error code 只在集中常量/状态机定义一次。
-
-### 9.3 一致性与补偿
-
-#### 新 Agent
-
-```text
-persist received operation
--> safe staging and validation
--> invisible registry reservation
--> materialize owned workspace
--> initialize Git and initial import commit
--> validate final bytes
--> finalize registry
--> complete operation
-```
-
-失败时只删除本次 operation 证明拥有的 staging/workspace，补偿 reservation；不删除预存目录、不误伤其他 Agent。
-
-#### 覆盖 Agent
-
-```text
-safe staging and validation
--> acquire per-Agent maintenance lease
--> recheck active turn / unresolved change set / expected HEAD
--> scan current dirty tree for protected content
--> create pre-import snapshot when dirty
--> replace Git-managed tree
--> validate final bytes
--> commit import
--> persist git_applied
--> update registry metadata and complete
-```
-
-如果 import commit 之前失败，hard reset 到 pre-import commit 并保留私有 excluded 文件；如果 Git 已提交但 DB
-尚未完成，由恢复器根据 import ID/commit/HEAD 完成对账，不能盲目回退一个已经成功激活的版本。
-
-维护租约和 Git 仓库跨进程锁共同保证同 Agent 串行；不同 Agent 可以并行导入。事务块内不执行 `rmtree`、
-远程调用或其他不可回滚副作用。
-
-受管树独占不变量：持有维护租约期间，该 Agent 的受管树对 import 事务独占，任何非 import 写入者都不得触达它。
-`validate final bytes` 与 `commit import` 之间不允许存在第三方写入窗口，否则会提交一棵从未通过校验的树。
-该不变量要求 turn 主路径上不存在 workspace 写入者（见 9.1 与 9.4 删除清单）；仅靠维护租约不足以保证独占，
-因为租约只拦截 turn admission，不拦截 admission 之前的 router 层文件写入。
-
-### 9.4 删除、迁移与保留清单
-
-**删除**
-
-- turn 主路径上的模板播种：从 `resolve_business_profile` 移除 `initialize_business_agent_workspace` 调用，
-  播种收敛到 Agent 创建路径单一入口。该调用位于 router 层、早于维护栅栏，会在导入删除文件后的下一 turn
-  把文件复活，直接推翻完整替换语义；且它不传 `render_context`，真触发时写入的是未渲染内容并跳过受管策略校验。
-  删除后，受管文件缺失改为 fail closed，不静默补写。
-- workspace 切换结果中的 `requires_runtime_restart` 旧语义，以及已无调用者的 `restore_version` 死代码。
-- 新 change set 调用对隐式 `main-agent` 的依赖。
-
-**迁移**
-
-- 现有 Git `info/exclude` 写入逻辑改为每次幂等合并缺失规则，而不是见到 marker 后停止更新。
-- restore/rollback 两条路由的运行时 git result dict 迁移到统一 activation 字段。该迁移范围仅限运行时 dict：
-  publish 的同名字段在响应前即被丢弃，从不进入公开投影；该字段在 OpenAPI 中不是具名属性，只藏在不透明
-  JSON 对象与 extra-allow 穿透里；前端生成类型只有索引签名，重新生成为零 diff。不要把迁移工作量描述成
-  跨 OpenAPI 与前端类型的契约变更。
-- 历史已落库的 activation 相关字段：旧字段已写入 release payload 与 operation result 的 JSON 列，
-  仅改代码不能移除公开投影，必须补投影过滤或数据回填，否则历史行会继续吐出旧字段。
-- `GET /api/agent-change-sets` 调用方迁移为显式 Agent 过滤。
-- Agent 删除影响面结构增加 workspace import 计数，使导入记录与 run、feedback、change set、release 一样
-  在删除前可见，不出现无声删除治理对象。
-- 实现完成后，把当前事实和使用旅程合并进 README、集成指南及核心功能测试用例。
-
-**保留**
-
-- 现有模板创建 API 的创建时播种职责：该路径传 `render_context` 并经过受管 workspace 策略校验，
-  适合从平台 catalog 创建，不与完整 workspace 导入重复。保留的是它在创建时的播种能力，
-  不包括它在 profile 解析路径上的每-turn 复活行为（见删除清单）。
-- 现有 release/change set 版本治理：导入冲突处理和后续治理继续复用。
-- 现有 Agent delete/lifecycle：导入不复制删除、归档或激活状态机。
-- SDK session transcript：继续作为会话事实唯一来源。
-- runtime seeds：继续只承担出生配置和离线预置，不成为在线导入目标。
-
-## 10. Workspace 测试契约
-
-### 10.1 两类测试资产
-
-| 类型 | 位置 | 目的 | 平台行为 |
-| --- | --- | --- | --- |
-| 确定性单元测试 | `workspace/tests/unit` | 配置解析、hook/helper、纯函数和固定输入输出 | 随 workspace 版本化；服务端不执行 |
-| 远程行为测试 | `workspace/tests/remote` | 调用已激活 Agent，验证响应、工具、错误和多轮行为 | 随 workspace 版本化；开发者本地手工执行 |
-
-平台 `TestDataset` / `EvalRun` 继续承担候选版本回归和发布门禁。workspace pytest 是接入者自测，二者在
-对象、执行者、证据可信度和发布副作用上保持分离。
-
-### 10.2 pytest client 环境
-
-标准 fixture 只从环境变量读取连接信息：
-
-```text
-AGENTGOV_BASE_URL
-AGENTGOV_API_KEY
-AGENTGOV_AGENT_ID
-AGENTGOV_EXPECTED_COMMIT
-```
-
-测试规则：
-
-- API key 不写入测试文件、pytest 参数、JUnit property、截图或提交记录。
-- 首个 fixture 必须验证当前 Agent 存在、可运行，并确认 response `agent_version_id` 等于 expected commit。
-- 新会话、多轮续聊、工具活动和错误投影分别使用公开 `/v1/responses` / conversation 契约，不调用内部 Chat 接口。
-- 断言以可观察行为为主，不依赖私有函数、模型措辞完全相等或不可控时间。
-- 测试缺失只产生 `REMOTE_TESTS_MISSING` warning；导入成功状态不得显示“测试已通过”。
-- pytest 失败不调用 rollback API。回滚必须是用户明确动作。
-
-### 10.3 产品化演进
-
-后续可在不改变 import operation 的前提下增加独立 `WorkspaceVerificationRecord`，接收签名的 JUnit/远程执行
-证据并绑定 `agent_id + applied_commit_sha + package_sha256`。只有该能力落地后，平台 UI 才能展示“已验证”
-或将验证作为策略门；首版不预留虚假的 passed 字段。
-
-## 11. 设置页设计
-
-导入入口位于现有“设置 → 业务 Agent”，不新增一级导航，不把开发调试前端升级成生产业务门户。
-
-### 11.1 表单
-
-- Workspace 包：仅选择 `.tar.gz`，显示文件名和大小。
-- Agent ID：必填；输入时查询 registry 和未终结 change set。
-- 名称：新 Agent 必填，覆盖时默认沿用并允许修改。
-- 操作人和原因：必填，进入审计记录。
-- 主按钮：新 ID 显示“导入并创建”，同 ID 显示“确认覆盖”。
-
-### 11.2 状态展示
-
-- 上传/校验中：显示单一业务动作进度，允许取消尚未进入 Git 副作用的请求。
-- 冲突：显示 Agent、active turn 或 change set 的具体原因和可执行下一步。
-- 安全失败：按相对路径和 finding 类型展示脱敏摘要，不展示文件正文。
-- 成功：显示 action、previous/applied commit、变更计数、下一 turn 生效和测试提示。
-- 历史：按 Agent 显示最近 import receipt、operator、reason、commit 和 rollback 状态。
-- 回滚：只有 receipt 明确可回滚且当前 HEAD 未变化时启用；点击后再次确认并填写原因。
-
-UI 不提供“测试通过”开关，不允许用户手工把本地测试结果改成平台可信状态。
-
-### 11.3 可用性与无障碍
-
-- 文件选择、冲突、错误和成功信息同时具备文本、图标和 ARIA live 反馈，不只依赖颜色。
-- 长文件名和 digest 可复制，默认截断展示但保留完整 accessible label。
-- 上传请求使用独立超时和 AbortController；取消后后端依赖 idempotency/operation 状态收口，不假设连接断开等于撤销。
-- Agent catalog 在成功和回滚后统一刷新，避免设置页、Topbar 和 Playground 选择器漂移。
-
-## 12. 安全与信任边界
-
-### 12.1 首版信任模型
-
-首版只允许已经获得 AgentGov API Key 的可信内部开发者导入。该假设降低的是发布者身份和恶意代码执行隔离
-范围，不降低输入安全、敏感信息、路径边界、受管权限和审计要求。
-
-导入包中的 prompt、hook、skill 和 MCP 配置会影响 Agent 后续行为，因此：
-
-- API Key 必须通过 Bearer header 传递，不能进入包、reason、日志或截图。
-- 所有 hook、MCP、settings 和 sandbox 配置仍需通过现有 managed workspace policy。
-- 包不得声明新的模型凭据、MCP header 或宿主路径；运行环境通过既有 env/volume 边界提供。
-- findings、日志和 metrics 只记录类型、大小、耗时、digest 和相对路径，不记录 prompt 或文件正文。
-- 导入/回滚均记录 backend-owned actor、operator 标签、reason、agent、commit 和时间，满足审计与追责。
-
-已知风险：受管策略按 agent_id 绑定，不按能力特征绑定。安全运营专家 Agent 的审批治理——包括其受管 marker
-区段、审批阶段契约和必需 MCP server——只在 `agent_id` 等于该 Agent 时生效。因此把携带
-`threat-response-disposition` skill 的 workspace 导入到其他 `agent_id`，会得到一个具备真实剧本执行能力、
-却不受审批治理约束的业务 Agent，其 `AGENTGOV:SECURITY-APPROVAL` 区段退化为无人校验的死文本。
-
-这是既有设计缺陷而非本能力引入：今天用宿主 shell 直接改写 workspace 即可触发同一后果。但导入把触发门槛
-从“需要宿主访问权限”降低到“一次 API 调用”，因此风险等级随本能力上线而上升。正确修法是把受管策略触发条件
-从 agent_id 改为能力特征识别，使任何携带该能力的 workspace 无论 id 为何都受管；该修复独立于本方案推进，
-上线时机需与本能力实现排期对齐。首版不在导入入口做局部补丁，避免只堵一条路径、留下其他入口绕过。
-
-### 12.2 后续生产增强
-
-在对第三方或多租户开放前增加：
-
-- 发布者身份、细粒度 import/overwrite/rollback 权限和高风险 Agent 额外确认。
-- 包签名、签名者信任策略、不可抵赖 provenance 和可选制品存储。
-- 恶意内容/依赖扫描、隔离的验证执行器和网络/CPU/内存/PID/文件配额。
-- 租户隔离、配额、审计导出、保留策略和大包异步处理。
-- 策略化验证门：按 Agent 风险等级决定立即激活、先验证后激活或双人确认。
-
-这些增强复用 `WorkspaceImportOperation`、digest、状态机和 receipt，不改变“workspace 包 → commit → next turn”
-核心模型。
-
-## 13. 可观测性与运营指标
-
-### 13.1 结构化日志
-
-记录：`import_id`、`agent_id`、backend-owned actor、operator 标签、action、status、package/tree digest 前缀、
-文件数、字节数、耗时、previous/applied commit、error code、claim generation。
-
-禁止记录：压缩包正文、文件正文、prompt、token、MCP header、私有 endpoint、宿主绝对路径和 pytest 输出全文。
-
-### 13.2 Metrics
-
-- import 请求数与 `created/overwritten/unchanged/failed` 分布。
-- validation、active turn、change set、maintenance、CAS 冲突次数。
-- package 大小、文件数、staging/validation/apply 总耗时分位数。
-- rollback 次数、rollback 率和 HEAD changed 冲突率。
-- `remote_tests_present` 比例；不把存在测试误计为测试通过。
-- startup reconciliation 处理数和未能自动收口的 operation 数。
-
-### 13.3 告警
-
-- 持续出现 `git_applied` 未完成 operation。
-- rollback_failed 或 maintenance claim 频繁丢失。
-- 同 Agent 高频覆盖/回滚。
-- 安全拒绝率异常上升或同一 idempotency key 输入漂移。
-- staging 临时目录超过保留期限未清理。
-
-导入操作记录无保留期限，不设清理器。既有治理记录（release、change set、run、eval run）全部无限期保留，
-本方案不为导入记录单开一套保留策略，避免治理记录保留口径分裂。更关键的是 operator 只存在于操作记录：
-git commit 的 author 是固定机器人身份、message 无结构化 trailer，因此清理导入记录会永久切断
-“某个 commit 是谁导入的”这条审计链路，且无任何冗余可恢复。staging 临时目录是运行态中间产物，与此不同，
-需要清理与告警。
-
-## 14. 测试同步矩阵
-
-### 14.1 后端单元与安全测试
-
-- tar 限额、路径穿越、绝对路径、symlink/hardlink/device/FIFO、重复/大小写冲突、压缩炸弹。
-- 非 UTF-8、二进制、`.git`、runtime data、私有文件、密钥、endpoint、本机路径和危险 mode。
-- protected/excluded policy、example 例外、tracked private file fail closed。
-- `agent.yaml` backend-owned 字段归一化和 hostile identity/status/test result 污染。
-- operation 状态集合、完整转移表、每条非法转移。
-- 受管必需文件按 Agent 动态判定：对每个 seed-origin `agent_id`，省略 `.mcp.json` 的包必须以
-  `required_file_missing` 拒绝且 findings 指名该文件；携带空 `mcpServers`、但该 Agent 的 seed 声明了 server 时，
-  必须以 `managed_mcp_server_drift` 拒绝。两者是不同 rule id，不得混为一谈。
-- 受管 marker 区段污染：改写安全运营专家 Agent 的 `agent.yaml` 审批区段、`CLAUDE.md` 或 skill 受管区段的包，
-  必须被拒绝且不静默改写调用者内容。
-
-### 14.2 应用服务与持久化测试
-
-- 新 Agent hidden reservation、成功 finalize、每个副作用点失败后的补偿。
-- active/main/seed/user Agent 覆盖，name 更新与 lifecycle/origin 保留。
-- 同名不同 ID、新 ID、governor、archived、tombstone 和 incomplete provision 边界。
-- dirty workspace 先提交，旧受管文件完整删除，私有 excluded 文件保留。
-- package/tree 相同的 no-op、metadata-only 更新、同 idempotency key 重试和输入漂移。
-- crash 位于 Git 前、Git 后/DB 前、registry finalize 前、rollback Git 后的启动恢复。
-- migration 在真实历史 SQLite 上读取旧数据，导入列表和详情不出现 500。
-
-### 14.3 并发与版本测试
-
-- 活跃 turn 与导入竞争，双方各自先取得 lease 的结果均确定。
-- 同 Agent 两次导入、导入与 publish、导入与 restore/rollback、导入与 change set 创建竞争。
-- 不同 Agent 并行导入互不阻塞。
-- unresolved change set 在 UI 查询后新建时，后端最终校验仍阻断。
-- rollback CAS、重复 rollback、后续 HEAD 已变化、metadata-only rollback。
-- 连续两次 `metadata_updated` 后回滚第一次，必须以 `409 IMPORT_METADATA_CHANGED` 拒绝：HEAD 在两次操作间
-  恒定不变，只有值型 name CAS 能拦住它，该用例是区分“真 CAS”与“常量锁”的唯一手段。
-- 导入/回滚 commit 历史可追溯，不删除旧 import commit。
-
-### 14.4 API/OpenAPI 测试
-
-- multipart、鉴权、`Idempotency-Key`、201/200/4xx 和结构化错误。
-- response model、OpenAPI 导出和前端生成类型完全一致。
-- `agent_id` change set filter 与手工创建显式 Agent 归属。
-- publish/restore/rollback 不再暴露旧 restart 语义。
-- 历史数据投影：在改造前写入的 release payload 与 operation result 行上查询 release 列表与详情，
-  不得再吐出旧 restart 字段。仅断言新写入行不含该字段不足以证明公开投影已移除。
-- 导入历史查询：`agent_id` 与 `status` 过滤、`limit` 边界（低于下限与高于上限均被拒）、按创建时间倒序。
-- 导入查询响应不含 claim token、claim generation、claim 到期时间等内部协调字段。
-- findings 脱敏、API key/宿主路径不回显；`WORKSPACE_POLICY_REJECTED` 的 findings 含相对路径与 rule id。
-
-### 14.5 Runtime 和 pytest 契约测试
-
-- 新会话下一 turn 使用 applied commit。
-- 既有会话保持 SDK session ID，并在下一 turn 使用新 project 配置。
-- in-flight turn 保持旧 commit，导入不改变该 run 的版本。
-- `/v1/responses` 返回的 `agent_version_id` 与实际 workspace HEAD 一致。
-- 删除不得被撤销：导入一个刻意省略某个非受管文件的包并完成替换后，连续多个 turn 内该文件不得重现，
-  且每个 turn 结束后受管树相对 HEAD 必须干净。该用例是防止 turn 主路径重新引入 workspace 写入者的唯一硬门。
-  只断言 `agent_version_id` 等于 applied commit 不足以覆盖：文件被运行时复活时该断言依然通过，给出假阳性。
-- 受管树在租约期间独占：导入执行到 validate final bytes 与 commit import 之间时，并发到达的运行请求
-  不得写入该受管树；提交的树必须与通过校验的树逐字节一致。
-- canonical pytest fixture 使用公开 Responses API、校验 expected commit、不会自动回滚。
-- 缺少 tests 仅 warning；测试存在不等于 passed。
-
-### 14.6 前端与真实容器测试
-
-- 新建、覆盖、no-op、无测试、结构失败、安全失败和网络失败状态。
-- unresolved change set 提示与发布/拒绝/放弃入口。
-- active turn、maintenance、HEAD changed 冲突和重试。
-- import history、复制 digest/命令、人工 rollback 和 catalog 刷新。
-- 空态、成功态、失败详情均有浏览器证据，console error 和 failed request 为零或有明确预期。
-- 使用真实 Compose API/UI 和隔离 `${HOST_RUNTIME_VOLUME_ROOT}` 验证 next-turn、既有 session、Git 历史、
-  回滚及容器重启后 receipt 恢复；local-debug 结果不能替代容器验收。
-
-### 14.7 质量策略与命令
-
-- 将导入场景绑定到 `tests/quality_policy.json` 的 Agent 生命周期主流程、安全 lane 和前端契约 lane。
-- 内循环：目标 pytest、OpenAPI 类型生成、前端 typecheck/build。
-- 主流程：`make main-flow-test`，并运行真实容器 import/next-turn/rollback smoke。
-- 治理硬门：`make codex-guard`。
-- 提交、CI 或发版：`make test`；安全专项按质量策略运行 coverage/mutation。
-
-## 15. 验收标准
-
-### 15.1 功能验收
-
-- 新 ID 导入后只出现一个稳定业务 Agent，且运行、反馈和版本均使用该 ID。
-- 同 ID 覆盖后旧受管资产被完整替换，current HEAD 是独立 import commit。
-- dirty workspace 内容先固化，任何失败都能回到可证明的 pre-import 状态。
-- 无需重启 API；新会话及既有会话下一 turn 使用 applied commit。
-- 手工 pytest 能证明测试请求命中了 applied commit；平台不虚报测试通过。
-- 人工 rollback 在无后续 HEAD 变化时恢复旧行为包并留下新审计 commit。
-
-### 15.2 负向验收
-
-- 不能导入 `governor`、archived/tombstone Agent、含未终结 change set 的 Agent 或有活跃 turn 的 Agent。
-- 不能把 `.git`、密钥、私有路径、runtime data、SDK state 或 release archive 带入包。
-- 不能在 API 服务端执行包内 Python、安装依赖或自动联网。
-- 不能在 turn 中途切换 workspace，也不能把旧 session 静默变成新 session。
-- 不能因导入请求断线留下可见半成品、无归属目录或无法解释的 Git HEAD。
-- 不能在后续版本已经产生时用旧 import receipt 强制覆盖当前 HEAD。
-- 不能让 UI、日志、OpenAPI 或导入回执泄露 API key、MCP header、包正文或宿主私有路径。
-
-### 15.3 架构验收
-
-- 新模块、类、函数和路由不触发项目行数、方法数、复杂度和路由数阈值。
-- 没有复制 tar 安全逻辑、protected path、change set 终态或 operation 状态字符串。
-- DB row、domain record、API response 和前端生成类型各有单一真相源，无手写 schema 双轨。
-- DB + FS + Git 更新具备 idempotency、maintenance fencing、补偿和启动恢复。
-- profile resolver 及其调用链不含任何 workspace 写操作；turn 主路径上不存在受管树写入者。
-- 旧 restart 字段和隐式 main change set 路径完成迁移，不留活跃兼容 shim；历史落库行经投影过滤或回填后
-  不再吐出旧字段。
-- README、集成指南、核心测试用例、OpenAPI、前端类型和质量策略在实现阶段同步。
-
-## 16. 分阶段交付
-
-### 阶段 A：安全与领域基础
-
-- 把安全 archive 解压侧限额搬到公共模块，复用既有内容扫描公共库。
-- 集中 protected/excluded policy、change set 终态和 activation contract。
-- 建立 typed import models、DB migration、完整状态机、idempotency 和恢复器。
-- 先拆 Git store 边界，提供 expected-HEAD 的受管 tree 事务能力。
-- 移除 turn 主路径上的模板播种，把 profile 解析收敛为无文件系统副作用的只读投影。该项是导入语义的前置条件，
-  不是可选优化：不完成它，后续阶段的完整替换、回滚和版本一致性验收都无法成立。
-
-退出标准：纯 parser/policy、状态机、migration、Git transaction 和 hostile 输入测试通过，架构硬门无新增债；
-profile resolver 调用链已无 workspace 写操作，且“删除不得被撤销”用例在无导入 API 的情况下即可通过
-（用直接文件删除加连续 turn 验证）。
-
-### 阶段 B：导入、热加载与回滚 API
-
-- 实现新建/覆盖 saga、维护栅栏、pre-import snapshot、完整替换、receipt 和人工 rollback。
-- 收口 change set Agent 过滤与显式归属。
-- 统一 workspace 切换 activation 响应并生成 OpenAPI。
-
-退出标准：目标后端测试、并发/恢复测试、API 契约和 next-turn Runtime 测试通过。
-
-### 阶段 C：设置页与 workspace pytest
-
-- 增加独立导入面板、冲突处理、历史、命令复制和回滚交互。
-- 在集成指南提供 canonical pytest client 和包结构说明。
-- 增加前端契约、浏览器和真实容器 smoke。
-
-退出标准：空态、成功态、失败详情、既有 session 热加载和人工 rollback 均有容器证据。
-
-### 阶段 D：产品化收口
-
-- 更新 README、集成指南、核心功能测试用例、质量策略和运行手册。
-- 用真实历史 SQLite/运行卷验证 migration、列表、详情、重启恢复和审计。
-- 完成 `make main-flow-test`、`make codex-guard`、`make test` 和阶段末架构审计。
-
-退出标准：文档从“目标方案”更新为可追溯的已实现契约入口，OpenAPI 与运行容器一致，未实现增强仍明确留在
-产品演进边界而不伪装为当前能力。
-
-## 17. 运行环境、数据与发布边界
-
-- 容器模式继续使用 `docker/.env` 和宿主 `${HOME}/volume-agent-gov`；本机调试使用
-  `docker/.env.local-debug` 和 `/tmp/local-debug-volume-agent-gov`，二者是按运行环境选择，不是覆盖关系。
-- 不增加新的 env 选择规则或 Docker volume。staging 和 operation 数据位于现有 data root 的受控临时/SQLite 边界。
-- 在线导入只修改 `data/business-agents/<agent_id>/workspace` 和对应审计数据；不修改
-  `docker/runtime-volume-seeds/`、`claude-root/`、`version/` 目录布局或 Langfuse 数据。
-- 包和测试不得携带 `MODEL_PROVIDER_API_KEY`、MCP header 或其他私有 env；真实容器测试从私有运行环境注入。
-- DB migration 为 additive；上线前先备份 runtime SQLite，启动恢复器处理已知 operation 状态后 API 才 ready。
-- 本方案本身不 bump `VERSION`、不创建 tag。功能实现完成、真实验证通过并由用户确认发布点后再走版本发布流程。
-
-## 18. 文档治理与实现完成后的同步
-
-本文是独立目标方案，因为该能力跨产品旅程、包协议、Runtime、Git、SQLite、UI、安全与测试，无法仅靠集成指南
-中的一节安全承载。它不取代现有文档：
-
-| 文档 | 当前动作 | 实现完成后的动作 |
-| --- | --- | --- |
-| `docs/项目目标愿景使命.md` | keep | 仅在长期产品边界变化时更新；本能力已经被“创建/配置/版本治理”目标覆盖 |
-| `docs/AgentGov术语与版本边界.md` | keep | 不新增与既有业务 Agent、版本、测试冲突的术语 |
-| `docs/AgentGov集成指南.md` | no-op | 实现完成后合并包契约、API 旅程、错误和 pytest 使用说明 |
-| `docs/AgentGov核心功能测试用例.md` | no-op | 实现完成后增强 AGV-004/031/036/042/044 证据和状态 |
-| `docs/README.md` | update | 增加本目标方案入口并明确尚未实现边界 |
-| `docs/archive/README.md` | no-op | 当前没有被本文替代且需要归档的旧文档 |
-
-实现完成前，任何 README、UI 或集成说明都不能把 workspace 包导入写成当前已支持能力；实现完成后以 OpenAPI、
-自动测试和真实容器证据为准同步当前事实，而不是复制本文中的计划性描述。
+恢复把目标 tree 写成新的 Git commit，不 hard reset 历史。响应返回 previous、target 和新的
+current commit，激活方式仍是 `next_turn`。
+
+## 5. Git 与并发事务
+
+覆盖既有 Agent：
+
+1. 取得该 Agent 的维护栅栏；栅栏已被其他维护操作占用时返回
+   `409 WORKSPACE_MAINTENANCE_CONFLICT`。
+2. 有活跃 turn，或激活前 SDK session 失效发生冲突时返回
+   `409 WORKSPACE_SESSION_INVALIDATION_CONFLICT`。
+3. 有未终结 change set 时返回 `409 WORKSPACE_CHANGE_SET_ACTIVE`。
+4. dirty workspace 先生成包操作快照；快照强制纳入普通文件，包括被 `.gitignore` 忽略的
+   workspace 自有文件。
+5. 在临时 Git worktree 中清空旧业务文件、复制 staging tree 并提交。
+6. 以 `expected_current_commit_sha` 校验主 HEAD。
+7. CAS 成功后把候选 commit 应用到主 workspace；失败时主 workspace 不变。
+8. 清理临时 worktree，释放维护栅栏。
+
+新建 Agent 复用 registry reservation、文件落盘、Git 初始化和失败补偿 saga。任一步失败都不能留下
+可见 registry 行、无归属目录或半个 Git 仓库。
+
+## 6. 热加载
+
+- 当前 turn 的 Git HEAD 解析、SDK mapping 选择、active run 与 intent 创建必须处于同一个
+  SQLite admission 写屏障；因此它绑定的 `agent_version_id` 与实际执行 workspace 线性一致，
+  不能在维护切换前读旧 HEAD、切换后再登记 turn。
+- 导入与恢复只在没有活跃 turn 时应用。
+- 候选 commit 激活前，必须在同一数据库事务中清除该 Agent 所有 inactive SDK resume
+  映射；失效失败时不得 merge，也不得返回 `next_turn` 成功。
+- 普通异常和数据库提交失败先执行 Git 补偿；若进程恰好在 Git 激活后、数据库提交前退出，
+  系统无法仅凭过期 claim 判断是否已经跨过激活边界，因此下一次准入在清理过期的
+  `workspace_import` / `workspace_restore` claim 时保守清除 inactive SDK mappings。最坏结果
+  是多建一个新 SDK session，不允许旧 transcript resume 到可能已经变化的 workspace。
+- 维护结束后，新 turn 保留原 API session id，但不携带旧 SDK resume；它读取新的 Git HEAD
+  和原生 Claude Code workspace 配置，并绑定 applied `agent_version_id`。
+- 不需要重启 API，也不输出 `requires_runtime_restart`。
+
+## 7. UI
+
+设置页提供：
+
+- “导入 Agent workspace”：选择包，填写 Agent ID；新建时填写 name。
+- 既有 Agent 行的“覆盖导入”。
+- 成功回执中的 previous/current commit。
+- 覆盖成功后的“恢复导入前版本”按钮。
+
+覆盖前明确说明“workspace 将原样替换，下一 turn 生效”。失败态必须显示结构化错误和可执行动作，
+不能只显示通用上传失败。
+
+## 8. 验收
+
+- 含真实 endpoint、`.env`、MCP header 形态和二进制文件的包可原样导入。
+- 导出同一 workspace 后再导入，tree digest 不变。
+- 新建、覆盖、unchanged 和恢复均绑定实际 commit。
+- active turn、开放 change set、HEAD 竞争、恶意 tar 和超限输入明确失败。
+- Git 提交、registry finalize 或文件替换任一点故障后，原 workspace 和 HEAD 可证明未改变或已恢复。
+- 新 turn 使用 applied commit，当前 turn 和 session 身份不被静默改写。
+
+## 9. 后续升级触发
+
+只有出现公网导入、外部租户、客户敏感数据、合规要求或真实攻击事件时，才重新评估包签名、
+发布者身份、恶意代码隔离和内容治理。它们不是首版上线前置。

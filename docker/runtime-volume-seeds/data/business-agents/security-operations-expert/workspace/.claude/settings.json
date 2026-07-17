@@ -5,8 +5,8 @@
     "disableBypassPermissionsMode": "disable",
     "allow": [
       "Read(./**)",
-      "Read(/data/uploads/**)",
-      "Read(/data/outputs/security-operations-expert/**)",
+      "Read(../../../uploads/**)",
+      "Read(../../../outputs/security-operations-expert/**)",
       "Glob",
       "Grep",
       "Skill",
@@ -15,10 +15,10 @@
       "Bash(date *)",
       "Bash(date)",
       "Bash(pwd)",
-      "Bash(mkdir -p /data/outputs/security-operations-expert/**)",
+      "Bash(mkdir -p ../../../outputs/security-operations-expert/**)",
       "Edit(./**)",
       "Write(./**)",
-      "Write(/data/outputs/security-operations-expert/**)",
+      "Write(../../../outputs/security-operations-expert/**)",
       "mcp__sec-ops__*"
     ],
     "ask": [
@@ -37,11 +37,11 @@
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./secrets/**)",
-      "Read(/data/business-agents/**/claude-root/**)",
-      "Read(/data/agent-governance/**)",
-      "Read(/data/runtime.sqlite3*)",
-      "Read(/data/business-agents/security-operations-expert/claude-root/.claude.json)",
-      "Read(/data/business-agents/security-operations-expert/claude-root/.claude/projects/**)",
+      "Read(../../*/claude-root/**)",
+      "Read(../../../agent-governance/**)",
+      "Read(../../../runtime.sqlite3*)",
+      "Read(../claude-root/.claude.json)",
+      "Read(../claude-root/.claude/projects/**)",
       "Bash(cat *claude-root*)",
       "Bash(head *claude-root*)",
       "Bash(tail *claude-root*)",
@@ -101,25 +101,28 @@
     "enabled": true,
     "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": true,
-    "enableWeakerNestedSandbox": false,
+    "enableWeakerNestedSandbox": true,
     "filesystem": {
       "allowWrite": [
-        "/data/outputs/security-operations-expert",
-        "/data/transcripts"
+        "../../../outputs/security-operations-expert",
+        "../../../transcripts"
       ],
       "denyRead": [
         "./.env",
         "./secrets",
-        "/data/business-agents/**/claude-root/**",
-        "/data/agent-governance/**",
-        "/data/runtime.sqlite3*",
-        "/data/business-agents/security-operations-expert/claude-root/.claude.json"
+        "../../*/claude-root/**",
+        "../../../agent-governance/**",
+        "../../../runtime.sqlite3*",
+        "../claude-root/.claude.json"
       ]
     },
     "network": {
       "allowedDomains": [
-        "${SERVICE_HOST}",
-        "${INTERNAL_DOMAIN}"
+        "localhost",
+        "127.0.0.1",
+        "host.docker.internal",
+        "*.internal",
+        "*.corp"
       ],
       "deniedDomains": []
     },

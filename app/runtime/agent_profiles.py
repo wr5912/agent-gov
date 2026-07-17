@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from .agent_paths import InvalidAgentId, business_agent_layout, business_agents_root, validate_agent_id
-from .business_agent_seed_catalog import declared_business_agent_ids
+from .business_agent_seed_catalog import declared_business_agent_ids, runtime_seed_catalog_dir
 from .settings import AppSettings
 
 
@@ -88,12 +88,17 @@ def agents_requiring_web_hitl(profiles: dict[str, AgentRuntimeProfile]) -> list[
 
 
 def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
-    return {
-        # main 是预制的业务 Agent：与动态业务 Agent 同走 build_business_agent_profile，
-        # workspace 落 data/business-agents/main-agent/workspace。governor 仍是特殊治理 Agent。
-        MAIN_AGENT_PROFILE: build_business_agent_profile(settings, agent_id=MAIN_AGENT_PROFILE, workspace_dir=settings.main_workspace_dir),
-        GOVERNOR_PROFILE: _governor_profile(settings),
-    }
+    """静态 profile：只有 governor。
+
+    这里曾预制 main-agent 条目。main 是可删除的普通业务 Agent，预制条目会让它被删除后
+    `profiles["main-agent"]` 仍返回一个幽灵 profile——workspace 已不在磁盘上，运行会在更深处
+    炸掉，且掩盖了「该 Agent 已不存在」这个事实。main 现在与其它业务 Agent 一样，由
+    `discover_seeded_business_agents`（磁盘发现）与注册表提供：workspace 在则在，删了就没有。
+
+    governor 不同：它是平台治理执行者，不是被治理的业务对象，不参与注册表与删除。
+    """
+
+    return {GOVERNOR_PROFILE: _governor_profile(settings)}
 
 
 def discover_seeded_business_agents(settings: AppSettings) -> list[AgentRuntimeProfile]:
@@ -130,14 +135,19 @@ def discover_seeded_business_agents(settings: AppSettings) -> list[AgentRuntimeP
     return discovered
 
 
-def seed_business_agent_ids() -> frozenset[str]:
-    """声明式 seed 预置业务 Agent 的 agent_id 集合——docker/runtime-volume-seeds/data/business-agents/<id>/workspace。
+def seed_business_agent_ids(settings: AppSettings) -> frozenset[str]:
+    """当前运行态声明了哪些 seed 业务 Agent——读运行态 seed catalog，不读仓库出生配置。
 
-    用于区分 seed（声明式基线，禁删）与用户创建（可 tombstone 删除）的业务 Agent（#26）。
-    seed 目录是「出生配置」声明源，与运行卷的活配置无关（卷配置被反馈优化闭环修改、不可覆盖）。
+    读 catalog 而非仓库，是因为 seed 可被在线删除：仓库出生配置永远保留全部内置 Agent，
+    拿它做判定会让已删除的 seed 在每次启动被重新标记为声明基线。catalog 是「这套运行态里
+    现在还有哪些 seed」的答案。
+
+    该集合只用于派生 `origin`（展示与出生来源），不再决定能否删除——删除保护由
+    `protected_business_agents.PROTECTED_BUSINESS_AGENT_IDS` 显式裁决。
     """
+    catalog_root = runtime_seed_catalog_dir(settings.data_dir)
     ids: set[str] = set()
-    for raw_agent_id in declared_business_agent_ids():
+    for raw_agent_id in declared_business_agent_ids(seed_root=catalog_root):
         try:
             ids.add(validate_agent_id(raw_agent_id))
         except InvalidAgentId:

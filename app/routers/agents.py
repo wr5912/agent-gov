@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.runtime.agent_governance_schemas import agent_summary_response as _summary
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
-from app.runtime.business_agent_seed_catalog import declared_business_agent_ids
+from app.runtime.business_agent_seed_catalog import declared_business_agent_ids, runtime_seed_catalog_dir
 from app.runtime.business_agent_workspace import (
     DEFAULT_TEMPLATE_ID,
     InvalidDeclaredBusinessAgentSeed,
@@ -26,28 +28,16 @@ from app.runtime.schemas import (
     BusinessAgentTemplatesResponse,
 )
 from app.runtime.settings import AppSettings
-from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
+from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.agent_governance import AgentGovernanceService
+from app.services.business_agent_deletion import purge_business_agent_storage
 from app.services.business_agent_provisioning import provision_business_agent
 
 _PASSED_EVAL_RESULT_STATUSES = {"passed", "passed_with_notes"}
 
 _IMPACT_COUNT_CAP = 1000
-
-
-def _summary(record: AgentRegistryRecord) -> AgentSummaryResponse:
-    return AgentSummaryResponse(
-        agent_id=record.agent_id,
-        name=record.name,
-        category=record.category,
-        workspace_dir=record.workspace_dir,
-        created_at=record.created_at,
-        status=record.status,
-        origin=record.origin,
-        requires_web_hitl=record.requires_web_hitl,
-    )
 
 
 def _resolve_template_id(raw: str | None) -> str:
@@ -58,21 +48,23 @@ def _resolve_template_id(raw: str | None) -> str:
     return template_id
 
 
-def _resolve_source_seed_id(raw: str | None) -> str | None:
+def _resolve_source_seed_id(raw: str | None, *, seed_root: Path) -> str | None:
     if raw is None:
         return None
     try:
         source_seed_id = validate_agent_id(raw)
     except InvalidAgentId as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if source_seed_id not in declared_business_agent_ids():
+    if source_seed_id not in declared_business_agent_ids(seed_root=seed_root):
         raise HTTPException(status_code=422, detail=f"Unknown source_seed_id: {source_seed_id!r}")
     return source_seed_id
 
 
 def _register_and_seed_agent(req: AgentCreateRequest, settings: AppSettings, store: AgentRegistryStore) -> AgentSummaryResponse:
     """Stage, validate, version, atomically install, then register a business Agent."""
-    source_seed_id = _resolve_source_seed_id(req.source_seed_id)
+    # seed 实例化源是运行态 catalog，不是仓库出生配置：已被在线删除的 seed 不应还能实例化。
+    seed_root = runtime_seed_catalog_dir(settings.data_dir)
+    source_seed_id = _resolve_source_seed_id(req.source_seed_id, seed_root=seed_root)
     template_id = _resolve_template_id(req.template_id) if source_seed_id is None else f"declared:{source_seed_id}"
     agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
     try:
@@ -84,6 +76,7 @@ def _register_and_seed_agent(req: AgentCreateRequest, settings: AppSettings, sto
         plan = (
             prepare_declared_business_agent_workspace(
                 source_agent_id=source_seed_id or agent_id,
+                seed_root=seed_root,
             )
             if req.template_id is None
             else None
@@ -108,6 +101,66 @@ def _register_and_seed_agent(req: AgentCreateRequest, settings: AppSettings, sto
         return _summary(record)
     except (InvalidDeclaredBusinessAgentSeed, WorkspaceSafetyError, ManagedAgentPolicyError) as exc:
         raise HTTPException(status_code=422, detail=f"Business agent template violates managed policy: {exc}") from exc
+
+
+def _deletion_impact(
+    agent_id: str,
+    *,
+    feedback_store: FeedbackStore,
+    improvement_store: ImprovementStore,
+    agent_governance: AgentGovernanceService,
+) -> AgentDeletionImpact:
+    """删除前的跨维度影响面提示，避免无声删除治理对象。
+
+    这些治理记录是已发生事实，删除 Agent 不级联删除它们——只是把「你将失去对多少证据的入口」
+    如实说出来。
+    """
+
+    return AgentDeletionImpact(
+        runs=len(feedback_store.list_runs(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+        feedback_signals=len(feedback_store.list_signals(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+        improvements=len(improvement_store.list_improvements(agent_id=agent_id)),
+        eval_runs=len(feedback_store.list_eval_runs(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+        change_sets=len(agent_governance.list_change_sets(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+        releases=len(agent_governance.list_releases(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+    )
+
+
+def _delete_agent_with_storage(
+    agent_id: str,
+    *,
+    settings: AppSettings,
+    agent_registry_store: AgentRegistryStore,
+    feedback_store: FeedbackStore,
+    improvement_store: ImprovementStore,
+    agent_governance: AgentGovernanceService,
+) -> AgentDeleteResponse:
+    """删除注册身份并清理其运行态存储。
+
+    事务与磁盘清理的先后是有意的：事务内只 tombstone，提交后才 rmtree。rmtree 不可回滚，
+    放进事务块意味着事务回滚后磁盘已经回不来。
+    """
+
+    impact = _deletion_impact(
+        agent_id,
+        feedback_store=feedback_store,
+        improvement_store=improvement_store,
+        agent_governance=agent_governance,
+    )
+    # 与导入/导出/恢复共用同一把维护租约，因此删除与它们、与活跃 turn 天然互斥：租约获取本身
+    # 就拒绝存在活跃 run 的 Agent，不会删掉正在被使用的 workspace。
+    with agent_governance.version_maintenance.lease(agent_id=agent_id, kind="agent_delete", owner_id="api:agent-delete"):
+        deleted = agent_registry_store.delete_business_agent(agent_id)  # 受保护→400，未知→404
+    cleanup = purge_business_agent_storage(data_dir=settings.data_dir, agent_id=agent_id)
+    # 缓存的版本 store 持有已被 rmtree 的 repository_dir；不失效会让同 id 重建命中悬空 store。
+    agent_governance.evict_agent_store(agent_id)
+    return AgentDeleteResponse(
+        deleted=_summary(deleted),
+        impact=impact,
+        workspace_removed=cleanup.workspace_removed,
+        seed_removed=cleanup.seed_removed,
+        cleanup_complete=cleanup.cleanup_complete,
+    )
 
 
 def create_agents_router(
@@ -142,7 +195,7 @@ def create_agents_router(
     async def list_templates() -> BusinessAgentTemplatesResponse:
         return BusinessAgentTemplatesResponse(
             templates=list_business_agent_templates(),
-            seed_agent_ids=sorted(declared_business_agent_ids()),
+            seed_agent_ids=sorted(declared_business_agent_ids(seed_root=runtime_seed_catalog_dir(settings.data_dir))),
         )
 
     @router.post(
@@ -175,16 +228,13 @@ def create_agents_router(
         summary="Delete a business agent and report its governance impact",
     )
     async def delete_agent(agent_id: str) -> AgentDeleteResponse:
-        # 删除前先给出影响面提示（该 Agent 归属的运行/反馈/优化/评估/版本计数），避免无声删除治理对象。
-        impact = AgentDeletionImpact(
-            runs=len(feedback_store.list_runs(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
-            feedback_signals=len(feedback_store.list_signals(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
-            improvements=len(improvement_store.list_improvements(agent_id=agent_id)),
-            eval_runs=len(feedback_store.list_eval_runs(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
-            change_sets=len(agent_governance.list_change_sets(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
-            releases=len(agent_governance.list_releases(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+        return _delete_agent_with_storage(
+            agent_id,
+            settings=settings,
+            agent_registry_store=agent_registry_store,
+            feedback_store=feedback_store,
+            improvement_store=improvement_store,
+            agent_governance=agent_governance,
         )
-        deleted = agent_registry_store.delete_business_agent(agent_id)  # main 不可删→400，未知→404
-        return AgentDeleteResponse(deleted=_summary(deleted), impact=impact)
 
     return router

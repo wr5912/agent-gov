@@ -39,6 +39,7 @@
   下一 turn 生效、Git 审计与恢复的当前产品工程契约；字段级真相源仍是 OpenAPI
 - [业务 Agent 工作区资产闭环产品工程方案](./业务Agent工作区资产闭环产品工程方案.md)：
   `docs/业务Agent工作区资产闭环产品工程方案.md`，定义 workspace 在线导出、seed 跨 ID 原样实例化、
+  业务 Agent 删除（清运行态存储与 seed catalog 条目）、
   原生环境变量解析和离线归档为 seed 的当前产品工程契约
 
 ## 四阶段改进治理工作台权威方案
@@ -58,7 +59,7 @@
 
 ## 工程治理
 
-- [AgentGov 工程宪法与当前交付边界](./engineering/CI-CD宪法与交付链两阶段整改计划.md)：`docs/engineering/CI-CD宪法与交付链两阶段整改计划.md`，定义价值优先、workspace 原样、repo seed 分级准入、机器事实、单一 CI/部署入口和最小充分论证等稳定原则
+- [AgentGov 工程宪法与当前交付边界](./engineering/CI-CD宪法与交付链两阶段整改计划.md)：`docs/engineering/CI-CD宪法与交付链两阶段整改计划.md`，定义价值优先、workspace 原样、repo seed 分级准入与运行态 seed catalog、机器事实、单一 CI/部署入口和最小充分论证等稳定原则
 - [Multica 持续 CI 与联调环境部署](./engineering/Multica持续CI与联调环境部署.md)：`docs/engineering/Multica持续CI与联调环境部署.md`，定义 GitHub CI 终态进入 Multica AID/研发协作会话，以及人工精确 SHA 部署到联调环境的当前可执行契约
 - [测试资产组合治理](./engineering/测试资产组合治理.md)：`docs/engineering/测试资产组合治理.md`，测试分类、生命周期、执行通道、可信证据、TIA/xdist 晋级和 mutation 的权威工程契约
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`

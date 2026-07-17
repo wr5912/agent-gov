@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.runtime.agent_admission import AgentAdmissionError, AgentRunsActiveError
 from app.runtime.agent_git_raw_storage import RawGitStorageError, configure_raw_git_storage
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
-from app.runtime.agent_governance_schemas import AgentSummaryResponse
+from app.runtime.agent_governance_schemas import agent_summary_response as _summary
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
 from app.runtime.agent_workspace_package_schemas import (
     WorkspaceImportResponse,
@@ -437,19 +437,6 @@ class AgentWorkspacePackageService:
                 "WORKSPACE_SESSION_INVALIDATION_CONFLICT",
                 str(exc),
             ) from exc
-
-
-def _summary(record: AgentRegistryRecord) -> AgentSummaryResponse:
-    return AgentSummaryResponse(
-        agent_id=record.agent_id,
-        name=record.name,
-        category=record.category,
-        workspace_dir=record.workspace_dir,
-        created_at=record.created_at,
-        status=record.status,
-        origin=record.origin,
-        requires_web_hitl=record.requires_web_hitl,
-    )
 
 
 def _cleanup_imported_versioning(workspace: Path, version_base: Path) -> bool:

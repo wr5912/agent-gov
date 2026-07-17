@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.schemas import ChatResponse
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
+from fastapi.testclient import TestClient
+
 from test_api_execution_optimizer import _load_app
 
 
@@ -112,13 +112,21 @@ def test_v1_runs_configured_business_agent(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_v1_unconfigured_runs_main(monkeypatch, tmp_path: Path) -> None:
+    """未配置 /v1 出口时跑出厂默认 Agent（main-agent）。
+
+    它现在被解析成一个真实 profile，而不是「None 代表 main」——main 已是普通业务 Agent，
+    和其他 Agent 走同一条解析路径，没有 None 这个特例。
+    """
+
     module = _load_app(monkeypatch, tmp_path)
     captured: dict = {}
     monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
     with TestClient(module.app) as client:
         resp = client.post("/v1/chat/completions", json={"model": "x", "messages": [{"role": "user", "content": "hi"}]})
         assert resp.status_code == 200
-    assert captured["profile"] is None  # 未配置 -> main（profile=None）
+    assert captured["profile"] is not None
+    assert captured["profile"].agent_id == "main-agent"
+    assert str(captured["profile"].workspace_dir).endswith("/business-agents/main-agent/workspace")
 
 
 def test_v1_fail_loud_when_configured_agent_deleted(monkeypatch, tmp_path: Path) -> None:

@@ -8,9 +8,10 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 from sqlalchemy.orm import sessionmaker
 
-from ..agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile, read_requires_web_hitl
+from ..agent_profiles import AgentRuntimeProfile, read_requires_web_hitl
 from ..agent_registry_db import AgentRegistryModel
 from ..errors import BusinessRuleViolation, ConflictError, DataIntegrityError, NotFoundError
+from ..protected_business_agents import is_protected_business_agent
 from ..runtime_db import utc_now
 from ..runtime_db_base import begin_sqlite_write_transaction
 from ..runtime_recovery import runtime_operation_heartbeat, runtime_operation_is_stale
@@ -309,10 +310,8 @@ class AgentRegistryStore:
         """业务 Agent 生命周期状态转移（AGV-020）。
 
         合法转移由 `agent_lifecycle` 状态机判定，非法转移抛 StateTransitionError（可理解错误）。
-        main-agent 是样板基线，其生命周期固定为 active，不接受转移。
+        main-agent 不再特判：它是可删除、可归档的普通业务 Agent。
         """
-        if agent_id == MAIN_AGENT_PROFILE:
-            raise BusinessRuleViolation("Main agent lifecycle is fixed (sample baseline)")
         with self._session_factory.begin() as db:
             row = db.get(AgentRegistryModel, agent_id)
             if row is None or not _is_public(row):
@@ -322,23 +321,27 @@ class AgentRegistryStore:
             return _record(row)
 
     def delete_business_agent(self, agent_id: str) -> AgentRegistryRecord:
-        """删除业务 Agent。main-agent 与 seed 声明式基线不可删（去 seed 源移除）；用户创建的 Agent 逻辑删除
-        （tombstone：置 deleted_at），重启 discover_seeded 不复活。未知 / 已删除 agent_id 报 404。
+        """把业务 Agent 标记为已删除（tombstone），使其立即不可见且重启不复活。
 
-        删除前的影响面提示由路由层基于 agent_id 归属计数给出，避免无声删除治理对象。
+        保护只认受保护名单，不看 `origin`：origin 是「出生来源」的派生投影，会随运行态 seed
+        catalog 内容漂移，用它决定删除权限会让保护也跟着漂。main-agent 也不再特判——它是可
+        删除的普通业务 Agent。
+
+        本方法只动注册表。磁盘与运行态 seed 的清理由删除服务在事务提交后执行——rmtree 不可
+        回滚，放进事务块意味着事务回滚后磁盘已经回不来（见 AGENTS.md 的事务副作用约束）。
+        删除前的影响面提示由路由层给出，避免无声删除治理对象。
         """
-        if agent_id == MAIN_AGENT_PROFILE:
-            raise BusinessRuleViolation("Main agent is the sample baseline and cannot be deleted")
+        if is_protected_business_agent(agent_id):
+            raise BusinessRuleViolation(
+                f"Business agent '{agent_id}' is protected: its configuration and seed live in the project "
+                f"repository and can only be removed through a reviewed repository change"
+            )
         with self._session_factory.begin() as db:
             row = db.get(AgentRegistryModel, agent_id)
             if row is None or not _is_public(row):
                 raise NotFoundError(f"Business agent not found: {agent_id}")
-            if (row.origin or "user") == "seed":
-                raise BusinessRuleViolation(
-                    f"Seed business agent '{agent_id}' is a declarative baseline and cannot be deleted; remove it from docker/runtime-volume-seeds instead"
-                )
             record = _record(row)
-            row.deleted_at = utc_now()  # #26：tombstone 逻辑删除，重启 discover 不复活
+            row.deleted_at = utc_now()  # tombstone：sync/discover 均跳过，重启不复活
         return record
 
 

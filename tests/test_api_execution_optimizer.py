@@ -1,8 +1,31 @@
 import importlib
 import json
+import shutil
 import sys
+from pathlib import Path
 
 from app.runtime.business_agent_workspace import seed_business_agent_workspace
+
+_REPO_SEED_AGENTS = Path(__file__).resolve().parents[1] / "docker" / "runtime-volume-seeds" / "data" / "business-agents"
+
+
+def _copy_repo_seeds_into_catalog(catalog_agents: Path) -> None:
+    """把仓库声明的 seed 按字节复制进运行态 catalog。
+
+    生产由 bootstrap 的一级同步完成（runtime-init 容器）。用例若只放合成内容，跨 ID 实例化的
+    字节比对就会比一份该 Agent 根本没读过的东西。
+    """
+
+    if not _REPO_SEED_AGENTS.is_dir():
+        return
+    for source in sorted(_REPO_SEED_AGENTS.iterdir()):
+        workspace = source / "workspace"
+        if not workspace.is_dir() or source.is_symlink():
+            continue
+        destination = catalog_agents / source.name / "workspace"
+        if destination.exists():
+            continue
+        shutil.copytree(workspace, destination, symlinks=False)
 
 
 def _load_app(monkeypatch, tmp_path, *, api_key=""):
@@ -29,6 +52,14 @@ def _load_app(monkeypatch, tmp_path, *, api_key=""):
     monkeypatch.setenv("RUNTIME_VOLUME_MODE", "local-debug")
     main_ws = data / "business-agents" / "main-agent" / "workspace"
     seed_business_agent_workspace(main_ws, agent_id="main-agent", name="Main Agent")
+    # 运行态 seed catalog：生产由 bootstrap 从仓库出生配置填充（runtime-init 容器）。它是
+    # 「当前运行态声明了哪些 seed」的真相源——origin 判定与跨 ID 实例化都读它，因此夹具必须
+    # 建出这一层，否则测到的是一个 catalog 为空的、生产中不存在的状态。
+    catalog_agents = data / "seed-catalog" / "data" / "business-agents"
+    seed_business_agent_workspace(catalog_agents / "main-agent" / "workspace", agent_id="main-agent", name="Main Agent")
+    # 仓库声明的 seed 按字节复制进 catalog，与生产 bootstrap 的一级同步一致——跨 ID 实例化的
+    # 用例要比对源 seed 的真实字节，用合成内容会让它比一份生产中不存在的东西。
+    _copy_repo_seeds_into_catalog(catalog_agents)
     main_ws.joinpath("CLAUDE.md").write_text("原始规则\n", encoding="utf-8")
     main_ws.joinpath(".mcp.json").write_text(
         json.dumps(
@@ -69,6 +100,23 @@ def _load_app(monkeypatch, tmp_path, *, api_key=""):
     import app.runtime.settings as settings_module
 
     settings_module.get_settings.cache_clear()
-    if "app.main" in sys.modules:
-        return importlib.reload(sys.modules["app.main"])
-    return importlib.import_module("app.main")
+    module = importlib.reload(sys.modules["app.main"]) if "app.main" in sys.modules else importlib.import_module("app.main")
+    _register_seeded_business_agents(module)
+    return module
+
+
+def _register_seeded_business_agents(module) -> None:
+    """把磁盘上已播种的业务 Agent 登记进注册表。
+
+    main-agent 现在与其他业务 Agent 一样必须在注册表里才能运行——它不再有「预制 profile 直接
+    跑、不查表」的豁免。生产由 lifespan 的 sync 完成；不经 TestClient 的用例（直接调 runtime）
+    不会触发 lifespan，因此夹具在此补上，与生产语义一致。
+    """
+
+    from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
+
+    settings = module.settings
+    profiles = build_profiles(settings)
+    for profile in discover_seeded_business_agents(settings):
+        profiles.setdefault(profile.name, profile)
+    module.agent_registry_store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids(settings))

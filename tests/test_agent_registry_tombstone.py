@@ -1,23 +1,26 @@
-"""#26：业务 Agent 删除 tombstone + seed 声明式基线禁删 + 重启不复活。"""
+"""业务 Agent 删除：tombstone + 受保护名单禁删 + 重启不复活。
+
+删除保护认受保护名单（配置与 seed 在仓库、只能经 PR 变更），不认 origin——origin 随运行态
+seed catalog 内容漂移，用它决定权限会让保护也跟着漂。
+"""
+
 from __future__ import annotations
 
 import pytest
-
 from app.runtime.agent_profiles import build_business_agent_profile
 from app.runtime.errors import BusinessRuleViolation, NotFoundError
+from app.runtime.protected_business_agents import SECURITY_OPERATIONS_EXPERT_AGENT_ID
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from tests.feedback_store_test_utils import _settings
 
 
-def _store_and_profiles(tmp_path):
+def _store_and_profiles(tmp_path, *, extra_agent_ids: tuple[str, ...] = ()):
     settings = _settings(tmp_path)
     store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
     profiles = {
-        agent_id: build_business_agent_profile(
-            settings, agent_id=agent_id, workspace_dir=settings.data_dir / "business-agents" / agent_id / "workspace"
-        )
-        for agent_id in ("AAA", "BBB")
+        agent_id: build_business_agent_profile(settings, agent_id=agent_id, workspace_dir=settings.data_dir / "business-agents" / agent_id / "workspace")
+        for agent_id in ("AAA", "BBB", *extra_agent_ids)
     }
     return store, profiles
 
@@ -30,12 +33,32 @@ def test_sync_stamps_origin_from_seed_set(tmp_path) -> None:
     assert agents["BBB"].origin == "user"  # 用户创建（不在 seed 集合）
 
 
-def test_seed_agent_cannot_be_deleted(tmp_path) -> None:
+def test_seed_origin_agent_can_be_deleted(tmp_path) -> None:
+    """seed-origin 不再意味着禁删。
+
+    origin 是「出生来源」的派生投影，随运行态 seed catalog 内容漂移；用它决定删除权限会让
+    保护也跟着漂。删除保护改由受保护名单显式裁决（见下一个用例）。
+    """
+
     store, profiles = _store_and_profiles(tmp_path)
     store.sync_business_agents(profiles, seed_agent_ids=frozenset({"AAA"}))
+    assert store.get_agent("AAA").origin == "seed"
+
+    store.delete_business_agent("AAA")
+
+    assert store.get_agent("AAA") is None
+
+
+def test_protected_agent_cannot_be_deleted(tmp_path) -> None:
+    """受保护 Agent 的配置与 seed 在仓库，只能经受保护 PR 移除。"""
+
+    store, profiles = _store_and_profiles(tmp_path, extra_agent_ids=(SECURITY_OPERATIONS_EXPERT_AGENT_ID,))
+    store.sync_business_agents(profiles, seed_agent_ids=frozenset({SECURITY_OPERATIONS_EXPERT_AGENT_ID}))
+
     with pytest.raises(BusinessRuleViolation):
-        store.delete_business_agent("AAA")  # seed = 声明式基线，禁删
-    assert store.get_agent("AAA") is not None  # 仍在
+        store.delete_business_agent(SECURITY_OPERATIONS_EXPERT_AGENT_ID)
+
+    assert store.get_agent(SECURITY_OPERATIONS_EXPERT_AGENT_ID) is not None
 
 
 def test_user_agent_tombstone_delete_and_no_resurrect_on_restart(tmp_path) -> None:

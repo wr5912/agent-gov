@@ -48,15 +48,17 @@ def _governance(tmp_path):
         workspace_dir=settings.main_workspace_dir,
         agent_version_provider=lambda _aid=None: agent_store.current_version_id(),
     )
-    return (
-        AgentGovernanceService(
-            feedback_store=store,
-            agent_version_store=agent_store,
-            runtime_mode=settings.runtime_volume_mode,
-            runtime_env={"MCP_SERVER_URL": "http://localhost:58001/mcp"},
-        ),
-        agent_store,
+    governance = AgentGovernanceService(
+        feedback_store=store,
+        agent_version_store=agent_store,
+        runtime_mode=settings.runtime_volume_mode,
+        runtime_env={"MCP_SERVER_URL": "http://localhost:58001/mcp"},
     )
+    # service 不再预置 main-agent 的版本 store（预置会在 main 被删除后留下悬空实例）。用例把
+    # 返回的 agent_store 当作「main 的版本库」注入失败或断言状态，因此这里显式放进缓存，
+    # 让它与 service 懒建的实例是同一个——否则 monkeypatch 打在一个 service 从不使用的对象上。
+    governance._agent_stores["main-agent"] = agent_store
+    return governance, agent_store
 
 
 def _candidate_change_set(
@@ -395,7 +397,7 @@ def test_business_agent_version_chain_is_isolated_from_main(tmp_path):
     # 隔离性：发布业务 Agent 版本不改动 main 版本链（main HEAD 不变）。
     assert main_store.current_commit_sha() == main_head_before
     biz_store = governance._store_for("biz-agent-001")
-    assert biz_store is not main_store
+    assert biz_store.repository_dir != main_store.repository_dir
     assert biz_store.current_commit_sha() == biz_release["commit_sha"]
     assert biz_store.repository_dir != main_store.repository_dir
 
@@ -1627,10 +1629,12 @@ def test_repository_ops_route_per_agent_not_always_main(tmp_path):
     不再恒走 main 主库（per-agent 版本治理隔离）。"""
     governance, main_store = _governance(tmp_path)
     # main-agent 仍走传入的主库实例。
-    assert governance._store_for("main-agent") is main_store
+    # main 不再预置为传入的那个 store 实例（预置会在 main 被删除后留下悬空 store）；
+    # 它与其他业务 Agent 一样懒建，但仍指向同一个 workspace 版本库。
+    assert governance._store_for("main-agent").repository_dir == main_store.repository_dir
     # 业务 Agent 走独立 per-agent 库：不同实例、不同 repository_dir。
     biz_store = governance._store_for("biz-x")
-    assert biz_store is not main_store
+    assert biz_store.repository_dir != main_store.repository_dir
     assert main_store.repository_dir != biz_store.repository_dir
     assert "business-agents/biz-x/workspace" in str(biz_store.repository_dir)
     # repository_status 按 agent_id 路由：业务 Agent 的状态来自其自己的库，不是主库。
@@ -1641,12 +1645,23 @@ def test_repository_ops_route_per_agent_not_always_main(tmp_path):
 
 
 def test_version_governance_rejects_unregistered_ghost_agent(tmp_path):
-    """缺陷④：装配 agent_exists 后，未注册 agent_id 的版本治理操作被拒（404），不懒建幽灵版本库。"""
+    """缺陷④：装配 agent_exists 后，未注册 agent_id 的版本治理操作被拒（404），不懒建幽灵版本库。
+
+    main-agent 不再豁免这条校验：它是可删除的普通业务 Agent，删除后对它的版本治理请求应当
+    404，而不是就地重建一个版本库把它复活。
+    """
     governance, _ = _governance(tmp_path)
-    governance.agent_exists = lambda aid: aid == "real-biz"
+    governance.agent_exists = lambda aid: aid in {"real-biz", "main-agent"}
     with pytest.raises(AgentGovernanceError) as exc:
         governance.repository_status("ghost-agent")
     assert exc.value.status_code == 404
-    # main-agent 恒有效；已注册的 real-biz 放行。
+    # 已注册的放行（main-agent 与其他业务 Agent 同等对待）。
     assert governance.repository_status("main-agent")
     assert governance.repository_status("real-biz")
+
+    # main-agent 未注册（已删除）时同样 404——没有「恒有效」豁免。
+    governance.evict_agent_store("main-agent")
+    governance.agent_exists = lambda aid: aid == "real-biz"
+    with pytest.raises(AgentGovernanceError) as deleted_main:
+        governance.repository_status("main-agent")
+    assert deleted_main.value.status_code == 404

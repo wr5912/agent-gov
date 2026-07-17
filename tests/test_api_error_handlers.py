@@ -314,7 +314,9 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
 
 def test_chat_during_agent_version_maintenance_returns_structured_503(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path)
-    monkeypatch.setattr(module.agent_version_store, "is_maintenance_active", lambda: True)
+    # 维护态由注入的 provider 判定（main.py 装配），不再由 main 专属的 agent_version_store 决定——
+    # main-agent 已是普通业务 Agent，它的版本 store 与其他 Agent 一样懒建，不是那个预置实例。
+    monkeypatch.setattr(module.runtime, "agent_version_maintenance_provider", lambda agent_id: True)
 
     with TestClient(module.app) as client:
         # /api/chat 要求 agent_id 必填；用 main-agent 通过校验后才命中维护态 503。

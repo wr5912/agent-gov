@@ -223,14 +223,18 @@ async def lifespan(_: FastAPI):
     cancelled = claude_user_input_service.cancel_orphan_waiting_requests(reason="service_restarted")
     if cancelled:
         logger.info("cancelled orphan Claude user-input requests: %s", len(cancelled))
-    agent_version_store.ensure_bootstrap()
-    # 预制 profile（main-agent + governor）优先，再用磁盘发现补充 seed 预置的其它业务 Agent，
-    # 使运行卷 data/business-agents/* 下落盘的多业务 Agent 与 main-agent 走同一注册/路由/治理抽象。
+    # 这里曾无条件 agent_version_store.ensure_bootstrap()：该 store 指向 main-agent 的 workspace，
+    # 会在 main 被删除后于原地重新 git init，使删除不粘。各业务 Agent 的版本库由
+    # prepare_runtime 的 _ensure_agent_repositories 按注册表与 catalog 实际存在的 Agent 建立。
+    #
+    # 静态 profile 只有 governor；业务 Agent（含 main）全部由磁盘发现提供：workspace 在则在，
+    # 删了就没有。这样注册表 sync 不会复活已删除的 Agent。
     profiles = build_profiles(settings)
     for profile in discover_seeded_business_agents(settings):
         profiles.setdefault(profile.name, profile)
-    # #26：以 seed 目录为准标 origin（seed 声明式基线禁删 / user 可 tombstone 删除）；sync 跳过 tombstone 不复活。
-    agent_registry_store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids())
+    # 以运行态 seed catalog 为准标 origin（出生来源展示）；删除保护由受保护名单裁决，不看 origin。
+    # sync 跳过 tombstone 不复活。
+    agent_registry_store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids(settings))
     logger.info(
         "business agent registry synced: %s",
         sorted(agent_id for agent_id, profile in profiles.items() if profile.category == "business"),

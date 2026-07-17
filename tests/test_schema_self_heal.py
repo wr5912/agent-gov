@@ -2,11 +2,10 @@
 表加列却走 create_all 不改旧表、致已存在卷 no such column 500 的系统性 bug）。"""
 from __future__ import annotations
 
-from sqlalchemy import create_engine, inspect
-
 import app.runtime.improvement_db  # noqa: F401 — 注册 improvement 模型到共享 Base（attributions 等）
 from app.runtime.runtime_db import Base, ensure_schema
 from app.runtime.schema_self_heal import sync_missing_columns
+from sqlalchemy import create_engine, inspect
 
 
 def _cols(engine, table: str) -> set[str]:

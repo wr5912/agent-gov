@@ -16,6 +16,7 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock
 
+from claude_runtime_test_utils import main_profile_resolver
 from test_claude_runtime import _settings
 
 
@@ -305,7 +306,7 @@ def test_runtime_emits_backend_owned_suggestion_without_persisting_it(tmp_path, 
     monkeypatch.setattr("app.runtime.claude_runtime_stream.read_requires_web_hitl", lambda _workspace: False)
     settings = _settings(tmp_path)
     store = FeedbackStore(data_dir=settings.data_dir, workspace_dir=settings.main_workspace_dir)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), feedback_store=store)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings), feedback_store=store)
 
     async def collect():
         return [event async for event in runtime.stream(ChatRequest(message="hello", session_id="api-session"))]

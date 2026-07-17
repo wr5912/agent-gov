@@ -16,6 +16,7 @@ from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import AgentReleaseModel, utc_now
 from app.runtime.state_machines import validate_transition
 from app.services.agent_change_set_worktree_lifecycle import cleanup_published_change_set
+from app.services.agent_governance_projections import release_to_payload
 from app.services.agent_publication import PublicationFinalizationLost, reconcile_publication_failure
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,6 @@ class _GovernanceService(Protocol):
     ) -> Any: ...
 
     def _finalize_publication(self, intent: Any, *, archive: JsonObject) -> JsonObject: ...
-
-    def _release_to_payload(self, row: AgentReleaseModel) -> JsonObject: ...
 
     def _add_event_row(self, *args: Any, **kwargs: Any) -> None: ...
 
@@ -686,7 +685,7 @@ def _complete_release_operation(
         completed_release = db.get(AgentReleaseModel, claim.release_id)
         if completed_release is None:
             raise _error(404, "Agent release not found")
-        release_payload = service._release_to_payload(completed_release)
+        release_payload = release_to_payload(completed_release)
     return {"release": release_payload, "git_result": git_result}
 
 

@@ -6,9 +6,14 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.runtime.protected_business_agents import is_protected_business_agent
+
+if TYPE_CHECKING:
+    from app.runtime.stores.agent_registry_store import AgentRegistryRecord
 
 
 class AgentCreateRequest(BaseModel):
@@ -44,7 +49,14 @@ class AgentSummaryResponse(BaseModel):
     workspace_dir: str
     created_at: str
     status: str = Field(default="active", description="生命周期状态：draft/active/evaluating/deprecated/archived。")
-    origin: str = Field(default="user", description="来源：seed（声明式基线，禁删，去 seed 源移除）/ user（用户创建，可删除）。")
+    origin: str = Field(
+        default="user",
+        description="出生来源：seed（由运行态 seed catalog 声明）/ user（用户创建）。仅表达来源，不决定能否删除——删除权限见 protected。",
+    )
+    protected: bool = Field(
+        default=False,
+        description="受保护 Agent：其配置与 seed 的真相源在项目仓库，只能经受保护 PR 变更，不接受在线删除。",
+    )
     requires_web_hitl: bool = Field(
         default=False,
         description="从 workspace project settings 的 permissions.ask 派生；为 true 时交互审批依赖 ENABLE_CLAUDE_WEB_HITL。",
@@ -88,6 +100,29 @@ class AgentDeletionImpact(BaseModel):
     releases: int = Field(default=0, description="该 Agent 归属的版本 release 数（影响面提示，按 limit 截顶）。")
 
 
+def agent_summary_response(record: AgentRegistryRecord) -> AgentSummaryResponse:
+    """把注册表记录投影为 API 摘要。
+
+    单一实现：`protected` 是 backend-owned 派生字段，两处各投影一次必然漂移——此前路由层与
+    workspace 包服务各有一份逐字段拷贝，新增字段就要记得改两遍。
+    """
+
+    return AgentSummaryResponse(
+        agent_id=record.agent_id,
+        name=record.name,
+        category=record.category,
+        workspace_dir=record.workspace_dir,
+        created_at=record.created_at,
+        status=record.status,
+        origin=record.origin,
+        protected=is_protected_business_agent(record.agent_id),
+        requires_web_hitl=record.requires_web_hitl,
+    )
+
+
 class AgentDeleteResponse(BaseModel):
     deleted: AgentSummaryResponse
     impact: AgentDeletionImpact = Field(description="删除前的治理影响面提示，避免无声删除治理对象。")
+    workspace_removed: bool = Field(default=True, description="该 Agent 的运行态目录（workspace/claude-root/version）是否已确认删除。")
+    seed_removed: bool = Field(default=True, description="该 Agent 的运行态 seed 条目是否已确认删除；已删 seed 不会在重启时复活。")
+    cleanup_complete: bool = Field(default=True, description="磁盘清理是否完整。为 false 时注册表已删除但存在磁盘残留，同 id 重建会被安全供给流程拦住。")

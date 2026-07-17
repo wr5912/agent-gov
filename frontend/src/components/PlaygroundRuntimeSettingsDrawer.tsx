@@ -153,7 +153,7 @@ export function PlaygroundRuntimeSettingsDrawer(props: PlaygroundRuntimeSettings
       {editingPath ? (
         <AgentConfigFileEditor
           clientConfig={props.clientConfig}
-          agentId={props.selectedBusinessAgentId || "main-agent"}
+          agentId={props.selectedBusinessAgentId}
           path={editingPath}
           sessionId={props.activeSessionId}
           streaming={props.streaming}

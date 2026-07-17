@@ -79,6 +79,25 @@ class FakeLangfuseClient:
         self.flushed = True
 
 
+def _runtime(settings, **kwargs):
+    """构造 ClaudeRuntime，并装上最小 business profile resolver。
+
+    生产装配总会注入 resolver（main.py）。runtime 不再持有预制的 main profile——main 是可删除的
+    普通业务 Agent，profile 一律由 resolver 从注册表解析。这些用例测的是 SDK options/env/langfuse
+    等，main profile 只是载体，因此这里直接返回它，不引入注册表依赖。
+    """
+
+    kwargs.setdefault(
+        "business_profile_resolver",
+        lambda agent_id: build_business_agent_profile(
+            settings,
+            agent_id=agent_id or "main-agent",
+            workspace_dir=settings.main_workspace_dir,
+        ),
+    )
+    return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), **kwargs)
+
+
 def _settings(tmp_path):
     data = tmp_path / "docker" / "volume" / "data"
     settings = AppSettings(
@@ -153,7 +172,7 @@ def test_run_without_native_ask_uses_finite_streaming_prompt(tmp_path, monkeypat
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
 
@@ -178,7 +197,7 @@ def test_runtime_keeps_event_loop_responsive_during_blocking_failure_boundaries(
     import threading
 
     settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
     provider_started = threading.Event()
     provider_release = threading.Event()
     abort_started = threading.Event()
@@ -235,7 +254,7 @@ def test_runtime_rejects_file_checkpointing_with_durable_session_store(tmp_path)
     settings.enable_file_checkpointing = True
 
     with pytest.raises(RuntimeUnavailableError, match="incompatible"):
-        ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+        _runtime(settings)
 
 
 def test_runtime_resolves_non_main_agent_for_internal_callers(tmp_path, monkeypatch):
@@ -271,13 +290,13 @@ def test_runtime_resolves_non_main_agent_for_internal_callers(tmp_path, monkeypa
 
 def test_runtime_rejects_explicit_profile_agent_mismatch(tmp_path):
     settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     with pytest.raises(BusinessRuleViolation, match="does not match"):
         asyncio.run(
             runtime.run(
                 ChatRequest(message="wrong owner", agent_id="soc-ops"),
-                profile=runtime.profiles["main-agent"],
+                profile=build_business_agent_profile(settings, agent_id="main-agent", workspace_dir=settings.main_workspace_dir),
             )
         )
 
@@ -297,7 +316,7 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
 
     settings = _settings(tmp_path)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/tmp/should-not-leak")
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
     options = seen["options"]
@@ -339,6 +358,9 @@ def test_candidate_runtime_uses_business_agent_owner_for_session_and_maintenance
         settings,
         session_store,
         agent_version_maintenance_provider=lambda agent_id: seen_maintenance_agents.append(agent_id) or False,
+        business_profile_resolver=lambda agent_id: build_business_agent_profile(
+            settings, agent_id=agent_id or "main-agent", workspace_dir=settings.main_workspace_dir
+        ),
     )
     worktree = tmp_path / "candidate-worktree"
     worktree.mkdir()
@@ -361,8 +383,8 @@ def test_candidate_runtime_uses_business_agent_owner_for_session_and_maintenance
 
 def test_profile_env_marks_backend_owned_workspace_trusted(tmp_path):
     settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
-    profile = runtime.profiles["main-agent"]
+    runtime = _runtime(settings)
+    profile = build_business_agent_profile(settings, agent_id="main-agent", workspace_dir=settings.main_workspace_dir)
     state_path = profile.claude_config_dir / ".claude.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
@@ -387,16 +409,15 @@ def test_profile_env_marks_backend_owned_workspace_trusted(tmp_path):
 def test_profile_env_inherits_selected_runtime_env_instead_of_process_env(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     monkeypatch.setenv("MCP_SERVER_URL", "http://process-env.example/mcp")
-    runtime = ClaudeRuntime(
+    runtime = _runtime(
         settings,
-        LocalSessionStore(settings.session_dir),
         runtime_env={
             "MCP_SERVER_URL": "http://selected-env.example/mcp",
             "SELECTED_RUNTIME_MARKER": "selected",
         },
     )
 
-    env = runtime._profile_env(runtime.profiles["main-agent"])
+    env = runtime._profile_env(build_business_agent_profile(settings, agent_id="main-agent", workspace_dir=settings.main_workspace_dir))
 
     assert env["MCP_SERVER_URL"] == "http://selected-env.example/mcp"
     assert env["SELECTED_RUNTIME_MARKER"] == "selected"
@@ -425,7 +446,7 @@ def test_profile_env_never_forwards_backend_control_credentials_to_agent_process
         },
     )
 
-    env = runtime._profile_env(runtime.profiles["main-agent"])
+    env = runtime._profile_env(build_business_agent_profile(settings, agent_id="main-agent", workspace_dir=settings.main_workspace_dir))
 
     assert "API_KEY" not in env
     assert "FRONTEND_RUNTIME_API_KEY" not in env
@@ -461,7 +482,7 @@ def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch)
         ),
         encoding="utf-8",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
 
@@ -471,7 +492,7 @@ def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch)
 
 def test_feedback_attribution_job_options_use_profile_minimum_max_turns(tmp_path):
     settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
@@ -481,7 +502,7 @@ def test_feedback_attribution_job_options_use_profile_minimum_max_turns(tmp_path
 def test_feedback_attribution_job_options_allow_global_max_turn_override(tmp_path):
     settings = _settings(tmp_path)
     settings.max_turns = 20
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
@@ -503,7 +524,7 @@ def test_feedback_job_profile_does_not_inject_mcp_servers(tmp_path):
         ),
         encoding="utf-8",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
@@ -522,7 +543,7 @@ def test_feedback_job_options_inject_model_provider_credentials(tmp_path):
         MODEL_PROVIDER_API_KEY="sk-test-provider",
         MODEL_PROVIDER_API_URL="https://model-gateway.example.test/anthropic",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
@@ -563,7 +584,7 @@ def test_vllm_feedback_job_options_use_derived_litellm_sidecar(tmp_path, monkeyp
         MODEL_PROVIDER_BACKEND="vllm",
         MODEL_PROVIDER_API_URL="http://vllm:8000",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
@@ -585,7 +606,7 @@ def test_background_agent_job_requires_model_credentials_before_query(tmp_path, 
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     with pytest.raises(AgentAuthenticationRequiredError) as exc_info:
         asyncio.run(
@@ -606,7 +627,7 @@ def test_background_agent_job_requires_model_credentials_before_query(tmp_path, 
 
 def test_governor_job_options_use_profile_minimum_max_turns(tmp_path):
     settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
@@ -618,7 +639,7 @@ def test_governor_job_options_use_profile_minimum_max_turns(tmp_path):
 def test_governor_job_options_allow_global_max_turn_override(tmp_path):
     settings = _settings(tmp_path)
     settings.max_turns = 20
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
@@ -666,7 +687,7 @@ def test_explicit_main_mcp_config_override_is_not_injected_into_options(tmp_path
         CLAUDE_CONFIG_DIR=config_dir,
         RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
     monkeypatch.setattr(runtime.langfuse, "get_client", lambda: None)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
@@ -712,7 +733,7 @@ def test_main_mcp_override_does_not_inject_feedback_job_profile_mcp(tmp_path):
         ),
         encoding="utf-8",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
@@ -750,7 +771,7 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
         LANGFUSE_RESOURCE_ATTRIBUTES="service.version=0.1.0",
         LANGFUSE_EXPORT_INTERVAL_MS=500,
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
     monkeypatch.setattr(runtime.langfuse, "get_client", lambda: None)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
@@ -862,7 +883,7 @@ def test_langfuse_requires_keys_when_enabled(tmp_path):
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
 
@@ -896,7 +917,7 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
         LANGFUSE_SECRET_KEY="sk-test",
         CLAUDE_ENV_JSON='{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://collector:4318","OTEL_LOG_USER_PROMPTS":"1"}',
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
     env = seen["options"].env
@@ -1016,7 +1037,7 @@ def test_run_normalizes_result_error_and_dedupes_answer(tmp_path, monkeypatch):
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
 
@@ -1101,7 +1122,7 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
     fake_langfuse = FakeLangfuseClient()
     propagations = []
     trace_upserts = []
@@ -1264,7 +1285,7 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = _runtime(settings)
     fake_langfuse = FakeLangfuseClient()
     propagations = []
     trace_upserts = []

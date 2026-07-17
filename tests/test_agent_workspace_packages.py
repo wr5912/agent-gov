@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 
 import pytest
-from app.runtime.business_agent_seed_catalog import declared_business_agent_workspace
+from app.runtime.business_agent_seed_catalog import declared_business_agent_workspace, runtime_seed_catalog_dir
 from app.runtime.runtime_db import SessionTurnIntentModel
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSession
@@ -232,7 +232,12 @@ def test_cross_id_seed_creation_copies_bytes_and_rejects_ambiguous_source(monkey
     assert created.json()["status"] == "active"
     assert created.json()["requires_web_hitl"] is True
     target = Path(created.json()["workspace_dir"])
-    source = declared_business_agent_workspace("security-operations-expert")
+    # 实例化源是运行态 seed catalog，不是仓库出生配置——已被在线删除的 seed 不应还能实例化，
+    # 因此这里必须显式传 catalog root，否则比的是一份该 Agent 根本没读过的字节。
+    source = declared_business_agent_workspace(
+        "security-operations-expert",
+        seed_root=runtime_seed_catalog_dir(module.settings.data_dir),
+    )
     source_files = {path.relative_to(source).as_posix(): path for path in source.rglob("*") if path.is_file()}
     target_files = {path.relative_to(target).as_posix(): path for path in target.rglob("*") if path.is_file() and ".git" not in path.relative_to(target).parts}
     assert set(target_files) == set(source_files)

@@ -127,13 +127,18 @@ def list_business_agent_templates() -> list[str]:
 def prepare_declared_business_agent_workspace(
     *,
     source_agent_id: str,
+    seed_root: Path | None = None,
 ) -> WorkspaceTemplatePlan | None:
-    """Read a declared seed byte-for-byte before reserving persistent state."""
+    """Read a declared seed byte-for-byte before reserving persistent state.
+
+    `seed_root` 应传运行态 seed catalog：已被在线删除的 seed 不应还能实例化。缺省回退到
+    仓库出生配置，仅为不带 settings 的直接调用（测试）保留。
+    """
 
     source_id = source_agent_id.strip()
     if not source_id:
         return None
-    source_workspace = declared_business_agent_workspace(source_id)
+    source_workspace = declared_business_agent_workspace(source_id, seed_root=seed_root)
     source_stat = _lstat(source_workspace)
     if source_stat is None:
         return None

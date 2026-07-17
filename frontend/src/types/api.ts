@@ -2104,9 +2104,27 @@ export interface components {
         };
         /** AgentDeleteResponse */
         AgentDeleteResponse: {
+            /**
+             * Cleanup Complete
+             * @description 磁盘清理是否完整。为 false 时注册表已删除但存在磁盘残留，同 id 重建会被安全供给流程拦住。
+             * @default true
+             */
+            cleanup_complete: boolean;
             deleted: components["schemas"]["AgentSummaryResponse"];
             /** @description 删除前的治理影响面提示，避免无声删除治理对象。 */
             impact: components["schemas"]["AgentDeletionImpact"];
+            /**
+             * Seed Removed
+             * @description 该 Agent 的运行态 seed 条目是否已确认删除；已删 seed 不会在重启时复活。
+             * @default true
+             */
+            seed_removed: boolean;
+            /**
+             * Workspace Removed
+             * @description 该 Agent 的运行态目录（workspace/claude-root/version）是否已确认删除。
+             * @default true
+             */
+            workspace_removed: boolean;
         };
         /** AgentDeletionImpact */
         AgentDeletionImpact: {
@@ -2635,10 +2653,16 @@ export interface components {
             name: string;
             /**
              * Origin
-             * @description 来源：seed（声明式基线，禁删，去 seed 源移除）/ user（用户创建，可删除）。
+             * @description 出生来源：seed（由运行态 seed catalog 声明）/ user（用户创建）。仅表达来源，不决定能否删除——删除权限见 protected。
              * @default user
              */
             origin: string;
+            /**
+             * Protected
+             * @description 受保护 Agent：其配置与 seed 的真相源在项目仓库，只能经受保护 PR 变更，不接受在线删除。
+             * @default false
+             */
+            protected: boolean;
             /**
              * Requires Web Hitl
              * @description 从 workspace project settings 的 permissions.ask 派生；为 true 时交互审批依赖 ENABLE_CLAUDE_WEB_HITL。

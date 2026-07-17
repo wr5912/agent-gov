@@ -115,11 +115,20 @@ def _dockerfile_apt_packages(path: Path) -> set[str]:
     return packages
 
 
+# Vendored 第三方资产（自托管的 Swagger UI / ReDoc 产物）不是我们编写的配置：它们是上游发布的
+# minified bundle，其中的随机字节序列会偶然匹配端口族一类的形态正则。对它们做「我们有没有把私有
+# 调试端口提交进仓库」的扫描没有意义，只会产生误报。它们的真实约束是版本固定与自托管（见
+# tests/test_docs_offline_assets.py）。
+_VENDORED_ASSET_PREFIXES = ("app/static/docs/",)
+
+
 def _tracked_text_files(repo_root: Path = REPO_ROOT) -> list[tuple[str, str]]:
     result = subprocess.run(["git", "ls-files", "-z"], cwd=repo_root, check=True, stdout=subprocess.PIPE)
     files: list[tuple[str, str]] = []
     for rel_path in result.stdout.decode("utf-8").split("\0"):
         if not rel_path:
+            continue
+        if rel_path.startswith(_VENDORED_ASSET_PREFIXES):
             continue
         path = repo_root / rel_path
         if not path.is_file():

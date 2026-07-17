@@ -10,6 +10,7 @@ from app.runtime.managed_agent_policy import (
     runtime_workspace_policy_violations,
     validate_managed_mcp_content,
 )
+from app.runtime.protected_business_agents import SECURITY_OPERATIONS_EXPERT_AGENT_ID
 from scripts.bootstrap_runtime_volume import bootstrap_runtime_volume
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

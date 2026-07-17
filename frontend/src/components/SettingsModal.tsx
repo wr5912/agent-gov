@@ -71,11 +71,13 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [idError, setIdError] = useState<string | undefined>();
   const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
   const [openaiCompat, setOpenaiCompat] = useState<OpenAICompatAgentConfig | null>(null);
-  const [openaiCompatSel, setOpenaiCompatSel] = useState("main-agent");
+  const [openaiCompatSel, setOpenaiCompatSel] = useState("");
   const busy = pending !== null || workspaceBusy;
 
   const activeTabMeta = useMemo(() => SETTINGS_TABS.find((tab) => tab.key === activeTab) ?? SETTINGS_TABS[0], [activeTab]);
-  const openaiCompatOptions = useMemo(() => ["main-agent", ...agents.map((agent) => agent.agent_id)], [agents]);
+  // 出口 Agent 选项来自实际注册表：main-agent 是可删除的普通业务 Agent，不再硬编码进列表
+  // （它本来就在 agents 里，硬编码会产生重复选项，且删除后仍会出现在下拉中）。
+  const openaiCompatOptions = useMemo(() => agents.map((agent) => agent.agent_id), [agents]);
 
   const reloadAgents = useCallback(async () => {
     setError(undefined);
@@ -108,7 +110,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
       })
       .catch(() => {
         setOpenaiCompat(null);
-        setOpenaiCompatSel("main-agent");
+        setOpenaiCompatSel("");
       });
   }, [open, config]);
 
@@ -129,10 +131,11 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
       });
   }, [open, config]);
 
-  // 选中的出口 Agent 被删除（业务 Agent 列表刷新后不在选项里）时，回退到 main-agent，避免下拉悬空。
+  // 选中的出口 Agent 被删除时回退到第一个可用 Agent，避免下拉悬空。不回退到 main-agent：
+  // 它也可能已被删除。列表为空（全部 Agent 都被删了）时保持空选择，由后端返回明确错误。
   useEffect(() => {
-    if (openaiCompatSel !== "main-agent" && !openaiCompatOptions.includes(openaiCompatSel)) {
-      setOpenaiCompatSel("main-agent");
+    if (openaiCompatSel && !openaiCompatOptions.includes(openaiCompatSel)) {
+      setOpenaiCompatSel(openaiCompatOptions[0] ?? "");
     }
   }, [openaiCompatOptions, openaiCompatSel]);
 
@@ -208,11 +211,19 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
     // F1①安全快修：删除治理对象前二次确认；F1③：删后把治理影响面放到可见的反馈横幅（替换不可达的行内 <small>）。
     const agent = agents.find((a) => a.agent_id === agentId);
     const label = agent?.name ? `${agent.name}（${agentId}）` : agentId;
-    if (!window.confirm(`确认删除业务 Agent ${label}？该操作不可撤销。`)) return;
+    if (
+      !window.confirm(
+        `确认删除业务 Agent ${label}？\n\n将永久删除它的工作区配置、会话记录与版本历史；若它是内置 Agent，其运行态 seed 也会一并移除且重启后不会恢复。运行、反馈与发布记录保留作审计。该操作不可撤销。`,
+      )
+    )
+      return;
     void run(async () => {
       const res = await deleteBusinessAgent(config, agentId);
       const i = res.impact;
-      setSuccessMsg(`已删除业务 Agent ${label}（影响：runs ${i.runs} · feedback ${i.feedback_signals} · 改进事项 ${i.improvements} · eval ${i.eval_runs} · 变更集 ${i.change_sets} · 发布 ${i.releases}）`);
+      const impactText = `影响：runs ${i.runs} · feedback ${i.feedback_signals} · 改进事项 ${i.improvements} · eval ${i.eval_runs} · 变更集 ${i.change_sets} · 发布 ${i.releases}`;
+      // 清理不完整时必须说出来：注册表已删除但磁盘有残留，同 id 重建会被安全供给流程拦住。
+      const cleanupText = res.cleanup_complete === false ? "；磁盘清理未完成，请检查运行卷残留" : "";
+      setSuccessMsg(`已删除业务 Agent ${label}（${impactText}）${cleanupText}`);
       await reloadAgents();
       onAgentsChanged();
     }, `delete:${agentId}`);
@@ -314,21 +325,23 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                     ) : !agents.length ? (
                       error ? null : <div className="empty-state" data-testid="settings-agent-empty">暂无业务 Agent。</div>
                     ) : agents.map((agent) => {
-                      const isMain = agent.agent_id === "main-agent"; // F4：样板基线不可删除/生命周期固定
                       const isArchived = agent.status === "archived"; // F3：归档为终态，禁止再转移
-                      const isSeed = agent.origin === "seed"; // #26：seed 声明式基线禁删（去 seed 源移除）
+                      // 删除保护由后端受保护名单裁决（配置与 seed 在仓库、只能经 PR 变更）。
+                      // 不再用 origin 判断：origin 只表达出生来源，会随运行态 seed catalog 漂移。
+                      const isProtected = agent.protected === true;
+                      const isSeed = agent.origin === "seed"; // 仅作出生来源展示
                       return (
                       <div className="settings-agent-row" data-testid="settings-agent-item" key={agent.agent_id}>
                         <div className="settings-agent-main">
-                          <strong>{agent.name}{isMain ? <em className="settings-agent-badge"> · 样板基线</em> : isSeed ? <em className="settings-agent-badge"> · 声明基线</em> : null}</strong>
+                          <strong>{agent.name}{isProtected ? <em className="settings-agent-badge"> · 仓库维护</em> : isSeed ? <em className="settings-agent-badge"> · 内置</em> : null}</strong>
                           <span>{agent.agent_id}</span>
                         </div>
                         <code title={agent.workspace_dir || "-"}>{agent.workspace_dir || "-"}</code>
-                        <select className="select" data-testid="settings-agent-lifecycle" aria-label={`${agent.name} 生命周期`} aria-busy={pending === `lifecycle:${agent.agent_id}`} value={agent.status} disabled={busy || isMain || isArchived} title={isMain ? "样板基线生命周期固定" : isArchived ? "已归档为终态" : undefined} onChange={(e) => handleLifecycle(agent.agent_id, e.target.value)}>
+                        <select className="select" data-testid="settings-agent-lifecycle" aria-label={`${agent.name} 生命周期`} aria-busy={pending === `lifecycle:${agent.agent_id}`} value={agent.status} disabled={busy || isArchived} title={isArchived ? "已归档为终态" : undefined} onChange={(e) => handleLifecycle(agent.agent_id, e.target.value)}>
                           {LIFECYCLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                         </select>
                         <div className="settings-agent-actions">
-                          <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy || isSeed} aria-busy={pending === `delete:${agent.agent_id}`} title={isMain ? "样板基线不可删除" : isSeed ? "seed 声明式基线不可删除，去 seed 源移除" : undefined} onClick={() => handleDelete(agent.agent_id)}>
+                          <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy || isProtected} aria-busy={pending === `delete:${agent.agent_id}`} title={isProtected ? "该 Agent 的配置与 seed 在项目仓库维护，只能经仓库变更移除" : undefined} onClick={() => handleDelete(agent.agent_id)}>
                             {pending === `delete:${agent.agent_id}` ? <Loader2 size={14} className="settings-spin" /> : <Trash2 size={14} />}
                             <span>删除</span>
                           </button>
@@ -357,7 +370,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                   <span>OpenAI 兼容入口（/v1）出口 Agent</span>
                   <select value={openaiCompatSel} onChange={(e) => setOpenaiCompatSel(e.target.value)} disabled={busy}>
                     {openaiCompatOptions.map((id) => (
-                      <option key={id} value={id}>{id === "main-agent" ? "main-agent（默认）" : id}</option>
+                      <option key={id} value={id}>{id}</option>
                     ))}
                   </select>
                   <small data-testid="settings-openai-compat-state">

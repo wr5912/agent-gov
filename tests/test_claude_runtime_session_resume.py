@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 from app.runtime import claude_prompt_suggestions, session_turn_lease
+from app.runtime.agent_profiles import build_business_agent_profile
 from app.runtime.async_iterators import close_async_iterator
 from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.claude_runtime import ClaudeRuntime
@@ -21,6 +22,20 @@ from claude_runtime_test_utils import route_interactive_client_through_query
 @pytest.fixture(autouse=True)
 def _route_interactive_sdk_client(monkeypatch):
     route_interactive_client_through_query(monkeypatch)
+
+
+def _runtime(settings, store, *args, **kwargs):
+    """构造 ClaudeRuntime，并装上最小 business profile resolver。
+
+    runtime 不再持有预制 main profile——main 是可删除的普通业务 Agent，profile 一律由 resolver
+    从注册表解析（生产装配见 main.py）。这些用例测的是 session/lease/取消语义，profile 只是载体。
+    """
+
+    kwargs.setdefault(
+        "business_profile_resolver",
+        lambda agent_id: build_business_agent_profile(settings, agent_id=agent_id or "main-agent", workspace_dir=settings.main_workspace_dir),
+    )
+    return ClaudeRuntime(settings, store, *args, **kwargs)
 
 
 def _settings(tmp_path):
@@ -202,7 +217,7 @@ def test_non_stream_turn_renews_lease_while_sdk_query_runs(tmp_path, monkeypatch
         return expires_at
 
     monkeypatch.setattr(store, "renew_turn", observe_renewal)
-    runtime = ClaudeRuntime(settings, store)
+    runtime = _runtime(settings, store)
 
     response = asyncio.run(runtime.run(ChatRequest(message="hello", session_id="sess-heartbeat-run")))
 
@@ -237,7 +252,7 @@ def test_stream_turn_fails_closed_when_lease_renewal_loses_ownership(tmp_path, m
         raise SessionConflictError(f"Session {session_id} lease lost for {run_id}")
 
     monkeypatch.setattr(store, "renew_turn", lose_lease)
-    runtime = ClaudeRuntime(settings, store)
+    runtime = _runtime(settings, store)
 
     async def exercise_failure():
         with pytest.raises(SessionConflictError, match="lease lost"):
@@ -280,7 +295,7 @@ def test_client_cancel_closes_sdk_task_and_discards_unfinished_turn(tmp_path, mo
     settings = _settings(tmp_path)
     store = LocalSessionStore(settings.session_dir)
     feedback_store = FeedbackStore(data_dir=settings.data_dir, workspace_dir=settings.main_workspace_dir)
-    runtime = ClaudeRuntime(settings, store, feedback_store)
+    runtime = _runtime(settings, store, feedback_store)
     session_id = "sess-client-cancel"
 
     async def exercise_cancel() -> str:
@@ -357,7 +372,7 @@ def test_client_cancel_closes_sdk_task_when_hitl_cleanup_fails(tmp_path, monkeyp
     settings = _settings(tmp_path)
     store = LocalSessionStore(settings.session_dir)
     feedback_store = FeedbackStore(data_dir=settings.data_dir, workspace_dir=settings.main_workspace_dir)
-    runtime = ClaudeRuntime(
+    runtime = _runtime(
         settings,
         store,
         feedback_store,
@@ -433,7 +448,7 @@ def test_blocking_sdk_stream_cannot_lose_session_mapping_to_concurrent_delete(tm
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     settings = _settings(tmp_path)
     store = LocalSessionStore(settings.session_dir)
-    runtime = ClaudeRuntime(settings, store)
+    runtime = _runtime(settings, store)
 
     async def exercise_race():
         task = asyncio.create_task(_collect_stream(runtime, ChatRequest(message="hello", session_id="sess-stream-active")))
@@ -460,11 +475,12 @@ async def _collect_stream(runtime: ClaudeRuntime, request: ChatRequest):
 def test_build_options_does_not_reuse_api_session_id_after_resume_is_cleared(tmp_path):
     settings = _settings(tmp_path)
     store = LocalSessionStore(settings.session_dir)
-    runtime = ClaudeRuntime(settings, store)
+    runtime = _runtime(settings, store)
     session_id = str(uuid.uuid4())
     session = store.get_or_create_owned(session_id, agent_id="main-agent")
 
-    first_options = runtime._build_options(ChatRequest(message="first", session_id=session_id), session)
+    main_profile = build_business_agent_profile(settings, agent_id="main-agent", workspace_dir=settings.main_workspace_dir)
+    first_options = runtime._build_options(ChatRequest(message="first", session_id=session_id), session, profile=main_profile)
     assert getattr(first_options, "session_id", None) == session_id
     assert getattr(first_options, "resume", None) is None
 
@@ -478,6 +494,7 @@ def test_build_options_does_not_reuse_api_session_id_after_resume_is_cleared(tmp
     second_options = runtime._build_options(
         ChatRequest(message="second", session_id=session_id),
         resumed_after_config_change,
+        profile=main_profile,
     )
 
     assert getattr(second_options, "session_id", None) is None
@@ -512,7 +529,7 @@ def test_run_retries_once_when_saved_sdk_session_is_missing(tmp_path, monkeypatc
 
     settings = _settings(tmp_path)
     store = _store_with_stale_session(settings, "sess-stale")
-    runtime = ClaudeRuntime(settings, store)
+    runtime = _runtime(settings, store)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello", session_id="sess-stale")))
 
@@ -560,7 +577,7 @@ def test_stream_retries_once_when_saved_sdk_session_is_missing(tmp_path, monkeyp
 
     settings = _settings(tmp_path)
     store = _store_with_stale_session(settings, "sess-stream-stale")
-    runtime = ClaudeRuntime(settings, store)
+    runtime = _runtime(settings, store)
 
     events = asyncio.run(collect(runtime))
 
@@ -611,7 +628,7 @@ def test_stream_retries_when_process_error_stderr_reports_missing_session(tmp_pa
 
     settings = _settings(tmp_path)
     store = _store_with_stale_session(settings, "sess-process-stale")
-    runtime = ClaudeRuntime(settings, store)
+    runtime = _runtime(settings, store)
 
     events = asyncio.run(collect(runtime))
 
@@ -662,7 +679,7 @@ def test_stream_retries_when_process_error_hides_stderr_detail(tmp_path, monkeyp
 
     settings = _settings(tmp_path)
     store = _store_with_stale_session(settings, "sess-hidden-stale")
-    runtime = ClaudeRuntime(settings, store)
+    runtime = _runtime(settings, store)
 
     events = asyncio.run(collect(runtime))
 

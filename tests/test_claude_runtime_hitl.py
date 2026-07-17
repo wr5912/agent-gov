@@ -19,6 +19,8 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
 
+from claude_runtime_test_utils import main_profile_resolver
+
 SECURITY_OPERATIONS_EXPERT_AGENT_ID = "security-operations-expert"
 SOC_CREATE_TOOL = "mcp__sec-ops__soc_api__create"
 SOC_MANUAL_TOOL = "mcp__sec-ops__soc_api__manual"
@@ -156,7 +158,7 @@ def test_stream_hitl_consumes_prompt_eof_then_resumes_sdk_after_allow(tmp_path, 
 
     settings = _settings(tmp_path, enable_hitl=True)
     service, store = _service(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings), user_input_service=service)
 
     async def scenario():
         stream = runtime.stream(ChatRequest(message="needs tool approval"))
@@ -229,7 +231,7 @@ def test_stream_imported_security_agent_uses_native_hitl_without_id_gate_or_inpu
         ask_rules=[SOC_CREATE_TOOL, SOC_MANUAL_TOOL],
     )
     service, store = _service(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings), user_input_service=service)
     profile = _profile(settings, imported_agent_id)
 
     async def scenario():
@@ -287,7 +289,7 @@ def test_stream_without_native_ask_consumes_finite_prompt_without_permission_bri
 
     settings = _settings(tmp_path, enable_hitl=False)
     service, store = _service(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings), user_input_service=service)
 
     async def collect():
         return [event async for event in runtime.stream(ChatRequest(message="no hitl"))]
@@ -318,7 +320,7 @@ def test_stream_fail_loud_when_hitl_required_but_disabled(tmp_path, monkeypatch)
 
     settings = _settings(tmp_path, enable_hitl=False)
     service, store = _service(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings), user_input_service=service)
 
     async def collect():
         return [event async for event in runtime.stream(ChatRequest(message="dispose"))]
@@ -356,7 +358,7 @@ def test_stream_imported_security_agent_fails_closed_when_native_hitl_is_disable
         ask_rules=[SOC_CREATE_TOOL, SOC_MANUAL_TOOL],
     )
     service, store = _service(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings), user_input_service=service)
     profile = _profile(settings, imported_agent_id)
 
     async def collect():
@@ -389,7 +391,7 @@ def test_run_fail_loud_when_hitl_required(tmp_path, monkeypatch):
 
     settings = _settings(tmp_path, enable_hitl=False)
     service, _store = _service(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings), user_input_service=service)
 
     asyncio.run(runtime.run(ChatRequest(message="dispose")))
     assert getattr(seen["options"], "permission_mode", None) == "default"
@@ -420,7 +422,7 @@ def test_run_imported_security_agent_denies_native_ask_without_stream_hitl(tmp_p
         ask_rules=[SOC_CREATE_TOOL, SOC_MANUAL_TOOL],
     )
     service, _store = _service(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings), user_input_service=service)
     profile = _profile(settings, imported_agent_id)
 
     asyncio.run(runtime.run(ChatRequest(message="dispose"), profile=profile))
@@ -446,7 +448,7 @@ def test_runtime_reads_native_ask_from_workspace_on_each_turn(mode, tmp_path, mo
 
     _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
     settings = _settings(tmp_path, enable_hitl=False)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings))
     settings_path = settings.main_workspace_dir / ".claude" / "settings.json"
     settings_data = json.loads(settings_path.read_text(encoding="utf-8"))
     settings_data["permissions"]["ask"].append("mcp__dynamic__execute")
@@ -490,7 +492,7 @@ def test_stream_finishes_when_completion_step_raises(tmp_path, monkeypatch):
 
     settings = _settings(tmp_path, enable_hitl=False)
     service, _store = _service(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings), user_input_service=service)
 
     def fail_complete(*args, **kwargs):
         raise RuntimeError("completion boom")
@@ -532,7 +534,7 @@ def test_interactive_stream_client_cancel_closes_sdk_and_aborts_turn(tmp_path, m
     settings = _settings(tmp_path, enable_hitl=False)
     session_store = LocalSessionStore(settings.session_dir)
     service, _store = _service(tmp_path)
-    runtime = ClaudeRuntime(settings, session_store, user_input_service=service)
+    runtime = ClaudeRuntime(settings, session_store, business_profile_resolver=main_profile_resolver(settings), user_input_service=service)
     session_id = "interactive-client-cancel"
 
     async def scenario():
@@ -581,7 +583,7 @@ def test_interactive_stream_lease_loss_cancels_sdk_and_aborts_turn(tmp_path, mon
         raise SessionConflictError(f"Session {session_id} lease lost for {run_id}")
 
     monkeypatch.setattr(session_store, "renew_turn", lose_lease)
-    runtime = ClaudeRuntime(settings, session_store, user_input_service=service)
+    runtime = ClaudeRuntime(settings, session_store, business_profile_resolver=main_profile_resolver(settings), user_input_service=service)
     session_id = "interactive-lease-loss"
 
     async def scenario():

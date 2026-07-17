@@ -80,8 +80,22 @@ Agent 行为证据：agent_id + per-Agent Git commit
 - Docker Compose 每次选择一份完整 env；不是 layered override。
 - 容器运行态根目录保持 `${HOME}/volume-agent-gov`。
 - 本机调试根目录保持 `/tmp/local-debug-volume-agent-gov`。
-- `docker/runtime-volume-seeds/` 是只读出生配置；已有 live workspace 不被重启或部署回灌。
+- `docker/runtime-volume-seeds/` 是只读出生配置：随代码版本发布、可审计、可复现，容器内只读挂载，
+  不接受运行态写入。它回答的是「换一个空运行卷时平台自带什么」。
+- 运行卷内的 `data/seed-catalog/` 是运行态 seed catalog：由 bootstrap 从只读出生配置填充，可被在线
+  删除（留 `<id>.deleted` 标记使删除跨重启保持）。它回答的是「当前这套运行态里还有哪些 seed」。
+  业务 Agent 的出生与 origin 判定读 catalog，不读仓库——否则在线删除的 seed 会在每次重启复活。
+  受保护 Agent（配置与 seed 在仓库维护）例外：bootstrap 强制确保其 catalog 条目存在并清除删除标记。
+- 已有 live workspace 不被重启或部署回灌。
 - 本机调试结果不能冒充真实 Compose 或联调环境验收。
+
+**受控例外（catalog 常量双份）**：`scripts/bootstrap_runtime_volume.py` 必须能作为独立脚本运行——
+Dockerfile 只 COPY 它本身（不带 `app` 包），runtime-init 与 Makefile 都直接执行它。因此 catalog
+目录名、删除标记后缀和受保护 Agent 名单在该脚本与 `app/runtime/` 各存一份，违反单一真相源的字面
+要求。这是有意的：给该脚本加 `app.*` import 会让容器启动直接崩，而 pytest 因 rootdir 在 sys.path
+上仍然全绿——这个失败模式只有真实容器才暴露。两份常量由
+`tests/test_seed_catalog_bootstrap.py` 的一致性断言与独立运行子进程断言共同锁住；新增 catalog
+常量时必须同步两侧并扩这两条测试。
 
 ### 2.6 业务 Agent workspace 原样原则
 
@@ -104,7 +118,9 @@ live workspace 可以包含 `.env`、真实 endpoint、凭据型 header、数据
 | 对象与方向 | 稳定裁决 |
 | --- | --- |
 | generic template → live | 除明确的身份 token 外原样；generic template 采用保守出生权限，不绑定真实秘密或具体私有环境 |
-| repo 声明 seed/builtin → live | 同 ID、跨 ID 都按字节和权限配置原样复制；generic template 的保守权限不得覆盖专用 seed |
+| repo 声明 seed/builtin → 运行态 seed catalog | bootstrap 按字节复制；已被在线删除（有删除标记）的条目跳过，使删除跨重启保持；受保护 Agent 强制确保存在并清标记 |
+| 运行态 seed catalog → live | 同 ID、跨 ID 都按字节和权限配置原样复制；generic template 的保守权限不得覆盖专用 seed |
+| 运行态 seed catalog 条目删除 | 随 Agent 删除一并移除并留删除标记；仓库出生配置不受影响，换新卷时该 seed 仍会重新出生 |
 | live workspace ↔ workspace 包/per-Agent Git | 原样往返，可含真实私有运行配置；按敏感资产保管 |
 | live workspace → repo seed/builtin | 先在项目仓库外生成逐字节候选，再执行仓库准入；不是无条件原样提交 |
 
@@ -116,7 +132,13 @@ live workspace 可以包含 `.env`、真实 endpoint、凭据型 header、数据
   能力风险，必须提示提交者复核，但不冒充泄密问题、不自动替换；generic template 仍须使用
   可由部署环境解析的变量引用和保守出生权限；
 - 扫描默认只读。只有用户明确选择替换时才能运行 sanitize，并必须复核 diff；
-- 通过仓库准入后的声明 seed 才成为后续“原样实例化”的来源。
+- 通过仓库准入后的声明 seed 经 bootstrap 进入运行态 seed catalog，由 catalog 承担“原样实例化”的来源；
+  仓库准入仍是进入 catalog 的唯一入口，运行态只能删除 catalog 条目，不能绕过仓库新增一个 seed。
+
+业务 Agent 的删除权限由受保护名单显式裁决，不由 `origin` 派生：`origin` 只表达出生来源，会随
+catalog 内容漂移，把删除权限挂在它上面会让保护也跟着漂。受保护 Agent 的配置与 seed 在仓库维护，
+在线删除一律拒绝；其余业务 Agent（含出厂默认的 main-agent）都可删除，删除会清理其运行态目录与
+catalog 条目。
 
 若未来确实需要含真实秘密、仍须逐字节复用的 builtin，应设计 Git 仓库外的私有只读 catalog；
 不得通过放宽项目源码仓库边界实现。是否建设该 catalog 由真实使用需求触发，当前不预埋。

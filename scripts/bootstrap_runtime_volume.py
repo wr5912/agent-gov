@@ -11,6 +11,14 @@ from collections.abc import Iterable, MutableMapping
 from pathlib import Path
 from typing import TypedDict
 
+# 本脚本必须可作为独立脚本运行：Dockerfile 只 COPY 它本身（不带 app 包），runtime-init 与
+# Makefile 都直接执行它。因此这里不 import app.*，与 catalog 布局相关的常量在下方内联，并由
+# tests/test_seed_catalog_bootstrap.py 断言两侧一致。
+RUNTIME_SEED_CATALOG_DIRNAME = "seed-catalog"
+SEED_DELETION_MARKER_SUFFIX = ".deleted"
+# 受保护 Agent：配置与 seed 在仓库维护，bootstrap 强制确保其 catalog 条目存在。
+PROTECTED_BUSINESS_AGENT_IDS = frozenset({"security-operations-expert"})
+
 DEFAULT_TEMPLATE_DIR = Path("docker/runtime-volume-seeds")
 DEFAULT_ENV_FILE = Path("docker/.env")
 CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-gov"
@@ -37,10 +45,9 @@ RUNTIME_DATA_DIRS = (
     "data/pending-correlations",
     "data/feedback-cases",
     "data/evidence-packages",
-    "data/business-agents/main-agent/version/worktrees",
-    "data/business-agents/main-agent/version/releases",
-    "data/business-agents/main-agent/version/candidate-claude-roots",
-    "data/business-agents/main-agent/claude-root/.claude",
+    # main-agent 的 version/claude-root 目录不在此无条件创建：main 是可删除的普通业务 Agent，
+    # 固定目录会在它被删除后每次启动重建骨架，使删除不粘。这些目录由通用机制按需供给
+    # （workspace 经 seed catalog 播种，version 由 GitAgentVersionStore.ensure_bootstrap 建）。
     "langfuse/postgres",
     "langfuse/clickhouse/data",
     "langfuse/clickhouse/logs",
@@ -63,6 +70,8 @@ class BootstrapResult(TypedDict):
     copied: list[str]
     skipped_existing: list[str]
     migrated: list[str]
+    seed_catalog_copied: list[str]
+    seed_catalog_skipped_deleted: list[str]
 
 
 def _repo_root() -> Path:
@@ -139,7 +148,96 @@ def _iter_template_entries(template_dir: Path) -> Iterable[Path]:
     for entry in sorted(template_dir.iterdir()):
         if entry.name in SKIP_TEMPLATE_ROOT_ENTRIES:
             continue
+        # data/business-agents 不从仓库直供 live：它先经运行态 seed catalog（见
+        # _sync_seed_catalog），使在线删除的 seed 不会在下次启动被仓库出生配置复活。
+        if entry.name == "data":
+            continue
         yield entry
+
+
+def _sync_seed_catalog(
+    *,
+    runtime_root: Path,
+    template_dir: Path,
+    dry_run: bool,
+    catalog_copied: list[str],
+    catalog_skipped_deleted: list[str],
+) -> Path:
+    """把仓库出生配置同步进运行态 seed catalog，返回 catalog 根。
+
+    三条规则，各自对应一个真实需求：
+    - 已被在线删除（存在 `<id>.deleted` 标记）的 seed 跳过——否则删除不粘，重启即复活。
+    - catalog 缺失的 seed 整目录复制——新装/换卷时平台自带的内置 Agent 由此而来。
+    - 受保护 Agent 强制确保存在并清除标记——它的真相源在仓库，不接受运行态把它删掉。
+    """
+
+    catalog_root = runtime_root / "data" / RUNTIME_SEED_CATALOG_DIRNAME
+    repo_agents = template_dir / "data" / "business-agents"
+    if not repo_agents.is_dir():
+        return catalog_root
+
+    catalog_agents = catalog_root / "data" / "business-agents"
+    for source in sorted(repo_agents.iterdir()):
+        if not source.is_dir() or source.is_symlink():
+            continue
+        agent_id = source.name
+        marker = catalog_agents / f"{agent_id}{SEED_DELETION_MARKER_SUFFIX}"
+        protected = agent_id in PROTECTED_BUSINESS_AGENT_IDS
+        if protected and marker.exists():
+            # 受保护 Agent 不接受运行态删除；标记只可能来自手工投毒或历史数据，直接修复。
+            if not dry_run:
+                marker.unlink(missing_ok=True)
+        elif marker.exists():
+            catalog_skipped_deleted.append((catalog_agents / agent_id).as_posix())
+            continue
+        destination = catalog_agents / agent_id
+        if destination.exists() and not protected:
+            continue
+        # 受保护 Agent 走 fill-missing（补齐缺失文件，不覆盖已有），与 governor-workspace
+        # 的「跟随 seed」取向一致，但不抹掉运行态已有内容。
+        _copy_missing(
+            source,
+            destination,
+            rel_path=Path("seed-catalog") / agent_id,
+            dry_run=dry_run,
+            copied=catalog_copied,
+            skipped=[],
+        )
+    return catalog_root
+
+
+def _seed_live_business_agents(
+    *,
+    runtime_root: Path,
+    catalog_root: Path,
+    dry_run: bool,
+    copied: list[str],
+    skipped: list[str],
+) -> None:
+    """从运行态 seed catalog 播种 live workspace（整目录 fill-missing）。
+
+    与仓库直供的区别只有源；`_copy_missing` 的「workspace 已存在则整体跳过、绝不逐文件回灌」
+    语义原样保留（rel_path 仍是 data/business-agents/<id>/workspace）。
+    """
+
+    catalog_agents = catalog_root / "data" / "business-agents"
+    if not catalog_agents.is_dir():
+        return
+    for entry in sorted(catalog_agents.iterdir()):
+        if not entry.is_dir() or entry.is_symlink():
+            continue
+        workspace = entry / "workspace"
+        if not workspace.is_dir() or workspace.is_symlink():
+            continue
+        rel = Path("data") / "business-agents" / entry.name / "workspace"
+        _copy_missing(
+            workspace,
+            runtime_root / rel,
+            rel_path=rel,
+            dry_run=dry_run,
+            copied=copied,
+            skipped=skipped,
+        )
 
 
 def _copy_missing(
@@ -266,7 +364,27 @@ def bootstrap_runtime_volume(
         if not dry_run:
             path.mkdir(parents=True, exist_ok=True)
 
+    catalog_copied: list[str] = []
+    catalog_skipped_deleted: list[str] = []
     if template_dir.exists():
+        # 一级：仓库出生配置 -> 运行态 seed catalog。
+        catalog_root = _sync_seed_catalog(
+            runtime_root=runtime_root,
+            template_dir=template_dir,
+            dry_run=dry_run,
+            catalog_copied=catalog_copied,
+            catalog_skipped_deleted=catalog_skipped_deleted,
+        )
+        # 二级：运行态 seed catalog -> live workspace（整目录 fill-missing，语义不变，
+        # 只是源从仓库换成 catalog）。已删 seed 不在 catalog，因此不再产生 live 孤儿目录。
+        _seed_live_business_agents(
+            runtime_root=runtime_root,
+            catalog_root=catalog_root,
+            dry_run=dry_run,
+            copied=copied,
+            skipped=skipped,
+        )
+        # 三级：governor-workspace 与 templates 仍直连仓库——它们不是可被在线管理的对象。
         for entry in _iter_template_entries(template_dir):
             _copy_missing(
                 entry,
@@ -282,6 +400,8 @@ def bootstrap_runtime_volume(
         "copied": copied,
         "skipped_existing": skipped,
         "migrated": migrated,
+        "seed_catalog_copied": catalog_copied,
+        "seed_catalog_skipped_deleted": catalog_skipped_deleted,
     }
 
 

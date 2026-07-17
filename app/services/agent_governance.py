@@ -35,6 +35,12 @@ from app.services.agent_change_set_worktree_lifecycle import (
     execute_worktree_cleanup,
     reconcile_worktree_cleanup_tasks,
 )
+from app.services.agent_governance_projections import (
+    diff_summary,
+    event_to_payload,
+    release_to_payload,
+    safe_int,
+)
 from app.services.agent_publication import (
     PublicationFinalizationLost,
     PublicationIntent,
@@ -93,19 +99,26 @@ class AgentGovernanceService(AgentRegressionMixin):
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
         self.version_maintenance = AgentVersionMaintenanceCoordinator(feedback_store.Session)
-        # 多租户版本 store 注册表：main-agent 复用传入的主 store（行为不变），
-        # 业务 Agent 各自懒初始化一套独立 git 版本链（B3.2/B3.3）。
-        self._agent_stores: dict[str, GitAgentVersionStore] = {MAIN_AGENT_ID: agent_version_store}
+        # 每个业务 Agent 一套独立 git 版本链，懒初始化并缓存。这里曾预置 main-agent 条目：
+        # main 是可删除的普通业务 Agent，预置会让它被删除后仍能取到指向已清理目录的悬空 store。
+        self._agent_stores: dict[str, GitAgentVersionStore] = {}
         self._runtime_mode = runtime_mode
         self._runtime_env = dict(runtime_env or os.environ)
-        # 缺陷④：非 main 业务 Agent 必须在注册表中存在才允许建/取其版本库，杜绝幽灵 Agent。
+        # 业务 Agent 必须在注册表中存在才允许建/取其版本库，杜绝幽灵 Agent。
         # 由 app 装配后注入（None 则不校验，便于单测）。
         self.agent_exists: Callable[[str], bool] | None = None
 
+    def evict_agent_store(self, agent_id: str) -> None:
+        """丢弃某 Agent 的版本 store 缓存。
+
+        删除 Agent 后必须调用：缓存的 store 持有已被 rmtree 的 repository_dir，同 id 重建时
+        会命中这个悬空 store，把新 Agent 的版本操作打到一个不存在的目录上。
+        """
+
+        self._agent_stores.pop((agent_id or "").strip(), None)
+
     def _normalize_agent_id(self, agent_id: str | None) -> str:
         normalized = (agent_id or MAIN_AGENT_ID).strip()
-        if normalized == MAIN_AGENT_ID:
-            return MAIN_AGENT_ID
         try:
             return validate_agent_id(normalized)
         except InvalidAgentId as exc:
@@ -114,17 +127,17 @@ class AgentGovernanceService(AgentRegressionMixin):
     def _store_for(self, agent_id: str | None) -> GitAgentVersionStore:
         """按 agent_id 选版本 store。
 
-        main-agent 暂复用主 store（B 阶段并入统一模型）；业务 Agent 的版本库 root 在其
-        **workspace**（与 main 同构：git 就地版本化配置），worktrees/releases 落
-        ``data_dir/business-agents/{agent_id}/version/`` 兄弟目录，claude-root 因去嵌套
-        在 workspace 之外、天然不进版本源。懒初始化并缓存，实现 per-agent 版本治理隔离。
+        每个业务 Agent（含 main-agent）的版本库 root 在其 **workspace**（git 就地版本化配置），
+        worktrees/releases 落 ``data_dir/business-agents/{agent_id}/version/`` 兄弟目录，
+        claude-root 因去嵌套在 workspace 之外、天然不进版本源。懒初始化并缓存。
         """
         normalized = self._normalize_agent_id(agent_id)
         existing = self._agent_stores.get(normalized)
         if existing is not None:
             return existing
-        # 缺陷④：懒建版本库前校验该业务 Agent 在注册表中存在（main-agent 恒有效）。
-        if normalized != MAIN_AGENT_ID and self.agent_exists is not None and not self.agent_exists(normalized):
+        # 懒建版本库前校验该业务 Agent 在注册表中存在，杜绝幽灵 Agent。main-agent 不再豁免：
+        # 它可被删除，删除后对它的版本治理请求应当 404 而不是就地重建版本库。
+        if self.agent_exists is not None and not self.agent_exists(normalized):
             raise AgentGovernanceError(404, f"Agent not registered for version governance: {normalized}")
         layout = business_agent_layout(self.feedback_store.data_dir, normalized)
         store = GitAgentVersionStore(
@@ -234,7 +247,7 @@ class AgentGovernanceService(AgentRegressionMixin):
                 .where(AgentChangeSetEventModel.change_set_id == change_set_id)
                 .order_by(AgentChangeSetEventModel.created_at.asc())
             ).all()
-            return [self._event_to_payload(row) for row in rows]
+            return [event_to_payload(row) for row in rows]
 
     def create_change_set(
         self,
@@ -296,7 +309,7 @@ class AgentGovernanceService(AgentRegressionMixin):
             "candidate_commit_sha": candidate_commit_sha,
             "execution_job_id": execution_job_id or change_set.get("execution_job_id"),
             "note": note or change_set.get("note"),
-            "diff_summary": self._diff_summary(diff),
+            "diff_summary": diff_summary(diff),
         }
         return self._transition_change_set(
             change_set_id,
@@ -415,12 +428,12 @@ class AgentGovernanceService(AgentRegressionMixin):
         if agent_id:
             stmt = stmt.where(AgentReleaseModel.agent_id == agent_id)
         with self.feedback_store.Session() as db:
-            return [self._release_to_payload(row) for row in db.scalars(stmt).all()]
+            return [release_to_payload(row) for row in db.scalars(stmt).all()]
 
     def get_release(self, release_id: str) -> JsonObject | None:
         with self.feedback_store.Session() as db:
             row = db.get(AgentReleaseModel, release_id)
-            return self._release_to_payload(row) if row else None
+            return release_to_payload(row) if row else None
 
     def rollback_release(self, release_id: str, *, operator: str = "runtime", note: str | None = None) -> JsonObject:
         return rollback_release(self, release_id, operator=operator, note=note)
@@ -527,7 +540,7 @@ class AgentGovernanceService(AgentRegressionMixin):
             row = row or self._release_row_for_change_set(db, str(change_set["change_set_id"]))
             if row is None:
                 raise AgentGovernanceError(409, "Published Agent change set has no release metadata")
-            release = self._release_to_payload(row)
+            release = release_to_payload(row)
         if requested_tag_name and requested_tag_name != release["tag_name"]:
             raise AgentGovernanceError(409, "Agent change set was already published with a different tag")
         return release
@@ -741,7 +754,7 @@ class AgentGovernanceService(AgentRegressionMixin):
             if isinstance(item, dict) and item.get("dataset_case_id") and str(item.get("status") or "") in {"failed", "needs_human_review"}
         ]
         summary = eval_run.get("summary") if isinstance(eval_run.get("summary"), dict) else {}
-        summary_failed = _safe_int(summary.get("failed")) + _safe_int(summary.get("needs_human_review"))
+        summary_failed = safe_int(summary.get("failed")) + safe_int(summary.get("needs_human_review"))
         gate_result = eval_run.get("gate_result") if isinstance(eval_run.get("gate_result"), dict) else {}
         status = str(eval_run.get("result_status") or gate_result.get("status") or "")
         if not failed_case_ids and summary_failed <= 0 and status not in REGRESSION_BLOCKING_STATUSES:
@@ -750,48 +763,5 @@ class AgentGovernanceService(AgentRegressionMixin):
         detail = f"{failed_count} 条用例失败" if failed_count else f"状态 {status}"
         return f"回归验证存在失败用例（{detail}），禁止发布。请修复后重新运行回归并确认通过。"
 
-    def _event_to_payload(self, row: AgentChangeSetEventModel) -> JsonObject:
-        return {
-            "event_id": row.event_id,
-            "change_set_id": row.change_set_id,
-            "action": row.action,
-            "operator": row.operator,
-            "created_at": row.created_at,
-            "before": row.before_json or {},
-            "after": row.after_json or {},
-        }
-
-    def _release_to_payload(self, row: AgentReleaseModel) -> JsonObject:
-        payload = dict(row.payload_json or {})
-        payload.update(
-            {
-                "release_id": row.release_id,
-                "agent_id": row.agent_id or "main-agent",
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-                "status": row.status,
-                "tag_name": row.tag_name,
-                "commit_sha": row.commit_sha,
-                "change_set_id": row.change_set_id,
-                "rollback_of_release_id": row.rollback_of_release_id,
-                "archive_path": row.archive_path,
-            }
-        )
-        return payload
-
-    def _diff_summary(self, diff: JsonObject) -> JsonObject:
-        return {
-            "added": len(diff.get("added") or []),
-            "modified": len(diff.get("modified") or []),
-            "deleted": len(diff.get("deleted") or []),
-        }
-
     def change_set_worktree_path(self, change_set: JsonObject) -> Path:
         return Path(str(change_set.get("worktree_path") or ""))
-
-
-def _safe_int(value: object) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0

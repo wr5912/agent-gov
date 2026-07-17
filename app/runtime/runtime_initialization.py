@@ -9,7 +9,7 @@ from scripts.bootstrap_runtime_volume import BootstrapResult, bootstrap_runtime_
 
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
-from app.runtime.business_agent_seed_catalog import declared_business_agent_ids
+from app.runtime.business_agent_seed_catalog import declared_business_agent_ids, runtime_seed_catalog_dir
 from app.runtime.managed_agent_policy import (
     WorkspacePolicyPlan,
     plan_workspace_policy,
@@ -56,8 +56,10 @@ def _active_registry_agent_ids(db_path: Path) -> set[str]:
 
 
 def _runtime_agent_ids(settings: RuntimeSettingsView, template_dir: Path) -> list[str]:
+    del template_dir  # 声明集读运行态 catalog，不读仓库出生配置（已删 seed 不再是候选）。
     root = settings.data_dir / "business-agents"
-    known = set(declared_business_agent_ids(seed_root=template_dir)) | _active_registry_agent_ids(settings.runtime_db_path)
+    catalog_root = runtime_seed_catalog_dir(settings.data_dir)
+    known = set(declared_business_agent_ids(seed_root=catalog_root)) | _active_registry_agent_ids(settings.runtime_db_path)
     validated: list[str] = []
     for raw_agent_id in sorted(known):
         try:

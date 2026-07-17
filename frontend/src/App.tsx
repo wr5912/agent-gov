@@ -636,7 +636,9 @@ export default function App() {
       taskId: message?.runId || activeSessionId || undefined,
       alertId: feedbackAlertId,
       caseId: feedbackCaseId,
-      agentId: selectedBusinessAgentId || "main-agent",
+      // selectedBusinessAgentId 已由实际 Agent 列表解析（见上方 find/[0] 回落）。不再回落到
+      // 硬编码 main-agent：它是可删除的普通业务 Agent，删除后该回落会指向不存在的 Agent。
+      agentId: selectedBusinessAgentId,
       agentName: currentAgentName,
     });
     setFeedbackDrawerOpen(true);

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from app.runtime.agent_profiles import GOVERNOR_PROFILE, MAIN_AGENT_PROFILE, build_profiles
+from app.runtime.agent_profiles import GOVERNOR_PROFILE, MAIN_AGENT_PROFILE, build_business_agent_profile, build_profiles
 from app.runtime.mcp_config import McpConfigError, filtered_mcp_servers, resolve_main_mcp_config_path
 from app.runtime.settings import AppSettings
 
@@ -95,7 +95,10 @@ def test_main_profile_uses_project_mcp_without_polluting_feedback_profiles(tmp_p
 
     profiles = build_profiles(settings)
 
-    assert profiles[MAIN_AGENT_PROFILE].mcp_config_path == workspace / ".mcp.json"
+    # main 不再是预制 profile（它是可删除的普通业务 Agent）；这里直接构造业务 profile——
+    # 本用例测的是「业务 Agent 的 mcp_config_path 指向自己 workspace 的 .mcp.json」。
+    business = build_business_agent_profile(settings, agent_id=MAIN_AGENT_PROFILE, workspace_dir=workspace)
+    assert business.mcp_config_path == workspace / ".mcp.json"
     assert profiles[GOVERNOR_PROFILE].mcp_config_path.name == ".mcp.json"
 
 
@@ -106,6 +109,7 @@ def test_legacy_mcp_config_path_env_is_ignored(tmp_path: Path) -> None:
     _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
     _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
 
-    profiles = build_profiles(settings)
-
-    assert profiles[MAIN_AGENT_PROFILE].mcp_config_path == workspace / ".mcp.json"
+    # main 不再是预制 profile（它是可删除的普通业务 Agent）；这里直接构造业务 profile——
+    # 本用例测的是「业务 Agent 的 mcp_config_path 指向自己 workspace 的 .mcp.json」。
+    business = build_business_agent_profile(settings, agent_id=MAIN_AGENT_PROFILE, workspace_dir=workspace)
+    assert business.mcp_config_path == workspace / ".mcp.json"

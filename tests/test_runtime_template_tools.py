@@ -424,7 +424,10 @@ def test_bootstrap_runtime_volume_fills_missing_without_overwrite(tmp_path):
     assert (runtime_root / "main-workspace" / "CLAUDE.md").read_text(encoding="utf-8") == "custom"
     assert (runtime_root / "main-workspace" / "agent.yaml").read_text(encoding="utf-8") == "agent"
     assert (runtime_root / "data" / "outputs" / "reports").is_dir()
-    assert (runtime_root / "data" / "business-agents" / "main-agent" / "version" / "worktrees").is_dir()
+    # main-agent 的 version 骨架不再被无条件创建：main 是可删除的普通业务 Agent，固定目录会在
+    # 它被删除后每次启动重建骨架、使删除不粘。该目录由 GitAgentVersionStore.ensure_bootstrap
+    # 在真正需要版本库时按需建立。
+    assert not (runtime_root / "data" / "business-agents" / "main-agent" / "version").exists()
     assert result["skipped_existing"]
 
 

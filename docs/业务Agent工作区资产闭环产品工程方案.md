@@ -26,7 +26,7 @@
 | --- | --- | --- | --- |
 | live workspace 导入、导出、恢复 | 是；普通文件、二进制和 executable bit 不被平台改写 | 可包含业务运行所需真实值；包按敏感资产保管，不在日志或回执中回显 | 保留包内声明，不套用 generic template 基线 |
 | generic template → live workspace | 除明确的 `{{AGENT_ID}}` / `{{AGENT_NAME}}` 外原样 | repo template 不含真实密钥、私有 header、数据库凭据或本机私有路径 | generic template 提供保守出生基线 |
-| repo 声明 seed/builtin → live workspace | 是；同 ID、跨 ID 都逐字节复制 | seed 本身必须先满足可提交仓库边界；“实例化原样”不等于“可把任意 live workspace 原样提交进 Git” | 保留该 seed 自己的权限配置，不强制改成 generic template 权限 |
+| repo 声明 seed/builtin → 运行态 seed catalog → live workspace | 是；同 ID、跨 ID 都逐字节复制；已在线删除的 seed 不再填充 | seed 本身必须先满足可提交仓库边界；“实例化原样”不等于“可把任意 live workspace 原样提交进 Git” | 保留该 seed 自己的权限配置，不强制改成 generic template 权限 |
 | live workspace → repo 声明 seed/builtin | 先在仓库外生成逐字节候选；写入 repo 时分级检查，不静默改写 | 明确秘密和本机私有路径必须移除；非秘密 endpoint、内网地址等环境绑定值只警告，由提交者决定保留或参数化 | 是否调整权限由该 builtin 的产品定位与评审决定；宽权限提示复核，不自动收紧 |
 
 因此，原样导入与 repo template 的安全基线不冲突；真正冲突的是“带真实秘密的 live
@@ -138,8 +138,44 @@ repo seed 的 `.mcp.json` 继续使用 Claude Code 原生 `${MCP_SERVER_URL}`、
 5. 运行 seed 扫描、目标测试和真实 Compose 空卷初始化。
 6. 经受保护 PR 合并。
 
-不提供在线 API 写 seed，也不把 registry origin 更新当作归档。seed 身份仍由仓库声明目录派生。
+不提供在线 API 写 seed：新增一个 seed 只能经仓库准入，运行态不能绕过评审自造声明基线。
 归档过程中发生的仓库边界处理不改变 live workspace，也不削弱导入/导出的原样契约。
+
+出生身份由仓库声明目录派生，但**运行态存在性**由运行态 seed catalog（`data/seed-catalog/`）裁决：
+bootstrap 把仓库出生配置填充进 catalog，业务 Agent 的出生与 `origin` 判定读 catalog。删除一个
+业务 Agent 会一并移除它的 catalog 条目并留下删除标记，使删除跨重启保持——否则仓库出生配置会在
+每次启动把它填回来。仓库出生配置不受在线删除影响：换一个空运行卷时，该 seed 仍会重新出生。
+受保护 Agent（`security-operations-expert`）例外：其配置与 seed 在仓库维护，bootstrap 强制确保
+catalog 条目存在，在线删除一律拒绝。
+
+## 6.1 删除业务 Agent
+
+```text
+DELETE /api/agent-registry/{agent_id}
+  -> {deleted, impact, workspace_removed, seed_removed, cleanup_complete}
+```
+
+删除是一次注册表 tombstone + 一次磁盘清理，二者分处事务前后：
+
+1. 取维护租约（与导入/导出/恢复共用同一把），因此删除与它们、与活跃 turn 天然互斥——租约获取
+   本身就拒绝存在活跃 run 的 Agent，不会删掉正在被使用的 workspace。
+2. 事务内置 `deleted_at`：Agent 立即不可见，`sync`/磁盘发现均跳过，重启不复活。
+3. **事务提交后**才清理磁盘：删除 `data/business-agents/<id>/` 整个目录（workspace、claude-root、
+   version），移除运行态 seed catalog 条目并写删除标记。rmtree 不可回滚，放进事务块意味着事务
+   回滚后磁盘已经回不来。
+4. 清理结果如实回报（`workspace_removed` / `seed_removed` / `cleanup_complete`）。部分失败时
+   注册表已删除但磁盘有残留，同 id 重建会被安全供给流程拦住，不会静默继承残留内容。
+
+边界：
+
+- **受保护 Agent 拒删**（400）：`security-operations-expert` 的配置与 seed 在仓库维护，只能经
+  受保护 PR 移除。保护认受保护名单，不认 `origin`——origin 随 catalog 内容漂移。
+- **main-agent 可删**：它只是出厂默认，不是平台组件。删除后未指定 `agent_id` 的 `/v1` 请求会得到
+  明确的 404 并提示重新配置出口 Agent，而不是跑在幽灵 profile 上。
+- **治理记录保留**：runs、feedback、change set、release 是已发生事实，不随 Agent 消失；删除前以
+  影响面计数提示，避免无声删除治理对象。
+- **同 id 可重建**：清 tombstone 后重新创建，得到全新 workspace（磁盘已清），不继承被删 Agent 的
+  prompt/skills/MCP 配置。
 
 ## 7. UI
 

@@ -32,6 +32,8 @@ from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 
+from claude_runtime_test_utils import main_profile_resolver
+
 TRAILING_WINDOW = claude_prompt_suggestions._TRAILING_TIMEOUT_SECONDS
 
 
@@ -156,7 +158,7 @@ def _runtime(tmp_path) -> ClaudeRuntime:
         + "\n",
         encoding="utf-8",
     )
-    return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings))
 
 
 async def _stream_until_done(runtime: ClaudeRuntime) -> tuple[list[str], float, float]:

@@ -65,11 +65,17 @@ def test_candidate_profile_keeps_runtime_name_separate_from_business_agent_owner
     assert profile.workspace_dir == workspace
 
 
-def test_build_profiles_expose_category() -> None:
+def test_build_profiles_exposes_only_governance_profiles() -> None:
+    """静态 profile 只有治理执行者；业务 Agent（含 main-agent）不预制。
+
+    main-agent 曾是预制条目。它是可删除的普通业务 Agent，预制会让删除后仍能取到幽灵 profile。
+    业务 Agent 一律由磁盘发现与注册表提供。
+    """
+
     profiles = build_profiles(_settings())
-    assert profiles["main-agent"].category == "business"
-    governance = [name for name, profile in profiles.items() if profile.category == "governance"]
-    assert set(governance) == GOVERNANCE_AGENT_ROLES
+    assert "main-agent" not in profiles
+    assert {name for name, profile in profiles.items() if profile.category == "governance"} == GOVERNANCE_AGENT_ROLES
+    assert [name for name, profile in profiles.items() if profile.category == "business"] == []
 
 
 def test_governor_workspace_owns_read_only_policy() -> None:

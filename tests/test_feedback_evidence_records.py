@@ -1,8 +1,7 @@
+from app.runtime.runtime_db import EvidencePackageModel
 from pydantic import ValidationError
 
 from feedback_store_test_utils import FeedbackSignalCreateRequest, _record_run, _store, pytest
-
-from app.runtime.runtime_db import EvidencePackageModel
 
 
 def test_evidence_package_projection_rejects_invalid_persisted_file_path(tmp_path):

@@ -243,6 +243,8 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
     from app.runtime.settings import AppSettings
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
+    from claude_runtime_test_utils import main_profile_resolver
+
     async def fake_query(*, prompt, options):
         async for _ in prompt:
             pass
@@ -272,7 +274,7 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}) + "\n",
         encoding="utf-8",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings))
 
     async def run() -> tuple[list[str], list[str]]:
         raw_frames: list[str] = []

@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
+from app.runtime.business_agent_seed_catalog import declared_business_agent_ids
 from app.runtime.managed_agent_policy import GENERIC_MCP_MUTATION_RULES
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.schemas import ChatResponse
@@ -31,7 +32,7 @@ SECOPS_EXPERT_WORKSPACE = SEED_ROOT / SECOPS_EXPERT_AGENT_ID / "workspace"
 
 
 def test_security_data_standardization_review_seed_is_declared() -> None:
-    assert REVIEW_AGENT_ID in seed_business_agent_ids()
+    assert REVIEW_AGENT_ID in declared_business_agent_ids(seed_root=RUNTIME_SEEDS)
     assert (REVIEW_WORKSPACE / "CLAUDE.md").is_file()
     assert (REVIEW_WORKSPACE / "agent.yaml").is_file()
     assert (REVIEW_WORKSPACE / ".mcp.json").is_file()
@@ -71,7 +72,7 @@ def test_security_data_standardization_review_seed_config_matches_agent_id() -> 
 
 
 def test_ai_soc_gap_analyzer_seed_is_declared() -> None:
-    assert AI_SOC_GAP_AGENT_ID in seed_business_agent_ids()
+    assert AI_SOC_GAP_AGENT_ID in declared_business_agent_ids(seed_root=RUNTIME_SEEDS)
     assert (AI_SOC_GAP_WORKSPACE / "CLAUDE.md").is_file()
     assert (AI_SOC_GAP_WORKSPACE / "agent.yaml").is_file()
     assert (AI_SOC_GAP_WORKSPACE / ".mcp.json").is_file()
@@ -174,7 +175,7 @@ def test_ai_soc_gap_analyzer_seed_bootstraps_into_registry_for_playground(monkey
         profiles.setdefault(profile.name, profile)
 
     store = AgentRegistryStore(make_session_factory(runtime_root / "data" / "runtime.sqlite3"))
-    store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids())
+    store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids(settings))
 
     registered = store.get_agent(AI_SOC_GAP_AGENT_ID)
     assert registered is not None
@@ -216,7 +217,7 @@ def test_ai_soc_gap_analyzer_seed_routes_through_openai_responses(monkeypatch, t
 
 
 def test_security_operations_expert_seed_is_declared() -> None:
-    assert SECOPS_EXPERT_AGENT_ID in seed_business_agent_ids()
+    assert SECOPS_EXPERT_AGENT_ID in declared_business_agent_ids(seed_root=RUNTIME_SEEDS)
     assert (SECOPS_EXPERT_WORKSPACE / "CLAUDE.md").is_file()
     assert (SECOPS_EXPERT_WORKSPACE / "agent.yaml").is_file()
     assert (SECOPS_EXPERT_WORKSPACE / ".mcp.json").is_file()
@@ -332,7 +333,7 @@ def test_security_operations_expert_seed_bootstraps_into_registry_for_playground
         profiles.setdefault(profile.name, profile)
 
     store = AgentRegistryStore(make_session_factory(runtime_root / "data" / "runtime.sqlite3"))
-    store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids())
+    store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids(settings))
 
     registered = store.get_agent(SECOPS_EXPERT_AGENT_ID)
     assert registered is not None

@@ -26,6 +26,8 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
+from claude_runtime_test_utils import main_profile_resolver
+
 
 def _settings(tmp_path, **overrides) -> AppSettings:
     return AppSettings(
@@ -192,7 +194,7 @@ def _runtime(tmp_path, monkeypatch, *, enabled: bool):
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}) + "\n",
         encoding="utf-8",
     )
-    return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings))
 
 
 def test_runtime_emits_backend_generated_suggestion_after_done(tmp_path, monkeypatch) -> None:

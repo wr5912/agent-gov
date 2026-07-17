@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from app.runtime.errors import BusinessRuleViolation, ConflictError, NotFoundError
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_store import ImprovementStore

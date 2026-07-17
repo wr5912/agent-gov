@@ -53,6 +53,18 @@ _CLAUDE_CHILD_BLOCKED_CONTROL_ENV_KEYS = frozenset(
 _LANGFUSE_ATTRIBUTE_MAX_LENGTH = 200
 
 
+def _require_profile(profile: AgentRuntimeProfile | None) -> AgentRuntimeProfile:
+    """profile 必须已由上游解析。
+
+    这里曾经回落到预制的 main profile。main 已是可删除的普通业务 Agent，没有预制条目可回落；
+    更重要的是回落本身是错误掩蔽——它把「上游没解析出 profile」变成「静默跑在别的 Agent 上」。
+    """
+
+    if profile is None:
+        raise RuntimeUnavailableError("runtime profile was not resolved for this run")
+    return profile
+
+
 def clean_langfuse_attribute_value(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -169,12 +181,12 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             return explicit_profile
 
         if self.business_profile_resolver is not None:
-            resolved = self.business_profile_resolver(requested_agent_id or None)
-            return resolved or self.profiles[MAIN_AGENT_PROFILE]
+            # resolver 契约：永不返回 None（空 agent_id 解析为出厂默认 Agent，且同样过注册表
+            # 校验）。因此这里没有「回落到预制 main profile」——main 已是可删除的普通业务
+            # Agent，回落只会掩盖「默认 Agent 不存在」并在更深处炸掉。
+            return self.business_profile_resolver(requested_agent_id or None)
 
-        if requested_agent_id and requested_agent_id != MAIN_AGENT_PROFILE:
-            raise RuntimeUnavailableError(f"Business profile resolver is not configured for requested agent {requested_agent_id}")
-        return self.profiles[MAIN_AGENT_PROFILE]
+        raise RuntimeUnavailableError(f"Business profile resolver is not configured for requested agent {requested_agent_id or MAIN_AGENT_PROFILE}")
 
     def _build_prompt(self, req: ChatRequest) -> str:
         return req.message
@@ -377,7 +389,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
     ) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
-        profile = profile or self.profiles[MAIN_AGENT_PROFILE]
+        profile = _require_profile(profile)
         env = self._profile_env(profile)
         env.update(self.model_provider_router.claude_env())
 
@@ -488,7 +500,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             "mode": mode,
             "permission_mode": telemetry.get("permission_mode"),
             "claude_web_hitl_enabled": telemetry.get("claude_web_hitl_enabled"),
-            "profile": (profile or self.profiles[MAIN_AGENT_PROFILE]).name,
+            "profile": _require_profile(profile).name,
         }
 
     def _langfuse_propagation_attributes(
@@ -504,8 +516,8 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         return {
             "user_id": self._langfuse_user_id(req.metadata),
             "session_id": context.session.session_id,
-            "trace_name": (profile or self.profiles[MAIN_AGENT_PROFILE]).langfuse_observation_name,
-            "tags": ["role:business", f"agent:{(profile or self.profiles[MAIN_AGENT_PROFILE]).name}"],  # §4.4 多主体
+            "trace_name": _require_profile(profile).langfuse_observation_name,
+            "tags": ["role:business", f"agent:{_require_profile(profile).name}"],  # §4.4 多主体
             "metadata": {key: value for key, value in metadata.items() if value},
         }
 

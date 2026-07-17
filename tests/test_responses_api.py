@@ -198,7 +198,8 @@ def test_strict_unconfigured_runs_main(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
     with TestClient(module.app) as client:
         assert client.post("/v1/responses", json={"input": "hi"}).status_code == 200
-    assert captured["profile"] is None  # 未配置 -> main
+    # 未配置 -> 出厂默认 main-agent，被解析成真实 profile（不再有「None 代表 main」这个特例）。
+    assert captured["profile"] is not None and captured["profile"].agent_id == "main-agent"
 
 
 def test_strict_explicit_main_is_configured_but_runs_main(monkeypatch, tmp_path: Path) -> None:
@@ -208,7 +209,8 @@ def test_strict_explicit_main_is_configured_but_runs_main(monkeypatch, tmp_path:
     with TestClient(module.app) as client:
         assert client.put("/api/settings/openai-compat-agent", json={"agent_id": "main-agent"}).json()["configured"] is True
         assert client.post("/v1/responses", json={"input": "hi"}).status_code == 200
-    assert captured["profile"] is None  # 显式 main 与未配置状态不同，但运行目标仍是 main
+    # 显式配置 main 与未配置的 configured 状态不同，但运行目标同样是 main-agent。
+    assert captured["profile"] is not None and captured["profile"].agent_id == "main-agent"
 
 
 def test_strict_rejects_instructions_422(monkeypatch, tmp_path: Path) -> None:

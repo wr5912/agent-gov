@@ -9,7 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.runtime.agent_paths import business_agent_layout, business_agents_root
-from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents
+from app.runtime.agent_profiles import MAIN_AGENT_PROFILE, build_business_agent_profile, build_profiles, discover_seeded_business_agents
+from app.runtime.protected_business_agents import SECURITY_OPERATIONS_EXPERT_AGENT_ID
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
@@ -20,8 +21,22 @@ from test_api_execution_optimizer import _load_app
 
 
 def _store(tmp_path: Path) -> tuple[AgentRegistryStore, dict]:
+    """注册表 store + 一份「governor（治理执行者）+ 一个业务 Agent」的 profile 集合。
+
+    业务 profile 在此显式构造：`build_profiles` 只提供 governor——main-agent 是可删除的普通
+    业务 Agent，不再作为静态预制条目存在，运行时由磁盘发现提供。这些用例测的是 sync 的
+    「只登记 business / 幂等 / 身份稳定」行为，main 只是恰好被用作样本。
+    """
+
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    return AgentRegistryStore(factory), build_profiles(AppSettings())
+    settings = AppSettings()
+    profiles = build_profiles(settings)
+    profiles[MAIN_AGENT_PROFILE] = build_business_agent_profile(
+        settings,
+        agent_id=MAIN_AGENT_PROFILE,
+        workspace_dir=settings.main_workspace_dir,
+    )
+    return AgentRegistryStore(factory), profiles
 
 
 def test_sync_registers_only_business_agents(tmp_path: Path) -> None:
@@ -286,12 +301,12 @@ def test_business_agent_lifecycle_transitions_and_archived_excluded_from_run(mon
         # archived Agent 仍可查询（审计）但不参与新运行（400）。
         assert any(a["agent_id"] == "soc-ops" for a in client.get("/api/agent-registry").json())
         assert client.post("/api/chat", json={"message": "hi", "agent_id": "soc-ops"}).status_code == 400
-        # main-agent 样板生命周期固定，不接受转移。
-        assert client.post("/api/agent-registry/main-agent/lifecycle", json={"status": "archived"}).status_code == 400
+        # main-agent 不再特判：它是普通业务 Agent，生命周期可正常转移。
+        assert client.post("/api/agent-registry/main-agent/lifecycle", json={"status": "archived"}).status_code == 200
 
 
 def test_delete_business_agent_reports_impact_and_protects_main(monkeypatch, tmp_path: Path) -> None:
-    """AGV-031：统一入口下 agent_id 在运行/反馈/评估/版本一致，删除前给出跨维度影响面提示；main-agent 样板不可删，未知 404。"""
+    """AGV-031：统一入口下 agent_id 在运行/反馈/评估/版本一致，删除前给出跨维度影响面提示；受保护 Agent 不可删，未知 404。"""
     from app.runtime.schemas import FeedbackSignalCreateRequest
 
     module = _load_app(monkeypatch, tmp_path)
@@ -333,8 +348,9 @@ def test_delete_business_agent_reports_impact_and_protects_main(monkeypatch, tmp
         assert impact["change_sets"] >= 1 and impact["releases"] >= 1
         # 删除后不再出现在注册表。
         assert "soc-ops" not in {a["agent_id"] for a in client.get("/api/agent-registry").json()}
-        # main-agent 样板不可删（400），未知 agent_id 报 404。
-        assert client.delete("/api/agent-registry/main-agent").status_code == 400
+        # 受保护 Agent（配置与 seed 在仓库）不可删（400）；未知 agent_id 报 404。
+        # main-agent 不在保护名单内——它是可删除的普通业务 Agent（见 test_main_agent_is_deletable）。
+        assert client.delete(f"/api/agent-registry/{SECURITY_OPERATIONS_EXPERT_AGENT_ID}").status_code in (400, 404)
         assert client.delete("/api/agent-registry/biz-unknown").status_code == 404
 
 

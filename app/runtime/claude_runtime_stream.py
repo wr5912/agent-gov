@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 from . import claude_prompt_suggestions
 from .agent_job_runner import AgentJobRunner
-from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile, read_requires_web_hitl
+from .agent_profiles import AgentRuntimeProfile, read_requires_web_hitl
 from .async_iterators import close_async_iterator
-from .claude_runtime import RuntimeQueryState
+from .claude_runtime import RuntimeQueryState, _require_profile
 from .claude_sdk_interactive import query_with_interactive_client
 from .json_types import JsonObject
 from .message_utils import to_plain
@@ -63,7 +63,9 @@ async def stream_claude_runtime(
     *,
     profile: AgentRuntimeProfile | None = None,
 ) -> AsyncIterator[JsonObject]:
-    selected_profile = profile or runtime.profiles[MAIN_AGENT_PROFILE]
+    # profile 由上游解析（路由层 resolve_business_profile）。不回落预制 main：main 已是可删除的
+    # 普通业务 Agent，回落会把「未解析出 profile」掩蔽成「跑在别的 Agent 上」。
+    selected_profile = _require_profile(profile)
     stream_run = await _new_stream_run(runtime, req, selected_profile)
     context = stream_run.request_context
     heartbeat = SessionTurnLeaseHeartbeat(

@@ -13,6 +13,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _LOCAL_DEBUG_PORT_FAMILY_RE = re.compile(r"(?<![#A-Za-z0-9_])4\d{4}(?![A-Za-z0-9_])|" + "4" + r"[xX]{4}")
+_PORT_POLICY_VENDOR_PREFIXES = ("app/static/docs/",)
 RUNTIME_ENV_KEYS = (
     "CLAUDE_HOME",
     "DATA_DIR",
@@ -144,6 +145,9 @@ def test_tracked_text_files_skip_paths_deleted_from_worktree(tmp_path: Path) -> 
 def test_tracked_text_files_do_not_commit_private_debug_port_family() -> None:
     offenders: list[str] = []
     for rel_path, text in _tracked_text_files():
+        # 自托管 API 文档资源是逐字节 vendor 的压缩产物，其中五位数值是 Unicode 码点而非端口。
+        if rel_path.startswith(_PORT_POLICY_VENDOR_PREFIXES):
+            continue
         for lineno, line in enumerate(text.splitlines(), start=1):
             if _LOCAL_DEBUG_PORT_FAMILY_RE.search(line):
                 offenders.append(f"{rel_path}:{lineno}:{line.strip()}")
@@ -284,12 +288,12 @@ def test_official_docker_env_examples_do_not_define_runtime_volume_mode() -> Non
     assert "RUNTIME_VOLUME_MODE=" not in local_debug_example
 
 
-def test_official_env_examples_use_debug_api_key_without_forcing_response_orchestrator_key() -> None:
+def test_official_env_examples_expose_only_the_general_debug_api_key() -> None:
     for env_file in ("docker/.env.example", "docker/.env.local-debug.example"):
         lines = set((REPO_ROOT / env_file).read_text(encoding="utf-8").splitlines())
 
         assert "API_KEY=change-me" in lines
-        assert "RESPONSE_ORCHESTRATOR_API_KEY=" in lines
+        assert "RESPONSE_ORCHESTRATOR_API_KEY=" not in lines
 
 
 def test_local_debug_env_example_keeps_runtime_keys_in_sync() -> None:

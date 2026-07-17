@@ -257,7 +257,7 @@ def test_security_operations_expert_fuses_response_disposal_permissions() -> Non
     assert "Bash(rm -rf /)" in permissions["deny"]
 
 
-def test_security_operations_expert_config_matches_agent_id_and_response_contract() -> None:
+def test_security_operations_expert_is_exportable_flagship_with_native_confirmation_contract() -> None:
     agent_yaml = (SECOPS_EXPERT_WORKSPACE / "agent.yaml").read_text(encoding="utf-8")
     claude_md = (SECOPS_EXPERT_WORKSPACE / "CLAUDE.md").read_text(encoding="utf-8")
     mcp = json.loads((SECOPS_EXPERT_WORKSPACE / ".mcp.json").read_text(encoding="utf-8"))
@@ -273,17 +273,24 @@ def test_security_operations_expert_config_matches_agent_id_and_response_contrac
     assert list(mcp["mcpServers"]) == ["sec-ops"]
     assert mcp["mcpServers"]["sec-ops"]["url"] == "${SEC_OPS_MCP_URL}"
 
-    assert "响应处置系统（RO）通过结构化 `phase` 驱动" in claude_md
-    assert "phase=proposal" in claude_md
-    assert "phase=approved_execution" in claude_md
+    assert "网络安全运营旗舰智能体" in claude_md
+    assert "以任意平台 Agent ID 导入" in claude_md
+    assert "不能用于判断当前实例是否有资格运行或确认工具" in claude_md
+    assert "Claude 原生工具权限确认" in claude_md
     assert "threat-response-disposition" in claude_md
-    assert "`mcp__sec-ops__soc_api__execute` 是单原子动作执行接口" in claude_md
-    assert "create/manual 每次请求逐次校验批准快照" in agent_yaml
+    assert "工具卡输入就是确认对象；不得在确认后修改工具参数" in claude_md
+    assert "不得请求 run 级放行" in claude_md
+    assert "包被跨 ID 导入后仍按来源权限运行" in agent_yaml
+    assert "native_confirmation_source: .claude/settings.json" in agent_yaml
     assert "告警分流" in analysis_skill
     assert "真实响应处置交给 threat-response-disposition" in analysis_skill
-    assert "用户确认对象始终是完整剧本" in response_skill
-    assert "create` / `manual` 的 AgentGov ask 是 RO 内部授权握手" in response_skill
-    assert "获得 `instanceId` 后立即停止" in response_skill
+    assert "确认对象是工具卡中展示的完整输入" in response_skill
+    assert "只接受当次 `allow_once` 或 `deny`" in response_skill
+    assert "`manual` 返回非空 `instanceId` 后立即停止" in response_skill
+    combined = "\n".join((agent_yaml, claude_md, response_skill))
+    assert "approved_execution" not in combined
+    assert "agentgov.phase" not in combined
+    assert "RESPONSE_ORCHESTRATOR" not in combined
 
 
 def test_hitl_required_deployment_contract_and_low_fixes() -> None:

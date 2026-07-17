@@ -77,7 +77,7 @@ def test_retrieve_strips_reserved_metadata_on_echo(monkeypatch, tmp_path: Path) 
     assert body["metadata"] == {"source": "playground"}
 
 
-def test_retrieve_projects_persisted_response_disposition_context(monkeypatch, tmp_path: Path) -> None:
+def test_retrieve_ignores_retired_response_disposition_payload(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     run_id = _record(
         module,
@@ -95,8 +95,5 @@ def test_retrieve_projects_persisted_response_disposition_context(monkeypatch, t
     with TestClient(module.app) as client:
         body = client.get(f"/v1/responses/resp_{run_id}").json()
 
-    assert body["agentgov"]["phase"] == "approved_execution"
-    assert body["agentgov"]["case_id"] == "case-1"
-    assert body["agentgov"]["approval_request_id"] == "approval-1"
-    assert body["agentgov"]["playbook_digest"] == "a" * 64
-    assert body["agentgov"]["execution_run_id"] == "execution-1"
+    for field in ("phase", "case_id", "approval_request_id", "playbook_digest", "execution_run_id"):
+        assert field not in body["agentgov"]

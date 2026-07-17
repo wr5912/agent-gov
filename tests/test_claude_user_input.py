@@ -3,22 +3,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from app.routers.claude_user_input import create_claude_user_input_router
-from app.runtime.api_auth import ApiPrincipal
 from app.runtime.claude_user_input_schemas import ClaudeUserInputDecisionRequest
 from app.runtime.claude_user_input_service import (
     ClaudeUserInputConflict,
-    ClaudeUserInputForbidden,
     ClaudeUserInputInvalid,
     ClaudeUserInputService,
 )
-from app.runtime.response_disposition_control import (
-    SECURITY_OPERATIONS_EXPERT_AGENT_ID,
-    SOC_CREATE_TOOL,
-    TrustedResponseDispositionContext,
-)
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
-from app.runtime.stores.response_disposition_claim_store import ResponseDispositionClaimStore
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -26,19 +18,6 @@ from fastapi.testclient import TestClient
 def _service(tmp_path, *, timeout_seconds: int = 5) -> ClaudeUserInputService:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     return ClaudeUserInputService(ClaudeUserInputStore(factory), timeout_seconds=timeout_seconds)
-
-
-def _protected_service(tmp_path) -> tuple[ClaudeUserInputService, ResponseDispositionClaimStore]:
-    factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    claim_store = ResponseDispositionClaimStore(factory)
-    return (
-        ClaudeUserInputService(
-            ClaudeUserInputStore(factory),
-            timeout_seconds=5,
-            response_disposition_claim_store=claim_store,
-        ),
-        claim_store,
-    )
 
 
 def _decision(token: str, **overrides: object) -> ClaudeUserInputDecisionRequest:
@@ -53,12 +32,13 @@ async def _start_wait(
     tool_name: str = "Bash",
     input_data: object | None = None,
     run_id: str = "run-1",
+    business_agent_id: str = "main-agent",
 ):
     event_queue: asyncio.Queue = asyncio.Queue()
     task = asyncio.create_task(
         service.create_and_wait(
             event_queue=event_queue,
-            business_agent_id="main-agent",
+            business_agent_id=business_agent_id,
             run_id=run_id,
             api_session_id="sess-1",
             sdk_session_id="sdk-1",
@@ -98,58 +78,34 @@ def test_tool_permission_allow_once_resolves_sdk_wait_and_keeps_debug_input(tmp_
     asyncio.run(scenario())
 
 
-def test_protected_soc_decision_requires_ro_one_shot_updated_input(tmp_path):
+def test_high_risk_mcp_uses_generic_one_shot_confirmation_for_any_agent_id(tmp_path):
     async def scenario():
-        service, claim_store = _protected_service(tmp_path)
-        disposition = TrustedResponseDispositionContext(
-            phase="approved_execution",
-            case_id="case-1",
-            approval_request_id="approval-1",
-            playbook_digest="a" * 64,
-            execution_run_id="execution-1",
+        service = _service(tmp_path)
+        _event_queue, task, request = await _start_wait(
+            service,
+            business_agent_id="soc-derived-copy",
+            tool_name="mcp__sec-ops__soc_api__manual",
+            input_data={"playbookId": "playbook-1", "mode": "manual"},
         )
-        claim_store.claim(disposition)
-        event_queue: asyncio.Queue = asyncio.Queue()
-        task = asyncio.create_task(
-            service.create_and_wait(
-                event_queue=event_queue,
-                business_agent_id=SECURITY_OPERATIONS_EXPERT_AGENT_ID,
-                run_id="run-1",
-                api_session_id="sess-1",
-                sdk_session_id="sdk-1",
-                tool_name=SOC_CREATE_TOOL,
-                input_data={"playbookId": "model-draft"},
-                context={"tool_use_id": "toolu-create"},
-                response_disposition=disposition,
-            )
-        )
-        request = (await event_queue.get())["data"]
+        assert request["business_agent_id"] == "soc-derived-copy"
+        assert request["input"] == {"playbookId": "playbook-1", "mode": "manual"}
+        assert request["risk"]["level"] == "high"
+        assert request["risk"]["run_allow_eligible"] is False
 
-        with pytest.raises(ClaudeUserInputForbidden, match="response orchestrator"):
+        with pytest.raises(ClaudeUserInputInvalid, match="eligible low-risk category"):
             service.submit_decision(
                 request["request_id"],
-                decision=_decision(request["decision_token"], updated_input={"playbookId": "approved"}),
-                decided_by="ordinary-client",
-                principal=ApiPrincipal.GENERAL_API,
+                decision=_decision(request["decision_token"], action="allow_for_run"),
+                decided_by="tester",
             )
-        with pytest.raises(ClaudeUserInputInvalid, match="requires non-empty updated_input"):
-            service.submit_decision(
-                request["request_id"],
-                decision=_decision(request["decision_token"]),
-                decided_by="response-orchestrator",
-                principal=ApiPrincipal.RESPONSE_ORCHESTRATOR,
-            )
-
         service.submit_decision(
             request["request_id"],
-            decision=_decision(request["decision_token"], updated_input={"playbookId": "approved"}),
-            decided_by="response-orchestrator",
-            principal=ApiPrincipal.RESPONSE_ORCHESTRATOR,
+            decision=_decision(request["decision_token"]),
+            decided_by="tester",
         )
         sdk_decision = await task
-        claim = claim_store.get("approval-1")
-        assert sdk_decision.updated_input == {"playbookId": "approved"}
-        assert claim is not None and claim.create_authorized is True
+        assert sdk_decision.action == "allow_once"
+        assert not hasattr(sdk_decision, "updated_input")
 
     asyncio.run(scenario())
 
@@ -515,7 +471,6 @@ def test_decision_api_rejects_allow_modified_and_updated_input_for_ordinary_requ
         create_claude_user_input_router(
             service=service,
             require_api_key=lambda: None,
-            authenticate_api_or_ro=lambda: ApiPrincipal.GENERAL_API,
         )
     )
     client = TestClient(app)
@@ -547,7 +502,6 @@ def test_decision_api_rejects_unknown_request_and_wrong_token(tmp_path):
         create_claude_user_input_router(
             service=service,
             require_api_key=lambda: None,
-            authenticate_api_or_ro=lambda: ApiPrincipal.GENERAL_API,
         )
     )
     client = TestClient(app)
@@ -612,7 +566,6 @@ def test_v1_confirmation_path_wired_and_rejects_legacy_triple(tmp_path):
         create_claude_user_input_router(
             service=service,
             require_api_key=lambda: None,
-            authenticate_api_or_ro=lambda: ApiPrincipal.GENERAL_API,
         )
     )
     client = TestClient(app)

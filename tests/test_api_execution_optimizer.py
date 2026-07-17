@@ -5,7 +5,7 @@ import sys
 from app.runtime.business_agent_workspace import seed_business_agent_workspace
 
 
-def _load_app(monkeypatch, tmp_path, *, api_key="", response_orchestrator_api_key=""):
+def _load_app(monkeypatch, tmp_path, *, api_key=""):
     root = tmp_path / "docker" / "volume"
     workspace = root / "main-workspace"
     data = root / "data"
@@ -60,7 +60,7 @@ def _load_app(monkeypatch, tmp_path, *, api_key="", response_orchestrator_api_ke
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
     monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "")
     monkeypatch.setenv("API_KEY", api_key)
-    monkeypatch.setenv("RESPONSE_ORCHESTRATOR_API_KEY", response_orchestrator_api_key)
+    monkeypatch.delenv("RESPONSE_ORCHESTRATOR_API_KEY", raising=False)
     monkeypatch.setenv("AGENT_GIT_REPOSITORY_DIR", str(main_ws))
     monkeypatch.setenv("AGENT_GIT_WORKTREES_DIR", str(agent_worktrees))
     monkeypatch.setenv("AGENT_RELEASE_ARCHIVES_DIR", str(release_archives))

@@ -55,6 +55,7 @@ from .runtime_db_migrations_0041 import migrate_0041_agent_registry_provisioning
 from .runtime_db_migrations_0042 import migrate_0042_retire_persisted_agent_job_queue
 from .runtime_db_migrations_0043 import migrate_0043_response_disposition_claims
 from .runtime_db_migrations_0044 import migrate_0044_agent_release_source_claims
+from .runtime_db_migrations_0045 import migrate_0045_drop_response_disposition_claims
 from .schema_self_heal import sync_missing_columns
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
@@ -66,7 +67,6 @@ from .agent_maintenance_db import (  # noqa: E402,F401
     AgentWorktreeCleanupTaskModel,
 )
 from .claude_user_input_db import ClaudeUserInputRequestModel  # noqa: E402,F401
-from .response_disposition_db import ResponseDispositionClaimModel  # noqa: E402,F401
 from .test_dataset_db import (  # noqa: E402,F401
     ArchivedTestDatasetAssetModel,
     TestDatasetCaseModel,
@@ -540,6 +540,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ),
         ("0043_response_disposition_claims", migrate_0043_response_disposition_claims),
         ("0044_agent_release_source_claims", migrate_0044_agent_release_source_claims),
+        ("0045_drop_response_disposition_claims", migrate_0045_drop_response_disposition_claims),
     ):
         if version in applied:
             continue

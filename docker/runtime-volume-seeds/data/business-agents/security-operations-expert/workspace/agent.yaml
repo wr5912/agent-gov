@@ -1,15 +1,13 @@
 agent:
   id: security-operations-expert
-  name: 网络安全运营专家智能体
-  english_name: Security Operations Expert Agent
-  version: 0.1.0
+  name: 网络安全运营旗舰智能体
+  english_name: Security Operations Flagship Agent
+  version: 0.2.0
   language: zh-CN
   runtime: claude-code
   profile: security-operations-expert
-  # 本 Agent 的原生 Web HITL 由 .claude/settings.json 的 permissions.ask 单一派生，
-  # 仅作为 RO 内部执行授权握手，不在 agent.yaml 维护第二份布尔状态。
-  # 用户只在 RO 界面确认一次整本剧本；proposal 阶段拒绝写工具，approved_execution
-  # 阶段由 RO 对 create/manual 每次请求逐次校验批准快照并内部 allow_once。
+  # 原生 Web HITL 完全由 .claude/settings.json 的 permissions.ask 派生。
+  # 包被跨 ID 导入后仍按来源权限运行，不以本文件中的 id/profile 做二次准入。
 
 capabilities:
   - alert_triage
@@ -38,14 +36,13 @@ paths:
 
 mcp:
   default_transport: http
-  # 单一 SOC 网关由 .mcp.json 的 sec-ops server 挂载。整本确认由 RO 两阶段门承担。
   servers:
     sec-ops:
       purpose: 统一 SOC 网关，聚合 SOC 处置与研判数据能力
       risk: mixed
       tool_families:
         - name: mcp__sec-ops__soc_api__*
-          purpose: SOC 处置能力；create/manual 仅由 approved_execution 使用，execute 及其他 mutation 禁止
+          purpose: SOC 处置能力；create/manual 由 Claude 原生工具卡逐次确认，execute 及其他 mutation 禁止
           risk: mixed
         - name: mcp__sec-ops__threat_analysis__*
           purpose: 研判数据只读（告警/事件/资产/分析结果等）
@@ -64,6 +61,16 @@ operational_model:
   evidence_first: true
   distinguish_fact_inference_action: true
   default_output_dir: ../../../outputs/security-operations-expert
+  native_confirmation_source: .claude/settings.json
+  temporary_submission:
+    - create_playbook
+    - submit_manual
+  published_submission:
+    - submit_manual
+  stop_after_nonempty_instance_id: true
+  poll_execution_result: false
+  evaluate_effect_in_submission: false
+  close_response_case: false
   investigation_scopes:
     - alert
     - incident
@@ -74,40 +81,6 @@ operational_model:
     - network
     - cloud
     - vulnerability
-
-# AGENTGOV:SECURITY-APPROVAL:START
-approval_policy:
-  owner: response-orchestration
-  phase_field: phase
-  proposal_phase: proposal
-  approved_execution_phase: approved_execution
-  whole_playbook_only: true
-  user_confirmation_count: 1
-  native_web_hitl_role: ro_internal_execution_authorization
-  native_web_hitl_tools:
-    - mcp__sec-ops__soc_api__create
-    - mcp__sec-ops__soc_api__manual
-  native_web_hitl_decision: allow_once_per_request
-  validate_each_permission_input_against_approved_snapshot: true
-  proposal_side_effects: deny
-  approved_execution:
-    temporary:
-      - create_playbook
-      - submit_manual
-    published_reuse:
-      - submit_manual
-  forbidden_tools:
-    - mcp__sec-ops__soc_api__execute
-    - mcp__sec-ops__soc_api__update*
-    - mcp__sec-ops__soc_api__delete*
-    - mcp__sec-ops__soc_api__upload*
-    - mcp__sec-ops__soc_api__cancel*
-    - mcp__sec-ops__soc_api__rollback
-  stop_after_nonempty_instance_id: true
-  poll_execution_result: false
-  evaluate_effect: false
-  close_response_case: false
-# AGENTGOV:SECURITY-APPROVAL:END
 
 observability:
   hook_audit_log: ../../../transcripts/claude-hook-audit.jsonl

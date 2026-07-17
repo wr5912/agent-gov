@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 
 from app.runtime.business_agent_seed_catalog import runtime_volume_seeds_dir
 
-SECURITY_OPERATIONS_EXPERT_AGENT_ID = "security-operations-expert"
 BASH_ALLOW_RULE = "Bash(*)"
 GENERIC_MCP_MUTATION_RULES = (
     "mcp__*__*write*",

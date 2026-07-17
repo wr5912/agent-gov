@@ -7,7 +7,6 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, Query
 
 from app.routers.sessions import _resolve_owning_profile
-from app.runtime.api_auth import ApiPrincipal
 from app.runtime.errors import NotFoundError
 from app.runtime.json_types import JsonObject
 from app.runtime.openai_responses_adapter import (
@@ -119,17 +118,13 @@ def create_conversations_router(
     settings: AppSettings,
     agent_registry_store: AgentRegistryStore,
     require_api_key: Callable,
-    authenticate_api_or_ro: Callable,
 ) -> APIRouter:
     """OpenAI Conversations 接口。会话对象与 items 均投影自 SDK session/transcript，后端不另建消息副本。"""
 
-    router = APIRouter(prefix="/v1", tags=["openai-conversations"])
+    router = APIRouter(prefix="/v1", tags=["openai-conversations"], dependencies=[Depends(require_api_key)])
 
     @router.post("/conversations", response_model=Conversation, summary="Create a conversation")
-    async def create_conversation(
-        req: Optional[ConversationCreateRequest] = None,
-        _: ApiPrincipal = Depends(authenticate_api_or_ro),  # noqa: B008 - FastAPI dependency factory
-    ) -> Conversation:
+    async def create_conversation(req: Optional[ConversationCreateRequest] = None) -> Conversation:
         metadata = public_metadata(req.metadata) if req else {}
         return _conversation(session_store.create(metadata=metadata))
 
@@ -137,7 +132,6 @@ def create_conversations_router(
         "/conversations",
         response_model=ConversationList,
         summary="List conversations (AgentGov extension for the session sidebar)",
-        dependencies=[Depends(require_api_key)],
     )
     async def list_conversations() -> ConversationList:
         return ConversationList(data=[_conversation(session) for session in session_store.list()])
@@ -146,7 +140,6 @@ def create_conversations_router(
         "/conversations/{conversation_id}",
         response_model=Conversation,
         summary="Retrieve a conversation",
-        dependencies=[Depends(require_api_key)],
     )
     async def get_conversation(conversation_id: str) -> Conversation:
         session_id = session_id_from_conversation(conversation_id)
@@ -159,7 +152,6 @@ def create_conversations_router(
         "/conversations/{conversation_id}",
         response_model=ConversationDeleted,
         summary="Delete a conversation mapping",
-        dependencies=[Depends(require_api_key)],
     )
     async def delete_conversation(conversation_id: str) -> ConversationDeleted:
         session_id = session_id_from_conversation(conversation_id)
@@ -170,7 +162,6 @@ def create_conversations_router(
         "/conversations/{conversation_id}/items",
         response_model=ConversationItemList,
         summary="List conversation items (projected from the SDK transcript; cursor-style after/limit/order/include)",
-        dependencies=[Depends(require_api_key)],
     )
     async def list_conversation_items(
         conversation_id: str,

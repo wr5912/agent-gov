@@ -12,7 +12,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _PROFILE_ENV_KEYS = (
     "API_KEY",
-    "RESPONSE_ORCHESTRATOR_API_KEY",
     "API_PORT",
     "LOG_LEVEL",
     "RUNTIME_VOLUME_MODE",
@@ -38,13 +37,11 @@ _PROFILE_ENV_KEYS = (
 )
 
 
-def test_settings_requires_distinct_general_and_response_orchestrator_keys() -> None:
-    with pytest.raises(ValueError, match="must be different"):
-        AppSettings(_env_file=None, API_KEY="same-secret", RESPONSE_ORCHESTRATOR_API_KEY="same-secret")
+def test_settings_exposes_only_the_general_api_key() -> None:
+    settings = AppSettings(_env_file=None, API_KEY="  general-secret  ")
 
-    settings = AppSettings(_env_file=None, API_KEY="  ", RESPONSE_ORCHESTRATOR_API_KEY="  ro-secret  ")
-    assert settings.api_key is None
-    assert settings.response_orchestrator_api_key == "ro-secret"
+    assert settings.api_key == "general-secret"
+    assert not hasattr(settings, "response_orchestrator_api_key")
 
 
 def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_path, monkeypatch):
@@ -198,7 +195,6 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "model_provider_vllm_allow_direct": False,
         "provider_api_key_configured": False,
         "provider_api_url_configured": False,
-        "response_orchestrator_api_key_configured": False,
         "governance_agent_timeout_seconds": 300,
         "dspy_output_formatter_timeout_seconds": 300,
         "claude_web_hitl_enabled": False,

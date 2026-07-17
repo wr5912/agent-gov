@@ -123,7 +123,6 @@ services:
       HITL_TIMEOUT_SECONDS: ${HITL_TIMEOUT_SECONDS:-300}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-http://host.docker.internal:58001/mcp}
       SEC_OPS_MCP_URL: ${SEC_OPS_MCP_URL:-http://host.docker.internal:58001/mcp}
-      RESPONSE_ORCHESTRATOR_API_KEY: ${RESPONSE_ORCHESTRATOR_API_KEY:-}
       CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
       NO_PROXY: ${NO_PROXY:-}
       no_proxy: ${no_proxy:-}

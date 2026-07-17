@@ -69,7 +69,6 @@ class RuntimeSettingsLogFields(TypedDict):
     model_provider_vllm_allow_direct: bool
     provider_api_key_configured: bool
     provider_api_url_configured: bool
-    response_orchestrator_api_key_configured: bool
     governance_agent_timeout_seconds: int
     dspy_output_formatter_timeout_seconds: int
     claude_web_hitl_enabled: bool
@@ -180,7 +179,6 @@ class AppSettings(BaseSettings):
     model_provider_probe_timeout_seconds: float = Field(default=30.0, alias="MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS")
     model_provider_warning_ttl_seconds: int = Field(default=300, alias="MODEL_PROVIDER_WARNING_TTL_SECONDS")
     api_key: Optional[str] = Field(default=None, alias="API_KEY")
-    response_orchestrator_api_key: Optional[str] = Field(default=None, alias="RESPONSE_ORCHESTRATOR_API_KEY")
 
     # 会话历史读取端点 GET /api/sessions/{id}/messages 默认返回完整对话正文（会话所有者回放自己的历史）；
     # 仅当该开关打开时对返回的 text/thinking/tool 输入与结果做脱敏。
@@ -260,7 +258,7 @@ class AppSettings(BaseSettings):
             return None
         return value
 
-    @field_validator("api_key", "response_orchestrator_api_key", mode="before")
+    @field_validator("api_key", mode="before")
     @classmethod
     def _blank_optional_api_key(cls, value: object) -> object:
         if isinstance(value, str):
@@ -270,8 +268,6 @@ class AppSettings(BaseSettings):
 
     def model_post_init(self, __context: Any) -> None:
         _derive_profile_dirs(self)
-        if self.api_key is not None and self.response_orchestrator_api_key is not None and self.api_key == self.response_orchestrator_api_key:
-            raise ValueError("API_KEY and RESPONSE_ORCHESTRATOR_API_KEY must be different")
 
     @property
     def settings_env_file(self) -> Path | None:
@@ -404,7 +400,6 @@ def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFiel
         "model_provider_vllm_allow_direct": settings.model_provider_vllm_allow_direct,
         "provider_api_key_configured": provider_api_key_configured(settings.provider_api_key),
         "provider_api_url_configured": bool(settings.provider_api_url),
-        "response_orchestrator_api_key_configured": bool(settings.response_orchestrator_api_key),
         "governance_agent_timeout_seconds": settings.governance_agent_timeout_seconds,
         "dspy_output_formatter_timeout_seconds": settings.dspy_output_formatter_timeout_seconds,
         "claude_web_hitl_enabled": settings.enable_claude_web_hitl,

@@ -11,11 +11,9 @@ from .agent_job_runner import AgentJobRunner
 from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile, read_requires_web_hitl
 from .async_iterators import close_async_iterator
 from .claude_runtime import RuntimeQueryState
-from .claude_runtime_permissions import runtime_response_disposition
 from .claude_sdk_interactive import query_with_interactive_client
 from .json_types import JsonObject
 from .message_utils import to_plain
-from .response_disposition_control import permission_denial_reason, response_disposition_fields
 from .runtime_db import utc_now
 from .schemas import ChatRequest
 from .session_turn_lease import SessionTurnLeaseHeartbeat
@@ -152,10 +150,6 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
     from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
     async def sdk_can_use_tool(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
-        response_disposition = runtime_response_disposition(stream_run.req)
-        denial = permission_denial_reason(stream_run.profile.agent_id, tool_name, response_disposition)
-        if denial is not None:
-            return PermissionResultDeny(message=denial)
         service = stream_run.runtime.user_input_service
         if service is None or not stream_run.web_hitl_enabled:
             message = f"工具 {tool_name} 请求人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启或 HITL 服务不可用；请求已显式拒绝。"
@@ -170,14 +164,11 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
             tool_name=tool_name,
             input_data=input_data,
             context=sdk_context,
-            response_disposition=response_disposition,
         )
         if decision.action == "allow_once":
-            if decision.updated_input is not None:
-                return PermissionResultAllow(updated_input=decision.updated_input)
             return PermissionResultAllow()
         if decision.action == "answer_question":
-            return PermissionResultAllow(updated_input=decision.updated_input or decision.ask_user_question_input or {})
+            return PermissionResultAllow(updated_input=decision.ask_user_question_input or {})
         return PermissionResultDeny(message=decision.message or "User denied Claude tool request.")
 
     return sdk_can_use_tool
@@ -279,9 +270,7 @@ async def _emit_backend_prompt_suggestion(
     if not isinstance(user_message, str):
         return
     answer = _answer_text_from_state(stream_run.query_state)
-    suggestion = await asyncio.to_thread(
-        runtime.prompt_suggestion_generator.generate, user_message, answer
-    )
+    suggestion = await asyncio.to_thread(runtime.prompt_suggestion_generator.generate, user_message, answer)
     if not suggestion:
         return
     await event_queue.put(
@@ -325,7 +314,6 @@ async def _publish_result_event(
         "stop_reason": state.stop_reason,
         "errors": result_errors,
     }
-    data.update(response_disposition_fields(runtime_response_disposition(stream_run.req)))
     await event_queue.put(
         {
             "event": "result",

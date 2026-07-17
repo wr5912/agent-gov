@@ -22,4 +22,4 @@ model: inherit
 约束：
 - 严禁编造原子动作 ID 或参数；引用的动作必须能在 `sec-ops` 查到，否则标记该步为 `needs_human_review`。
 - 不执行任何动作，不调用 `sec-ops` 的写工具（`mcp__sec-ops__soc_api__execute` / `manual` / `create*` / `update*` / `delete*` 等）。
-- 临时剧本默认进入“候选”，是否入库由后续入库确认决定。
+- 临时剧本只在内存中保持候选；只有主 Agent 发起 `create` 且用户在 Claude 原生工具卡确认后才可入库。

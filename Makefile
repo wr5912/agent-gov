@@ -15,7 +15,6 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/routers/claude_user_input.py \
 	app/routers/conversations.py \
 	app/routers/responses.py \
-	app/runtime/api_auth.py \
 	app/runtime/advisory_lock.py \
 	app/runtime/agent_git_raw_storage.py \
 	app/runtime/agent_job_types.py \
@@ -38,11 +37,6 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/runtime_coordination.py \
 	app/runtime/runtime_initialization.py \
 	app/runtime/service_launcher.py \
-	app/runtime/records/response_disposition_records.py \
-	app/runtime/response_disposition_control.py \
-	app/runtime/response_disposition_db.py \
-	app/runtime/response_disposition_stream.py \
-	app/runtime/stores/response_disposition_claim_store.py \
 	app/services/agent_change_set_queries.py \
 	app/services/agent_workspace_package_codec.py \
 	app/services/agent_workspace_packages.py \

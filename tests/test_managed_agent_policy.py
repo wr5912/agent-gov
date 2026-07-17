@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 from app.runtime.managed_agent_policy import (
-    SECURITY_OPERATIONS_EXPERT_AGENT_ID,
     plan_workspace_policy,
     runtime_workspace_policy_violations,
     validate_managed_mcp_content,
@@ -15,6 +14,7 @@ from scripts.bootstrap_runtime_volume import bootstrap_runtime_volume
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SEEDS = REPO_ROOT / "docker" / "runtime-volume-seeds"
+SECURITY_OPERATIONS_EXPERT_AGENT_ID = "security-operations-expert"
 SEEDED_AGENT_IDS = tuple(sorted(path.name for path in (SEEDS / "data" / "business-agents").iterdir() if (path / "workspace").is_dir()))
 
 
@@ -46,7 +46,7 @@ def test_seeded_business_agent_workspaces_match_managed_policy(tmp_path, agent_i
     )
 
 
-def test_security_operations_workspace_matches_specialized_managed_policy(tmp_path):
+def test_security_operations_workspace_uses_generic_structural_managed_policy(tmp_path):
     runtime_root = _seeded_runtime(tmp_path)
     workspace = runtime_root / "data" / "business-agents" / SECURITY_OPERATIONS_EXPERT_AGENT_ID / "workspace"
     settings_path = workspace / ".claude" / "settings.json"

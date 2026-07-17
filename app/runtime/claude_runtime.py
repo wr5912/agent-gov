@@ -22,7 +22,6 @@ from .agent_profiles import (
     candidate_profile,
 )
 from .async_iterators import close_async_iterator
-from .claude_runtime_permissions import runtime_response_disposition
 from .claude_runtime_session_persistence import RuntimeSessionPersistenceMixin
 from .claude_trust import ensure_claude_workspace_trusted
 from .claude_user_input_service import ClaudeUserInputService
@@ -37,7 +36,6 @@ from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
 from .prompt_suggestion_generator import PromptSuggestionGenerator
 from .records.source_records import AgentRunRecord
-from .response_disposition_control import response_disposition_fields, trusted_response_disposition_prompt
 from .runtime_activity import RuntimeActivityExtractor
 from .schemas import ChatRequest, ChatResponse
 from .session_store import LocalSession, LocalSessionStore
@@ -45,6 +43,13 @@ from .session_turn_lease import SessionTurnLeaseHeartbeat
 from .settings import AppSettings
 from .stores.feedback_store import FeedbackStore
 
+_CLAUDE_CHILD_BLOCKED_CONTROL_ENV_KEYS = frozenset(
+    {
+        "API_KEY",
+        "FRONTEND_RUNTIME_API_KEY",
+        "RESPONSE_ORCHESTRATOR_API_KEY",
+    }
+)
 _LANGFUSE_ATTRIBUTE_MAX_LENGTH = 200
 
 
@@ -132,9 +137,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         self.langfuse = RuntimeLangfuseClient(settings)
         self.model_provider_router = ModelProviderRouter(settings)
         self.output_formatter = DSPyOutputFormatter(settings, langfuse=self.langfuse, provider_router=self.model_provider_router)
-        self.prompt_suggestion_generator = PromptSuggestionGenerator(
-            settings, provider_router=self.model_provider_router, langfuse=self.langfuse
-        )
+        self.prompt_suggestion_generator = PromptSuggestionGenerator(settings, provider_router=self.model_provider_router, langfuse=self.langfuse)
         self.job_runner = AgentJobRunner(
             settings=settings,
             profiles=self.profiles,
@@ -206,7 +209,6 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         run_id: str,
         agent_version_id: Optional[str],
     ) -> JsonObject:
-        disposition = runtime_response_disposition(req)
         return {
             "run_id": run_id,
             "agent_version_id": agent_version_id,
@@ -220,7 +222,6 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             "model": req.model or self.settings.agent_model,
             "system_append": req.system_append,
             "metadata": req.metadata,
-            **({"response_disposition": response_disposition_fields(disposition)} if disposition is not None else {}),
         }
 
     def _runtime_output_payload(
@@ -284,7 +285,6 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         if self.feedback_store is None:
             return None
         answer_summary = answer.strip().replace("\n", " ")[:500]
-        disposition = runtime_response_disposition(req)
         return self.feedback_store.prepare_run_record(
             {
                 "run_id": run_id,
@@ -307,7 +307,6 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
                 "metadata": req.metadata,
                 "created_at": created_at,
                 "completed_at": completed_at,
-                **({"response_disposition": response_disposition_fields(disposition)} if disposition is not None else {}),
             }
         )
 
@@ -349,6 +348,8 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         env.update(self.langfuse.build_env())
         claude_env = self.settings.claude_env
         env.update(claude_env)
+        for key in _CLAUDE_CHILD_BLOCKED_CONTROL_ENV_KEYS:
+            env.pop(key, None)
         env["HOME"] = str(profile.claude_root)
         env["CLAUDE_CONFIG_DIR"] = str(profile.claude_config_dir)
         env["DATA_DIR"] = str(profile.data_dir)
@@ -380,8 +381,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         env = self._profile_env(profile)
         env.update(self.model_provider_router.claude_env())
 
-        disposition_prompt = trusted_response_disposition_prompt(runtime_response_disposition(req))
-        system_append = "\n\n".join(part for part in [self.settings.claude_system_append, req.system_append, disposition_prompt] if part)
+        system_append = "\n\n".join(part for part in [self.settings.claude_system_append, req.system_append] if part)
         system_prompt = {"type": "preset", "preset": "claude_code"}
         if system_append:
             system_prompt = {"type": "preset", "preset": "claude_code", "append": system_append}
@@ -533,13 +533,11 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         return None
 
     def _generation_input(self, req: ChatRequest, context: RuntimeRequestContext) -> JsonObject:
-        disposition = runtime_response_disposition(req)
         return {
             "run_id": context.run_id,
             "agent_version_id": context.agent_version_id,
             "prompt": context.prompt,
             "model": req.model or self.settings.agent_model,
-            **({"response_disposition": response_disposition_fields(disposition)} if disposition is not None else {}),
         }
 
     def _track_query_message(
@@ -601,9 +599,6 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             stop_reason=state.stop_reason,
             errors=state.errors,
         )
-        disposition = runtime_response_disposition(req)
-        if disposition is not None:
-            output["response_disposition"] = response_disposition_fields(disposition)
         return answer, agent_activity, output
 
     def _update_runtime_observations(
@@ -677,7 +672,6 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             "alert_id": req.alert_id,
             "case_id": req.case_id,
         }
-        data.update(response_disposition_fields(runtime_response_disposition(req)))
         return {
             "event": "session",
             "data": data,

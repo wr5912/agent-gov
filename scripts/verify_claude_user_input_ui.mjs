@@ -105,12 +105,15 @@ function requestEvent(kind, sessionId) {
     context: { tool_use_id: `toolu-${kind}` },
     risk: kind === "question"
       ? { level: "info", reason: "Claude needs input.", run_allow_eligible: false }
-      : {
-          level: "high",
-          reason: "Tool execution requires user confirmation before Claude continues.",
-          run_allow_eligible: true,
-          run_allow_scope: "run",
-        },
+      : kind === "high"
+        ? { level: "high", reason: "MCP mutation requires one-shot confirmation.", run_allow_eligible: false }
+        : {
+            level: "low",
+            reason: "Read-only tool may be allowed for this run category.",
+            run_allow_eligible: true,
+            run_allow_category: "read_only",
+            run_allow_scope: "run",
+          },
     created_at: "2026-06-29T00:00:00Z",
     expires_at: "2026-06-29T00:05:00Z",
   };
@@ -132,13 +135,23 @@ function requestEvent(kind, sessionId) {
       },
     };
   }
+  if (kind === "high") {
+    return {
+      ...common,
+      request_id: "cur-high-tool",
+      decision_token: "secret-high-tool-token",
+      request_type: "tool_permission",
+      tool_name: "mcp__sec-ops__soc_api__manual",
+      redacted_input: { playbookId: "playbook-1" },
+    };
+  }
   return {
     ...common,
     request_id: "cur-tool",
     decision_token: "secret-tool-token",
     request_type: "tool_permission",
-    tool_name: "Bash",
-    redacted_input: { command: "echo hitl-smoke", api_key: "<redacted>" },
+    tool_name: "Read",
+    redacted_input: { file_path: "report.md" },
   };
 }
 
@@ -155,7 +168,7 @@ async function installMockRoutes(page, streamRequests, decisionRequests) {
       const sessionId = sessionIdFromResponsesBody(body);
       streamRequests.push(body);
       streamIndex += 1;
-      const kind = streamIndex === 1 ? "tool" : "question";
+      const kind = streamIndex === 1 ? "tool" : streamIndex === 2 ? "high" : "question";
       return sse(route, [
         { event: "agentgov.session", data: { session_id: sessionId, sdk_session_id: "sdk-hitl-ui-session", run_id: `run-${kind}` } },
         { event: "agentgov.confirmation.requested", data: requestEvent(kind, sessionId) },
@@ -214,7 +227,7 @@ async function main() {
 
     const toolCard = page.locator('[data-testid="claude-user-input-card"][data-request-type="tool_permission"]').first();
     await toolCard.waitFor({ timeout: 10000 });
-    if (!(await toolCard.innerText()).includes("Bash")) throw new Error("tool permission card did not render the requested tool");
+    if (!(await toolCard.innerText()).includes("Read")) throw new Error("tool permission card did not render the requested tool");
     const visibleAfterTool = await page.locator("body").innerText();
     const storedAfterTool = await persistedText(page);
     if (visibleAfterTool.includes("secret-tool-token") || storedAfterTool.includes("secret-tool-token")) {
@@ -224,13 +237,27 @@ async function main() {
     await waitForCondition(() => decisionRequests.length >= 1, "tool decision request was not posted");
     await toolCard.getByText("已处理").waitFor({ timeout: 10000 });
 
+    await page.getByTestId("chat-composer-input").fill("trigger high-risk tool confirmation");
+    await page.getByTestId("chat-send").click();
+    const highRiskCard = page.locator('[data-testid="claude-user-input-card"][data-request-type="tool_permission"]').last();
+    await highRiskCard.waitFor({ timeout: 10000 });
+    if (!(await highRiskCard.innerText()).includes("mcp__sec-ops__soc_api__manual")) {
+      throw new Error("high-risk tool permission card did not render the requested tool");
+    }
+    if (await highRiskCard.getByTestId("claude-user-input-allow-run").count()) {
+      throw new Error("high-risk tool permission card exposed allow_for_run");
+    }
+    await highRiskCard.getByTestId("claude-user-input-allow").click();
+    await waitForCondition(() => decisionRequests.length >= 2, "high-risk tool decision request was not posted");
+    await highRiskCard.getByText("已处理").waitFor({ timeout: 10000 });
+
     await page.getByTestId("chat-composer-input").fill("trigger ask user question");
     await page.getByTestId("chat-send").click();
     const questionCard = page.locator('[data-testid="claude-user-input-card"][data-request-type="ask_user_question"]').last();
     await questionCard.waitFor({ timeout: 10000 });
     await questionCard.getByTestId("claude-user-input-other").fill("Only the current alert asset.");
     await questionCard.getByTestId("claude-user-input-submit-answer").click();
-    await waitForCondition(() => decisionRequests.length >= 2, "AskUserQuestion decision request was not posted");
+    await waitForCondition(() => decisionRequests.length >= 3, "AskUserQuestion decision request was not posted");
     await questionCard.getByText("已处理").waitFor({ timeout: 10000 });
 
     const visibleAfterQuestion = await page.locator("body").innerText();
@@ -238,14 +265,17 @@ async function main() {
     if (visibleAfterQuestion.includes("secret-question-token") || storedAfterQuestion.includes("secret-question-token")) {
       throw new Error("AskUserQuestion decision token leaked into visible UI or localStorage");
     }
-    if (streamRequests.length !== 2) throw new Error(`expected 2 stream requests, got ${streamRequests.length}`);
+    if (streamRequests.length !== 3) throw new Error(`expected 3 stream requests, got ${streamRequests.length}`);
     if (streamRequests.some((item) => item.agentgov?.agent_id !== "response-disposal")) {
       throw new Error(`topbar agent selection did not flow into chat requests: ${JSON.stringify(streamRequests)}`);
     }
-    if (decisionRequests.length !== 2) throw new Error(`expected 2 decision requests, got ${decisionRequests.length}`);
-    const [toolDecision, questionDecision] = decisionRequests;
+    if (decisionRequests.length !== 3) throw new Error(`expected 3 decision requests, got ${decisionRequests.length}`);
+    const [toolDecision, highRiskDecision, questionDecision] = decisionRequests;
     if (toolDecision.requestId !== "cur-tool" || toolDecision.body.action !== "allow_for_run" || toolDecision.body.decision_token !== "secret-tool-token") {
       throw new Error(`invalid tool decision body: ${JSON.stringify(toolDecision)}`);
+    }
+    if (highRiskDecision.requestId !== "cur-high-tool" || highRiskDecision.body.action !== "allow_once" || highRiskDecision.body.decision_token !== "secret-high-tool-token") {
+      throw new Error(`invalid high-risk tool decision body: ${JSON.stringify(highRiskDecision)}`);
     }
     if (questionDecision.requestId !== "cur-question" || questionDecision.body.action !== "answer_question" || questionDecision.body.answer?.response !== "Only the current alert asset.") {
       throw new Error(`invalid AskUserQuestion decision body: ${JSON.stringify(questionDecision)}`);

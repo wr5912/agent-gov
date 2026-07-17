@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from .agent_job_runner import AgentJobRunner
 from .agent_profiles import read_requires_web_hitl
 from .async_iterators import close_async_iterator
-from .claude_runtime_permissions import non_stream_permission_callback, runtime_response_disposition
+from .claude_runtime_permissions import non_stream_permission_callback
 from .claude_sdk_interactive import query_with_interactive_client
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ async def _execute_non_stream_query(
 
     await asyncio.to_thread(runtime.model_provider_router.ensure_agent_runtime_ready)
     native_ask_configured = await asyncio.to_thread(read_requires_web_hitl, profile.workspace_dir)
-    can_use_tool = non_stream_permission_callback(profile.name, runtime_response_disposition(req)) if native_ask_configured else None
+    can_use_tool = non_stream_permission_callback() if native_ask_configured else None
     options = await asyncio.to_thread(
         runtime._build_options,
         req,

@@ -13,12 +13,15 @@
 | --- | --- | --- | --- |
 | workspace 普通文件原样导入 | live workspace 才是 Agent 实际行为资产，平台改写会让上传包与 Git commit 不一致 | endpoint 脱敏、身份字段改写、内容扫描 | 导出后导入，tree digest 与文件字节一致 |
 | 导入同步完成 | 单个业务 Agent workspace 规模有明确资源上限，无需引入 job/operation 状态机 | 异步队列、导入历史 API、十一状态状态机 | API 在一次请求内完成或完整失败 |
+| 导入成功即运行准入 | 调用者已通过 API Key，包已经过基础输入保护并形成可追溯 Git commit；再按 Agent ID/来源加后端白名单会制造双轨权限事实 | seed ID 白名单、专用阶段字段、第二套运行锁 | 任意目标 Agent ID 导入成功后为 active，下一 turn 按导入 workspace 原生权限运行 |
 | per-Agent Git 是版本事实 | 当前运行、反馈和评估已经绑定 `agent_version_id` | 第二套 import active-version 字段 | 成功响应返回实际 Git commit，下一 turn 读取同一 commit |
 | 首版只做基础输入保护 | 当前调用者是持有 API Key 的内部开发者，核心风险是半成品和文件系统越界 | 包签名、发布者 RBAC、杀毒、第三方代码沙箱 | 公网、多租户、客户敏感数据、合规或真实攻击发生时重审 |
 
 导入不恢复 conversation、SDK session、run、feedback、EvalRun、Langfuse、数据库或
 `claude-root`。已有 API session id 保留；成功激活前按 Agent 批量清除其 inactive
 `sdk_session_id` 映射，使下一 turn 建立新的 SDK session 并读取新的 workspace commit。
+
+“导入即准入”不等于跳过研发治理。以 `security-operations-expert` 旗舰样板开发网络安全业务 Agent 时，推荐链路是“导出旗舰 workspace → 以新 Agent ID 导入 → 在该实例迭代和回归 → 导出验证后的 workspace → 用目标当前 commit 做 CAS 覆盖 → 发布验收”。候选测试、回归和发布是操作者显式执行的质量门；它们不应藏在运行时的 Agent ID、来源 seed 或特殊凭据判断中。仓库 seed 也只播种缺失 workspace，不回灌已有 live 实例。
 
 ## 2. Workspace 包
 
@@ -44,7 +47,8 @@ workspace/
 - 空目录不进入 per-Agent Git，也不承诺在导出后保留。
 
 平台身份只来自路由和 registry。新建 Agent 的 name 来自请求字段；覆盖既有 Agent 时 registry
-name、origin 和 lifecycle 不变。
+name、origin 和 lifecycle 不变。包内 `agent.id`、profile 与路径声明不会触发额外准入，也不需要
+改写成目标 Agent ID；成功导入的目标 registry ID 是 API 路由、会话归属和审计的权威身份。
 
 这里的“原样”止于 live workspace 与其 per-Agent Git 边界，不代表上传包可原样提交到
 `docker/runtime-volume-seeds/`。repo generic template 与声明 seed/builtin 是源码仓库资产，

@@ -88,7 +88,7 @@ make logs
 
 治理类 Agent job、改进事项生成动作和前端治理请求默认使用 `GOVERNANCE_AGENT_TIMEOUT_SECONDS=300`。`DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS` 只是高级覆盖项，未配置时跟随治理超时；业务 Playground 的流式 idle timeout、模型探测超时和 Docker healthcheck 不共用该值。Web HITL 人工确认等待使用独立的 `HITL_TIMEOUT_SECONDS=300`，只影响流式业务 Agent 运行。Web HITL 的 SDK callback 等待态保存在 API 进程内存中，开启 `ENABLE_CLAUDE_WEB_HITL=true` 时必须保持单 API 进程；`WEB_CONCURRENCY`、`API_WORKERS` 或 `UVICORN_WORKERS` 大于 1 会在启动时失败。非流式运行始终对权限询问 fail-closed，不再使用 `bypassPermissions`。
 
-响应编排服务使用独立的 `RESPONSE_ORCHESTRATOR_API_KEY`，且必须与普通 `API_KEY` 不同。该服务间凭据只允许调用 `/v1/responses` 的 `agentgov.phase=proposal|approved_execution` 受控路径、按需创建 `/v1/conversations` 映射，以及批准执行过程中精确 `soc_api__create` / `soc_api__manual` 的一次性 HITL 决策；它不能读取、列举或删除会话/响应，普通 API 与浏览器前端也不得持有或复用它。`approved_execution` 还要求 `stream=true`、HITL 可用、完整审批绑定和未消费的一次性 claim。
+`security-operations-expert` 是网络安全业务 Agent 的旗舰样板：可以按字节导出、以任意 Agent ID 导入并继续开发。用户通过受保护的导入 API 成功创建或覆盖 workspace 即完成运行准入，后端不再按样板 ID、来源或处置阶段设置第二套白名单/锁。精确的 `soc_api__create` / `soc_api__manual` 由导入 workspace 的 Claude 原生 `permissions.ask` 逐次确认，工具参数不可由决策请求改写，高风险请求不提供 run 级放行；API 统一使用 `API_KEY`。仓库 seed 只播种缺失 workspace，不回灌现有运行实例；现有实例升级应走“导出候选 → 跨 ID 导入测试 → 导出验证包 → CAS 覆盖目标 → 回归/发布”流程。
 
 健康检查：
 

@@ -212,22 +212,34 @@ def test_cross_id_seed_creation_copies_bytes_and_rejects_ambiguous_source(monkey
                 "name": "ambiguous",
                 "agent_id": "ambiguous",
                 "template_id": "general",
-                "source_seed_id": "main-agent",
+                "source_seed_id": "security-operations-expert",
             },
         )
         created = client.post(
             "/api/agent-registry",
-            json={"name": "seed clone", "agent_id": "seed-clone", "source_seed_id": "main-agent"},
+            json={
+                "name": "SOC derived agent",
+                "agent_id": "security-operations-derived",
+                "source_seed_id": "security-operations-expert",
+            },
         )
 
     assert catalog.status_code == 200
-    assert "main-agent" in catalog.json()["seed_agent_ids"]
+    assert "security-operations-expert" in catalog.json()["seed_agent_ids"]
     assert ambiguous.status_code == 422
     assert created.status_code == 201
+    assert created.json()["agent_id"] == "security-operations-derived"
+    assert created.json()["status"] == "active"
+    assert created.json()["requires_web_hitl"] is True
     target = Path(created.json()["workspace_dir"])
-    source = declared_business_agent_workspace("main-agent")
-    assert (target / ".mcp.json").read_bytes() == (source / ".mcp.json").read_bytes()
-    assert (target / "CLAUDE.md").read_bytes() == (source / "CLAUDE.md").read_bytes()
+    source = declared_business_agent_workspace("security-operations-expert")
+    source_files = {path.relative_to(source).as_posix(): path for path in source.rglob("*") if path.is_file()}
+    target_files = {path.relative_to(target).as_posix(): path for path in target.rglob("*") if path.is_file() and ".git" not in path.relative_to(target).parts}
+    assert set(target_files) == set(source_files)
+    for relative, source_path in source_files.items():
+        target_path = target_files[relative]
+        assert target_path.read_bytes() == source_path.read_bytes()
+        assert stat.S_IMODE(target_path.stat().st_mode) & 0o111 == stat.S_IMODE(source_path.stat().st_mode) & 0o111
 
 
 def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(monkeypatch, tmp_path: Path) -> None:

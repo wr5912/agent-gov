@@ -97,24 +97,19 @@ def test_create_strips_reserved_metadata(monkeypatch, tmp_path: Path) -> None:
     assert body["metadata"] == {"source": "s"}
 
 
-def test_response_orchestrator_can_only_create_conversation_mapping(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(
-        monkeypatch,
-        tmp_path,
-        api_key="general-secret",
-        response_orchestrator_api_key="ro-secret",
-    )
+def test_single_api_key_authorizes_all_conversation_operations(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path, api_key="general-secret")
     general_headers = {"Authorization": "Bearer general-secret"}
-    ro_headers = {"Authorization": "Bearer ro-secret"}
+    invalid_headers = {"Authorization": "Bearer retired-secret"}
 
     with TestClient(module.app) as client:
-        created = client.post("/v1/conversations", json={}, headers=ro_headers)
+        assert client.post("/v1/conversations", json={}, headers=invalid_headers).status_code == 401
+        created = client.post("/v1/conversations", json={}, headers=general_headers)
         conversation_id = created.json()["id"]
         assert created.status_code == 200
-        assert client.get("/v1/conversations", headers=ro_headers).status_code == 403
-        assert client.get(f"/v1/conversations/{conversation_id}", headers=ro_headers).status_code == 403
-        assert client.get(f"/v1/conversations/{conversation_id}/items", headers=ro_headers).status_code == 403
-        assert client.delete(f"/v1/conversations/{conversation_id}", headers=ro_headers).status_code == 403
+        assert client.get("/v1/conversations", headers=general_headers).status_code == 200
+        assert client.get(f"/v1/conversations/{conversation_id}", headers=general_headers).status_code == 200
+        assert client.get(f"/v1/conversations/{conversation_id}/items", headers=general_headers).status_code == 200
         assert client.delete(f"/v1/conversations/{conversation_id}", headers=general_headers).status_code == 200
 
 

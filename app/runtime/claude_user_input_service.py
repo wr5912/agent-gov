@@ -11,21 +11,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from app.runtime.api_auth import ApiPrincipal
 from app.runtime.claude_user_input_schemas import ClaudeUserInputDecisionRequest
 from app.runtime.json_types import JsonObject
 from app.runtime.message_utils import to_plain
 from app.runtime.records.claude_user_input_records import ClaudeUserInputRequestRecord
-from app.runtime.response_disposition_control import (
-    TrustedResponseDispositionContext,
-    protected_soc_permission,
-    response_disposition_fields,
-)
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
-from app.runtime.stores.response_disposition_claim_store import (
-    ResponseDispositionClaimError,
-    ResponseDispositionClaimStore,
-)
 
 _DEFAULT_TIMEOUT_SECONDS = 300
 _REPORT_OUTPUT_ROOTS = ("/data/outputs", "/data/reports")
@@ -75,16 +65,11 @@ class ClaudeUserInputInvalid(ClaudeUserInputError):
     pass
 
 
-class ClaudeUserInputForbidden(ClaudeUserInputError):
-    pass
-
-
 @dataclass(frozen=True)
 class SdkUserInputDecision:
     action: str
     message: str = ""
     ask_user_question_input: JsonObject | None = None
-    updated_input: JsonObject | None = None
 
 
 @dataclass
@@ -98,7 +83,6 @@ class _PendingRuntimeRequest:
     business_agent_id: str
     run_id: str
     low_risk_category: str | None
-    response_disposition: TrustedResponseDispositionContext | None
 
 
 def _token_hash(token: str) -> str:
@@ -116,12 +100,10 @@ class ClaudeUserInputService:
         store: ClaudeUserInputStore,
         *,
         timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS,
-        response_disposition_claim_store: ResponseDispositionClaimStore | None = None,
     ) -> None:
         self._store = store
         self._timeout_seconds = timeout_seconds
         self._pending: dict[str, _PendingRuntimeRequest] = {}
-        self._response_disposition_claim_store = response_disposition_claim_store
         self._run_grants: set[tuple[str, str, str]] = set()
 
     def cancel_orphan_waiting_requests(self, *, reason: str = "service_restarted") -> list[ClaudeUserInputRequestRecord]:
@@ -138,7 +120,6 @@ class ClaudeUserInputService:
         tool_name: str,
         input_data: Any,
         context: Any,
-        response_disposition: TrustedResponseDispositionContext | None = None,
     ) -> SdkUserInputDecision:
         request_type = "ask_user_question" if tool_name == "AskUserQuestion" else "tool_permission"
         request_id = f"cur-{uuid.uuid4()}"
@@ -146,16 +127,8 @@ class ClaudeUserInputService:
         loop = asyncio.get_running_loop()
         raw_input = json_object(input_data)
         context_json = json_object(context)
-        if response_disposition is not None:
-            context_json["response_disposition"] = response_disposition_fields(response_disposition)
         low_risk_category = _low_risk_run_allow_category(tool_name, request_type, raw_input)
-        protected = protected_soc_permission(business_agent_id, tool_name, response_disposition)
-        if (
-            request_type == "tool_permission"
-            and not protected
-            and low_risk_category is not None
-            and self._has_run_grant(business_agent_id, run_id, low_risk_category)
-        ):
+        if request_type == "tool_permission" and low_risk_category is not None and self._has_run_grant(business_agent_id, run_id, low_risk_category):
             return SdkUserInputDecision(action="allow_once")
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=self._timeout_seconds)).isoformat()
         record = self._store.create(
@@ -171,7 +144,7 @@ class ClaudeUserInputService:
             tool_name=tool_name,
             input_json=raw_input,
             context_json=context_json,
-            risk_json=self._risk_payload(tool_name, request_type, low_risk_category, protected=protected),
+            risk_json=self._risk_payload(tool_name, request_type, low_risk_category),
             expires_at=expires_at,
         )
         pending = _PendingRuntimeRequest(
@@ -184,7 +157,6 @@ class ClaudeUserInputService:
             business_agent_id=business_agent_id,
             run_id=run_id,
             low_risk_category=low_risk_category,
-            response_disposition=response_disposition,
         )
         self._pending[request_id] = pending
         await event_queue.put({"event": "claude_user_input_required", "data": record.public_payload(include_token=token)})
@@ -209,7 +181,6 @@ class ClaudeUserInputService:
         *,
         decision: ClaudeUserInputDecisionRequest,
         decided_by: str,
-        principal: ApiPrincipal = ApiPrincipal.GENERAL_API,
     ) -> ClaudeUserInputRequestRecord:
         # 校验顺序：record 存在性 -> decision_token(constant-time) -> status/pending。
         # request_id(URL) 定位 + decision_token 为唯一授权因子；不再校验冗余的 run/session/agent 三元组。
@@ -223,29 +194,7 @@ class ClaudeUserInputService:
         pending = self._pending.get(request_id)
         if pending is None:
             raise ClaudeUserInputConflict("Claude execution is no longer waiting for this request")
-        protected = protected_soc_permission(
-            pending.business_agent_id,
-            pending.tool_name,
-            pending.response_disposition,
-        )
-        if protected:
-            if principal != ApiPrincipal.RESPONSE_ORCHESTRATOR:
-                raise ClaudeUserInputForbidden("Protected SOC tool decisions require the response orchestrator credential")
-            sdk_decision, decision_data, store_decision = self._build_protected_sdk_decision(pending, decision)
-            approval_request_id = pending.response_disposition.approval_request_id if pending.response_disposition else None
-            if self._response_disposition_claim_store is None or approval_request_id is None:
-                raise ClaudeUserInputConflict("Response-disposition approval claim is unavailable")
-            if store_decision == "allow_once":
-                try:
-                    self._response_disposition_claim_store.mark_tool_authorized(approval_request_id, pending.tool_name)
-                except ResponseDispositionClaimError as exc:
-                    raise ClaudeUserInputConflict(str(exc)) from exc
-        else:
-            if principal == ApiPrincipal.RESPONSE_ORCHESTRATOR:
-                raise ClaudeUserInputForbidden("Response orchestrator credential may only decide protected SOC tool requests")
-            if decision.updated_input is not None:
-                raise ClaudeUserInputInvalid("updated_input is only accepted for protected SOC tool requests")
-            sdk_decision, decision_data, store_decision = self._build_sdk_decision(pending, decision)
+        sdk_decision, decision_data, store_decision = self._build_sdk_decision(pending, decision)
         updated = self._store.finish(
             request_id,
             decision=store_decision,
@@ -330,31 +279,9 @@ class ClaudeUserInputService:
             SdkUserInputDecision(
                 action="answer_question",
                 ask_user_question_input=updated_input,
-                updated_input=updated_input,
             ),
             dict(decision.answer),
             "answer_question",
-        )
-
-    @staticmethod
-    def _build_protected_sdk_decision(
-        pending: _PendingRuntimeRequest,
-        decision: ClaudeUserInputDecisionRequest,
-    ) -> tuple[SdkUserInputDecision, JsonObject, str]:
-        if decision.action == "deny":
-            if decision.updated_input is not None:
-                raise ClaudeUserInputInvalid("deny must not include updated_input")
-            message = (decision.message or "Response orchestrator denied the protected SOC tool request.").strip()
-            return SdkUserInputDecision(action="deny", message=message), {"message": message}, "deny"
-        if decision.action != "allow_once":
-            raise ClaudeUserInputInvalid("protected SOC tool requests only accept allow_once or deny")
-        if not decision.updated_input:
-            raise ClaudeUserInputInvalid("protected SOC tool allow_once requires non-empty updated_input")
-        updated_input = dict(decision.updated_input)
-        return (
-            SdkUserInputDecision(action="allow_once", updated_input=updated_input),
-            {"action": "allow_once", "updated_input": updated_input},
-            "allow_once",
         )
 
     @staticmethod
@@ -362,16 +289,7 @@ class ClaudeUserInputService:
         tool_name: str,
         request_type: str,
         low_risk_category: str | None,
-        *,
-        protected: bool = False,
     ) -> JsonObject:
-        if protected:
-            return {
-                "level": "critical",
-                "reason": "Protected SOC execution requires a one-shot response-orchestrator decision.",
-                "run_allow_eligible": False,
-                "approval_scope": "response_disposition_claim",
-            }
         if request_type == "ask_user_question":
             return {
                 "level": "info",

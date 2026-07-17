@@ -119,15 +119,17 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
             <button type="button" className="primary-button" data-testid="claude-user-input-allow" disabled={submitting} onClick={() => onSubmit(request, { action: "allow_once" })}>
               <Check size={15} /> 允许一次
             </button>
-            <button
-              type="button"
-              className="secondary-button"
-              data-testid="claude-user-input-allow-run"
-              disabled={submitting}
-              onClick={() => onSubmit(request, { action: "allow_for_run" })}
-            >
-              <CheckCheck size={15} /> 本次运行允许
-            </button>
+            {request.risk.run_allow_eligible === true ? (
+              <button
+                type="button"
+                className="secondary-button"
+                data-testid="claude-user-input-allow-run"
+                disabled={submitting}
+                onClick={() => onSubmit(request, { action: "allow_for_run" })}
+              >
+                <CheckCheck size={15} /> 本次运行允许
+              </button>
+            ) : null}
             <button type="button" className="secondary-button" data-testid="claude-user-input-deny" disabled={submitting} onClick={() => onSubmit(request, { action: "deny", message: denyMessage.trim() || undefined })}>
               <X size={15} /> 拒绝
             </button>
@@ -140,7 +142,7 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
 }
 
 function buildAnswer(answers: Record<string, string | string[]>, otherResponse: string): Record<string, unknown> {
-  // 单一 answer 对象：其键并入 SDK AskUserQuestion 的 updated_input（保持原 answers/response 形状）。
+  // 单一 answer 对象：后端只在 SDK AskUserQuestion 边界合并，工具权限请求不接受输入改写。
   const answer: Record<string, unknown> = {};
   if (Object.keys(answers).length) answer.answers = answers;
   const response = otherResponse.trim();

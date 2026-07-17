@@ -404,6 +404,36 @@ def test_profile_env_inherits_selected_runtime_env_instead_of_process_env(tmp_pa
     assert env["DATA_DIR"] == str(settings.data_dir)
 
 
+def test_profile_env_never_forwards_backend_control_credentials_to_agent_process(tmp_path):
+    settings = _settings(tmp_path)
+    settings.claude_env_json = json.dumps(
+        {
+            "API_KEY": "claude-env-api-key",
+            "FRONTEND_RUNTIME_API_KEY": "claude-env-frontend-key",
+            "RESPONSE_ORCHESTRATOR_API_KEY": "retired-claude-env-key",
+            "MCP_AUTHORIZATION": "Bearer workspace-owned-token",
+        }
+    )
+    runtime = ClaudeRuntime(
+        settings,
+        LocalSessionStore(settings.session_dir),
+        runtime_env={
+            "API_KEY": "runtime-api-key",
+            "FRONTEND_RUNTIME_API_KEY": "runtime-frontend-key",
+            "RESPONSE_ORCHESTRATOR_API_KEY": "retired-runtime-key",
+            "MCP_SERVER_URL": "http://selected-env.example/mcp",
+        },
+    )
+
+    env = runtime._profile_env(runtime.profiles["main-agent"])
+
+    assert "API_KEY" not in env
+    assert "FRONTEND_RUNTIME_API_KEY" not in env
+    assert "RESPONSE_ORCHESTRATOR_API_KEY" not in env
+    assert env["MCP_AUTHORIZATION"] == "Bearer workspace-owned-token"
+    assert env["MCP_SERVER_URL"] == "http://selected-env.example/mcp"
+
+
 def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch):
     seen = {}
 

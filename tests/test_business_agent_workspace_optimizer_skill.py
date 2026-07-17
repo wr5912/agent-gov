@@ -71,12 +71,13 @@ def test_skill_encodes_review_corrected_boundaries():
     assert "不能整目录拒绝 `data/`" in text
     assert "不得把 `${RUNTIME_ROOT}/data`" in text
     assert "`data/` 和 `data/business-agents/` 父目录本身也不是优化目标" in text
-    # 权限模型对齐：通用 Bash 进入 ask，run grant 只覆盖低风险类别；SOC 执行仅开放 RO 精确握手。
+    # 权限模型对齐：通用 Bash 进入 ask，run grant 只覆盖低风险类别；旗舰样板使用原生逐次确认。
     assert "`Bash(*)` 放在 `ask`" in text
     assert "run 级授权必须按低风险类别隔离" in text
     assert "高风险或未分类请求不得整轮放行" in text
     assert "精确 `soc_api__create` / `soc_api__manual`" in text
     assert "其他处置 mutation 与 `AskUserQuestion` 均拒绝" in text
+    assert "不得按 Agent ID 在后端增加第二套授权" in text
     assert "普通优化不得随意放大 allow" in text
     # 复用现成模板脱敏扫描，不重复造轮子。
     assert "runtime-volume-seeds-scan" in text

@@ -9,7 +9,6 @@ from fastapi.responses import StreamingResponse
 
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.agent_profiles import AgentRuntimeProfile
-from app.runtime.api_auth import ApiAuthenticator, ApiPrincipal
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.errors import BusinessRuleViolation, NotFoundError
 from app.runtime.json_types import JsonObject
@@ -24,33 +23,22 @@ from app.runtime.openai_responses_adapter import (
 )
 from app.runtime.openai_responses_schemas import ResponseObject, ResponsesRequest
 from app.runtime.openai_responses_stream import iter_responses_sse
-from app.runtime.response_disposition_control import (
-    ResponseDispositionControlError,
-    TrustedResponseDispositionContext,
-    validate_response_disposition_control,
-)
-from app.runtime.response_disposition_stream import observe_response_disposition_stream
-from app.runtime.schemas import RuntimeChatRequest
+from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
-from app.runtime.stores.response_disposition_claim_store import (
-    ResponseDispositionClaimConflict,
-    ResponseDispositionClaimStore,
-)
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 
 _MAIN_AGENT_DISPLAY = "main-agent"
 
 
 class _RunPlan(NamedTuple):
-    chat_req: RuntimeChatRequest
+    chat_req: ChatRequest
     profile: Optional[AgentRuntimeProfile]
     effective_agent_id: str
     control: bool
     sdk_raw: bool
-    response_disposition: TrustedResponseDispositionContext | None
 
 
 def _resolve_session_id(
@@ -159,22 +147,7 @@ def _prepare_run(
     runtime_settings_store: RuntimeSettingsStore,
     feedback_store: FeedbackStore,
     session_store: LocalSessionStore,
-    principal: ApiPrincipal,
-    authenticator: ApiAuthenticator,
-    claim_store: ResponseDispositionClaimStore,
-    web_hitl_available: bool,
 ) -> _RunPlan:
-    ext = req.agentgov
-    response_disposition_requested = bool(
-        ext and any(value is not None for value in (ext.phase, ext.approval_request_id, ext.playbook_digest, ext.execution_run_id))
-    )
-    if response_disposition_requested:
-        authenticator.require_response_orchestrator(principal)
-    elif principal == ApiPrincipal.RESPONSE_ORCHESTRATOR:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Response orchestrator credential may only create response-disposition runs",
-        )
     control = req.agentgov is not None
     profile, effective_agent_id, system_append = _resolve_run_target(
         req,
@@ -188,33 +161,14 @@ def _prepare_run(
         session_store=session_store,
         effective_agent_id=effective_agent_id,
     )
-    try:
-        response_disposition = validate_response_disposition_control(
-            phase=ext.phase if ext else None,
-            agent_id=effective_agent_id,
-            stream=req.stream,
-            web_hitl_available=web_hitl_available,
-            case_id=ext.case_id if ext else None,
-            approval_request_id=ext.approval_request_id if ext else None,
-            playbook_digest=ext.playbook_digest if ext else None,
-            execution_run_id=ext.execution_run_id if ext else None,
-        )
-    except ResponseDispositionControlError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    if response_disposition and response_disposition.phase == "approved_execution":
-        try:
-            claim_store.claim(response_disposition)
-        except ResponseDispositionClaimConflict as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     chat_req = build_chat_request(
         req,
         agent_id=effective_agent_id if control else None,
         system_append=system_append,
         session_id=session_id,
-        response_disposition=response_disposition,
     )
     sdk_raw = bool(control and req.agentgov and req.agentgov.debug and req.agentgov.debug.sdk_raw)
-    return _RunPlan(chat_req, profile, effective_agent_id, control, sdk_raw, response_disposition)
+    return _RunPlan(chat_req, profile, effective_agent_id, control, sdk_raw)
 
 
 async def _create_response_impl(
@@ -225,9 +179,6 @@ async def _create_response_impl(
     agent_registry_store: AgentRegistryStore,
     runtime_settings_store: RuntimeSettingsStore,
     feedback_store: FeedbackStore,
-    principal: ApiPrincipal,
-    authenticator: ApiAuthenticator,
-    claim_store: ResponseDispositionClaimStore,
 ) -> ResponseObject | StreamingResponse:
     plan = _prepare_run(
         req,
@@ -236,19 +187,9 @@ async def _create_response_impl(
         runtime_settings_store=runtime_settings_store,
         feedback_store=feedback_store,
         session_store=runtime.session_store,
-        principal=principal,
-        authenticator=authenticator,
-        claim_store=claim_store,
-        web_hitl_available=bool(settings.enable_claude_web_hitl and runtime.user_input_service is not None),
     )
     if req.stream:
         source = runtime.stream(plan.chat_req, profile=plan.profile)
-        if plan.response_disposition and plan.response_disposition.phase == "approved_execution":
-            source = observe_response_disposition_stream(
-                source,
-                context=plan.response_disposition,
-                claim_store=claim_store,
-            )
         return StreamingResponse(
             iter_responses_sse(
                 source,
@@ -256,7 +197,6 @@ async def _create_response_impl(
                 effective_agent_id=plan.effective_agent_id,
                 control=plan.control,
                 sdk_raw=plan.sdk_raw,
-                response_disposition=plan.response_disposition,
             ),
             media_type="text/event-stream",
         )
@@ -267,7 +207,6 @@ async def _create_response_impl(
         agent_id=plan.effective_agent_id,
         metadata=public_metadata(req.metadata),
         created_at=int(time.time()),
-        response_disposition=plan.response_disposition,
     )
 
 
@@ -287,13 +226,10 @@ def create_responses_router(
     runtime_settings_store: RuntimeSettingsStore,
     feedback_store: FeedbackStore,
     require_api_key: Callable,
-    authenticate_api_or_ro: Callable,
-    authenticator: ApiAuthenticator,
-    claim_store: ResponseDispositionClaimStore,
 ) -> APIRouter:
     """OpenAI Responses-first canonical 接口（薄路由，逻辑在 ``openai_responses_adapter`` 与本模块 impl）。"""
 
-    router = APIRouter(prefix="/v1", tags=["openai-responses"])
+    router = APIRouter(prefix="/v1", tags=["openai-responses"], dependencies=[Depends(require_api_key)])
 
     @router.post(
         "/responses",
@@ -306,10 +242,7 @@ def create_responses_router(
             "(`response.*`; plus `agentgov.*` control envelope, including optional `agentgov.prompt_suggestion`, in control mode)."
         ),
     )
-    async def create_response(
-        req: ResponsesRequest,
-        principal: ApiPrincipal = Depends(authenticate_api_or_ro),  # noqa: B008 - FastAPI dependency factory
-    ) -> ResponseObject | StreamingResponse:
+    async def create_response(req: ResponsesRequest) -> ResponseObject | StreamingResponse:
         return await _create_response_impl(
             req,
             settings=settings,
@@ -317,9 +250,6 @@ def create_responses_router(
             agent_registry_store=agent_registry_store,
             runtime_settings_store=runtime_settings_store,
             feedback_store=feedback_store,
-            principal=principal,
-            authenticator=authenticator,
-            claim_store=claim_store,
         )
 
     @router.get(
@@ -332,7 +262,7 @@ def create_responses_router(
             "status derived from errors/stop_reason; output_text from the message timeline. store=false -> 404 (internal audit stays)."
         ),
     )
-    async def retrieve_response(response_id: str, _: None = Depends(require_api_key)) -> ResponseObject:
+    async def retrieve_response(response_id: str) -> ResponseObject:
         return _retrieve_response_impl(response_id, feedback_store=feedback_store)
 
     return router

@@ -229,7 +229,6 @@
           "tests/test_native_workspace_policy.py",
           "tests/test_pre_tool_guard.py",
           "tests/test_repository_env_policy.py",
-          "tests/test_response_disposition*.py",
           "tests/test_workspace_hooks.py"
         ],
         "classification": {
@@ -319,7 +318,6 @@
           "tests/test_pre_tool_guard.py",
           "tests/test_release_workbench_contract.py",
           "tests/test_repository_env_policy.py",
-          "tests/test_response_disposition*.py",
           "tests/test_responses*.py",
           "tests/test_runtime*.py",
           "tests/test_schema_self_heal.py",
@@ -884,19 +882,20 @@
           ]
         },
         {
-          "id": "security_operations_expert_approved_playbook_hitl",
-          "description": "security-operations-expert 只在 RO 认证的 approved_execution 中对精确 soc_api__create/manual 逐次 HITL；execute 与其他 mutation 禁止，历史 workspace 启动时只读校验、不自动改写。",
+          "id": "security_operations_flagship_native_hitl",
+          "description": "security-operations-expert 是可按字节导出、跨 ID 导入迭代的网络安全旗舰样板；导入即准入，精确 create/manual 由来源 workspace 的 Claude 原生权限逐次确认，参数不可改写且高风险不得整轮放行。",
           "pytest": [
             "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_fuses_response_disposal_permissions",
-            "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_config_matches_agent_id_and_response_contract",
-            "tests/test_managed_agent_policy.py::test_security_operations_workspace_matches_specialized_managed_policy",
+            "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_is_exportable_flagship_with_native_confirmation_contract",
+            "tests/test_agent_workspace_packages.py::test_cross_id_seed_creation_copies_bytes_and_rejects_ambiguous_source",
+            "tests/test_managed_agent_policy.py::test_security_operations_workspace_uses_generic_structural_managed_policy",
             "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_not_rewritten_or_recommitted",
             "tests/test_runtime_coordination.py::test_dirty_workspace_does_not_block_receipt_refresh_or_get_committed",
             "tests/test_runtime_coordination.py::test_open_change_set_does_not_trigger_workspace_migration",
-            "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_requires_ro_for_approved_create_and_manual",
-            "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_disabled_hitl_denies_approved_tools_and_execute",
-            "tests/test_claude_runtime_hitl.py::test_run_security_operations_expert_denies_all_permission_requests_without_stream_hitl",
-            "tests/test_claude_user_input.py::test_protected_soc_decision_requires_ro_one_shot_updated_input"
+            "tests/test_claude_runtime_hitl.py::test_stream_imported_security_agent_uses_native_hitl_without_id_gate_or_input_rewrite",
+            "tests/test_claude_runtime_hitl.py::test_stream_imported_security_agent_fails_closed_when_native_hitl_is_disabled",
+            "tests/test_claude_runtime_hitl.py::test_run_imported_security_agent_denies_native_ask_without_stream_hitl",
+            "tests/test_claude_user_input.py::test_high_risk_mcp_uses_generic_one_shot_confirmation_for_any_agent_id"
           ]
         },
         {
@@ -1037,24 +1036,15 @@
           ]
         },
         {
-          "id": "response_disposition_ro_two_phase_contract",
-          "description": "RO 专用凭据驱动 proposal/approved_execution；批准执行要求 stream+HITL+完整绑定，一次性 claim 防回放，backend-owned metadata 不可伪造，claim 按 completed/failed/cancelled 收口。",
+          "id": "retired_response_disposition_contract_removed",
+          "description": "退役后端 response-disposition 锁：公开字段和专用凭据不再存在，历史响应投影忽略旧载荷，迁移直接删除旧 claim 表且保留通用 HITL 审计；所有 API 使用单一 API_KEY。",
           "pytest": [
-            "tests/test_responses_api.py::test_response_disposition_proposal_requires_ro_and_projects_trusted_context",
-            "tests/test_responses_api.py::test_response_disposition_approved_execution_validates_and_rejects_replay",
-            "tests/test_responses_api.py::test_response_disposition_reports_missing_ro_configuration",
-            "tests/test_response_disposition_control.py::test_response_disposition_validation_separates_proposal_and_approved_execution",
-            "tests/test_response_disposition_control.py::test_response_disposition_validation_fails_closed",
-            "tests/test_response_disposition_control.py::test_api_authenticator_keeps_general_and_response_orchestrator_scopes_separate",
-            "tests/test_response_disposition_control.py::test_public_metadata_strips_all_backend_owned_aliases_case_insensitively",
-            "tests/test_response_disposition_control.py::test_response_disposition_claim_is_one_shot_and_requires_manual_before_completion",
-            "tests/test_response_disposition_control.py::test_response_disposition_claim_allows_published_playbook_manual_without_create",
-            "tests/test_response_disposition_control.py::test_response_disposition_claim_cancels_orphaned_startup_work",
-            "tests/test_response_disposition_control.py::test_response_disposition_stream_binds_and_completes_claim",
-            "tests/test_response_disposition_control.py::test_response_disposition_stream_marks_error_and_missing_result_terminal_states",
-            "tests/test_responses_retrieve.py::test_retrieve_projects_persisted_response_disposition_context",
-            "tests/test_runtime_db.py::test_runtime_db_creates_response_disposition_claims_table",
-            "tests/test_settings.py::test_settings_requires_distinct_general_and_response_orchestrator_keys"
+            "tests/test_responses_api.py::test_retired_response_disposition_fields_are_rejected_and_absent_from_openapi",
+            "tests/test_responses_retrieve.py::test_retrieve_ignores_retired_response_disposition_payload",
+            "tests/test_runtime_db.py::test_runtime_db_drops_response_disposition_claims_without_touching_generic_hitl_audit",
+            "tests/test_settings.py::test_settings_exposes_only_the_general_api_key",
+            "tests/test_repository_env_policy.py::test_official_env_examples_expose_only_the_general_debug_api_key",
+            "tests/test_claude_runtime.py::test_profile_env_never_forwards_backend_control_credentials_to_agent_process"
           ]
         },
         {
@@ -1099,7 +1089,7 @@
             "tests/test_conversations_api.py::test_create_get_list_delete",
             "tests/test_conversations_api.py::test_active_turn_blocks_both_session_delete_surfaces",
             "tests/test_conversations_api.py::test_create_strips_reserved_metadata",
-            "tests/test_conversations_api.py::test_response_orchestrator_can_only_create_conversation_mapping",
+            "tests/test_conversations_api.py::test_single_api_key_authorizes_all_conversation_operations",
             "tests/test_conversations_api.py::test_get_unknown_conversation_404",
             "tests/test_conversations_api.py::test_items_empty_when_no_transcript",
             "tests/test_conversations_api.py::test_items_ownerless_transcript_is_session_conflict_409",

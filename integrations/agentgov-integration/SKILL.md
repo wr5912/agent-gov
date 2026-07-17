@@ -38,7 +38,7 @@ AgentGov 是 agent 运行治理底座，被上层业务系统通过 HTTP API 集
 
 确认类型：
 
-- `tool_permission`：动作是 `allow_once`、`allow_for_run`、`deny`。`allow_for_run` 只在同一 `business_agent_id + run_id` 内跳过后续工具确认，不跨 run、不写入永久权限。
+- `tool_permission`：动作是 `allow_once`、`allow_for_run`、`deny`。只有事件中 `risk.run_allow_eligible=true` 的低风险类别才能显示并提交 `allow_for_run`；授权只作用于同一 `business_agent_id + run_id + run_allow_category`，不跨 run、不写入永久权限。MCP 写操作等高风险请求只能 `allow_once` 或 `deny`。
 - `ask_user_question`：动作是 `answer_question`，可提交结构化选项，也可提交自然语言 `response`。
 
 HITL 硬边界：
@@ -52,7 +52,7 @@ HITL 硬边界：
 
 - 产品对话 id 用 `session_id`，不要用响应里的 `sdk_session_id`。
 - 读会话历史只传 `session_id`，不传 `agent_id`；归属由 AgentGov 按会话事实解析。
-- 高风险动作的人审批在上层业务系统完成；AgentGov 只记录 operator/reason/审计事件。
+- 上层业务系统负责渲染 AgentGov/Claude 工具卡并提交用户本人决策；AgentGov 负责把决策桥接回等待中的 Claude SDK 调用并记录审计，不额外建立业务 Agent ID 白名单或改写工具输入。
 - 客户端类型由 OpenAPI 生成，不要自造 schema；也不要在上层系统并行存储会话/消息副本。
 - 工具、MCP、skills、subagents 由 AgentGov 侧 Claude Code 官方配置管理，不通过 chat 入参接管。
 

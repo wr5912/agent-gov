@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Security
+from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse
@@ -46,7 +47,6 @@ from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_job_types import AgentJobType
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.agent_profiles import agents_requiring_web_hitl, build_profiles, discover_seeded_business_agents, seed_business_agent_ids
-from app.runtime.api_auth import ApiAuthenticator, ApiPrincipal
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.runtime.logging_config import configure_runtime_logging
@@ -61,7 +61,6 @@ from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
-from app.runtime.stores.response_disposition_claim_store import ResponseDispositionClaimStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from app.services.agent_governance import AgentGovernanceService
 from app.services.agent_version_maintenance import is_agent_version_maintenance_active
@@ -94,12 +93,10 @@ feedback_store = FeedbackStore(
     enable_debug_evidence=settings.enable_feedback_debug_evidence,
 )
 runtime_db_session_factory = make_session_factory(runtime_db_path_from_data_dir(settings.data_dir))
-response_disposition_claim_store = ResponseDispositionClaimStore(runtime_db_session_factory)
 claude_user_input_store = ClaudeUserInputStore(runtime_db_session_factory)
 claude_user_input_service = ClaudeUserInputService(
     claude_user_input_store,
     timeout_seconds=settings.hitl_timeout_seconds,
-    response_disposition_claim_store=response_disposition_claim_store,
 )
 runtime = ClaudeRuntime(
     settings,
@@ -160,7 +157,6 @@ improvement_execution_service = ImprovementExecutionService(
 )
 bearer_auth = HTTPBearer(auto_error=False)
 api_key_credentials = Security(bearer_auth)
-api_authenticator = ApiAuthenticator(settings.api_key, settings.response_orchestrator_api_key)
 
 
 def _reconcile_runtime_orphans() -> None:
@@ -227,9 +223,6 @@ async def lifespan(_: FastAPI):
     cancelled = claude_user_input_service.cancel_orphan_waiting_requests(reason="service_restarted")
     if cancelled:
         logger.info("cancelled orphan Claude user-input requests: %s", len(cancelled))
-    cancelled_claims = response_disposition_claim_store.cancel_orphan_claims(reason="service_restarted")
-    if cancelled_claims:
-        logger.info("cancelled orphan response-disposition claims: %s", len(cancelled_claims))
     agent_version_store.ensure_bootstrap()
     # 预制 profile（main-agent + governor）优先，再用磁盘发现补充 seed 预置的其它业务 Agent，
     # 使运行卷 data/business-agents/* 下落盘的多业务 Agent 与 main-agent 走同一注册/路由/治理抽象。
@@ -380,14 +373,11 @@ app.add_middleware(
 register_error_handlers(app)
 
 
-def authenticate_api_or_ro(
-    credentials: HTTPAuthorizationCredentials | None = api_key_credentials,
-) -> ApiPrincipal:
-    return api_authenticator.authenticate(credentials)
-
-
 def require_api_key(credentials: HTTPAuthorizationCredentials | None = api_key_credentials) -> None:
-    api_authenticator.require_general(credentials)
+    if not settings.api_key:
+        return
+    if not credentials or credentials.scheme.lower() != "bearer" or not hmac.compare_digest(credentials.credentials, settings.api_key):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
 
 app.include_router(
@@ -409,7 +399,6 @@ app.include_router(
     create_claude_user_input_router(
         service=claude_user_input_service,
         require_api_key=require_api_key,
-        authenticate_api_or_ro=authenticate_api_or_ro,
     )
 )
 app.include_router(
@@ -452,9 +441,6 @@ app.include_router(
         runtime_settings_store=runtime_settings_store,
         feedback_store=feedback_store,
         require_api_key=require_api_key,
-        authenticate_api_or_ro=authenticate_api_or_ro,
-        authenticator=api_authenticator,
-        claim_store=response_disposition_claim_store,
     )
 )
 app.include_router(
@@ -463,7 +449,6 @@ app.include_router(
         settings=settings,
         agent_registry_store=agent_registry_store,
         require_api_key=require_api_key,
-        authenticate_api_or_ro=authenticate_api_or_ro,
     )
 )
 app.include_router(

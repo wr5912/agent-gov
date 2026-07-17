@@ -109,6 +109,10 @@ make container-health-e2e
 部署到 Docker Compose 主机：
 
 ```bash
+# 部署 origin/master tip：SHA 与其 quality-gate run 都会被反查并打印
+scripts/deploy_agent_gov_to_host --host 172.16.112.232 --environment staging-232
+
+# 钉住某个提交；--aid 与 --pr-number 可选，成对提供时额外绑定已合并 PR
 scripts/deploy_agent_gov_to_host \
   --preflight-only \
   --ref <40位master提交SHA> \
@@ -117,9 +121,8 @@ scripts/deploy_agent_gov_to_host \
 
 scripts/deploy_agent_gov_to_host \
   --ref <40位master提交SHA> \
-  --aid AID-123 \
-  --pr-number 456 \
   --workflow-url https://github.com/<owner>/<repo>/actions/runs/<run-id> \
+  --aid AID-123 --pr-number 456 \
   --host 172.16.112.232 \
   --environment staging-232
 ```
@@ -129,14 +132,19 @@ scripts/deploy_agent_gov_to_host \
 `shared/docker.env`，运行数据继续位于目标 `${HOME}/volume-agent-gov`；私有 env 和运行
 数据都不进入部署快照。部署通过 `flock` 串行执行，API、UI 或 Langfuse 健康检查失败时
 立即恢复前一个健康部署快照。正式部署前还会通过公开 GitHub API 只读核对同仓库
-`master` push、成功 `quality-gate`、完整 SHA、已合并 PR 和唯一 AID；workflow URL
-不能单独充当成功证明。SSH 必须命中已确认的 `known_hosts`，不会自动信任新主机。
+`master` push、成功 `quality-gate` 和完整 SHA；提供 `--aid` + `--pr-number` 时额外核对
+已合并 PR 与 AID。workflow URL 不能单独充当成功证明，因此它只是定位符、可省略（按 SHA
+反查同一份事实）。`master` 目前未启用分支保护、允许直推，故 PR 与 AID 不是部署准入的必要
+条件——代价与恢复方式见
+[CI-CD 宪法](docs/engineering/CI-CD宪法与交付链两阶段整改计划.md) §2.3。
+SSH 必须命中已确认的 `known_hosts`，不会自动信任新主机。
 
 GitHub CI 终态经 228 写入 Multica、systemd 中继安装以及人工联调部署的当前契约见
 [Multica 持续 CI 与联调环境部署](docs/engineering/Multica持续CI与联调环境部署.md)。
 
 需要重启或修复当前联调版本时，重新执行上一次完整的
-`scripts/deploy_agent_gov_to_host` 命令，保持相同的完整 SHA、AID、PR 和 workflow URL。
+`scripts/deploy_agent_gov_to_host` 命令，保持相同的完整 SHA（以及当初提供过的 AID、PR
+和 workflow URL）。
 部署入口会复核同一份 CI 证据并复用已经提交的不可变部署快照；远端 helper 发现该快照
 已经是 `current` 时，只重新加载归档镜像、幂等协调 Compose 和健康检查，不再维护一个绕过
 部署快照、SSH 校验和证据链的平行重启脚本。

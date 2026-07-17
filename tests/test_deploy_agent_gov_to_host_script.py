@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import os
 import subprocess
 import sys
@@ -224,15 +225,8 @@ def test_deployment_requires_complete_ci_trace_before_network_or_transport(
     environment = {**os.environ, "AGENT_GOV_SOURCE_REPO_DIR": str(source)}
     base = ["bash", str(DEPLOY_SCRIPT), "--ref", "0" * 40]
 
-    missing_aid = subprocess.run(
-        base,
-        cwd=REPO_ROOT,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    missing_pr = subprocess.run(
+    # --aid/--pr-number 可选（master 允许直推、提交没有 PR），但必须成对出现。
+    aid_without_pr = subprocess.run(
         [*base, "--aid", "AID-16"],
         cwd=REPO_ROOT,
         env=environment,
@@ -240,8 +234,16 @@ def test_deployment_requires_complete_ci_trace_before_network_or_transport(
         capture_output=True,
         text=True,
     )
-    missing_workflow = subprocess.run(
-        [*base, "--aid", "AID-16", "--pr-number", "42"],
+    pr_without_aid = subprocess.run(
+        [*base, "--pr-number", "42"],
+        cwd=REPO_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    bad_workflow_url = subprocess.run(
+        [*base, "--workflow-url", "https://evil.test/wr5912/agent-gov/actions/runs/1"],
         cwd=REPO_ROOT,
         env=environment,
         check=False,
@@ -249,10 +251,48 @@ def test_deployment_requires_complete_ci_trace_before_network_or_transport(
         text=True,
     )
 
-    assert missing_aid.returncode == 1
-    assert "--aid is required for deployment" in missing_aid.stderr
-    assert "--pr-number is required for deployment" in missing_pr.stderr
-    assert "--workflow-url is required for deployment" in missing_workflow.stderr
+    assert aid_without_pr.returncode == 1
+    assert "--pr-number is required when --aid is supplied" in aid_without_pr.stderr
+    assert pr_without_aid.returncode == 1
+    assert "--aid is required when --pr-number is supplied" in pr_without_aid.stderr
+    # workflow-url 可省略（按 SHA 反查），但**给了就必须属于本仓库**——
+    # 否则等于允许拿别的仓库的绿 run 冒充本次部署的证据。
+    assert bad_workflow_url.returncode == 1
+    assert "workflow URL must belong to wr5912/agent-gov" in bad_workflow_url.stderr
+
+
+def test_deployment_needs_no_trace_arguments_at_all(tmp_path: Path) -> None:
+    """裸跑不该被任何「缺参数」挡下：ref/workflow-url 反查得到，PR/AID 已非必需。
+
+    此处 origin 指向不存在的主机，因此跑到 fetch 就会以 git 的 128 退出——那正好证明它
+    越过了全部参数校验、进到了需要网络的阶段，而不是在参数关就被拒。
+    """
+    source = tmp_path / "source"
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(source), "remote", "add", "origin", "https://github.test/wr5912/agent-gov.git"],
+        check=True,
+        capture_output=True,
+    )
+    environment = {**os.environ, "AGENT_GOV_SOURCE_REPO_DIR": str(source)}
+
+    result = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT)],
+        cwd=REPO_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 128
+    for gone in (
+        "--ref is required",
+        "--aid is required for deployment",
+        "--pr-number is required for deployment",
+        "--workflow-url is required for deployment",
+    ):
+        assert gone not in result.stderr
 
 
 def test_deployment_rejects_malformed_trace_before_fetch(tmp_path: Path) -> None:
@@ -461,6 +501,163 @@ def test_deployment_ci_evidence_binds_successful_master_run_pr_and_aid() -> None
     assert evidence.pr_number == config.pr_number
     assert evidence.aid_identifier == config.aid_identifier
     assert len(github.calls) == 4
+
+
+def _direct_push_config(config: EvidenceConfig) -> EvidenceConfig:
+    """同一份 fixture 去掉 PR/AID —— 模拟 master 直推（无分支保护）的提交。"""
+    return dataclasses.replace(config, aid_identifier=None, pr_number=None)
+
+
+def _discovery_fixture(
+    extra_runs: list[dict[str, object]] | None = None,
+) -> tuple[EvidenceConfig, dict[str, object]]:
+    """省略 workflow_url ⇒ 走 SHA 反查。extra_runs 排在成功 run 之前，模拟同 SHA 多次 run。"""
+    base, responses = valid_evidence_fixture()
+    direct = dataclasses.replace(base, workflow_url=None, aid_identifier=None, pr_number=None)
+    successful_run = responses["/repos/wr5912/agent-gov/actions/runs/901"]
+    assert isinstance(successful_run, dict)
+    listing = f"/repos/wr5912/agent-gov/actions/runs?head_sha={direct.commit_sha}&event=push&branch=master&per_page=100"
+    responses[listing] = {"workflow_runs": [*(extra_runs or []), successful_run]}
+    return direct, responses
+
+
+def test_ci_evidence_discovers_master_push_run_from_commit_sha() -> None:
+    config, responses = _discovery_fixture()
+    github = FakeGitHub(responses)
+
+    evidence = verify_ci_evidence(config, github)
+
+    assert evidence.workflow_run_id == 901
+    assert evidence.quality_gate == "success"
+    # 反查到的 run 必须原样留痕给 release.json —— 不能写空串或调用者转述的值。
+    assert evidence.workflow_url == "https://github.com/wr5912/agent-gov/actions/runs/901/attempts/2"
+
+
+def test_ci_evidence_discovery_skips_failed_run_and_picks_successful_rerun() -> None:
+    """同 SHA 既有失败 run 又有成功重跑时，必须挑成功那个——挑错会把「有绿」误判成「不可部署」。"""
+    config, responses = _discovery_fixture(
+        extra_runs=[
+            {
+                "id": 999,  # 比成功 run 更大：若只按 id 取最新而不过滤结论，就会挑中它
+                "run_attempt": 1,
+                "event": "push",
+                "head_branch": "master",
+                "head_sha": "a" * 40,
+                "status": "completed",
+                "conclusion": "failure",
+                "path": ".github/workflows/governance.yml@refs/heads/master",
+                "repository": {"full_name": "wr5912/agent-gov"},
+            }
+        ]
+    )
+
+    evidence = verify_ci_evidence(config, FakeGitHub(responses))
+
+    assert evidence.workflow_run_id == 901
+
+
+def test_ci_evidence_discovery_ignores_other_workflow_files() -> None:
+    """container-live-acceptance 之类的其它 workflow 长期红，绝不能被当成 quality-gate 证据。"""
+    config, responses = _discovery_fixture(
+        extra_runs=[
+            {
+                "id": 998,
+                "run_attempt": 1,
+                "event": "push",
+                "head_branch": "master",
+                "head_sha": "a" * 40,
+                "status": "completed",
+                "conclusion": "success",
+                "path": ".github/workflows/container-live-acceptance.yml@refs/heads/master",
+                "repository": {"full_name": "wr5912/agent-gov"},
+            }
+        ]
+    )
+
+    evidence = verify_ci_evidence(config, FakeGitHub(responses))
+
+    assert evidence.workflow_run_id == 901
+
+
+def test_ci_evidence_discovery_rejects_commit_without_successful_run() -> None:
+    config, responses = _discovery_fixture()
+    listing = f"/repos/wr5912/agent-gov/actions/runs?head_sha={config.commit_sha}&event=push&branch=master&per_page=100"
+    responses[listing] = {"workflow_runs": []}
+
+    with pytest.raises(EvidenceError, match="no successful .* run found"):
+        verify_ci_evidence(config, FakeGitHub(responses))
+
+
+def test_deployment_ci_evidence_accepts_direct_push_without_pr_trace() -> None:
+    config, responses = valid_evidence_fixture()
+    github = FakeGitHub(responses)
+
+    evidence = verify_ci_evidence(_direct_push_config(config), github)
+
+    assert evidence.commit_sha == config.commit_sha
+    assert evidence.quality_gate == "success"
+    assert evidence.pr_number is None
+    assert evidence.aid_identifier is None
+    # 不查 PR，就不该打 PR 的两个接口：直推提交上那两个接口本来就返回空。
+    assert len(github.calls) == 2
+    assert not [call for call in github.calls if "pulls" in call]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("conclusion", "failure", "workflow run conclusion mismatch"),
+        ("head_sha", "b" * 40, "workflow run head_sha mismatch"),
+        ("event", "pull_request", "workflow run event mismatch"),
+        ("head_branch", "feature/x", "workflow run head_branch mismatch"),
+        ("path", ".github/workflows/other.yml", "workflow file mismatch"),
+    ],
+)
+def test_direct_push_evidence_still_rejects_wrong_workflow_run(
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    """放宽 PR/AID 后，剩下这条证据链是唯一防线，必须一条都不松。"""
+    config, original = valid_evidence_fixture()
+    responses = copy.deepcopy(original)
+    run = responses["/repos/wr5912/agent-gov/actions/runs/901"]
+    assert isinstance(run, dict)
+    run[field] = value
+
+    with pytest.raises(EvidenceError, match=message):
+        verify_ci_evidence(_direct_push_config(config), FakeGitHub(responses))
+
+
+def test_direct_push_evidence_still_rejects_failed_quality_gate() -> None:
+    config, original = valid_evidence_fixture()
+    responses = copy.deepcopy(original)
+    jobs = responses["/repos/wr5912/agent-gov/actions/runs/901/attempts/2/jobs?per_page=100"]
+    assert isinstance(jobs, dict)
+    job_list = jobs["jobs"]
+    assert isinstance(job_list, list)
+    job = job_list[0]
+    assert isinstance(job, dict)
+    job["conclusion"] = "failure"
+
+    with pytest.raises(EvidenceError, match="quality-gate job is not successful"):
+        verify_ci_evidence(_direct_push_config(config), FakeGitHub(responses))
+
+
+@pytest.mark.parametrize(
+    ("aid", "pr_number"),
+    [("AID-16", None), (None, 42)],
+)
+def test_deployment_ci_evidence_requires_pr_and_aid_together(
+    aid: str | None,
+    pr_number: int | None,
+) -> None:
+    """只给一个会让 AID 校验静默失效：AID 是从 PR 元数据里读出来比对的。"""
+    config, responses = valid_evidence_fixture()
+    partial = dataclasses.replace(config, aid_identifier=aid, pr_number=pr_number)
+
+    with pytest.raises(EvidenceError, match="must be supplied together"):
+        verify_ci_evidence(partial, FakeGitHub(responses))
 
 
 @pytest.mark.parametrize(

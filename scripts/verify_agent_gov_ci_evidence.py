@@ -54,6 +54,10 @@ class WorkflowJobsPayload(TypedDict, total=False):
     jobs: list[WorkflowJobPayload]
 
 
+class WorkflowRunsPayload(TypedDict, total=False):
+    workflow_runs: list[WorkflowRunPayload]
+
+
 class PullRefPayload(TypedDict, total=False):
     ref: str
 
@@ -71,11 +75,20 @@ class PullRequestPayload(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class EvidenceConfig:
+    """部署证据的机器事实。
+
+    `aid_identifier` / `pr_number` **可选**:仓库当前允许 master 直推(无分支保护),此时提交
+    没有 PR,证据链落在「该 SHA 在 master push 上跑出 quality-gate success」这一条上——
+    它已由 _validate_workflow_run 硬校验 event/head_branch/head_sha/conclusion。
+    两者提供时按 PR 流程全量校验且必须成对出现:AID 是从 PR 元数据里读出来比对的,
+    只给 PR 号会让 AID 校验静默失效,只给 AID 则无从校验。
+    """
+
     repository: str
     commit_sha: str
-    aid_identifier: str
-    pr_number: int
-    workflow_url: str
+    workflow_url: str | None = None
+    aid_identifier: str | None = None
+    pr_number: int | None = None
     branch: str = "master"
     workflow_file: str = ".github/workflows/governance.yml"
 
@@ -84,9 +97,11 @@ class EvidenceConfig:
             raise EvidenceError(f"invalid repository: {self.repository}")
         if not _FULL_SHA.fullmatch(self.commit_sha):
             raise EvidenceError("commit SHA must be a lowercase full 40-character value")
-        if not _AID.fullmatch(self.aid_identifier):
+        if (self.aid_identifier is None) != (self.pr_number is None):
+            raise EvidenceError("AID identifier and pull request number must be supplied together")
+        if self.aid_identifier is not None and not _AID.fullmatch(self.aid_identifier):
             raise EvidenceError(f"invalid AID identifier: {self.aid_identifier}")
-        if self.pr_number < 1:
+        if self.pr_number is not None and self.pr_number < 1:
             raise EvidenceError("pull request number must be positive")
         if not _BRANCH.fullmatch(self.branch):
             raise EvidenceError(f"invalid branch: {self.branch}")
@@ -98,6 +113,39 @@ class EvidenceConfig:
 class WorkflowReference:
     run_id: int
     requested_attempt: int | None
+
+    @classmethod
+    def discover(cls, config: EvidenceConfig, reader: GitHubReader) -> WorkflowReference:
+        """按 SHA 反查该提交的 master-push run。
+
+        workflow URL 只是定位符、不是成功证明——无论手填还是反查，下面都会重新把 run 的
+        event/head_branch/head_sha/conclusion 和 quality-gate 结论整套查一遍。反查在这里
+        只做定位，判定标准不变。
+
+        筛选条件与 _validate_workflow_run 一致，反查到什么就必然过得了校验；筛不到就报
+        「没有成功证据」，而不是回落到一个不满足条件的 run。
+        """
+        path = f"/repos/{config.repository}/actions/runs?head_sha={config.commit_sha}&event=push&branch={config.branch}&per_page=100"
+        raw_payload = reader.get(path)
+        _require_object(raw_payload, label="workflow runs")
+        payload = cast(WorkflowRunsPayload, raw_payload)
+        runs = payload.get("workflow_runs")
+        if not isinstance(runs, list):
+            raise EvidenceError("GitHub returned invalid workflow runs")
+        candidates: list[int] = []
+        for raw_run in runs:
+            _require_object(raw_run, label="workflow run")
+            run = cast(WorkflowRunPayload, raw_run)
+            if str(run.get("path") or "").split("@", 1)[0] != config.workflow_file:
+                continue
+            if run.get("status") != "completed" or run.get("conclusion") != "success":
+                continue
+            candidates.append(_positive_int(run.get("id"), label="workflow run id"))
+        if not candidates:
+            raise EvidenceError(f"no successful {config.workflow_file} run found for {config.branch} push {config.commit_sha}")
+        # 同一 SHA 可能有多次成功 run（重跑）。任一成功 run 都证明该 SHA 通过；取最新的一次，
+        # 让重跑修好的结果生效而不是钉死在旧 run 上。attempt 由 run 载荷自身决定，不在这里指定。
+        return cls(run_id=max(candidates), requested_attempt=None)
 
     @classmethod
     def parse(cls, repository: str, workflow_url: str) -> WorkflowReference:
@@ -123,8 +171,11 @@ class VerifiedEvidence:
     workflow_attempt: int
     workflow_file: str
     quality_gate: str
-    pr_number: int
-    aid_identifier: str
+    pr_number: int | None
+    aid_identifier: str | None
+    # 实际校验的那个 run 的规范 URL。反查(未传 --workflow-url)时由此回吐给调用方写进
+    # release.json——留痕的必须是真正被校验的 run，不能是调用者转述的字符串。
+    workflow_url: str
 
 
 class GitHubClient:
@@ -288,7 +339,10 @@ def verify_ci_evidence(
     reader: GitHubReader,
 ) -> VerifiedEvidence:
     config.validate()
-    reference = WorkflowReference.parse(config.repository, config.workflow_url)
+    if config.workflow_url is None:
+        reference = WorkflowReference.discover(config, reader)
+    else:
+        reference = WorkflowReference.parse(config.repository, config.workflow_url)
     run_path = f"/repos/{config.repository}/actions/runs/{reference.run_id}"
     attempt = _validate_workflow_run(config, reference, reader.get(run_path))
     _validate_quality_gate(
@@ -297,8 +351,9 @@ def verify_ci_evidence(
         run_id=reference.run_id,
         attempt=attempt,
     )
-    pull = _validate_associated_pull_request(config, reader)
-    _validate_pull_request(config, pull)
+    if config.pr_number is not None:
+        pull = _validate_associated_pull_request(config, reader)
+        _validate_pull_request(config, pull)
     return VerifiedEvidence(
         repository=config.repository,
         commit_sha=config.commit_sha,
@@ -308,6 +363,7 @@ def verify_ci_evidence(
         quality_gate="success",
         pr_number=config.pr_number,
         aid_identifier=config.aid_identifier,
+        workflow_url=(f"https://github.com/{config.repository}/actions/runs/{reference.run_id}/attempts/{attempt}"),
     )
 
 
@@ -315,9 +371,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Verify public GitHub CI evidence before an AgentGov staging deployment")
     parser.add_argument("--repository", required=True)
     parser.add_argument("--ref", dest="commit_sha", required=True)
-    parser.add_argument("--aid", dest="aid_identifier", required=True)
-    parser.add_argument("--pr-number", type=int, required=True)
-    parser.add_argument("--workflow-url", required=True)
+    parser.add_argument("--aid", dest="aid_identifier", default=None)
+    parser.add_argument("--pr-number", type=int, default=None)
+    parser.add_argument("--workflow-url", default=None)
     parser.add_argument("--branch", default="master")
     parser.add_argument("--workflow-file", default=".github/workflows/governance.yml")
     return parser

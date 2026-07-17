@@ -19,12 +19,15 @@ usage() {
   cat <<'USAGE'
 Usage:
   scripts/deploy_agent_gov_to_host \
-    --ref <40-character-master-SHA> \
-    --aid <AID-N> \
-    --pr-number <number> \
-    --workflow-url <successful-quality-gate-url> \
+    [--ref <40-character-master-SHA>] \
+    [--workflow-url <successful-quality-gate-url>] \
+    [--aid <AID-N> --pr-number <number>] \
     [--host 172.16.112.232] \
     [--environment staging-232]
+
+  With no arguments this deploys the current origin/master tip, discovering its
+  successful quality-gate run from the commit SHA. The resolved SHA and run are
+  printed before anything is built or transported.
 
   scripts/deploy_agent_gov_to_host --preflight-only --ref <SHA> [options]
   scripts/deploy_agent_gov_to_host --rollback <release-id> [options]
@@ -37,9 +40,11 @@ Usage:
 Options:
   --host <host>              Default: 172.16.112.232
   --environment <name>      Default: staging-232
-  --aid <AID-N>             Required deployment trace identifier.
-  --pr-number <number>       Required deployment pull request number.
-  --workflow-url <url>       Required successful master quality-gate URL.
+  --ref <sha>                Optional full master SHA; defaults to origin/master tip.
+  --workflow-url <url>       Optional successful master quality-gate URL; defaults to
+                             the run discovered from the commit SHA.
+  --aid <AID-N>             Optional deployment trace identifier; requires --pr-number.
+  --pr-number <number>       Optional deployment pull request number; requires --aid.
 
 Environment:
   DEPLOY_USER                SSH user, default root.
@@ -51,7 +56,9 @@ Environment:
   AGENT_GOV_REMOTE_HELPER    External remote helper; defaults inside this module.
 
 The deploy path requires an exact full SHA reachable from origin/master and
-verifies its public GitHub workflow, quality-gate, merged PR, and AID evidence.
+verifies its public GitHub workflow run (master push, matching head SHA) and a
+successful quality-gate job. Supplying --aid with --pr-number additionally binds
+the deployment to a merged pull request and its AID metadata.
 It builds immutable SHA-tagged images, writes release.json, deploys through a
 serialized remote helper, and immediately restores the previous healthy
 release if health validation fails. GitHub credentials are never read here.
@@ -222,9 +229,20 @@ validate_trace_arguments() {
 }
 
 require_deploy_trace_arguments() {
-  [[ -n "$AID_IDENTIFIER" ]] || die "--aid is required for deployment"
-  [[ -n "$PR_NUMBER" ]] || die "--pr-number is required for deployment"
-  [[ -n "$WORKFLOW_URL" ]] || die "--workflow-url is required for deployment"
+  # 部署证据是「该 SHA 在 master push 上跑出 quality-gate success」这条机器事实，
+  # 它由 verify_ci_evidence 只读回查 GitHub API 得到，不依赖调用者转述：
+  #   --ref          省略即取 origin/master tip（解析结果会打印出来）。
+  #   --workflow-url 省略即按 SHA 反查该 run；它只是定位符、不是成功证明，
+  #                  手填与反查校验的是同一份 API 事实。
+  #   --aid/--pr-number 可选（master 无分支保护、允许直推，提交可以没有 PR）；
+  #                  给了就按 PR 流程全量校验，且必须成对——AID 是从 PR 元数据里
+  #                  读出来比对的，只给一个会让 AID 校验静默失效。
+  if [[ -n "$AID_IDENTIFIER" && -z "$PR_NUMBER" ]]; then
+    die "--pr-number is required when --aid is supplied"
+  fi
+  if [[ -n "$PR_NUMBER" && -z "$AID_IDENTIFIER" ]]; then
+    die "--aid is required when --pr-number is supplied"
+  fi
 }
 
 validate_git_origin_project() {
@@ -252,8 +270,19 @@ validate_git_origin_project() {
 }
 
 resolve_exact_master_sha() {
-  [[ "$REF_SHA" =~ ^[0-9a-f]{40}$ ]] || die "--ref must be a lowercase full 40-character commit SHA"
+  # 格式校验必须在 fetch 之前：--ref 写错是本地错误，不该先打一次网络才报出来。
+  if [[ -n "$REF_SHA" ]]; then
+    [[ "$REF_SHA" =~ ^[0-9a-f]{40}$ ]] || die "--ref must be a lowercase full 40-character commit SHA"
+  fi
   git -C "$SOURCE_REPO_DIR" fetch origin master --prune
+  if [[ -z "$REF_SHA" ]]; then
+    # 省略 --ref 就部署 origin/master tip。必须打印解析结果和提交标题：staging 跟随 master
+    # 是常态，但并发推送会让「我以为部的是自己那笔」变成别人的 tip，看不见就查不出来。
+    REF_SHA=$(git -C "$SOURCE_REPO_DIR" rev-parse --verify "origin/master^{commit}") \
+      || die "failed to resolve origin/master"
+    log "--ref omitted; using origin/master tip $REF_SHA"
+    log "  $(git -C "$SOURCE_REPO_DIR" log -1 --format='%s' "$REF_SHA")"
+  fi
   local resolved
   resolved=$(git -C "$SOURCE_REPO_DIR" rev-parse --verify "${REF_SHA}^{commit}" 2>/dev/null) \
     || die "commit is unavailable after fetching origin/master: $REF_SHA"
@@ -265,16 +294,28 @@ resolve_exact_master_sha() {
 verify_ci_evidence() {
   [[ -f "$CI_EVIDENCE_VERIFIER" ]] \
     || die "CI evidence verifier not found: $CI_EVIDENCE_VERIFIER"
-  log "Verifying successful CI, merged PR, and AID evidence for $REF_SHA"
+  local -a trace_args=()
+  if [[ -n "$PR_NUMBER" ]]; then
+    trace_args+=(--aid "$AID_IDENTIFIER" --pr-number "$PR_NUMBER")
+    log "Verifying successful CI, merged PR, and AID evidence for $REF_SHA"
+  else
+    log "Verifying successful master-push quality-gate evidence for $REF_SHA (no PR supplied)"
+  fi
   if ! CI_EVIDENCE_JSON=$(python3 "$CI_EVIDENCE_VERIFIER" \
       --repository "$SOURCE_REPOSITORY" \
       --ref "$REF_SHA" \
-      --aid "$AID_IDENTIFIER" \
-      --pr-number "$PR_NUMBER" \
+      "${trace_args[@]}" \
       --workflow-url "$WORKFLOW_URL" \
       --branch "$EXPECTED_GIT_BRANCH" \
       --workflow-file "$EXPECTED_WORKFLOW_FILE"); then
     die "deployment trace is not backed by successful CI evidence"
+  fi
+  # 省略 --workflow-url 时，回填校验器实际校验的那个 run 的规范 URL：release.json 和
+  # prepared_release_state 的等值比对都用它，留痕必须是被校验的 run 而非空串。
+  if [[ -z "$WORKFLOW_URL" ]]; then
+    WORKFLOW_URL=$(printf '%s' "$CI_EVIDENCE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["workflow_url"])') \
+      || die "CI evidence did not report the verified workflow URL"
+    log "--workflow-url omitted; verified run $WORKFLOW_URL"
   fi
   log "Verified CI evidence: $CI_EVIDENCE_JSON"
 }
@@ -462,14 +503,16 @@ for pair in image_pairs:
     images[name] = digest
 payload = {
     "release_id": release_id,
-    "aid_identifier": aid,
+    "aid_identifier": aid or None,
     "repository": repository,
     "commit_sha": sha,
     "image_version": image_version,
     "image_digests": images,
     "environment": environment,
     "host": host,
-    "pr_number": int(pr_number),
+    # PR/AID 可选：直推部署时写 null，不写空串——null 表达「本次没有 PR 追踪」，
+    # 空串会和「有 PR 但值为空」混淆，也过不了下面 prepared_release_state 的等值比对。
+    "pr_number": int(pr_number) if pr_number else None,
     "workflow_url": workflow_url,
     "ci_evidence": json.loads(ci_evidence_json),
     "status": "prepared",
@@ -538,8 +581,10 @@ expected = {
     "commit_sha": expected_sha,
     "repository": expected_repository,
     "environment": expected_environment,
-    "aid_identifier": expected_aid,
-    "pr_number": int(expected_pr_number),
+    # 与 release.json 的写法保持一致：PR/AID 缺省是 null 而非空串，
+    # 否则同一次直推部署复跑会因 None != "" 被误判成 conflicting release。
+    "aid_identifier": expected_aid or None,
+    "pr_number": int(expected_pr_number) if expected_pr_number else None,
     "workflow_url": expected_workflow_url,
 }
 for key, value in expected.items():
@@ -556,8 +601,8 @@ expected_ci = {
     "commit_sha": expected_sha,
     "workflow_file": expected_workflow_file,
     "quality_gate": "success",
-    "pr_number": int(expected_pr_number),
-    "aid_identifier": expected_aid,
+    "pr_number": int(expected_pr_number) if expected_pr_number else None,
+    "aid_identifier": expected_aid or None,
 }
 for key, value in expected_ci.items():
     if ci_evidence.get(key) != value:
@@ -638,7 +683,7 @@ if [[ "$MODE" == "diagnose" ]]; then
   exit 0
 fi
 
-[[ -n "$REF_SHA" ]] || die "--ref is required"
+# --ref 省略时由 resolve_exact_master_sha 取 origin/master tip（需要先 fetch，故不在这里解析）。
 if [[ "$MODE" == "deploy" ]]; then
   require_deploy_trace_arguments
 fi

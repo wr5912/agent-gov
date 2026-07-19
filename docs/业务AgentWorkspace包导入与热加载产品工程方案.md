@@ -213,16 +213,21 @@ API；已有 API session ID 保留，新 turn 建立新的 SDK session 并读取
 
 ## 8. UI 契约
 
-设置页只提供 Workspace 包入口：
+设置页以一张业务 Agent 表作为唯一管理入口，不再并列展示 Workspace 清单和 Agent 管理清单：
 
-- 新建时填写 Agent ID、name 并选择包；
-- 既有 Agent 行提供导出、覆盖导入；
-- 成功回执显示 action、previous/current commit、package/tree digest、测试状态、测试文件数和 warning；
-- 覆盖后提供“恢复导入前版本”；
-- 列表分别显示内置、默认、受保护和 HITL 观测；
-- 不显示来源选择器、通用模板、seed 提示或直接创建表单。
+- 表格一行对应一个注册业务 Agent，固定展示 Agent 身份、Workspace/测试状态、生命周期和操作；
+- 生命周期保留行内选择器，归档终态继续禁止回转；
+- “操作”使用对象级菜单，只包含导出 Workspace、覆盖导入和删除 Agent；受保护 Agent 的删除项
+  必须禁用并显示原因；
+- 页面级“导入 Agent”与行内“覆盖导入”复用同一个右侧抽屉。创建模式填写 Agent ID、name
+  并选择包，覆盖模式锁定目标 Agent 的 ID 和名称，只选择包；
+- 成功后抽屉保持打开，回执显示 action、previous/current commit、package/tree digest、测试状态、
+  测试文件数和 warning；覆盖后在同一抽屉提供“恢复导入前版本”；
+- 列表分别显示内置、默认、受保护状态；不显示来源选择器、通用模板、seed 提示或直接创建表单。
 
-失败态必须显示结构化错误代码和可执行动作，目标变化后清除旧文件与旧失败状态。
+菜单必须支持 `Escape` 关闭、外部点击关闭和键盘方向键导航，并使用脱离滚动容器的浮层定位，避免
+在表格底部或移动端被裁切。导入失败只在抽屉内显示结构化错误代码和可执行动作；关闭抽屉或切换
+覆盖目标后清除旧文件、回执和失败状态。
 
 ## 9. 验收
 
@@ -233,6 +238,8 @@ API；已有 API session ID 保留，新 turn 建立新的 SDK session 并读取
 - 导入身份只取 URL `agent_id`，不从包名或 `agent.yaml` 推断；缺少测试目录只告警。
 - 所有业务 Agent Workspace 可携带 `tests/`，平台可按精确 commit 检查 suite 并运行固定 pytest 命令。
 - 新建、覆盖、unchanged、恢复都绑定实际 Git commit；下一 turn 使用应用后的 commit。
+- 设置页只渲染一份业务 Agent 行，Workspace 测试状态和生命周期属于同一行；创建与覆盖导入模式
+  不得混用目标身份或遗留上一次选择的文件、回执和错误。
 - active turn、开放 change set、HEAD 竞争、恶意 tar、超限输入和部分失败明确失败且不暴露半成品。
 - 删除普通 Agent 后重启不复活；重建同 ID 不继承旧 Workspace；受保护 Agent 不可删除。
 - `make runtime-bootstrap-scan`、专项 pytest、前端浏览器验收、`make main-flow-test`、

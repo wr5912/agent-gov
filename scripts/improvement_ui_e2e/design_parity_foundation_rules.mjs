@@ -49,7 +49,7 @@ const RULES = [
     const feedbackTopNav = await page.getByRole("button", { name: "反馈优化", exact: true }).count();
     return { ok: nav === 3 && asset && !release && feedbackTopNav === 0, detail: `topbar-nav=${nav} nav-asset=${asset} nav-release=${release} 反馈优化顶级=${feedbackTopNav}（期望 3/true/false/0）` };
   } },
-  { id: "settings-ia", phase: "P0", desc: "Settings 使用宽幅工作台弹窗，含业务 Agent 与 Developer 分组，旧自动推进策略入口不存在", async fn(page) {
+  { id: "settings-ia", phase: "P0", desc: "Settings 使用单一业务 Agent 管理表、对象操作菜单和统一导入抽屉，含 Developer 分组且旧入口不存在", async fn(page) {
     await (page.getByTestId("open-settings").click().catch(() => page.getByRole("button", { name: "设置" }).first().click()));
     await page.getByTestId("settings-panel").waitFor({ timeout: 8000 });
     const box = await page.getByTestId("settings-panel").boundingBox();
@@ -68,14 +68,41 @@ const RULES = [
     }
     await page.getByTestId("settings-tab-agents").click();
     const agentTable = await visible(page, "settings-agent-table");
+    const agentRows = await page.getByTestId("settings-agent-item").count();
+    const actionTriggers = await page.getByTestId("settings-agent-actions-trigger").count();
+    const duplicateWorkspaceList = await page.getByTestId("settings-workspace-agent-list").count();
+    if (actionTriggers) await page.getByTestId("settings-agent-actions-trigger").first().click();
+    const actionMenu = await visible(page, "settings-agent-actions-menu");
+    const menuActions = actionMenu
+      ? await page.getByTestId("settings-agent-actions-menu").getByRole("menuitem").count()
+      : 0;
+    if (actionMenu) await page.keyboard.press("Escape");
+    const menuClosed = await page.getByTestId("settings-agent-actions-menu").count() === 0;
+    const importTrigger = await visible(page, "settings-agent-import-open");
+    if (importTrigger) await page.getByTestId("settings-agent-import-open").click();
+    const importDrawer = await visible(page, "settings-agent-import-drawer");
+    const importMode = importDrawer ? await page.getByTestId("settings-agent-import-drawer").getAttribute("data-state") : null;
+    if (importDrawer) await page.getByTestId("settings-agent-import-drawer").getByLabel("关闭").click();
+    const drawerClosed = await page.getByTestId("settings-agent-import-drawer").count() === 0;
     const obsoleteAutomation = await page.getByTestId("settings-tab-automation").count();
     await page.getByTestId("settings-tab-developer").click();
     const runtimeInput = await visible(page, "settings-api-base");
     // 关闭设置弹窗，避免 modal-backdrop 拦截后续规则的点击。
     await page.locator(".settings-footer").getByRole("button", { name: "关闭" }).click().catch(() => {});
     await page.getByTestId("settings-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    const ok = wide && tall && navigation && content && oldHorizontalTabs === 0 && found.length === tabs.length && agentTable && obsoleteAutomation === 0 && runtimeInput;
-    return { ok, detail: `size=${Math.round(box?.width || 0)}x${Math.round(box?.height || 0)} nav=${navigation} content=${content} oldTabs=${oldHorizontalTabs} sections=${found.length}/${tabs.length} table=${agentTable} obsoleteAutomation=${obsoleteAutomation} runtime=${runtimeInput}` };
+    const agentManagementOk = agentTable
+      && agentRows === 2
+      && actionTriggers === agentRows
+      && duplicateWorkspaceList === 0
+      && actionMenu
+      && menuActions === 3
+      && menuClosed
+      && importTrigger
+      && importDrawer
+      && importMode === "create"
+      && drawerClosed;
+    const ok = wide && tall && navigation && content && oldHorizontalTabs === 0 && found.length === tabs.length && agentManagementOk && obsoleteAutomation === 0 && runtimeInput;
+    return { ok, detail: `size=${Math.round(box?.width || 0)}x${Math.round(box?.height || 0)} nav=${navigation} content=${content} oldTabs=${oldHorizontalTabs} sections=${found.length}/${tabs.length} table=${agentTable}/rows=${agentRows}/triggers=${actionTriggers}/legacy=${duplicateWorkspaceList} menu=${actionMenu}/${menuActions}/${menuClosed} import=${importTrigger}/${importDrawer}/${importMode}/${drawerClosed} obsoleteAutomation=${obsoleteAutomation} runtime=${runtimeInput}` };
   } },
   { id: "playground-clean", phase: "P1", desc: "Playground 主区无旧 Subagent/Sessions/Skills 侧栏、无 Inspector、无常显 control-strip", async fn(page) {
     await page.getByTestId("nav-playground").click(); await page.waitForTimeout(400);

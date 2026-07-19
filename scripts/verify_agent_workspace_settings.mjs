@@ -44,6 +44,7 @@ const secondWorkspaceAgent = {
   agent_id: "workspace-agent-2",
   name: "Workspace Agent 2",
   workspace_dir: "/runtime/workspace-agent-2",
+  protected: true,
 };
 const importedWorkspaceAgent = {
   ...workspaceAgent,
@@ -163,6 +164,22 @@ async function installMockRoutes(page, state) {
     if (path === "/api/agent-registry" && method === "GET") {
       return json(route, state.agents);
     }
+    if (/^\/api\/agent-registry\/[^/]+\/test-suite$/.test(path) && method === "GET") {
+      const agentId = decodeURIComponent(path.split("/")[3]);
+      return json(route, {
+        agent_id: agentId,
+        commit_sha: previousCommit,
+        tests_directory_present: true,
+        readme_present: true,
+        test_file_count: 2,
+        test_files: ["tests/test_smoke.py", "tests/test_contract.py"],
+        suite_digest: "mock-suite",
+        diagnostics: [],
+      });
+    }
+    if (path === "/api/agent-test-runs" && method === "GET") {
+      return json(route, []);
+    }
     if (path === "/api/settings/openai-compat-agent" && method === "GET") {
       return json(route, { agent_id: null, configured: false, effective_agent_id: "security-operations-expert" });
     }
@@ -217,6 +234,10 @@ async function installMockRoutes(page, state) {
         tree_sha256: treeDigest,
         rollback_target_commit_sha: rollbackCommit,
         activation_mode: "next_turn",
+        import_record_id: "import-overwrite-1",
+        test_file_count: 2,
+        test_suite_status: "ready",
+        test_suite_warnings: [],
       });
     }
     if (path === "/api/agent-registry/imported-new/workspace/import" && method === "POST") {
@@ -231,6 +252,10 @@ async function installMockRoutes(page, state) {
         tree_sha256: treeDigest,
         rollback_target_commit_sha: null,
         activation_mode: "next_turn",
+        import_record_id: "import-create-1",
+        test_file_count: 2,
+        test_suite_status: "ready",
+        test_suite_warnings: [],
       });
     }
     if (path === "/api/agent-registry/workspace-agent/workspace/restore" && method === "POST") {
@@ -279,6 +304,19 @@ async function main() {
       if (await page.getByTestId("settings-agent-create-source").count()) {
         throw new Error("removed template/seed creation control is still visible");
       }
+      if ((await page.getByTestId("settings-agent-table").count()) !== 1) {
+        throw new Error("Settings must render exactly one authoritative Agent table");
+      }
+      if (await page.getByTestId("settings-workspace-agent-list").count()) {
+        throw new Error("duplicated Workspace Agent inventory is still visible");
+      }
+
+      await page.getByTestId("settings-agent-import-open").click();
+      const createDrawer = page.getByTestId("settings-agent-import-drawer");
+      await createDrawer.waitFor();
+      if ((await createDrawer.getAttribute("data-state")) !== "create") {
+        throw new Error("global import action did not open create mode");
+      }
       await page.getByTestId("settings-workspace-import-agent-id").fill("imported-new");
       await page.getByTestId("settings-workspace-import-name").fill("Imported Package Agent");
       await page.getByTestId("settings-workspace-import-file").setInputFiles({
@@ -288,6 +326,9 @@ async function main() {
       });
       await page.getByTestId("settings-workspace-import-submit").click();
       await page.getByTestId("settings-workspace-import-receipt").filter({ hasText: "created" }).waitFor();
+      if (!(await createDrawer.isVisible())) {
+        throw new Error("create drawer closed before the user could inspect the import receipt");
+      }
       if (
         state.newImportBodies.length !== 1 ||
         !state.newImportBodies[0].includes('name="name"') ||
@@ -295,11 +336,56 @@ async function main() {
       ) {
         throw new Error(`new Agent import did not submit its name: ${JSON.stringify(state.newImportBodies)}`);
       }
+      await createDrawer.getByLabel("关闭").click();
+      await createDrawer.waitFor({ state: "detached" });
 
       state.agents = [workspaceAgent, secondWorkspaceAgent];
       await page.getByTestId("settings-panel").locator('button[aria-label="关闭"]').click();
       await page.getByTestId("open-settings").click();
-      await page.getByTestId("settings-agent-item").filter({ hasText: "workspace-agent" }).first().waitFor();
+      const agentRow = (agentId) => page
+        .getByTestId("settings-agent-item")
+        .filter({ has: page.getByText(agentId, { exact: true }) });
+      const openActionMenu = async (row) => {
+        await row.getByTestId("settings-agent-actions-trigger").click();
+        const menu = page.getByTestId("settings-agent-actions-menu");
+        await menu.waitFor();
+        return menu;
+      };
+      const exportRow = agentRow("workspace-agent");
+      const protectedRow = agentRow("workspace-agent-2");
+      await exportRow.waitFor();
+      if ((await page.getByTestId("settings-agent-item").count()) !== 2) {
+        throw new Error("single Agent table did not render the two mocked Agents exactly once");
+      }
+      await page.getByTestId("settings-agent-test-status").first().waitFor();
+      if ((await page.getByTestId("settings-agent-test-status").count()) !== 2) {
+        throw new Error("Workspace test status was not merged into every authoritative Agent row");
+      }
+
+      let menu = await openActionMenu(exportRow);
+      if ((await menu.getByRole("menuitem").count()) !== 3) {
+        throw new Error("Agent object menu does not expose export, overwrite, and delete actions");
+      }
+      if ((await exportRow.getByTestId("settings-agent-actions-trigger").getAttribute("aria-expanded")) !== "true") {
+        throw new Error("Agent action trigger did not expose expanded state");
+      }
+      await page.waitForFunction(
+        () => document.activeElement?.getAttribute("data-testid") === "settings-agent-export",
+        null,
+        { timeout: 1000 },
+      );
+      await page.keyboard.press("ArrowDown");
+      const focusedMenuItem = await page.evaluate(() => document.activeElement?.getAttribute("data-testid"));
+      if (focusedMenuItem !== "settings-agent-overwrite") {
+        throw new Error(`ArrowDown did not move focus within the Agent action menu: ${focusedMenuItem}`);
+      }
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+      if ((await exportRow.getByTestId("settings-agent-actions-trigger").getAttribute("aria-expanded")) !== "false") {
+        throw new Error("Escape did not close the Agent action menu");
+      }
+      const focusReturned = await exportRow.getByTestId("settings-agent-actions-trigger").evaluate((element) => document.activeElement === element);
+      if (!focusReturned) throw new Error("Escape did not return focus to the Agent action trigger");
 
       const exposedHeaders = await page.evaluate(async ({ base, path }) => {
         const response = await fetch(`${base}${path}`, { method: "POST" });
@@ -318,29 +404,46 @@ async function main() {
       ) {
         throw new Error(`workspace export headers are not browser-visible: ${JSON.stringify(exposedHeaders)}`);
       }
-      const exportRow = page.getByTestId("settings-workspace-agent-item").filter({ hasText: "workspace-agent" }).first();
+      menu = await openActionMenu(exportRow);
       const downloadPromise = page.waitForEvent("download");
-      const exportButton = exportRow.getByTestId("settings-agent-export");
+      const exportButton = menu.getByTestId("settings-agent-export");
       await exportButton.click();
-      if ((await exportButton.getAttribute("aria-busy")) !== "true") {
-        throw new Error("workspace export button did not expose pending state");
-      }
+      await exportRow.locator(".settings-spin").waitFor({ timeout: 1000 });
       const download = await downloadPromise;
       if (download.suggestedFilename() !== exportFilename) {
         throw new Error(`workspace download filename mismatch: ${download.suggestedFilename()}`);
       }
       await page.getByTestId("settings-workspace-operation-feedback").filter({ hasText: "导出完成" }).waitFor();
-      await page.getByTestId("settings-success").filter({ hasText: `commit ${previousCommit.slice(0, 12)}` }).waitFor();
 
-      const failedExportRow = page.getByTestId("settings-workspace-agent-item").filter({ hasText: "workspace-agent-2" });
-      await failedExportRow.getByTestId("settings-agent-export").click();
+      menu = await openActionMenu(protectedRow);
+      const protectedDelete = menu.getByTestId("settings-agent-delete");
+      if (!(await protectedDelete.isDisabled()) || !(await protectedDelete.textContent())?.includes("受保护")) {
+        throw new Error("protected Agent delete action does not expose its disabled reason");
+      }
+      await menu.getByTestId("settings-agent-export").click();
       const exportFailure = page.getByTestId("settings-workspace-operation-feedback");
       await exportFailure.filter({ hasText: "[WORKSPACE_MAINTENANCE_CONFLICT]" }).waitFor();
       if ((await exportFailure.getAttribute("data-operation")) !== "export") {
         throw new Error("workspace export failure is not attributed to export");
       }
 
-      await page.getByTestId("settings-workspace-import-agent-id").fill("workspace-agent");
+      menu = await openActionMenu(exportRow);
+      await menu.getByTestId("settings-agent-overwrite").click();
+      const overwriteDrawer = page.getByTestId("settings-agent-import-drawer");
+      await overwriteDrawer.waitFor();
+      if ((await overwriteDrawer.getAttribute("data-state")) !== "overwrite") {
+        throw new Error("row overwrite action did not open overwrite mode");
+      }
+      const overwriteAgentId = page.getByTestId("settings-workspace-import-agent-id");
+      const overwriteName = page.getByTestId("settings-workspace-import-name");
+      if (
+        (await overwriteAgentId.inputValue()) !== "workspace-agent" ||
+        (await overwriteName.inputValue()) !== "Workspace Agent" ||
+        !(await overwriteAgentId.isDisabled()) ||
+        !(await overwriteName.isDisabled())
+      ) {
+        throw new Error("overwrite drawer target identity is not fixed and read-only");
+      }
       await page.getByTestId("settings-workspace-import-file").setInputFiles({
         name: "workspace.tar.gz",
         mimeType: "application/gzip",
@@ -351,37 +454,38 @@ async function main() {
       if ((await importButton.getAttribute("aria-busy")) !== "true") {
         throw new Error("workspace import button did not expose pending state");
       }
+      if (!(await overwriteDrawer.getByLabel("关闭").isDisabled())) {
+        throw new Error("import drawer remained closable while an import request was pending");
+      }
       const error = page.getByTestId("settings-error");
-      await error.waitFor();
-      const errorText = await error.textContent();
+      const localError = page.getByTestId("settings-workspace-operation-feedback");
+      await localError.waitFor();
+      const errorText = await localError.textContent();
       if (!errorText?.includes("[WORKSPACE_PACKAGE_PATH_CONFLICT]")) {
         throw new Error(`structured workspace failure code is not visible: ${errorText}`);
       }
-      await page.getByTestId("settings-workspace-operation-feedback").filter({ hasText: "[WORKSPACE_PACKAGE_PATH_CONFLICT]" }).waitFor();
+      if (await error.count()) {
+        throw new Error("import failure leaked from the import drawer into the Settings-global error banner");
+      }
       await page.screenshot({
         path: join(screenshotDir, "workspace-import-structured-failure.png"),
         fullPage: true,
       });
 
-      await page.getByTestId("settings-workspace-import-agent-id").fill("workspace-agent-2");
+      await overwriteDrawer.getByLabel("关闭").click();
+      await overwriteDrawer.waitFor({ state: "detached" });
+      menu = await openActionMenu(protectedRow);
+      await menu.getByTestId("settings-agent-overwrite").click();
+      await page.getByTestId("settings-agent-import-drawer").waitFor();
       if (!(await page.getByTestId("settings-workspace-import-submit").isDisabled())) {
-        throw new Error("editing the import target must clear the stale failed package");
+        throw new Error("opening another overwrite target must clear the stale failed package");
       }
-      await page.getByTestId("settings-workspace-operation-feedback").waitFor({ state: "detached" });
-      await page.getByTestId("settings-error").waitFor({ state: "detached" });
-      await page.getByTestId("settings-workspace-import-file").setInputFiles({
-        name: "stale-workspace.tar.gz",
-        mimeType: "application/gzip",
-        buffer: Buffer.from("stale mock workspace archive"),
-      });
-      const secondRow = page.getByTestId("settings-workspace-agent-item").filter({ hasText: "workspace-agent" }).first();
-      const fileChooserPromise = page.waitForEvent("filechooser");
-      await secondRow.getByTestId("settings-agent-import").click();
-      await fileChooserPromise;
-      if (!(await page.getByTestId("settings-workspace-import-submit").isDisabled())) {
-        throw new Error("choosing another overwrite target must clear the stale failed package");
+      if (await page.getByTestId("settings-workspace-operation-feedback").count()) {
+        throw new Error("opening another overwrite target retained stale operation feedback");
       }
-      await page.getByTestId("settings-workspace-import-agent-id").fill("workspace-agent");
+      await page.getByTestId("settings-agent-import-drawer").getByLabel("关闭").click();
+      menu = await openActionMenu(exportRow);
+      await menu.getByTestId("settings-agent-overwrite").click();
       await page.getByTestId("settings-workspace-import-file").setInputFiles({
         name: "workspace.tar.gz",
         mimeType: "application/gzip",
@@ -406,7 +510,6 @@ async function main() {
       if ((await page.getByTestId("settings-workspace-restore").getAttribute("aria-busy")) !== "true") {
         throw new Error("workspace restore button did not expose pending state");
       }
-      await page.getByTestId("settings-success").filter({ hasText: "已恢复 workspace-agent 导入前 workspace" }).waitFor();
       await page.getByTestId("settings-workspace-operation-feedback").filter({ hasText: "恢复完成" }).waitFor();
       await page.getByTestId("settings-workspace-restore").waitFor({ state: "detached" });
       if (state.restoreRequests.length !== 1) {
@@ -423,6 +526,35 @@ async function main() {
         throw new Error(`expected browser header probe and UI export, got ${state.exportRequests} requests`);
       }
 
+      await page.getByTestId("settings-agent-import-drawer").getByLabel("关闭").click();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await protectedRow.scrollIntoViewIfNeeded();
+      const mobileLayout = await page.evaluate(() => {
+        const panel = document.querySelector('[data-testid="settings-panel"]');
+        const table = document.querySelector('[data-testid="settings-agent-table"]');
+        const trigger = document.querySelector('[data-testid="settings-agent-actions-trigger"]');
+        if (!(panel instanceof HTMLElement) || !(table instanceof HTMLElement) || !(trigger instanceof HTMLElement)) return null;
+        const panelBox = panel.getBoundingClientRect();
+        const triggerBox = trigger.getBoundingClientRect();
+        return {
+          tableOverflow: table.scrollWidth - table.clientWidth,
+          triggerInside: triggerBox.left >= panelBox.left && triggerBox.right <= panelBox.right,
+        };
+      });
+      if (!mobileLayout || mobileLayout.tableOverflow > 1 || !mobileLayout.triggerInside) {
+        throw new Error(`mobile authoritative table overflowed or clipped its action trigger: ${JSON.stringify(mobileLayout)}`);
+      }
+      menu = await openActionMenu(protectedRow);
+      const menuBox = await menu.boundingBox();
+      if (!menuBox || menuBox.x < 0 || menuBox.y < 0 || menuBox.x + menuBox.width > 390 || menuBox.y + menuBox.height > 844) {
+        throw new Error(`mobile Agent action menu is outside the viewport: ${JSON.stringify(menuBox)}`);
+      }
+      await page.keyboard.press("Escape");
+      await page.screenshot({
+        path: join(screenshotDir, "workspace-agent-single-table-mobile.png"),
+        fullPage: true,
+      });
+
       console.log(
         JSON.stringify(
           {
@@ -431,15 +563,20 @@ async function main() {
             screenshots: screenshotDir,
             scenarios: [
               "agent_empty_state",
+              "single_authoritative_agent_table",
               "package_only_agent_creation",
+              "create_import_drawer_receipt",
+              "accessible_agent_action_menu",
+              "protected_delete_reason",
               "workspace_export_download_and_headers",
               "workspace_export_local_failure",
               "structured_import_failure",
-              "manual_target_change_clears_stale_package",
-              "stale_failed_package_cleared",
+              "overwrite_target_is_read_only",
+              "drawer_reset_clears_stale_package_and_feedback",
               "import_receipt",
               "restore_action",
               "new_agent_workspace_import",
+              "mobile_table_and_menu_bounds",
             ],
           },
           null,

@@ -246,93 +246,6 @@
   padding: 0 10px;
 }
 
-.settings-agent-table {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-}
-
-.settings-agent-table-head,
-.settings-agent-row {
-  display: grid;
-  grid-template-columns: minmax(170px, 1fr) minmax(160px, 0.9fr) 130px minmax(250px, auto);
-  gap: 12px;
-  align-items: center;
-}
-
-.settings-agent-table-head {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  background: #f8fafc;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.settings-agent-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.settings-agent-row {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
-}
-
-.settings-agent-row:last-child {
-  border-bottom: 0;
-}
-
-.settings-agent-main {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.settings-agent-main strong,
-.settings-agent-main span,
-.settings-agent-main small,
-.settings-agent-row code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-agent-main strong {
-  color: var(--text);
-  font-size: 13px;
-}
-
-.settings-agent-main span,
-.settings-agent-main small {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.settings-agent-row code {
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-}
-
-.settings-danger-button {
-  color: var(--danger);
-}
-
-.settings-agent-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.settings-agent-actions .secondary-button {
-  min-width: 0;
-  padding-inline: 9px;
-}
-
 .settings-runtime-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -427,19 +340,6 @@
     grid-template-columns: 1fr;
   }
 
-  .settings-agent-table-head {
-    display: none;
-  }
-
-  .settings-agent-row {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-
-  .settings-agent-actions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
 }
 
 /* F8：进行中操作的就近 spinner（per-action busy）。 */

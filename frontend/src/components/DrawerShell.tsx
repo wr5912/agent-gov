@@ -13,6 +13,7 @@ interface DrawerShellProps {
   bodyClassName?: string;
   headerMeta?: ReactNode;
   headerActions?: ReactNode;
+  closeDisabled?: boolean;
   children: ReactNode;
   onClose: () => void;
 }
@@ -27,12 +28,13 @@ export function DrawerShell({
   bodyClassName = "",
   headerMeta,
   headerActions,
+  closeDisabled = false,
   children,
   onClose,
 }: DrawerShellProps) {
   const titleId = `${testId}-title`;
   return (
-    <div className="drawer-backdrop" role="presentation" onClick={onClose}>
+    <div className="drawer-backdrop" role="presentation" onClick={closeDisabled ? undefined : onClose}>
       <aside
         className={`drawer-shell drawer-shell-${size} ${className}`.trim()}
         data-testid={testId}
@@ -51,7 +53,7 @@ export function DrawerShell({
           </div>
           <div className="drawer-shell-actions">
             {headerActions}
-            <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
+            <button className="icon-button" type="button" disabled={closeDisabled} onClick={onClose} aria-label="关闭">
               <X size={18} />
             </button>
           </div>

@@ -49,15 +49,17 @@ def test_release_workbench_runs_fixed_commit_bound_platform_tests() -> None:
 
 
 def test_agent_settings_show_workspace_test_status_and_import_audit() -> None:
-    inventory = _read("frontend/src/components/AgentWorkspaceInventory.tsx")
-    package_panel = _read("frontend/src/components/AgentWorkspacePackagePanel.tsx")
+    management = _read("frontend/src/components/BusinessAgentManagementPanel.tsx")
+    table = _read("frontend/src/components/BusinessAgentTable.tsx")
+    drawer = _read("frontend/src/components/AgentWorkspaceImportDrawer.tsx")
 
-    assert "inspectAgentTestSuite" in inventory
-    assert "listAgentTestRuns" in inventory
-    assert 'data-testid="settings-agent-test-status"' in inventory
-    assert "suite?.commit_sha" in inventory
-    assert "receipt.import_record_id" in package_panel
-    assert "receipt.test_suite_status" in package_panel
+    assert "inspectAgentTestSuite" in management
+    assert "listAgentTestRuns" in management
+    assert 'data-testid="settings-agent-test-status"' in table
+    assert "suite?.commit_sha" in table
+    assert "Workspace / 测试" in table
+    assert "receipt.import_record_id" in drawer
+    assert "receipt.test_suite_status" in drawer
 
 
 def test_force_publish_requires_an_explicit_persisted_reason() -> None:

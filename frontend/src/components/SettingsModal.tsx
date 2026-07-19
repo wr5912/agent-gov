@@ -2,9 +2,7 @@ import {
   Bot,
   ExternalLink,
   KeyRound,
-  Loader2,
   Save,
-  Trash2,
   Wrench,
   X,
   type LucideIcon,
@@ -20,18 +18,12 @@ import {
   type OpenAICompatAgentConfig,
 } from "../api/runtime";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
-import { AgentWorkspacePackagePanel } from "./AgentWorkspacePackagePanel";
+import { BusinessAgentManagementPanel } from "./BusinessAgentManagementPanel";
 import "./SettingsModal.css";
 
 // 四阶段改进治理 §2 平台设置：业务 Agent 管理 / Developer·Debug（纯配置）。
 // 资产 Registry 已提升为一级导航「资产复利」（W3 修订，三支柱 Playground/改进事项/资产复利）；旧反馈优化、API Docs、Langfuse 仍在此处。
 
-const LIFECYCLE_OPTIONS = [
-  { value: "active", label: "启用" },
-  { value: "evaluating", label: "评估中" },
-  { value: "deprecated", label: "弃用" },
-  { value: "archived", label: "归档" },
-];
 const SETTINGS_TABS: { key: SettingsTab; label: string; eyebrow: string; description: string; Icon: LucideIcon }[] = [
   { key: "agents", label: "业务 Agent", eyebrow: "Agents", description: "导入、停用和维护业务 Agent。", Icon: Bot },
   { key: "developer", label: "Developer", eyebrow: "Runtime", description: "配置本浏览器连接的 Runtime 与调试入口。", Icon: Wrench },
@@ -221,54 +213,18 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
 
             {activeTab === "agents" ? (
               <section className="settings-section settings-section-agents" data-testid="settings-section-agents" role="tabpanel">
-                <AgentWorkspacePackagePanel
+                <BusinessAgentManagementPanel
                   config={config}
                   agents={agents}
+                  loading={agentsLoading}
                   externalBusy={pending !== null}
+                  pending={pending}
                   reloadAgents={reloadAgents}
                   onAgentsChanged={onAgentsChanged}
                   onBusyChange={setWorkspaceBusy}
-                  onError={setError}
-                  onSuccess={setSuccessMsg}
+                  onLifecycle={handleLifecycle}
+                  onDelete={handleDelete}
                 />
-
-                <div className="settings-agent-table" data-testid="settings-agent-table">
-                  <div className="settings-agent-table-head" aria-hidden="true">
-                    <span>Agent</span>
-                    <span>Workspace</span>
-                    <span>生命周期</span>
-                    <span>操作</span>
-                  </div>
-                  <div className="settings-agent-list">
-                    {agentsLoading ? (
-                      <div className="empty-state" data-testid="settings-agent-loading">加载中…</div>
-                    ) : !agents.length ? (
-                      error ? null : <div className="empty-state" data-testid="settings-agent-empty">暂无业务 Agent。</div>
-                    ) : agents.map((agent) => {
-                      const isArchived = agent.status === "archived"; // F3：归档为终态，禁止再转移
-                      const isProtected = agent.protected === true;
-                      const labels = [agent.default ? "默认" : "", agent.builtin ? "内置" : "", isProtected ? "受保护" : ""].filter(Boolean);
-                      return (
-                      <div className="settings-agent-row" data-testid="settings-agent-item" key={agent.agent_id}>
-                        <div className="settings-agent-main">
-                          <strong>{agent.name}{labels.length ? <em className="settings-agent-badge"> · {labels.join(" · ")}</em> : null}</strong>
-                          <span>{agent.agent_id}</span>
-                        </div>
-                        <code title={agent.workspace_dir || "-"}>{agent.workspace_dir || "-"}</code>
-                        <select className="select" data-testid="settings-agent-lifecycle" aria-label={`${agent.name} 生命周期`} aria-busy={pending === `lifecycle:${agent.agent_id}`} value={agent.status} disabled={busy || isArchived} title={isArchived ? "已归档为终态" : undefined} onChange={(e) => handleLifecycle(agent.agent_id, e.target.value)}>
-                          {LIFECYCLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                        </select>
-                        <div className="settings-agent-actions">
-                          <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy || isProtected} aria-busy={pending === `delete:${agent.agent_id}`} title={isProtected ? "该业务 Agent 受保护，只能经仓库变更移除" : undefined} onClick={() => handleDelete(agent.agent_id)}>
-                            {pending === `delete:${agent.agent_id}` ? <Loader2 size={14} className="settings-spin" /> : <Trash2 size={14} />}
-                            <span>删除</span>
-                          </button>
-                        </div>
-                      </div>
-                      );
-                    })}
-                  </div>
-                </div>
               </section>
             ) : null}
 

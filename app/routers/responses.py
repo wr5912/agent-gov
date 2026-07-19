@@ -23,14 +23,13 @@ from app.runtime.openai_responses_adapter import (
 )
 from app.runtime.openai_responses_schemas import ResponseObject, ResponsesRequest
 from app.runtime.openai_responses_stream import iter_responses_sse
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
-
-_MAIN_AGENT_DISPLAY = "main-agent"
 
 
 class _RunPlan(NamedTuple):
@@ -114,7 +113,7 @@ def _resolve_run_target(
         if not agent_id:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="agentgov.agent_id is required in control mode (main-agent or a registered business agent)",
+                detail="agentgov.agent_id is required in control mode (use a registered business agent)",
             )
         profile = resolve_business_profile(settings, agent_registry_store, agent_id)
         return profile, agent_id, req.instructions
@@ -136,7 +135,7 @@ def _resolve_run_target(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Configured OpenAI-compat agent is unavailable: {exc}. Reconfigure via /api/settings/openai-compat-agent.",
         ) from exc
-    return profile, configured_agent_id or _MAIN_AGENT_DISPLAY, None
+    return profile, configured_agent_id or DEFAULT_BUSINESS_AGENT_ID, None
 
 
 def _prepare_run(

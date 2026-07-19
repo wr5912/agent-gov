@@ -354,7 +354,7 @@ const RULES = [
       && preview.includes('"agent_version_id"')
       && preview.includes('"optimization_plan_id"')
       && preview.includes('"asset_id"')
-      && preview.includes('"test_dataset_ref"')
+      && preview.includes('"workspace_tests"')
       && !preview.includes('"attribution": null')
       && !preview.includes('"evidence": []');
     const download = await has(page, "context-download");
@@ -362,223 +362,167 @@ const RULES = [
     await page.getByTestId("context-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
     return { ok: drawerSize === "medium" && found.length === 4 && download && rich, detail: `size=${drawerSize} 类型 ${found.length}/4，下载=${download}，证据链JSON=${rich}` };
   } },
-  { id: "release-workbench-target-binding", phase: "P2", desc: "发布工作台两候选选择、普通发布/回归/强制发布目标绑定、确认目标冻结、来源门禁与发布错误均按选中候选呈现", async fn(page) {
+  { id: "release-workbench-target-binding", phase: "P2", desc: "发布工作台按选中待发布变更绑定 Workspace pytest、精确 commit 发布、强制发布原因和清理动作", async fn(page) {
     const base = {
       agent_id: "soc-ops", created_at: ts, updated_at: ts, base_commit_sha: "base-demo",
-      branch_name: "agent-change/test", worktree_path: "/tmp/test", diff_summary: {}, source_improvement_id: "imp-demo04",
+      branch_name: "agent-change/test", worktree_path: "/tmp/test", diff_summary: {},
+      source_improvement_id: "imp-demo04", source_attribution_status: "confirmed", execution_job_id: "exec-1",
     };
     const ready = [
-      { ...base, change_set_id: "agc-target-a", title: "候选 A", status: "candidate_committed", candidate_commit_sha: "candidate-a", execution_job_id: "exec-1" },
-      {
-        ...base, change_set_id: "agc-target-b", title: "候选 B", status: "candidate_committed", candidate_commit_sha: "candidate-b",
-        execution_job_id: "exec-1",
-        source_attribution_id: "attr-b", source_attribution_status: "confirmed",
-        publication_error: { detail: "release metadata pending reconciliation", updated_at: ts },
-      },
+      { ...base, change_set_id: "agc-target-a", title: "候选 A", status: "candidate_committed", candidate_commit_sha: "candidate-a" },
+      { ...base, change_set_id: "agc-target-b", title: "候选 B", status: "candidate_committed", candidate_commit_sha: "candidate-b", publication_error: { detail: "release metadata pending reconciliation", updated_at: ts } },
     ];
     try {
-      await renderReleaseWorkbenchHarness(page, [{ ...ready[1], change_set_id: "agc-execution-mismatch", execution_job_id: "exec-other" }]);
-      await page.waitForFunction(() => document.querySelectorAll('[data-testid="release-regression-dataset"] option').length === 1);
-      const mismatchedExecutionDatasetHidden = await page.getByTestId("release-regression-dataset").inputValue() === "";
       await renderReleaseWorkbenchHarness(page, ready);
-      await page.waitForFunction(() => document.querySelectorAll('[data-testid="release-regression-dataset"] option').length === 1);
-      const mismatchedCandidateDatasetHidden = await page.getByTestId("release-regression-dataset").inputValue() === "";
+      await page.getByTestId("release-test-suite").waitFor({ timeout: 5000 });
       await page.getByTestId("release-changeset-select").selectOption("agc-target-b");
       await page.waitForFunction(() => document.querySelector('[data-testid="release-changeset-details"]')?.textContent?.includes("候选 B"));
-      await page.waitForFunction(() => document.querySelectorAll('[data-testid="release-regression-dataset"] option').length === 2);
-      const boundGate = await page.getByTestId("release-gate-attribution").getAttribute("data-state");
+      await page.waitForFunction(() => document.querySelector('[data-testid="release-gate-tests"]')?.getAttribute("data-state") === "pass");
+      const attributionGate = await page.getByTestId("release-gate-attribution").getAttribute("data-state");
+      const testGate = await page.getByTestId("release-gate-tests").getAttribute("data-state");
+      const suiteText = await page.getByTestId("release-test-suite").innerText();
       const errorVisible = await page.getByText("release metadata pending reconciliation", { exact: false }).first().isVisible().catch(() => false);
-      await page.getByTestId("release-regression-dataset").selectOption("tds-demo04");
-
-      observedApiRequests.length = 0;
-      await page.getByTestId("release-action-run-regression").click();
-      const regressionBound = await waitForObservedRequest((r) => r.path === "/api/agent-change-sets/agc-target-b/regression-runs");
-      const regressionRequest = observedApiRequests.find((r) => r.path === "/api/agent-change-sets/agc-target-b/regression-runs");
-      const regressionBody = JSON.parse(regressionRequest?.postData || "{}");
+      const publishEnabled = !(await page.getByTestId("release-action-publish").isDisabled());
 
       observedApiRequests.length = 0;
       await page.getByTestId("release-action-publish").click();
-      const publishBound = await waitForObservedRequest((r) => r.path === "/api/agent-change-sets/agc-target-b/publish");
-      const normalPublish = observedApiRequests.find((r) => r.path === "/api/agent-change-sets/agc-target-b/publish");
-      const normalBody = JSON.parse(normalPublish?.postData || "{}");
+      const publishBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-target-b/publish");
+      const publishRequest = observedApiRequests.find((request) => request.path === "/api/agent-change-sets/agc-target-b/publish");
+      const publishBody = JSON.parse(publishRequest?.postData || "{}");
 
-      await renderReleaseWorkbenchHarness(page, ready.map((item) => ({ ...item, status: "regression_failed" })));
+      await renderReleaseWorkbenchHarness(page, ready);
+      await page.getByTestId("release-changeset-select").selectOption("agc-target-b");
+      await page.waitForFunction(() => document.querySelector('[data-testid="release-action-run-tests"]')?.disabled === false);
+      observedApiRequests.length = 0;
+      await page.getByTestId("release-action-run-tests").click();
+      const testRunBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-target-b/test-runs");
+      const testRunRequest = observedApiRequests.find((request) => request.path === "/api/agent-change-sets/agc-target-b/test-runs");
+      const testRunBody = JSON.parse(testRunRequest?.postData || "{}");
+      const testRunPayloadExact = testRunRequest?.method === "POST"
+        && Object.keys(testRunBody).length === 0;
+
+      const blocked = ready.map((item) => ({ ...item, publication_blocker: "当前待发布 commit 的平台测试未通过" }));
+      await renderReleaseWorkbenchHarness(page, blocked);
+      await page.getByTestId("release-changeset-select").selectOption("agc-target-b");
       await page.getByTestId("release-action-force").click();
       await page.getByTestId("release-force-confirm").waitFor({ timeout: 5000 });
+      const emptyReasonDisabled = await page.getByTestId("release-force-confirm-submit").isDisabled();
+      await page.getByTestId("release-force-reason").fill("已人工复核失败输出，批准带风险发布");
+      await page.getByTestId("release-changeset-select").selectOption("agc-target-a");
       const frozenLabel = await page.getByTestId("release-force-confirm").innerText();
-      await page.getByTestId("release-changeset-select").evaluate((element) => {
-        element.value = "agc-target-a";
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-      await page.waitForFunction(() => document.querySelector('[data-testid="release-changeset-details"]')?.textContent?.includes("候选 A"));
-      const manualGate = await page.getByTestId("release-gate-attribution").getAttribute("data-state");
-
+      const frozenSubmitEnabled = !(await page.getByTestId("release-force-confirm-submit").isDisabled());
       observedApiRequests.length = 0;
       await page.getByTestId("release-force-confirm-submit").click();
-      const forceBound = await waitForObservedRequest((r) => r.path === "/api/agent-change-sets/agc-target-b/publish");
-      const forcePublish = observedApiRequests.find((r) => r.path === "/api/agent-change-sets/agc-target-b/publish");
-      const forceBody = JSON.parse(forcePublish?.postData || "{}");
-      await page.getByTestId("release-force-confirm").waitFor({ state: "detached", timeout: 5000 });
+      const forceBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-target-b/publish");
+      const forceRequest = observedApiRequests.find((request) => request.path === "/api/agent-change-sets/agc-target-b/publish");
+      const forceBody = JSON.parse(forceRequest?.postData || "{}");
+
       await renderReleaseWorkbenchHarness(page, [{
         ...ready[1],
-        publication_provenance_blocker: "改进执行尚未确认或执行来源不完整，请先确认执行结果",
-        publication_blocker: "改进执行尚未确认或执行来源不完整，请先确认执行结果",
+        publication_provenance_blocker: "改进执行来源不完整",
+        publication_blocker: "改进执行来源不完整",
       }]);
       const provenancePublishDisabled = await page.getByTestId("release-action-publish").isDisabled();
       const provenanceForceDisabled = await page.getByTestId("release-action-force").isDisabled();
-      const provenanceOptimizationGate = await page.getByTestId("release-gate-optimization").getAttribute("data-state");
-      await renderReleaseWorkbenchHarness(page, [
-        { ...ready[0], status: "regression_running" },
-        { ...ready[1], change_set_id: "agc-rejected", title: "已拒绝候选", status: "rejected" },
-        { ...ready[1], change_set_id: "agc-failed", title: "失败候选", status: "failed" },
-      ]);
-      const runningRegressionDisabled = await page.getByTestId("release-action-run-regression").isDisabled();
-      const terminalCandidatesHidden = await page.getByText("已拒绝候选", { exact: true }).count() === 0
-        && await page.getByText("失败候选", { exact: true }).count() === 0;
-      await renderReleaseWorkbenchHarness(page, [{
-        ...ready[0],
-        status: "failed",
-        worktree_cleanup_pending: true,
-      }]);
+
+      await renderReleaseWorkbenchHarness(page, [{ ...ready[0], status: "failed", worktree_cleanup_pending: true }]);
       observedApiRequests.length = 0;
       const cleanupVisible = await has(page, "release-cleanup-pending");
       await page.getByTestId("release-action-retry-cleanup").click();
       const cleanupBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-target-a/worktree-cleanup/retry");
-      await renderReleaseWorkbenchHarness(page, [{
-        ...ready[0],
-        change_set_id: "agc-other-improvement",
-        source_improvement_id: "imp-other",
-      }]);
-      await page.waitForFunction(() => document.querySelectorAll('[data-testid="release-regression-dataset"] option').length === 1);
-      const crossImprovementDatasetCleared = await page.getByTestId("release-regression-dataset").inputValue() === "";
-      const regressionPayloadIsTyped = Object.keys(regressionBody).sort().join(",") === "dataset_id"
-        && regressionBody.dataset_id === "tds-demo04";
-      const ok = mismatchedExecutionDatasetHidden && mismatchedCandidateDatasetHidden && boundGate === "pass" && manualGate === "unknown" && errorVisible
-        && regressionBound && regressionPayloadIsTyped && publishBound && normalBody.force === false
-        && frozenLabel.includes("agc-target-b") && forceBound && forceBody.force === true
-        && provenancePublishDisabled && provenanceForceDisabled && provenanceOptimizationGate === "pending"
-        && runningRegressionDisabled && terminalCandidatesHidden && cleanupVisible && cleanupBound && crossImprovementDatasetCleared;
+
+      const ok = attributionGate === "pass"
+        && testGate === "pass"
+        && suiteText.includes("tests/test_feedback_imp_demo04_01_time.py")
+        && errorVisible
+        && publishEnabled
+        && publishBound
+        && publishBody.force === false
+        && testRunBound
+        && testRunPayloadExact
+        && emptyReasonDisabled
+        && frozenLabel.includes("agc-target-b")
+        && frozenSubmitEnabled
+        && forceBound
+        && forceBody.force === true
+        && forceBody.force_reason === "已人工复核失败输出，批准带风险发布"
+        && provenancePublishDisabled
+        && provenanceForceDisabled
+        && cleanupVisible
+        && cleanupBound;
       return {
         ok,
-        detail: `executionMismatchHidden=${mismatchedExecutionDatasetHidden} candidateMismatchHidden=${mismatchedCandidateDatasetHidden} attribution=${boundGate}/manual=${manualGate} error=${errorVisible} regressionB=${regressionBound}/${regressionPayloadIsTyped} publishB=${publishBound}/${normalBody.force} frozenB=${frozenLabel.includes("agc-target-b")} forceB=${forceBound}/${forceBody.force} provenanceDisabled=${provenancePublishDisabled}/${provenanceForceDisabled}/${provenanceOptimizationGate} runningDisabled=${runningRegressionDisabled} terminalHidden=${terminalCandidatesHidden} cleanup=${cleanupVisible}/${cleanupBound} crossImprovementDatasetCleared=${crossImprovementDatasetCleared}`,
+        detail: [
+          "gates=" + attributionGate + "/" + testGate,
+          "suite=" + suiteText.includes("tests/test_feedback_imp_demo04_01_time.py"),
+          "publish=" + publishEnabled + "/" + publishBound + "/" + publishBody.force,
+          "testRun=" + testRunBound + "/" + testRunPayloadExact,
+          "force=" + emptyReasonDisabled + "/" + frozenLabel.includes("agc-target-b") + "/" + frozenSubmitEnabled + "/" + forceBound,
+          "provenance=" + provenancePublishDisabled + "/" + provenanceForceDisabled,
+          "cleanup=" + cleanupVisible + "/" + cleanupBound,
+        ].join(" "),
       };
     } finally {
       await removeReleaseWorkbenchHarness(page);
     }
   } },
-  { id: "release-regression-review", phase: "P2", desc: "待人工复核回归逐条决策完整后只提交专用 review 路由，且不能以强制发布替代", async fn(page) {
-    const datasetCases = [
-      { case_id: "tdc-demo-1", position: 1, prompt: "核验事件时间", expected_behavior: "先核验时间一致性。", checkpoints: ["核验时间"] },
-      { case_id: "tdc-demo-2", position: 2, prompt: "核验数据源", expected_behavior: "先确认数据源真实性。", checkpoints: ["核验数据源"] },
-    ];
-    const latestEvalRun = {
-      eval_run_id: "evr-review-demo",
-      dataset_id: "tds-demo04",
-      dataset_snapshot: { dataset_id: "tds-demo04" },
-      change_set_id: "agc-review-demo",
-      agent_id: "soc-ops",
-      source: "typed_test_dataset",
-      status: "completed",
-      result_status: "needs_human_review",
-      items: datasetCases.map((item, index) => ({
-        eval_run_id: "evr-review-demo",
-        eval_run_item_id: `evri-review-${index + 1}`,
-        dataset_case_id: item.case_id,
-        dataset_case_snapshot: item,
-        status: "needs_human_review",
-        answer_summary: `自动判定无法确认用例 ${index + 1}`,
-      })),
-      gate_result: {
-        status: "review_required",
-        blocked_dataset_case_ids: [],
-        review_dataset_case_ids: datasetCases.map((item) => item.case_id),
-        note_dataset_case_ids: [],
-      },
-      summary: { total: 2, passed: 0, failed: 0, blocked: 0, needs_human_review: 2, note: 0 },
-      created_at: ts,
-    };
-    const changeSet = {
-      change_set_id: "agc-review-demo",
-      agent_id: "soc-ops",
-      created_at: ts,
-      updated_at: ts,
-      status: "regression_review_required",
-      execution_job_id: "exec-1",
-      base_commit_sha: "base-demo",
-      candidate_commit_sha: "candidate-b",
-      branch_name: "agent-change/agc-review-demo",
-      worktree_path: "/tmp/agc-review-demo",
-      title: "待人工复核候选",
-      diff_summary: {},
-      source_improvement_id: "imp-demo04",
-      latest_eval_run: latestEvalRun,
+  { id: "release-test-run-contract", phase: "P2", desc: "发布条件只接受当前待发布 commit 的 pytest 结果，并支持取消与服务重启中断状态", async fn(page) {
+    const base = {
+      agent_id: "soc-ops", created_at: ts, updated_at: ts, base_commit_sha: "base-demo",
+      branch_name: "agent-change/test", worktree_path: "/tmp/test", diff_summary: {},
+      source_improvement_id: "imp-demo04", source_attribution_status: "confirmed", execution_job_id: "exec-1",
+      title: "测试运行契约",
     };
     try {
-      await renderReleaseWorkbenchHarness(page, [changeSet]);
-      await page.getByTestId("release-regression-review").waitFor({ timeout: 5000 });
-      const forceDisabled = await page.getByTestId("release-action-force").isDisabled();
-      const submitDisabledBefore = await page.getByTestId("release-review-submit").isDisabled();
-      await page.getByTestId("release-review-operator").fill("reviewer@example.com");
-      await page.getByTestId("release-review-reason").fill("人工核验关键证据后给出逐条结论");
-      await page.getByTestId("release-review-approve-tdc-demo-1").click();
-      const submitDisabledIncomplete = await page.getByTestId("release-review-submit").isDisabled();
-      await page.getByTestId("release-review-reject-tdc-demo-2").click();
-      const submitEnabledComplete = !(await page.getByTestId("release-review-submit").isDisabled());
-
+      await renderReleaseWorkbenchHarness(page, [{
+        ...base, change_set_id: "agc-stale", status: "candidate_committed", candidate_commit_sha: "candidate-current",
+      }]);
+      await page.getByTestId("release-test-suite").waitFor({ timeout: 5000 });
+      const staleGate = await page.getByTestId("release-gate-tests").getAttribute("data-state");
+      const stalePublishDisabled = await page.getByTestId("release-action-publish").isDisabled();
+      const staleRunHidden = !(await page.getByTestId("release-test-run-details").innerText()).includes("candidate-old");
       observedApiRequests.length = 0;
-      await page.getByTestId("release-review-submit").click();
-      const reviewBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-review-demo/regression-runs/evr-review-demo/review");
-      await page.getByTestId("release-action-message").waitFor({ timeout: 5000 });
-      await page.waitForFunction(() => window.__releaseWorkbenchRefreshCount === 1);
-      const refreshCount = await page.evaluate(() => window.__releaseWorkbenchRefreshCount);
-      const reviewRequest = observedApiRequests.find((request) => request.path === "/api/agent-change-sets/agc-review-demo/regression-runs/evr-review-demo/review");
-      const reviewBody = JSON.parse(reviewRequest?.postData || "{}");
-      const decisions = Array.isArray(reviewBody.decisions) ? reviewBody.decisions : [];
-      const payloadExact = reviewRequest?.method === "POST"
-        && Object.keys(reviewBody).sort().join(",") === "decisions,operator,reason,review_id,scope"
-        && reviewBody.review_id === "review-evr-review-demo"
-        && reviewBody.operator === "reviewer@example.com"
-        && reviewBody.reason === "人工核验关键证据后给出逐条结论"
-        && reviewBody.scope === "current_eval_run"
-        && decisions.length === 2
-        && decisions.every((item) => Object.keys(item).sort().join(",") === "dataset_case_id,decision")
-        && decisions[0]?.dataset_case_id === "tdc-demo-1"
-        && decisions[0]?.decision === "approve"
-        && decisions[1]?.dataset_case_id === "tdc-demo-2"
-        && decisions[1]?.decision === "reject";
-      const pendingReviewForceRouteUnused = !observedApiRequests.some((request) => request.path.endsWith("/publish"));
+      await page.getByTestId("release-action-run-tests").click();
+      const currentRunBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-stale/test-runs");
+      const currentRunRequest = observedApiRequests.find((request) => request.path === "/api/agent-change-sets/agc-stale/test-runs");
+      const currentRunBody = JSON.parse(currentRunRequest?.postData || "{}");
 
       await renderReleaseWorkbenchHarness(page, [{
-        ...changeSet,
-        status: "regression_failed",
-        publication_blocker: "人工复核拒绝了关键用例",
-        latest_eval_run: {
-          ...latestEvalRun,
-          result_status: "failed",
-          gate_result: {
-            ...latestEvalRun.gate_result,
-            status: "blocked",
-            review_dataset_case_ids: [],
-            blocked_dataset_case_ids: ["tdc-demo-2"],
-          },
-        },
+        ...base, change_set_id: "agc-running", status: "candidate_committed", candidate_commit_sha: "candidate-running",
       }]);
-      const forceEnabledAfterRejection = !(await page.getByTestId("release-action-force").isDisabled());
-      await page.getByTestId("release-action-force").click();
-      await page.getByTestId("release-force-confirm").waitFor({ timeout: 5000 });
-      const forceConfirmEnabledAfterRejection = !(await page.getByTestId("release-force-confirm-submit").isDisabled());
+      await page.waitForFunction(() => document.querySelector('[data-testid="release-action-cancel-tests"]')?.disabled === false);
       observedApiRequests.length = 0;
-      await page.getByTestId("release-force-confirm-submit").click();
-      const rejectedForceBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-review-demo/publish");
-      const rejectedForceRequest = observedApiRequests.find((request) => request.path === "/api/agent-change-sets/agc-review-demo/publish");
-      const rejectedForceBody = JSON.parse(rejectedForceRequest?.postData || "{}");
-      const ok = forceDisabled && submitDisabledBefore && submitDisabledIncomplete && submitEnabledComplete
-        && reviewBound && payloadExact && refreshCount === 1 && pendingReviewForceRouteUnused
-        && forceEnabledAfterRejection && forceConfirmEnabledAfterRejection
-        && rejectedForceBound && rejectedForceBody.force === true;
+      await page.getByTestId("release-action-cancel-tests").click();
+      const cancelBound = await waitForObservedRequest((request) => request.path === "/api/agent-test-runs/atr-running/cancel");
+
+      await renderReleaseWorkbenchHarness(page, [{
+        ...base, change_set_id: "agc-interrupted", status: "candidate_committed", candidate_commit_sha: "candidate-interrupted",
+      }]);
+      await page.waitForFunction(() => document.querySelector('[data-testid="release-test-run-details"]')?.textContent?.includes("服务重启中断"));
+      const interruptedText = await page.getByTestId("release-test-run-details").innerText();
+      const interruptedGate = await page.getByTestId("release-gate-tests").getAttribute("data-state");
+      const legacyControls = await page.locator('[data-testid="release-regression-review"], [data-testid="release-regression-dataset"], [data-testid="release-action-run-regression"]').count();
+
+      const exactCurrentRequest = currentRunRequest?.method === "POST"
+        && Object.keys(currentRunBody).length === 0;
+      const ok = staleGate === "pending"
+        && stalePublishDisabled
+        && staleRunHidden
+        && currentRunBound
+        && exactCurrentRequest
+        && cancelBound
+        && interruptedText.includes("服务重启中断")
+        && interruptedGate === "fail"
+        && legacyControls === 0;
       return {
         ok,
-        detail: `forceDisabled=${forceDisabled} submit=${submitDisabledBefore}/${submitDisabledIncomplete}/${submitEnabledComplete} review=${reviewBound}/${payloadExact} refresh=${refreshCount} pendingForceUnused=${pendingReviewForceRouteUnused} rejectedForce=${forceEnabledAfterRejection}/${forceConfirmEnabledAfterRejection}/${rejectedForceBound}/${rejectedForceBody.force}`,
+        detail: [
+          "stale=" + staleGate + "/" + stalePublishDisabled + "/" + staleRunHidden,
+          "current=" + currentRunBound + "/" + exactCurrentRequest,
+          "cancel=" + cancelBound,
+          "interrupted=" + interruptedGate + "/" + interruptedText.includes("服务重启中断"),
+          "legacy=" + legacyControls,
+        ].join(" "),
       };
     } finally {
       await removeReleaseWorkbenchHarness(page);

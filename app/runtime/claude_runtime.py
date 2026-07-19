@@ -8,14 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from app.services.feedback_eval_runner import FeedbackEvalRunner
-
 from .agent_git_store import AgentVersionProvider
 from .agent_job_runner import AgentJobRunner, ClaudeCodeResultError
 from .agent_job_types import FormatterOutputModel
 from .agent_profile_versions import profile_version_snapshot
 from .agent_profiles import (
-    MAIN_AGENT_PROFILE,
     PROFILE_VERSION_IDS,
     AgentRuntimeProfile,
     build_profiles,
@@ -26,7 +23,6 @@ from .claude_runtime_session_persistence import RuntimeSessionPersistenceMixin
 from .claude_trust import ensure_claude_workspace_trusted
 from .claude_user_input_service import ClaudeUserInputService
 from .errors import BusinessRuleViolation, RuntimeUnavailableError
-from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from .governor_job_trace import run_governor_profile_json
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
@@ -35,6 +31,7 @@ from .message_utils import extract_text, message_event_name, to_plain
 from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
 from .prompt_suggestion_generator import PromptSuggestionGenerator
+from .protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from .records.source_records import AgentRunRecord
 from .runtime_activity import RuntimeActivityExtractor
 from .schemas import ChatRequest, ChatResponse
@@ -94,7 +91,7 @@ class RuntimeRequestContext:
     telemetry_input: JsonObject
     langfuse_trace_id: Optional[str] = None
     langfuse_trace_url: Optional[str] = None
-    agent_id: str = MAIN_AGENT_PROFILE
+    agent_id: str = DEFAULT_BUSINESS_AGENT_ID
     finalized: bool = False
     finalization_attempted: bool = False
 
@@ -113,7 +110,10 @@ class RuntimeQueryState:
     result_is_error: bool = False
 
 
-class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
+SDK_QUERY_MISSING_RESULT_ERROR = "SDK query ended without ResultMessage"
+
+
+class ClaudeRuntime(RuntimeSessionPersistenceMixin):
     """Thin runtime adapter around Claude Agent SDK.
 
     Design goals:
@@ -157,17 +157,6 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             output_formatter=self.output_formatter,
             provider_router=self.model_provider_router,
         )
-        self.eval_runner = (
-            FeedbackEvalRunner(
-                feedback_store=feedback_store,
-                run_chat=self.run,
-                run_candidate_chat=lambda req, wt, commit, cs, aid: self.run_candidate(
-                    req, worktree_path=wt, candidate_commit_sha=commit, change_set_id=cs, agent_id=aid
-                ),
-            )
-            if feedback_store is not None
-            else None
-        )
 
     def _resolve_runtime_profile(
         self,
@@ -186,7 +175,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             # Agent，回落只会掩盖「默认 Agent 不存在」并在更深处炸掉。
             return self.business_profile_resolver(requested_agent_id or None)
 
-        raise RuntimeUnavailableError(f"Business profile resolver is not configured for requested agent {requested_agent_id or MAIN_AGENT_PROFILE}")
+        raise RuntimeUnavailableError(f"Business profile resolver is not configured for requested agent {requested_agent_id or DEFAULT_BUSINESS_AGENT_ID}")
 
     def _build_prompt(self, req: ChatRequest) -> str:
         return req.message
@@ -339,7 +328,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         if self.agent_version_maintenance_provider is not None:
             active = self.agent_version_maintenance_provider(agent_id)
         else:
-            active = agent_id == MAIN_AGENT_PROFILE and self.agent_version_store is not None and self.agent_version_store.is_maintenance_active()
+            active = agent_id == DEFAULT_BUSINESS_AGENT_ID and self.agent_version_store is not None and self.agent_version_store.is_maintenance_active()
         if active:
             raise RuntimeUnavailableError("Agent version maintenance is in progress; retry after restore completes.")
 
@@ -586,6 +575,14 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         state.errors.extend(result_errors)
         return event, text, plain, True, result_errors
 
+    @staticmethod
+    def _ensure_query_terminal_error(state: RuntimeQueryState) -> str | None:
+        """把 SDK 静默结束归一为失败，供持久化、HTTP 与观测面复用同一事实。"""
+        if state.result_observed or state.mirror_errors or state.errors:
+            return None
+        state.errors.append(SDK_QUERY_MISSING_RESULT_ERROR)
+        return SDK_QUERY_MISSING_RESULT_ERROR
+
     def _runtime_output_from_state(
         self,
         req: ChatRequest,
@@ -735,9 +732,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             heartbeat=heartbeat,
         )
 
-    async def run_candidate(
-        self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str, agent_id: str = MAIN_AGENT_PROFILE
-    ) -> ChatResponse:
+    async def run_candidate(self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str, agent_id: str) -> ChatResponse:
         # #24-A：候选 profile 按 change_set.agent_id 派生（归属/trace/隔离落到该业务 Agent）。
         profile = candidate_profile(self.settings, agent_id=agent_id, workspace_dir=worktree_path, candidate_id=change_set_id)
         return await self.run(req, profile=profile, agent_version_id_override=candidate_commit_sha)

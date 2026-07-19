@@ -7,10 +7,11 @@ from pathlib import Path
 import pytest
 from app.runtime.errors import BusinessRuleViolation, ConflictError
 from app.runtime.improvement_db import ImprovementFeedbackCaseAssignmentModel, ImprovementFeedbackModel
-from app.runtime.runtime_db import make_session_factory
+from app.runtime.runtime_db import AgentChangeSetModel, make_session_factory
 from app.runtime.schemas import FeedbackSignalCreateRequest
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
+from app.services.generated_agent_tests import build_generated_agent_test
 from fastapi.testclient import TestClient
 
 from feedback_store_test_utils import _seed_execution_record
@@ -19,6 +20,22 @@ from test_api_execution_optimizer import _load_app
 
 def _store(tmp_path: Path) -> ImprovementContentStore:
     return ImprovementContentStore(make_session_factory(tmp_path / "runtime.sqlite3"))
+
+
+def _regression_test_payload(improvement_id: str, prompt: str = "case") -> dict[str, str]:
+    return build_generated_agent_test(
+        improvement_id=improvement_id,
+        index=1,
+        test_code=(
+            "def test_regression(agent):\n"
+            f"    result = agent.run({prompt!r})\n"
+            "    assert not result.errors\n"
+            "    normalized_text = ''.join(result.text.split())\n"
+            f"    assert {prompt!r} in normalized_text\n"
+        ),
+        test_intent=f"验证 {prompt}",
+        assertion_rationale="回答必须包含反馈中的关键业务词",
+    ).to_payload()
 
 
 def _create_feedback_case(module, *, agent_id: str) -> dict:
@@ -386,8 +403,6 @@ def test_artifact_and_stage_roll_back_together_when_stage_write_fails(tmp_path: 
 
 
 def test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_advance(monkeypatch, tmp_path: Path) -> None:
-    from app.runtime.runtime_db import AgentChangeSetModel
-
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
         item = client.post(
@@ -413,10 +428,24 @@ def test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_ad
             change_set_id="old-change-set",
             advance_to_stage="execution",
         )
-        content.upsert_regression_assessment(
+        content.upsert_regression_test_design(
             improvement_id,
             summary="旧回归",
-            cases=[{"prompt": "old"}],
+            tests=[
+                build_generated_agent_test(
+                    improvement_id=improvement_id,
+                    index=1,
+                    test_code=(
+                        "def test_old(agent):\n"
+                        "    result = agent.run('old')\n"
+                        "    assert not result.errors\n"
+                        "    normalized_text = ''.join(result.text.split())\n"
+                        "    assert 'old' in normalized_text\n"
+                    ),
+                    test_intent="旧回归",
+                    assertion_rationale="验证 old 结果",
+                ).to_payload()
+            ],
             advance_to_stage="regression",
         )
         with module.runtime_db_session_factory.begin() as db:
@@ -434,7 +463,7 @@ def test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_ad
                 )
             )
         module.improvement_store.add_link(improvement_id, kind="change_set", ref_id="old-change-set")
-        module.improvement_store.add_link(improvement_id, kind="eval_run", ref_id="old-eval-run")
+        module.improvement_store.add_link(improvement_id, kind="test_run", ref_id="old-test-run")
 
         blocked = client.post(
             f"/api/improvements/{improvement_id}/lifecycle",
@@ -446,7 +475,7 @@ def test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_ad
             f"/api/improvements/{improvement_id}/lifecycle",
             json={"stage": "optimization"},
         )
-        stale_confirm = client.post(f"/api/improvements/{improvement_id}/regression-assessment/confirm")
+        stale_confirm = client.post(f"/api/improvements/{improvement_id}/regression-test-design/confirm")
         links = client.get(f"/api/improvements/{improvement_id}/links").json()
         after = client.get(f"/api/improvements/{improvement_id}").json()
 
@@ -455,7 +484,7 @@ def test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_ad
     assert refined.json()["improvement_stage"] == "optimization"
     assert content.get_optimization_plan(improvement_id) is not None
     assert content.get_execution(improvement_id) is None
-    assert content.get_regression_assessment(improvement_id) is None
+    assert content.get_regression_test_design(improvement_id) is None
     assert stale_confirm.status_code == 400
     assert links == []
     assert after["improvement_stage"] == "optimization"
@@ -487,10 +516,10 @@ def test_advanced_item_rejects_upstream_artifact_and_source_scope_mutation(monke
             advance_to_stage="execution",
         )
         content.set_execution_status(improvement_id, status="confirmed")
-        content.upsert_regression_assessment(
+        content.upsert_regression_test_design(
             improvement_id,
             summary="R1",
-            cases=[{"prompt": "r1"}],
+            tests=[_regression_test_payload(improvement_id, "r1")],
             advance_to_stage="regression",
         )
 
@@ -537,11 +566,11 @@ def test_structural_artifacts_reject_whitespace_only_business_fields(tmp_path: P
             summary="plan",
             changes=[{"target": "  ", "change": "  "}],
         )
-    with pytest.raises(BusinessRuleViolation, match="non-empty prompt"):
-        store.upsert_regression_assessment(
+    with pytest.raises(BusinessRuleViolation, match="require target_path"):
+        store.upsert_regression_test_design(
             "imp-1",
             summary="regression",
-            cases=[{"prompt": "  "}],
+            tests=[{"target_path": "  "}],
         )
 
 
@@ -714,13 +743,13 @@ def test_business_artifact_prerequisites_fail_closed(monkeypatch, tmp_path: Path
         )
         assert client.post(f"/api/improvements/{iid}/optimization-plan/generate").status_code == 400
         assert client.post(f"/api/improvements/{iid}/execution/apply").status_code == 400
-        assert client.post(f"/api/improvements/{iid}/regression-assessment/generate").status_code == 400
+        assert client.post(f"/api/improvements/{iid}/regression-test-design/generate").status_code == 400
         item = client.get(f"/api/improvements/{iid}").json()
 
     assert item["improvement_stage"] == "feedback_intake"
     assert module.improvement_content_store.get_optimization_plan(iid) is None
     assert module.improvement_content_store.get_execution(iid) is None
-    assert module.improvement_content_store.get_regression_assessment(iid) is None
+    assert module.improvement_content_store.get_regression_test_design(iid) is None
 
 
 def test_unapplied_execution_record_does_not_advance_or_unlock_regression(monkeypatch, tmp_path: Path) -> None:
@@ -756,7 +785,7 @@ def test_unapplied_execution_record_does_not_advance_or_unlock_regression(monkey
             f"/api/improvements/{iid}/execution",
             json={"summary": "声称执行", "changes_applied": ["prompt"], "agent_version": ""},
         )
-        regression = client.post(f"/api/improvements/{iid}/regression-assessment/generate")
+        regression = client.post(f"/api/improvements/{iid}/regression-test-design/generate")
         item = client.get(f"/api/improvements/{iid}").json()
 
     assert no_action.status_code == 200
@@ -766,8 +795,8 @@ def test_unapplied_execution_record_does_not_advance_or_unlock_regression(monkey
     assert item["improvement_stage"] == "optimization"
 
 
-def test_regression_assessment_generate_get_confirm(monkeypatch, tmp_path: Path) -> None:
-    """四阶段改进治理 §11/§17.5：回归保障评估 generate(治理 Agent，测试环境 heuristic 兜底)→get→confirm，未知事项 404。"""
+def test_regression_test_design_generate_get_confirm(monkeypatch, tmp_path: Path) -> None:
+    """生成代码、确认待发布 commit、运行测试是三个独立动作。"""
     module = _load_app(monkeypatch, tmp_path)
 
     async def apply_execution(improvement_id: str):
@@ -784,7 +813,68 @@ def test_regression_assessment_generate_get_confirm(monkeypatch, tmp_path: Path)
             advance_to_stage="execution",
         )
 
+    def materialize_regression_tests(improvement_id: str) -> dict:
+        module.improvement_content_store.rebind_execution_candidate(
+            improvement_id,
+            change_set_id="agc-regression",
+            previous_commit_sha="v-test",
+            candidate_commit_sha="a" * 40,
+            applied_diff={"changed_files": ["CLAUDE.md", "tests/test_feedback_regression.py"]},
+            generated_test_files=["tests/test_feedback_regression.py"],
+        )
+        return {
+            "agent_id": "soc-ops",
+            "change_set_id": "agc-regression",
+            "candidate_commit_sha": "a" * 40,
+            "generated_test_files": ["tests/test_feedback_regression.py"],
+        }
+
+    async def generate_regression_test_design(improvement_id: str, *, advance_to_stage: str | None = None):
+        candidate = build_generated_agent_test(
+            improvement_id=improvement_id,
+            index=1,
+            test_code=(
+                "def test_time_consistency(agent):\n"
+                "    result = agent.run('仅依据以下已给定事实回答，不调用任何工具或读取文件。请判断告警是否应升级；回答必须包含核验。')\n"
+                "    assert not result.errors\n"
+                "    normalized_text = ''.join(result.text.split())\n"
+                "    assert '核验' in normalized_text\n"
+                "    assert result.raw['agent_activity']['tool_calls'] == []\n"
+            ),
+            test_intent="验证升级前核验时间",
+            assertion_rationale="回答必须出现核验动作",
+        )
+        return module.improvement_content_store.upsert_regression_test_design(
+            improvement_id,
+            summary="生成可执行 pytest",
+            tests=[candidate.to_payload()],
+            generated_by="governor",
+            advance_to_stage=advance_to_stage,
+        )
+
+    test_run = {
+        "test_run_id": "atr-feedback",
+        "agent_id": "soc-ops",
+        "commit_sha": "a" * 40,
+        "change_set_id": "agc-regression",
+        "source": "feedback_optimization",
+        "status": "queued",
+        "cancel_requested": False,
+        "created_at": "2026-07-18T00:00:00Z",
+    }
+
+    test_runs: list[dict] = []
     monkeypatch.setattr(module.improvement_execution_service, "generate_and_apply_execution", apply_execution)
+    monkeypatch.setattr(module.improvement_execution_service, "materialize_regression_tests", materialize_regression_tests)
+    monkeypatch.setattr(module.improvement_governor_service, "generate_regression_test_design", generate_regression_test_design)
+
+    def create_change_set_run(_change_set_id: str) -> dict:
+        test_runs.append(test_run)
+        return test_run
+
+    monkeypatch.setattr(module.agent_testing_service, "create_change_set_run", create_change_set_run)
+    monkeypatch.setattr(module.agent_testing_service.store, "list_runs", lambda **_kwargs: list(test_runs))
+    monkeypatch.setattr(module.agent_testing_service.store, "get_run", lambda _test_run_id: test_run)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "误报治理"}).json()["improvement_id"]
         client.post(
@@ -805,11 +895,21 @@ def test_regression_assessment_generate_get_confirm(monkeypatch, tmp_path: Path)
         client.post(f"/api/improvements/{iid}/optimization-plan/confirm")
         client.post(f"/api/improvements/{iid}/execution/apply")
         client.post(f"/api/improvements/{iid}/execution/confirm")
-        gen = client.post(f"/api/improvements/{iid}/regression-assessment/generate")
-        assert gen.status_code == 200 and gen.json()["generated_by"] in {"governor", "heuristic"} and gen.json()["cases"]
-        assert client.get(f"/api/improvements/{iid}/regression-assessment").json()["status"] == "draft"
-        assert client.post(f"/api/improvements/{iid}/regression-assessment/confirm").json()["status"] == "confirmed"
+        gen = client.post(f"/api/improvements/{iid}/regression-test-design/generate")
+        assert gen.status_code == 200 and gen.json()["generated_by"] == "governor" and gen.json()["tests"]
+        assert client.get(f"/api/improvements/{iid}/regression-test-design").json()["status"] == "draft"
+        confirmed = client.post(f"/api/improvements/{iid}/regression-test-design/confirm")
+        assert confirmed.status_code == 200
+        assert confirmed.json()["status"] == "confirmed"
+        assert confirmed.json()["generated_test_files"] == ["tests/test_feedback_regression.py"]
+        assert confirmed.json()["test_run"] is None
+        started = client.post("/api/agent-change-sets/agc-regression/test-runs")
+        assert started.status_code == 202 and started.json()["status"] == "queued"
+        refreshed = client.get(f"/api/improvements/{iid}/regression-test-design").json()
+        assert refreshed["candidate_commit_sha"] == "a" * 40
+        assert refreshed["generated_test_files"] == ["tests/test_feedback_regression.py"]
+        assert refreshed["test_run"]["test_run_id"] == "atr-feedback"
         assert client.get(f"/api/improvements/{iid}").json()["improvement_stage"] == "regression"
-        assert client.post("/api/improvements/imp-none/regression-assessment/generate").status_code == 404
+        assert client.post("/api/improvements/imp-none/regression-test-design/generate").status_code == 404
         other = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "空"}).json()["improvement_id"]
-        assert client.get(f"/api/improvements/{other}/regression-assessment").status_code == 404
+        assert client.get(f"/api/improvements/{other}/regression-test-design").status_code == 404

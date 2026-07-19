@@ -70,7 +70,7 @@ export HOST_RUNTIME_VOLUME_ROOT="$runtime_root"
 export HOST_DATA_MOUNT="$runtime_root/data"
 export HOST_GOVERNOR_WORKSPACE_MOUNT="$runtime_root/governor-workspace"
 export HOST_GOVERNOR_CLAUDE_ROOT_MOUNT="$runtime_root/claude-roots/governor"
-export RUNTIME_VOLUME_SEEDS_HOST_DIR="$ROOT_DIR/docker/runtime-volume-seeds"
+export RUNTIME_BOOTSTRAP_HOST_DIR="$ROOT_DIR/docker/runtime-bootstrap"
 
 mkdir -p "$HOST_DATA_MOUNT" "$HOST_GOVERNOR_WORKSPACE_MOUNT" "$HOST_GOVERNOR_CLAUDE_ROOT_MOUNT" "$artifact_root"
 

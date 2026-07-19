@@ -104,7 +104,7 @@ def _prepare_finalization(
             "latest_release": release,
             "force_published": intent.force,
             "force_publication_blocker": intent.force_publication_blocker,
-            "force_publish_note": intent.note if intent.force else None,
+            "force_publish_reason": intent.note if intent.force else None,
             "publication_error": None,
             **pending_cleanup_projection(),
         }

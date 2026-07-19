@@ -5,7 +5,7 @@
 三处（architecture.md 禁止的"同一职责跨 3+ 文件字面量耦合"）。这里收敛为单一 helper：
 任何创建/解析业务 Agent workspace、claude-root、版本库的代码都从此处取路径，改布局只改一处。
 
-约定（每个业务 Agent，含预制 main-agent），三者**并列**于 ``<id>/`` 下：
+约定（每个注册业务 Agent，含 main-agent），三者**并列**于 ``<id>/`` 下：
 - ``workspace``     配置层（CLAUDE.md/.claude/.mcp.json）= cwd + git 版本源（repository_dir）
 - ``claude_root``   SDK 运行态家目录（CLAUDE_CONFIG_DIR 的家）；与 workspace 并列，天然不进版本源
 - ``version_base``  per-agent 版本治理工件根（其下 worktrees/releases；repo 即 workspace 本身）

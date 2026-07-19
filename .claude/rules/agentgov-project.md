@@ -82,7 +82,7 @@
 - 应用配置文件：约定放 `config/*.yaml` 或 `config/*.json`（当前未创建）。
 - Docker/Compose 入口：`docker/`，`docker/docker-compose.yml`。
 - 持久化数据路径：容器默认 `${HOME}/volume-agent-gov`，本机调试默认 `/tmp/local-debug-volume-agent-gov`；`docker/volume/` 仅迁移来源。
-- 项目源码仓库边界：真实 API key、MCP header、数据库凭据、本机私有路径和运行态数据不得进入 AgentGov 项目源码仓库、公开文档、日志或提交说明。业务 Agent 的 live workspace 与其 per-Agent Git 是敏感运行资产，可按字节保留 `.env`、真实 endpoint、凭据型 header、数据库配置和本机路径；该例外不延伸到项目源码仓库。live workspace 回流 repo seed/builtin 前先在仓库外形成候选，再通过 seed 准入扫描。
+- 项目源码仓库边界：真实 API key、MCP header、数据库凭据、本机私有路径和运行态数据不得进入 AgentGov 项目源码仓库、公开文档、日志或提交说明。业务 Agent 的 live Workspace 与其 per-Agent Git 是敏感运行资产，可按字节保留 `.env`、真实 endpoint、凭据型 header、数据库配置和本机路径；该例外不延伸到项目源码仓库。live Workspace 回流仓库内置运行卷初始化源前先在仓库外形成候选，再通过 `runtime-bootstrap` 准入扫描。
 - 涉及 `RUNTIME_CONTAINER`、`RUNTIME_VOLUME_MODE`、上述 env 文件、Docker volume、Langfuse 或治理模型凭据的改动，先按 `.claude/skills/runtime-env-governance/SKILL.md` 做 Consumer x Mode x Boundary 矩阵。
 - `.claude/settings.json` 的 Read deny 只约束内建文件工具；未启用 sandbox 时不能把它当作 Bash/Python 子进程的 OS 级密钥隔离。
 

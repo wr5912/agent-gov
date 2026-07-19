@@ -26,12 +26,16 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 import pytest
+from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.feedback_schemas import AttributionFormatterOutput
 from app.runtime.model_provider import LOCAL_PROVIDER_DUMMY_API_KEY, ModelProviderRouter
 from app.runtime.output_formatter import DSPyOutputFormatter
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings
+from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
 _LIVE_ENV_FILE = Path(__file__).resolve().parents[1] / "docker" / ".env"
 _LIVE_PROVIDER_KEYS = (
@@ -43,12 +47,10 @@ _LIVE_PROVIDER_KEYS = (
     "MODEL_PROVIDER_WARNING_TTL_SECONDS",
     "AGENT_MODEL",
 )
-# 业务 Agent（含预制 main-agent）统一住 /data 下；断言真实运行布局，不再用已删的 /main-workspace、
-# /claude-roots/main（B 整改后这两个目录已不创建，旧断言会因空死目录假通过）。
+# 空运行卷必须初始化当前默认内置业务 Agent，并使用统一的 per-Agent 布局。
 _CONTAINER_REQUIRED_PATHS = (
     Path("/data"),
-    Path("/data/business-agents/main-agent/workspace"),
-    Path("/data/business-agents/main-agent/claude-root"),
+    Path(f"/data/business-agents/{DEFAULT_BUSINESS_AGENT_ID}/workspace"),
 )
 _TRUTHY = {"1", "true", "yes", "on", "container"}
 _STRICT_LIVE_RUNTIME = os.environ.get("REQUIRE_LIVE_RUNTIME", "").strip().lower() in _TRUTHY
@@ -104,11 +106,7 @@ def _live_provider_skip_reason() -> str | None:
 _LIVE_PROVIDER_SKIP_REASON = _live_provider_skip_reason()
 
 if _STRICT_LIVE_RUNTIME:
-    strict_failures = [
-        reason
-        for reason in (_CONTAINER_ACCEPTANCE_SKIP_REASON, _LIVE_PROVIDER_SKIP_REASON)
-        if reason is not None
-    ]
+    strict_failures = [reason for reason in (_CONTAINER_ACCEPTANCE_SKIP_REASON, _LIVE_PROVIDER_SKIP_REASON) if reason is not None]
     if strict_failures:
         raise RuntimeError("严格 live 验收前置条件不满足: " + "; ".join(strict_failures))
 
@@ -264,7 +262,7 @@ def test_live_vllm_c_model_tool_and_schema_preflight(live_settings):
         },
         api_key=api_key,
     )
-    message = (((tool_response.get("choices") or [{}])[0]).get("message") or {})
+    message = ((tool_response.get("choices") or [{}])[0]).get("message") or {}
     assert message.get("tool_calls"), "模型未返回 tool_calls，不能准入 Claude Code 多工具循环"
     first_tool_call = message["tool_calls"][0]
     tool_call_id = first_tool_call.get("id") or "call_1"
@@ -345,11 +343,14 @@ def test_live_runtime_chat_executes_against_live_model(live_settings):
     import anyio
 
     settings = live_settings
-    if not (settings.main_workspace_dir / "CLAUDE.md").exists():
+    if not (settings.default_workspace_dir / "CLAUDE.md").exists():
         pytest.skip("chat live 验收需先部署并 bootstrap 容器运行卷")
 
+    registry = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
     runtime = __import__("app.runtime.claude_runtime", fromlist=["ClaudeRuntime"]).ClaudeRuntime(
-        settings, LocalSessionStore(settings.session_dir)
+        settings,
+        LocalSessionStore(settings.session_dir),
+        business_profile_resolver=lambda agent_id: resolve_business_profile(settings, registry, agent_id),
     )
 
     async def _run():
@@ -359,3 +360,4 @@ def test_live_runtime_chat_executes_against_live_model(live_settings):
     assert response.errors == [], f"live chat 不应有错误: {response.errors}"
     assert response.answer and response.answer.strip(), "live chat 应返回非空 answer"
     assert "5" in response.answer
+    assert (settings.default_claude_root / ".claude").is_dir(), "业务 Agent 首次运行后必须创建独立 claude-root"

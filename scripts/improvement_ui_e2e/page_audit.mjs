@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 const OPTIONAL_ARTIFACT_404 = [
-  /\/api\/improvements\/[^/]+\/(attribution|optimization-plan|execution|regression-assessment)$/,
+  /\/api\/improvements\/[^/]+\/(attribution|optimization-plan|execution|regression-test-design)$/,
 ];
 
 function responseRecord(response) {

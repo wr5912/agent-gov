@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.runtime.agent_loader import discover_agents, discover_skills
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import AgentInfo, SkillInfo
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
@@ -37,7 +38,7 @@ def create_catalog_router(
         summary="List configured Claude subagents",
     )
     async def list_agents(
-        agent_id: str = Query(default="main-agent", description="Business agent id from /api/agent-registry."),
+        agent_id: str = Query(default=DEFAULT_BUSINESS_AGENT_ID, description="Business agent id from /api/agent-registry."),
     ) -> list[AgentInfo]:
         workspace_dir, claude_home = _resolve_agent_dirs(agent_id)
         return [
@@ -58,7 +59,7 @@ def create_catalog_router(
         summary="List configured Claude skills",
     )
     async def list_skills(
-        agent_id: str = Query(default="main-agent", description="Business agent id from /api/agent-registry."),
+        agent_id: str = Query(default=DEFAULT_BUSINESS_AGENT_ID, description="Business agent id from /api/agent-registry."),
     ) -> list[SkillInfo]:
         workspace_dir, claude_home = _resolve_agent_dirs(agent_id)
         return [

@@ -346,7 +346,7 @@
 /* 四阶段改进治理 §9 Trace 摘要（深色调试区） */
 .iw-trace-summary { background: var(--bg-debug); border-radius: 8px; padding: 10px 12px; margin-top: 6px; }
 
-/* 四阶段改进治理 发布门禁台 */
+/* 四阶段改进治理发布条件 */
 .release-stage-workbench { display: grid; gap: 0; margin-top: 12px; border-top: 1px solid var(--border-subtle); }
 .release-stage-band { display: grid; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border-subtle); }
 .release-stage-heading { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; min-width: 0; }
@@ -758,6 +758,19 @@
   user-select: text;
 }
 .iw-regression-case-input .iw-link-button { justify-self: start; }
+.iw-regression-test-code {
+  margin: 0;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-muted);
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+}
 .iw-gate-pass {
   margin-top: 10px;
   padding: 10px;

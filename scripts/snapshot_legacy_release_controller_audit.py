@@ -62,13 +62,13 @@ class LegacyAuditSnapshot(TypedDict):
     outbox: list[OutboxAudit]
 
 
-_SNAPSHOT_KEYS = frozenset(LegacyAuditSnapshot.__required_keys__)
+_SNAPSHOT_KEYS = frozenset(LegacyAuditSnapshot.__annotations__)
 _SECTION_KEYS = (
-    ("metadata", frozenset(MetadataAudit.__required_keys__)),
-    ("releases", frozenset(ReleaseAudit.__required_keys__)),
-    ("commit_links", frozenset(CommitLinkAudit.__required_keys__)),
-    ("events", frozenset(EventAudit.__required_keys__)),
-    ("outbox", frozenset(OutboxAudit.__required_keys__)),
+    ("metadata", frozenset(MetadataAudit.__annotations__)),
+    ("releases", frozenset(ReleaseAudit.__annotations__)),
+    ("commit_links", frozenset(CommitLinkAudit.__annotations__)),
+    ("events", frozenset(EventAudit.__annotations__)),
+    ("outbox", frozenset(OutboxAudit.__annotations__)),
 )
 
 

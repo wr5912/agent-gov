@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, cast
 
 from .json_types import JsonObject
 
@@ -22,13 +23,8 @@ class McpConfigError(RuntimeError):
     """Raised when the selected MCP config cannot be passed to Claude Code."""
 
 
-def resolve_main_mcp_config_path(workspace_dir: Path, explicit_path: Path | None = None) -> McpConfigResolution:
-    """Return the Claude Code project MCP config.
-
-    ``explicit_path`` is accepted only for compatibility with older callers. The
-    runtime no longer injects MCP config through SDK Options; Claude Code should
-    discover the official project file from the workspace.
-    """
+def resolve_workspace_mcp_config_path(workspace_dir: Path) -> McpConfigResolution:
+    """Return the Claude Code project MCP config discovered from one Workspace."""
 
     return McpConfigResolution(path=workspace_dir / ".mcp.json", source="workspace_project")
 
@@ -90,9 +86,7 @@ def build_mcp_config_summary(
                 "name": name,
                 "type": config.get("type") if isinstance(config, dict) else None,
                 "url_present": bool(config.get("url")) if isinstance(config, dict) else False,
-                "url_has_placeholder": bool(_PLACEHOLDER_RE.search(str(config.get("url", ""))))
-                if isinstance(config, dict)
-                else False,
+                "url_has_placeholder": bool(_PLACEHOLDER_RE.search(str(config.get("url", "")))) if isinstance(config, dict) else False,
             }
             for name, config in sorted(selected.items())
         ]
@@ -154,20 +148,9 @@ def _replacement_value(match: re.Match[str], env: Mapping[str, str]) -> str:
 
 def _find_unresolved_placeholders(value: Any, path: str = "$") -> list[JsonObject]:
     if isinstance(value, str):
-        return [
-            {"path": path, "placeholder": match.group(1)}
-            for match in _PLACEHOLDER_RE.finditer(value)
-        ]
+        return [{"path": path, "placeholder": match.group(1)} for match in _PLACEHOLDER_RE.finditer(value)]
     if isinstance(value, list):
-        return [
-            item
-            for index, child in enumerate(value)
-            for item in _find_unresolved_placeholders(child, f"{path}[{index}]")
-        ]
+        return [item for index, child in enumerate(value) for item in _find_unresolved_placeholders(child, f"{path}[{index}]")]
     if isinstance(value, dict):
-        return [
-            item
-            for key, child in value.items()
-            for item in _find_unresolved_placeholders(child, f"{path}.{key}")
-        ]
+        return [item for key, child in value.items() for item in _find_unresolved_placeholders(child, f"{path}.{key}")]
     return []

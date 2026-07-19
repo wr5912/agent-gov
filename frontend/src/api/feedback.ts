@@ -4,7 +4,6 @@ import type {
   AgentJobRecord,
   EvidencePackageFileRecord,
   EvidencePackageRecord,
-  EvalRunRecord,
   FeedbackCaseCreateRequest,
   FeedbackCaseRecord,
   FeedbackFilters,
@@ -158,18 +157,6 @@ export function getEvidencePackageFile(config: RuntimeClientConfig, evidencePack
   );
 }
 
-export function getEvalRuns(config: RuntimeClientConfig, filters?: FeedbackFilters & { agent_version_id?: string }) {
-  return requestJson<EvalRunRecord[]>(config, `/api/eval-runs${feedbackQueryString(filters)}`);
-}
-
-export function createEvalRun(config: RuntimeClientConfig, datasetId: string) {
-  return requestJson<EvalRunRecord>(config, "/api/eval-runs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dataset_id: datasetId }),
-  });
-}
-
 export async function getFeedbackWorkbenchData(
   config: RuntimeClientConfig,
   filters: FeedbackFilters = { limit: 500 },
@@ -189,7 +176,6 @@ export async function getFeedbackWorkbenchData(
     events,
     pendingCorrelations,
     cases,
-    evalRuns,
   ] = await Promise.all([
     optionalList(getFeedbackSources(config, { limit })),
     optionalList(getAgentRuns(config, { limit })),
@@ -197,7 +183,6 @@ export async function getFeedbackWorkbenchData(
     optionalList(getSocEvents(config, { limit })),
     optionalList(getPendingCorrelations(config, { limit })),
     optionalList(getFeedbackCases(config, { limit })),
-    optionalList(getEvalRuns(config, { limit })),
   ]);
   return {
     sources,
@@ -206,6 +191,5 @@ export async function getFeedbackWorkbenchData(
     events,
     pending_correlations: pendingCorrelations,
     cases,
-    eval_runs: evalRuns,
   };
 }

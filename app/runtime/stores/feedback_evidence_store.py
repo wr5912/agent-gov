@@ -11,7 +11,8 @@ from typing import Any, Optional
 
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
 from ..json_types import JsonObject
-from ..mcp_config import build_mcp_config_summary, resolve_main_mcp_config_path
+from ..mcp_config import build_mcp_config_summary, resolve_workspace_mcp_config_path
+from ..protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from ..records.evidence_records import EvidenceIncludedFileRecord, EvidencePackageFileRecord, EvidencePackageRecord
 from ..runtime_db import EvidenceFileModel, EvidencePackageModel, utc_now
 
@@ -44,8 +45,8 @@ class FeedbackEvidenceStoreMixin:
 
         evidence_id = f"evp-{uuid.uuid4()}"
         context = self._collect_evidence_context(feedback_case)
-        main_agent_version: JsonObject = {
-            "main_agent_version_id": self._current_agent_version_id(self._resolve_task_agent_id(feedback_case_id=feedback_case_id)),
+        business_agent_version: JsonObject = {
+            "business_agent_version_id": self._current_agent_version_id(self._resolve_task_agent_id(feedback_case_id=feedback_case_id)),
             "captured_at": utc_now(),
         }
         redaction_report: JsonObject = {
@@ -53,14 +54,14 @@ class FeedbackEvidenceStoreMixin:
             "policy": "debug-evidence-raw-v1" if self.enable_debug_evidence else "security-redaction-v1",
             "redacted_fields": list(SENSITIVE_KEY_PARTS),
         }
-        files = self._build_evidence_files(context, main_agent_version, redaction_report)
+        files = self._build_evidence_files(context, business_agent_version, redaction_report)
         included_files = self._included_evidence_files(files)
         manifest = self._build_evidence_manifest(
             evidence_id=evidence_id,
             feedback_case_id=feedback_case_id,
             feedback_case=feedback_case,
             context=context,
-            main_agent_version=main_agent_version,
+            business_agent_version=business_agent_version,
             redaction_report=redaction_report,
             included_files=included_files,
         )
@@ -140,7 +141,7 @@ class FeedbackEvidenceStoreMixin:
     def _build_evidence_files(
         self,
         context: JsonObject,
-        main_agent_version: JsonObject,
+        business_agent_version: JsonObject,
         redaction_report: JsonObject,
     ) -> JsonObject:
         files: JsonObject = {
@@ -155,7 +156,7 @@ class FeedbackEvidenceStoreMixin:
             "mcp_connection_summary.json": context["mcp_connection_summary"],
             "runtime_env_snapshot.json": context["runtime_env_snapshot"],
             "workspace_placeholder_summary.json": context["workspace_placeholder_summary"],
-            "main_agent_version.json": main_agent_version,
+            "business_agent_version.json": business_agent_version,
             "langfuse_trace_details.json": context["langfuse_trace_details"],
             "redaction_report.json": redaction_report,
         }
@@ -186,7 +187,7 @@ class FeedbackEvidenceStoreMixin:
         feedback_case_id: str,
         feedback_case: JsonObject,
         context: JsonObject,
-        main_agent_version: JsonObject,
+        business_agent_version: JsonObject,
         redaction_report: JsonObject,
         included_files: list[JsonObject],
     ) -> JsonObject:
@@ -200,7 +201,7 @@ class FeedbackEvidenceStoreMixin:
                 "feedback_case_id": feedback_case_id,
                 "created_at": utc_now(),
                 "created_by": "system",
-                "main_agent_version_id": main_agent_version["main_agent_version_id"],
+                "business_agent_version_id": business_agent_version["business_agent_version_id"],
                 "source_refs": {
                     "feedback_ids": feedback_case.get("signal_ids", []),
                     "signal_ids": feedback_case.get("signal_ids", []),
@@ -223,7 +224,7 @@ class FeedbackEvidenceStoreMixin:
                     "has_mcp_connection_summary": bool(context["mcp_connection_summary"]),
                     "has_runtime_env_snapshot": bool(context["runtime_env_snapshot"]),
                     "has_workspace_placeholder_summary": bool(context["workspace_placeholder_summary"]),
-                    "has_main_agent_version": bool(main_agent_version["main_agent_version_id"]),
+                    "has_business_agent_version": bool(business_agent_version["business_agent_version_id"]),
                     "has_messages": bool(context["messages"] and any(item.get("messages") for item in context["messages"])),
                     "has_agent_activity": bool(context["agent_activity"] and any(item.get("agent_activity") for item in context["agent_activity"])),
                     "has_langfuse_trace_refs": bool(context["langfuse_trace_refs"]),
@@ -234,13 +235,13 @@ class FeedbackEvidenceStoreMixin:
         return record.to_payload()
 
     def _runtime_config_summary(self, effective_mcp_config: JsonObject) -> JsonObject:
-        project_settings_path = self.main_workspace_dir / ".claude" / "settings.json"
+        project_settings_path = self.default_workspace_dir / ".claude" / "settings.json"
         try:
             project_settings_bytes = project_settings_path.read_bytes()
         except OSError:
             project_settings_bytes = None
         return {
-            "main_workspace_dir": str(self.main_workspace_dir),
+            "default_workspace_dir": str(self.default_workspace_dir),
             "data_dir": str(self.data_dir),
             "report_output_dir": str(self.data_dir / "outputs" / "reports"),
             "project_settings": {
@@ -256,13 +257,13 @@ class FeedbackEvidenceStoreMixin:
 
     def _effective_mcp_config(self) -> JsonObject:
         env = self._mcp_expansion_env()
-        resolution = resolve_main_mcp_config_path(self.main_workspace_dir)
+        resolution = resolve_workspace_mcp_config_path(self.default_workspace_dir)
         summary = build_mcp_config_summary(resolution.path, _MAIN_MCP_SERVERS, env)
         return {
-            "profile": "main-agent",
+            "profile": DEFAULT_BUSINESS_AGENT_ID,
             "source": resolution.source,
-            "workspace_project_path": str(self.main_workspace_dir / ".mcp.json"),
-            "workspace_project_exists": (self.main_workspace_dir / ".mcp.json").exists(),
+            "workspace_project_path": str(self.default_workspace_dir / ".mcp.json"),
+            "workspace_project_exists": (self.default_workspace_dir / ".mcp.json").exists(),
             **summary,
         }
 
@@ -351,9 +352,9 @@ class FeedbackEvidenceStoreMixin:
 
     def _workspace_placeholder_summary(self) -> JsonObject:
         items: list[JsonObject] = []
-        if not self.main_workspace_dir.exists():
-            return {"workspace_dir": str(self.main_workspace_dir), "exists": False, "items": items}
-        for path in sorted(self.main_workspace_dir.rglob("*")):
+        if not self.default_workspace_dir.exists():
+            return {"workspace_dir": str(self.default_workspace_dir), "exists": False, "items": items}
+        for path in sorted(self.default_workspace_dir.rglob("*")):
             if not self._placeholder_scan_allowed(path):
                 continue
             try:
@@ -363,7 +364,7 @@ class FeedbackEvidenceStoreMixin:
             matches = sorted({match.group(1) for match in _PLACEHOLDER_RE.finditer(text)})
             if not matches:
                 continue
-            rel = path.relative_to(self.main_workspace_dir).as_posix()
+            rel = path.relative_to(self.default_workspace_dir).as_posix()
             items.append(
                 {
                     "path": rel,
@@ -372,12 +373,12 @@ class FeedbackEvidenceStoreMixin:
                     "attribution_hint": self._placeholder_attribution_hint(rel),
                 }
             )
-        return {"workspace_dir": str(self.main_workspace_dir), "exists": True, "items": items}
+        return {"workspace_dir": str(self.default_workspace_dir), "exists": True, "items": items}
 
     def _placeholder_scan_allowed(self, path: Path) -> bool:
         if not path.is_file() or path.suffix not in _PLACEHOLDER_SCAN_EXTENSIONS:
             return False
-        rel_parts = set(path.relative_to(self.main_workspace_dir).parts)
+        rel_parts = set(path.relative_to(self.default_workspace_dir).parts)
         if rel_parts & _PLACEHOLDER_SCAN_SKIP_PARTS:
             return False
         try:

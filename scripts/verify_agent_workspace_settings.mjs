@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Settings workspace package UI acceptance: empty state, raw seed hint,
-// structured import failure, successful receipt, and restore action.
+// Settings Workspace package UI acceptance: package-only creation, structured
+// import failure, successful receipt, export, and restore action.
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,7 +34,10 @@ const workspaceAgent = {
   workspace_dir: "/runtime/workspace-agent",
   created_at: timestamp,
   status: "active",
-  origin: "user",
+  builtin: false,
+  default: false,
+  protected: false,
+  requires_web_hitl: false,
 };
 const secondWorkspaceAgent = {
   ...workspaceAgent,
@@ -160,23 +163,8 @@ async function installMockRoutes(page, state) {
     if (path === "/api/agent-registry" && method === "GET") {
       return json(route, state.agents);
     }
-    if (path === "/api/agent-registry" && method === "POST") {
-      const payload = request.postDataJSON();
-      state.createRequests.push(payload);
-      const created = {
-        ...workspaceAgent,
-        agent_id: payload.agent_id || "generated-agent",
-        name: payload.name,
-        workspace_dir: `/runtime/${payload.agent_id || "generated-agent"}`,
-      };
-      state.agents.push(created);
-      return json(route, created, 201);
-    }
-    if (path === "/api/agent-registry/templates" && method === "GET") {
-      return json(route, { templates: ["general"], seed_agent_ids: ["main-agent"] });
-    }
     if (path === "/api/settings/openai-compat-agent" && method === "GET") {
-      return json(route, { agent_id: null, configured: false, effective_agent_id: "main-agent" });
+      return json(route, { agent_id: null, configured: false, effective_agent_id: "security-operations-expert" });
     }
     if (path === "/api/agent-repository/current" && method === "GET") {
       return json(route, defaultPayload(path));
@@ -270,7 +258,6 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 1440, height: 920 } });
     const state = {
       agents: [],
-      createRequests: [],
       exportRequests: 0,
       importAttempts: 0,
       newImportBodies: [],
@@ -289,20 +276,24 @@ async function main() {
       await page.getByTestId("open-settings").click();
       await page.getByTestId("settings-agent-empty").waitFor({ timeout: 20000 });
 
-      const sourceSelect = page.getByTestId("settings-agent-create-source");
-      await sourceSelect.locator('option[value="seed:main-agent"]').waitFor({ state: "attached", timeout: 10000 });
-      await sourceSelect.selectOption("seed:main-agent");
-      await page.getByTestId("settings-agent-create-seed-hint").waitFor();
-      await page.getByTestId("settings-agent-create-name").fill("Seed Clone");
-      await page.getByTestId("settings-agent-create-id").fill("seed-clone");
-      await page.getByTestId("settings-agent-create-submit").click();
-      await page.getByTestId("settings-success").filter({ hasText: "已创建业务 Agent Seed Clone" }).waitFor();
+      if (await page.getByTestId("settings-agent-create-source").count()) {
+        throw new Error("removed template/seed creation control is still visible");
+      }
+      await page.getByTestId("settings-workspace-import-agent-id").fill("imported-new");
+      await page.getByTestId("settings-workspace-import-name").fill("Imported Package Agent");
+      await page.getByTestId("settings-workspace-import-file").setInputFiles({
+        name: "new-agent.tar.gz",
+        mimeType: "application/gzip",
+        buffer: Buffer.from("new agent workspace archive"),
+      });
+      await page.getByTestId("settings-workspace-import-submit").click();
+      await page.getByTestId("settings-workspace-import-receipt").filter({ hasText: "created" }).waitFor();
       if (
-        state.createRequests.length !== 1 ||
-        state.createRequests[0].source_seed_id !== "main-agent" ||
-        Object.hasOwn(state.createRequests[0], "template_id")
+        state.newImportBodies.length !== 1 ||
+        !state.newImportBodies[0].includes('name="name"') ||
+        !state.newImportBodies[0].includes("Imported Package Agent")
       ) {
-        throw new Error(`seed creation payload is incorrect: ${JSON.stringify(state.createRequests)}`);
+        throw new Error(`new Agent import did not submit its name: ${JSON.stringify(state.newImportBodies)}`);
       }
 
       state.agents = [workspaceAgent, secondWorkspaceAgent];
@@ -432,23 +423,6 @@ async function main() {
         throw new Error(`expected browser header probe and UI export, got ${state.exportRequests} requests`);
       }
 
-      await page.getByTestId("settings-workspace-import-agent-id").fill("imported-new");
-      await page.getByTestId("settings-workspace-import-name").fill("Imported Package Agent");
-      await page.getByTestId("settings-workspace-import-file").setInputFiles({
-        name: "new-agent.tar.gz",
-        mimeType: "application/gzip",
-        buffer: Buffer.from("new agent workspace archive"),
-      });
-      await page.getByTestId("settings-workspace-import-submit").click();
-      await page.getByTestId("settings-workspace-import-receipt").filter({ hasText: "created" }).waitFor();
-      if (
-        state.newImportBodies.length !== 1 ||
-        !state.newImportBodies[0].includes('name="name"') ||
-        !state.newImportBodies[0].includes("Imported Package Agent")
-      ) {
-        throw new Error(`new Agent import did not submit its name: ${JSON.stringify(state.newImportBodies)}`);
-      }
-
       console.log(
         JSON.stringify(
           {
@@ -457,8 +431,7 @@ async function main() {
             screenshots: screenshotDir,
             scenarios: [
               "agent_empty_state",
-              "seed_raw_copy_hint",
-              "seed_source_creation_payload",
+              "package_only_agent_creation",
               "workspace_export_download_and_headers",
               "workspace_export_local_failure",
               "structured_import_failure",

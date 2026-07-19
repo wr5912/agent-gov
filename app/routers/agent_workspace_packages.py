@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.agent_testing.service import AgentTestingService
 from app.runtime.agent_workspace_package_schemas import (
     WorkspaceImportResponse,
     WorkspaceRestoreRequest,
@@ -56,6 +57,7 @@ def create_agent_workspace_packages_router(
     agent_registry_store: AgentRegistryStore,
     agent_governance: AgentGovernanceService,
     session_store: LocalSessionStore,
+    agent_testing: AgentTestingService,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agents"], dependencies=[Depends(require_api_key)])
@@ -64,6 +66,7 @@ def create_agent_workspace_packages_router(
         agent_registry_store=agent_registry_store,
         agent_governance=agent_governance,
         session_store=session_store,
+        agent_testing=agent_testing,
     )
     _register_export_route(router, service)
     _register_import_route(router, service)
@@ -77,6 +80,7 @@ def _create_workspace_package_service(
     agent_registry_store: AgentRegistryStore,
     agent_governance: AgentGovernanceService,
     session_store: LocalSessionStore,
+    agent_testing: AgentTestingService,
 ) -> AgentWorkspacePackageService:
     return AgentWorkspacePackageService(
         settings=settings,
@@ -84,6 +88,7 @@ def _create_workspace_package_service(
         store_for=agent_governance._store_for,
         version_maintenance=agent_governance.version_maintenance,
         session_store=session_store,
+        agent_testing=agent_testing,
         has_open_change_sets=lambda agent_id: has_open_change_sets(
             agent_governance.feedback_store.Session,
             agent_id=agent_id,

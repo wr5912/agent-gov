@@ -62,28 +62,30 @@ def test_skill_encodes_review_corrected_boundaries():
     """锁定评审纠偏：per-agent 边界、分类 HITL、现成脱敏扫描、data/ 业务路径与 governor 单一性。"""
     text = CODEX_PATH.read_text(encoding="utf-8")
     # B3 版本库与运行态状态默认拒绝。
-    assert "version/" in text and "per-agent" in text
+    assert "version/" in text and "per-Agent" in text
     # data/ 不可整目录拒绝（业务 Agent workspace 在其下）。
     assert "data/business-agents/<agent_id>" in text
     assert "目标解析矩阵" in text
     assert "runtime 父目录" in text
     assert "no-op 并重新定位" in text
     assert "不能整目录拒绝 `data/`" in text
-    assert "不得把 `${RUNTIME_ROOT}/data`" in text
+    assert "`${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/`" in text
     assert "`data/` 和 `data/business-agents/` 父目录本身也不是优化目标" in text
     # 权限模型对齐：通用 Bash 进入 ask，run grant 只覆盖低风险类别；旗舰样板使用原生逐次确认。
-    assert "`Bash(*)` 放在 `ask`" in text
+    assert "宽泛 Bash 默认进入 `ask`" in text
     assert "run 级授权必须按低风险类别隔离" in text
     assert "高风险或未分类请求不得整轮放行" in text
-    assert "精确 `soc_api__create` / `soc_api__manual`" in text
-    assert "其他处置 mutation 与 `AskUserQuestion` 均拒绝" in text
-    assert "不得按 Agent ID 在后端增加第二套授权" in text
-    assert "普通优化不得随意放大 allow" in text
-    # 复用现成模板脱敏扫描，不重复造轮子。
-    assert "runtime-volume-seeds-scan" in text
+    assert "`soc_api__create` / `soc_api__manual` 走 Claude 原生逐次确认" in text
+    assert "其他处置 mutation 与 `AskUserQuestion` 拒绝" in text
+    assert "后端不得按 Agent ID 添加第二套授权" in text
+    # 复用现成运行卷初始化源准入扫描，不重复造轮子。
+    assert "runtime-bootstrap-scan" in text
+    assert "runtime_bootstrap_safety.py" in text
     assert "scan_path" in text
+    assert "不存在运行态 seed catalog" in text
+    assert "不得把 `main-agent`" in text
     # governor 已是单一治理 workspace（合并后），且默认不作为目标。
     assert "governor-workspace" in text
-    assert "默认不作为目标" in text
+    assert "用户明确要求时" in text
     # 无硬编码他机绝对路径。
     assert "/home/admin" not in text

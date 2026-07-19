@@ -16,11 +16,13 @@ from app.runtime.errors import BusinessRuleViolation, ConflictError, DataIntegri
 from app.runtime.execution_content_guards import guard_execution_write
 from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
 from app.runtime.json_types import JsonObject
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.stores.improvement_content_store import ExecutionRecord, ImprovementContentStore
 from app.runtime.stores.improvement_execution_claim_store import ExecutionClaim
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.agent_change_set_provisioner import ChangeSetSource
 from app.services.agent_governance import AgentGovernanceError, AgentGovernanceService
+from app.services.generated_agent_tests import build_generated_agent_test
 from app.services.workspace_execution_applier import WorkspaceExecutionApplier
 
 logger = logging.getLogger(__name__)
@@ -127,7 +129,7 @@ class ImprovementExecutionService:
                 raise ConflictError(f"Applied execution belongs to a different plan or attribution revision: {improvement_id}")
             self._ensure_change_set_link(existing)
             return existing  # type: ignore[return-value]
-        agent_id = getattr(item, "agent_id", "main-agent") or "main-agent"
+        agent_id = getattr(item, "agent_id", DEFAULT_BUSINESS_AGENT_ID) or DEFAULT_BUSINESS_AGENT_ID
         store = self._gov._store_for(agent_id)
         change_set_id, base_commit_sha = self._execution_intent(existing, store)
         now, lease_expires_at = _lease_window()
@@ -177,14 +179,14 @@ class ImprovementExecutionService:
                     now=now,
                     claim_expires_at=claim_expires_at,
                 )
-                store = self._gov._store_for(getattr(item, "agent_id", "main-agent") or "main-agent")
+                store = self._gov._store_for(getattr(item, "agent_id", DEFAULT_BUSINESS_AGENT_ID) or DEFAULT_BUSINESS_AGENT_ID)
                 if self._candidate_commit_exists(claim, store=store):
                     try:
                         self._recover_candidate_claim(claim, store=store)
                     except Exception as exc:  # noqa: BLE001 - always release a corrupt durable fence.
                         self._finish_without_application(
                             claim,
-                            f"候选版本自动对账失败：{exc.__class__.__name__}: {exc}",
+                            f"待发布版本自动对账失败：{exc.__class__.__name__}: {exc}",
                             retain_change_set=True,
                         )
                         failed += 1
@@ -194,11 +196,11 @@ class ImprovementExecutionService:
                 retain_change_set = self._compensate_unapplied_change_set(
                     claim,
                     store=store,
-                    reason="过期执行申请未发现候选版本，后台对账已释放。",
+                    reason="过期执行申请未发现待发布版本，后台对账已释放。",
                 )
                 self._finish_without_application(
                     claim,
-                    "过期执行申请未发现候选版本，已释放执行锁。",
+                    "过期执行申请未发现待发布版本，已释放执行锁。",
                     retain_change_set=retain_change_set,
                 )
                 released += 1
@@ -238,7 +240,16 @@ class ImprovementExecutionService:
         worktree = self._gov.change_set_worktree_path(change_set)
         store.reset_worktree(worktree, base_ref=claim.base_commit_sha)
         policy = WorkspaceExecutionTargetPolicy(worktree)
-        targets = _editable_config_targets(worktree)
+        editable_targets = _editable_config_targets(worktree)
+        plan_changes = [
+            _ExecutionPlanChange(target=str(change.get("target") or ""), change=str(change.get("change") or ""))
+            for change in (getattr(plan, "changes", []) or [])
+            if isinstance(change, dict)
+        ]
+        scoped_recommendations = _scoped_execution_recommendations(plan_changes, editable_targets)
+        targets = list(dict.fromkeys(target for target, _ in scoped_recommendations))
+        if not targets:
+            return self._abandon_no_action(claim, store=store, reason="已确认优化方案没有可确定映射的 Workspace 配置目标")
         trace_ref: dict[str, str] = {}
         output = await self._run_execution_governor(plan, policy, targets, trace_ref=trace_ref)
         data = output.model_dump() if hasattr(output, "model_dump") else dict(output)
@@ -356,7 +367,7 @@ class ImprovementExecutionService:
                 try:
                     self._finish_without_application(
                         claim,
-                        f"候选版本对账失败：{recovery_error.__class__.__name__}: {recovery_error}",
+                        f"待发布版本对账失败：{recovery_error.__class__.__name__}: {recovery_error}",
                         retain_change_set=True,
                     )
                 except ConflictError:
@@ -375,8 +386,85 @@ class ImprovementExecutionService:
         record = self._finish_after_compensation(claim, f"未自动应用：{detail}", retain_change_set=retain_change_set)
         if isinstance(error, (RuntimeUnavailableError, ConflictError, DataIntegrityError, AgentGitError, AgentGovernanceError)):
             raise error
-        logger.exception("improvement governor execution apply failed: %s", claim.improvement_id, exc_info=error)
         return record
+
+    def materialize_regression_tests(self, improvement_id: str) -> JsonObject:
+        assessment = self._content.get_regression_test_design(improvement_id)
+        execution = self._content.get_execution(improvement_id)
+        item = self._improvements.get_improvement(improvement_id)
+        if assessment is None or not assessment.tests:
+            raise BusinessRuleViolation(f"Regression test design is required: {improvement_id}")
+        if execution is None or execution.status != "confirmed" or not _has_applied_execution(execution):
+            raise ConflictError(f"Confirmed execution is required before generating tests: {improvement_id}")
+        if item is None:
+            raise BusinessRuleViolation(f"No improvement item: {improvement_id}")
+        change_set = self._gov.get_change_set(execution.change_set_id)
+        if change_set is None:
+            raise DataIntegrityError(f"Execution change set disappeared: {execution.change_set_id}")
+        previous_commit = str(change_set.get("candidate_commit_sha") or "")
+        if not previous_commit or previous_commit != execution.applied_agent_version_id:
+            raise ConflictError("待发布变更与已确认执行记录的 commit 不一致。")
+        agent_id = getattr(item, "agent_id", DEFAULT_BUSINESS_AGENT_ID) or DEFAULT_BUSINESS_AGENT_ID
+        store = self._gov._store_for(agent_id)
+        worktree = self._gov.change_set_worktree_path(change_set)
+        generated_files: list[tuple[str, str]] = []
+        for index, test in enumerate(assessment.tests, start=1):
+            candidate = build_generated_agent_test(
+                improvement_id=improvement_id,
+                index=index,
+                test_code=str(test.get("test_code") or ""),
+                test_intent=str(test.get("test_intent") or ""),
+                assertion_rationale=str(test.get("assertion_rationale") or ""),
+            )
+            if candidate.target_path != str(test.get("target_path") or ""):
+                raise DataIntegrityError("Stored regression test path no longer matches backend projection")
+            generated_files.append((candidate.target_path, candidate.test_code))
+        created = _create_generated_test_assets(worktree, files=generated_files)
+        try:
+            with store.mutation_guard():
+                candidate = store.commit_squashed_worktree(
+                    worktree,
+                    base_ref=execution.base_commit_sha,
+                    message=f"Improvement {improvement_id} add feedback regression pytest",
+                )
+            self._gov.mark_candidate_committed(
+                execution.change_set_id,
+                candidate_commit_sha=candidate,
+                execution_job_id=execution.execution_id,
+                note="确认配置与 pytest 测试文件为同一待发布版本。",
+                operator="feedback-test-generator",
+            )
+            applied_diff = store.diff_versions(execution.base_commit_sha, candidate)
+            if not applied_diff:
+                raise DataIntegrityError("Generated tests have no verifiable candidate diff")
+            self._content.rebind_execution_candidate(
+                improvement_id,
+                change_set_id=execution.change_set_id,
+                previous_commit_sha=previous_commit,
+                candidate_commit_sha=candidate,
+                applied_diff=applied_diff,
+                generated_test_files=created,
+            )
+        except Exception:
+            try:
+                with store.mutation_guard():
+                    store.reset_worktree(worktree, base_ref=previous_commit)
+                self._gov.mark_candidate_committed(
+                    execution.change_set_id,
+                    candidate_commit_sha=previous_commit,
+                    execution_job_id=execution.execution_id,
+                    note="pytest 测试资产生成失败，已恢复原待发布版本。",
+                    operator="feedback-test-generator",
+                )
+            except Exception:  # noqa: BLE001 - preserve the original failure and log failed compensation.
+                logger.exception("failed to restore change set after pytest asset generation error")
+            raise
+        return {
+            "agent_id": agent_id,
+            "change_set_id": execution.change_set_id,
+            "candidate_commit_sha": candidate,
+            "generated_test_files": created,
+        }
 
     def _abandon_no_action(self, claim: ExecutionClaim, *, store: Any, reason: str) -> ExecutionRecord:
         retain_change_set = self._compensate_unapplied_change_set(
@@ -553,6 +641,46 @@ class ImprovementExecutionService:
         if isinstance(operation, dict):
             return f"{operation.get('operation', 'edit')}: {operation.get('path', '')}".strip()
         return str(operation)
+
+
+def _create_generated_test_assets(worktree: Path, *, files: list[tuple[str, str]]) -> list[str]:
+    workspace = worktree.resolve()
+    tests_dir = workspace / "tests"
+    if tests_dir.exists() and (not tests_dir.is_dir() or tests_dir.is_symlink()):
+        raise ConflictError("Workspace tests path is not a regular directory")
+    readme = tests_dir / "README.md"
+    destinations: list[tuple[str, Path, str]] = []
+    for relative_path, content in files:
+        destination = workspace / relative_path
+        if destination.parent != tests_dir:
+            raise DataIntegrityError("Generated pytest path escaped the flat tests directory")
+        if destination.exists() and (not destination.is_file() or destination.is_symlink() or destination.read_text(encoding="utf-8") != content):
+            raise ConflictError(f"Generated pytest file already exists and cannot be overwritten: {relative_path}")
+        destinations.append((relative_path, destination, content))
+    if readme.exists() and (not readme.is_file() or readme.is_symlink()):
+        raise ConflictError("Workspace tests/README.md is not a regular file")
+
+    tests_dir_created = not tests_dir.exists()
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    created: list[str] = []
+    try:
+        if not readme.exists():
+            readme.write_text(
+                "# Agent 测试套件\n\n本目录由业务 Agent 开发者维护，平台固定使用 pytest 执行。\n",
+                encoding="utf-8",
+            )
+            created.append("tests/README.md")
+        for relative_path, destination, content in destinations:
+            if not destination.exists():
+                destination.write_text(content, encoding="utf-8")
+            created.append(relative_path)
+        return created
+    except Exception:
+        for generated in reversed(created):
+            (workspace / generated).unlink(missing_ok=True)
+        if tests_dir_created:
+            tests_dir.rmdir()
+        raise
 
 
 def _lease_window() -> tuple[str, str]:

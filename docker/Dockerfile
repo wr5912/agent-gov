@@ -47,6 +47,8 @@ RUN set -eux; \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
+COPY VERSION /app/VERSION
+COPY packages/agentgov-testkit /app/packages/agentgov-testkit
 # python:slim 不内置 uv；这里仅用阿里 PyPI bootstrap uv，项目依赖安装仍统一走 uv。
 RUN python -m pip install --no-cache-dir \
         --index-url https://mirrors.aliyun.com/pypi/simple/ \
@@ -54,7 +56,8 @@ RUN python -m pip install --no-cache-dir \
         uv \
     && uv pip install --system --no-cache \
         --index-url https://mirrors.aliyun.com/pypi/simple/ \
-        -r /app/requirements.txt
+        -r /app/requirements.txt \
+        /app/packages/agentgov-testkit
 
 COPY docker/a2ui-requirements.txt /app/docker/a2ui-requirements.txt
 COPY docker/vendor/A2UI /app/vendor/A2UI
@@ -69,11 +72,10 @@ RUN set -eux; \
 
 ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 
-COPY VERSION /app/VERSION
 COPY app /app/app
 COPY scripts/bootstrap_runtime_volume.py /app/scripts/bootstrap_runtime_volume.py
 COPY scripts/runtime_cleanup.py /app/scripts/runtime_cleanup.py
-COPY docker/runtime-volume-seeds /app/docker/runtime-volume-seeds
+COPY docker/runtime-bootstrap /app/docker/runtime-bootstrap
 
 RUN mkdir -p /governor-workspace /claude-roots/governor/.claude /data
 

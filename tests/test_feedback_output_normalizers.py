@@ -7,7 +7,7 @@ from app.runtime.feedback_schemas import (
     AttributionFormatterOutput,
     ExecutionPlanFormatterOutput,
     ImprovementOptimizationPlanFormatterOutput,
-    RegressionAssessmentFormatterOutput,
+    RegressionTestDesignFormatterOutput,
     validate_execution_plan_output,
 )
 from app.runtime.normalizers.feedback_output_normalizers import (
@@ -256,17 +256,15 @@ def test_formatter_models_run_current_normalizers_before_strict_validation():
             "no_action_reason": "target_paths 为空。",
         }
     )
-    regression = RegressionAssessmentFormatterOutput.model_validate(
-        {"no_action_reason": "证据不足，无法形成回归评估候选。"}
-    )
+    regression = RegressionTestDesignFormatterOutput.model_validate({"no_action_reason": "证据不足，无法形成回归测试设计。"})
 
     assert attribution.problem_type == "tool_data_quality"
-    assert attribution.optimization_object_type == "main_agent_claude_md"
+    assert attribution.optimization_object_type == "business_agent_claude_md"
     assert attribution.actionability == "needs_human_analysis"
     assert attribution.recommended_next_step == "needs_human_review"
     assert attribution.responsibility_boundary.owner == "sec-ops-data"
     assert execution.status == "needs_human_review"
-    assert regression.no_action_reason == "证据不足，无法形成回归评估候选。"
+    assert regression.no_action_reason == "证据不足，无法形成回归测试设计。"
 
 
 def test_normalize_attribution_output_uses_intermediate_record_for_agent_shapes():
@@ -282,7 +280,7 @@ def test_normalize_attribution_output_uses_intermediate_record_for_agent_shapes(
     )
 
     assert normalized["problem_type"] == "tool_data_quality"
-    assert normalized["optimization_object_type"] == "main_agent_claude_md"
+    assert normalized["optimization_object_type"] == "business_agent_claude_md"
     assert normalized["actionability"] == "needs_human_analysis"
     assert normalized["recommended_next_step"] == "needs_human_review"
     assert normalized["evidence_refs"][0]["id"] == "evidence/a.json"
@@ -293,7 +291,7 @@ def test_attribution_formatter_output_drops_backend_owned_fields():
     model = AttributionFormatterOutput.model_validate(
         {
             "problem_type": "reasoning_error",
-            "optimization_object_type": "main_agent_claude_md",
+            "optimization_object_type": "business_agent_claude_md",
             "actionability": "workspace_config_change",
             "confidence": "medium",
             "human_review_required": False,
@@ -334,16 +332,16 @@ def test_normalize_execution_plan_output_uses_intermediate_operation_records_and
     assert "agent_note" not in normalized["operations"][0]
 
 
-def test_regression_assessment_formatter_drops_backend_owned_and_case_extra_fields():
-    output = RegressionAssessmentFormatterOutput.model_validate(
+def test_regression_test_design_formatter_keeps_only_agent_owned_test_code_fields():
+    output = RegressionTestDesignFormatterOutput.model_validate(
         {
-            "eval_cases": [
+            "tests": [
                 {
-                    "expected_behavior": "应说明数据缺失并请求补充。",
-                    "labels": ["tool-data"],
-                    "checks_json": {"requires_non_empty_answer": True},
-                    "prompt": "hostile prompt",
-                    "case_id": "case-hostile",
+                    "test_code": "def test_data(agent):\n    result = agent.run('x')\n    assert '缺失' in result.text\n",
+                    "test_intent": "验证数据缺失说明",
+                    "assertion_rationale": "回答必须说明缺失",
+                    "target_path": "/hostile/test.py",
+                    "agent_id": "hostile-agent",
                     "status": "approved",
                 },
             ],
@@ -354,11 +352,11 @@ def test_regression_assessment_formatter_drops_backend_owned_and_case_extra_fiel
     )
 
     dumped = output.model_dump()
-    assert dumped["eval_cases"] == [
+    assert dumped["tests"] == [
         {
-            "expected_behavior": "应说明数据缺失并请求补充。",
-            "checks_json": {"requires_non_empty_answer": True},
-            "labels": ["tool-data"],
+            "test_code": "def test_data(agent):\n    result = agent.run('x')\n    assert '缺失' in result.text\n",
+            "test_intent": "验证数据缺失说明",
+            "assertion_rationale": "回答必须说明缺失",
         }
     ]
     assert "job_id" not in dumped
@@ -385,9 +383,9 @@ def test_validated_execution_output_drops_agent_extra_fields():
     assert "agent_note" not in execution["operations"][0]
 
 
-def test_regression_assessment_requires_case_or_no_action_reason():
-    with pytest.raises(ValidationError, match="eval_cases or no_action_reason"):
-        RegressionAssessmentFormatterOutput.model_validate({})
+def test_regression_test_design_requires_test_code_or_no_action_reason():
+    with pytest.raises(ValidationError, match="tests or no_action_reason"):
+        RegressionTestDesignFormatterOutput.model_validate({})
 
 
 def test_normalized_output_record_drops_extra_agent_fields():

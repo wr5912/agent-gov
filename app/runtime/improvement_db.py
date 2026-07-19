@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import JSON, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from .protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from .runtime_db import Base, utc_now
 
 
@@ -31,7 +32,7 @@ class ImprovementItemModel(Base):
 class ImprovementLinkModel(Base):
     """改进事项 ↔ 既有闭环对象的轻引用（四阶段改进治理 W2-c）。
 
-    kind 标明被引对象类型（attribution / optimization_plan / eval_run / change_set / batch），
+    kind 标明被引对象类型（attribution / optimization_plan / test_run / change_set / batch），
     ref_id 为该对象 ID。独立新表，create_all 创建，无需改表迁移；不在 improvement_items 上加列。
     """
 
@@ -89,7 +90,7 @@ class ImprovementFeedbackModel(Base):
 
     feedback_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     improvement_id: Mapped[str] = mapped_column(String(128), index=True)
-    agent_id: Mapped[str] = mapped_column(String(128), default="main-agent")
+    agent_id: Mapped[str] = mapped_column(String(128), default=DEFAULT_BUSINESS_AGENT_ID)
     summary: Mapped[str] = mapped_column(String(1024), default="")
     source: Mapped[str] = mapped_column(String(64), default="playground_run")
     status: Mapped[str] = mapped_column(String(32), default="merged")
@@ -196,20 +197,20 @@ class ExecutionRecordModel(Base):
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
 
 
-class RegressionAssessmentModel(Base):
-    """回归保障评估 RegressionAssessment（四阶段改进治理 §11 P3，§17.5）：治理 Agent 生成的回归测试用例候选。
+class RegressionTestDesignModel(Base):
+    """治理 Agent 生成、开发者确认后写入 Workspace 的 pytest 代码候选。
 
-    与改进事项 1:1。cases_json：[{prompt, expected_behavior, checkpoints[]}]。status：draft / confirmed
-    （确认=允许后续采用为 typed TestDataset）。generated_by：governor / heuristic。独立新表。
+    与改进事项 1:1。tests_json 只保存后端投影后的目标路径、测试代码、测试意图和断言依据；
+    status 为 draft / confirmed。自然语言期望和检查点不再作为测试资产。
     """
 
-    __tablename__ = "regression_assessments"
+    __tablename__ = "regression_test_designs"
 
-    regression_assessment_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    regression_test_design_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     improvement_id: Mapped[str] = mapped_column(String(128), index=True, unique=True)
     summary: Mapped[str] = mapped_column(Text, default="")
-    cases_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
-    suggested_gate_thresholds_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    tests_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    no_action_reason: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(32), default="draft")
     generated_by: Mapped[str] = mapped_column(String(32), default="heuristic")
     generation_trace_id: Mapped[str] = mapped_column(String(256), default="")

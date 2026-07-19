@@ -42,41 +42,65 @@ export function createWorkbenchRules(context) {
 }
 
 const RULES = [
-  { id: "release-merged-into-test-stage", phase: "P2", desc: "旧发布顶级入口消失，发布门禁预览合入测试发布阶段", async fn(page) {
+  { id: "release-merged-into-test-stage", phase: "P2", desc: "旧发布顶级入口消失，发布条件预览合入测试发布阶段", async fn(page) {
     const releaseNav = await has(page, "nav-release");
     const opened = await openImprovementById(page, stageTarget("testRelease", "imp-demo04"));
     if (!opened) return { ok: false, detail: "无法打开测试发布阶段改进事项" };
     const stage = await page.getByTestId("stage-work-area").getAttribute("data-visible-stage").catch(() => "");
     const gate = await has(page, "stage-panel-release-gate");
     const primary = await page.getByTestId("primary-action").innerText().catch(() => "");
-    const actionMatches = primary.includes("生成回归方案") && !primary.includes("执行回归测试");
+    const actionMatches = primary.includes("生成回归测试") && !primary.includes("运行测试");
     return { ok: !releaseNav && stage === "test_release" && gate && actionMatches, detail: `nav-release=${releaseNav} stage=${stage} gate=${gate} primary=${primary}` };
   } },
-  { id: "test-release-stage-panels", phase: "P1", desc: "测试发布阶段含测试数据集、回归执行、测试用例详情、执行环境和门禁预览五个面板", async fn(page) {
+  { id: "test-release-stage-panels", phase: "P1", desc: "测试发布阶段展示 pytest 代码、Workspace 测试文件、版本范围和确定性发布门", async fn(page) {
     const opened = await openImprovementById(page, stageTarget("testRelease", "imp-demo04"));
     if (!opened) return { ok: false, detail: "无法打开测试发布阶段改进事项" };
-    const panels = ["test-dataset-asset", "regression-guarantee", "stage-panel-coverage", "stage-panel-execution-baseline", "stage-panel-release-gate"];
+    const panels = ["regression-test-design", "workspace-test-files", "stage-panel-coverage", "stage-panel-execution-baseline", "stage-panel-release-gate"];
     const found = [];
     for (const panel of panels) if (await has(page, panel)) found.push(panel);
-    const datasetId = await page.getByTestId("test-dataset-id").innerText().catch(() => "");
-    const runRef = await page.getByTestId("regression-run-dataset-ref").innerText().catch(() => "");
-    const duplicateGenerate = await page.getByTestId("test-dataset-asset").getByTestId("generate-regression").count();
-    const coverage = await has(page, "regression-case-coverage");
-    const summaryItems = await page.getByTestId("regression-case-summary-item").count();
+    await page.getByTestId("workspace-test-files").getByRole("button", { name: "查看详情" }).click();
+    await page.getByTestId("stage-detail-drawer").waitFor({ timeout: 6000 }).catch(() => {});
+    const filesText = await page.getByTestId("stage-detail-drawer").innerText().catch(() => "");
+    await page.locator(".drawer-shell-actions").getByRole("button", { name: "关闭" }).first().click().catch(() => {});
+    await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 4000 }).catch(() => {});
+    const confirmButton = page.getByTestId("confirm-regression-tests");
+    const materialized = await confirmButton.isDisabled().catch(() => false)
+      && (await confirmButton.innerText().catch(() => "")).includes("待发布变更已确认");
+    const legacyPanels = await page.locator('[data-testid="test-dataset-asset"], [data-testid="regression-guarantee"], [data-testid="test-dataset-lifecycle-management"]').count();
+    const coverage = await has(page, "regression-test-code-coverage");
+    const summaryItems = await page.getByTestId("regression-test-code-summary-item").count();
     await page.getByTestId("stage-panel-coverage").getByRole("button", { name: "查看详情" }).click();
     await page.getByTestId("stage-detail-drawer").waitFor({ timeout: 6000 }).catch(() => {});
-    const detailItems = await page.getByTestId("regression-case-detail-item").count();
-    const inputs = await page.getByTestId("regression-case-input").count();
-    const expected = await page.getByTestId("regression-case-expected").count();
-    const checkpoints = await page.getByTestId("regression-case-checkpoint").count();
-    const inputText = await page.getByTestId("regression-case-input").first().innerText().catch(() => ""), toggleButtons = await page.getByTestId("regression-case-input-toggle").count(), previewText = await page.getByTestId("regression-case-input-text").first().innerText().catch(() => "");
-    if (toggleButtons > 0) await page.getByTestId("regression-case-input-toggle").first().click();
-    const expandedText = await page.getByTestId("regression-case-input-text").first().innerText().catch(() => ""), inputSemantics = inputText.includes("数据转换前原始数据") && !inputText.includes("复现场景：") && toggleButtons > 0 && expandedText.length > previewText.length;
+    const detailItems = await page.getByTestId("regression-test-code-detail-item").count();
+    const paths = await page.getByTestId("regression-test-target-path").count();
+    const intents = await page.getByTestId("regression-test-intent").count();
+    const rationales = await page.getByTestId("regression-test-rationale").count();
+    const codeText = await page.getByTestId("regression-test-code").first().innerText().catch(() => "");
+    const codeSemantics = codeText.includes("agent.run(") && codeText.includes("result.text") && codeText.includes("assert");
     await page.locator(".drawer-shell-actions").getByRole("button", { name: "关闭" }).first().click().catch(() => {});
     await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 4000 }).catch(() => {});
     return {
-      ok: found.length === panels.length && datasetId && runRef === datasetId && duplicateGenerate === 0 && coverage && summaryItems >= 3 && detailItems >= 3 && inputs >= 3 && expected >= 3 && checkpoints >= 3 && inputSemantics,
-      detail: `panels=${found.length}/${panels.length} dataset=${datasetId} regression_ref=${runRef} duplicate_generate=${duplicateGenerate} coverage=${coverage} summary=${summaryItems} detail=${detailItems} inputs=${inputs} expected=${expected} checkpoints=${checkpoints} inputSemantics=${inputSemantics}`,
+      ok: found.length === panels.length
+        && filesText.includes("tests/test_feedback_imp_demo04_01_time.py")
+        && materialized
+        && legacyPanels === 0
+        && coverage
+        && summaryItems >= 3
+        && detailItems >= 3
+        && paths >= 3
+        && intents >= 3
+        && rationales >= 3
+        && codeSemantics,
+      detail: [
+        "panels=" + found.length + "/" + panels.length,
+        "files=" + filesText.includes("tests/test_feedback_imp_demo04_01_time.py"),
+        "materialized=" + materialized,
+        "legacy=" + legacyPanels,
+        "coverage=" + coverage,
+        "summary=" + summaryItems,
+        "detail=" + detailItems,
+        "codeSemantics=" + codeSemantics,
+      ].join(" "),
     };
   } },
   { id: "improvement-default-detail", phase: "P1", desc: "改进列表有数据时默认展示首个详情，不留空白首屏", async fn(page) {
@@ -129,7 +153,7 @@ const RULES = [
       ["feedback", "imp-demo01", "feedback_sorting", "stage-panel-sorting-result"],
       ["attribution", "imp-demo02", "attribution_analysis", "attribution"],
       ["optimization", "imp-demo03", "optimization_execution", "optimization-plan"],
-      ["testRelease", "imp-demo04", "test_release", "test-dataset-asset"],
+      ["testRelease", "imp-demo04", "test_release", "regression-test-design"],
     ];
     const seen = [];
     for (const [key, mockId, stage, panel] of expectations) {
@@ -329,20 +353,21 @@ const RULES = [
       detail: `primary=${primaryLabel}/${primaryAction} decisionRegen=${decisionRegen} stageRegen=${stageRegen} legacyAuto=${legacyAutoExecute} apply=${sawApply} confirmPlan=${confirmedPlan} planAlreadyConfirmed=${planAlreadyConfirmed} lifecycle=${lifecycle}`,
     };
   } },
-  { id: "regression-governor", phase: "P3", desc: "§11/§17.5 回归保障：生成/重新生成方案入口由决策卡承载，候选用例归属测试用例详情卡", async fn(page) {
+  { id: "regression-governor", phase: "P3", desc: "治理 Agent 只产出 pytest 代码、测试意图和断言依据；确认后写入待发布版本且不自动运行", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("testRelease", "imp-demo04")))) return { ok: false, detail: "无改进事项" };
-    await page.getByTestId("regression-guarantee").waitFor({ timeout: 6000 }).catch(() => {});
+    await page.getByTestId("regression-test-design").waitFor({ timeout: 6000 }).catch(() => {});
     const primary = await page.getByTestId("primary-action").innerText().catch(() => "");
-    const duplicateGenerate = await page.getByTestId("test-dataset-asset").getByTestId("generate-regression").count();
-    const sediment = await has(page, "sediment-assets");
-    const coverage = await has(page, "regression-case-coverage");
-    const primaryOk = primary.includes("重新生成回归方案") && !primary.includes("执行回归测试");
+    const duplicateGenerate = await page.getByTestId("stage-work-area").getByTestId("generate-regression").count();
+    const design = await has(page, "regression-test-design");
+    const files = await page.getByTestId("workspace-test-files").innerText().catch(() => "");
+    const coverage = await has(page, "regression-test-code-coverage");
+    const primaryOk = primary.includes("重新生成回归测试") && !primary.includes("运行测试");
     return {
-      ok: primaryOk && duplicateGenerate === 0 && (coverage || sediment),
-      detail: `决策卡=${primary} duplicate_generate=${duplicateGenerate} 覆盖场景=${coverage} 沉淀=${sediment}`,
+      ok: primaryOk && duplicateGenerate === 0 && design && files.includes("3 个文件") && coverage,
+      detail: "决策卡=" + primary + " duplicate_generate=" + duplicateGenerate + " design=" + design + " files=" + files.includes("3 个文件") + " coverage=" + coverage,
     };
   } },
-  { id: "execution-version-binding", phase: "P3", desc: "§17.5 执行记录标治理 Agent 应用来源；governor 成功时绑定候选 Agent 版本/变更集", async fn(page) {
+  { id: "execution-version-binding", phase: "P3", desc: "执行记录标治理 Agent 应用来源；governor 成功时绑定待发布 Agent 版本/待发布变更", async fn(page) {
     // 执行来源徽标始终在；版本绑定仅在 governor 成功 apply 时出现（取决于 governor 判断/环境），不强制。
     if (!(await openImprovementById(page, stageTarget("optimization", "imp-demo03")))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("execution-record").waitFor({ timeout: 6000 }).catch(() => {});
@@ -411,29 +436,26 @@ const RULES = [
       detail: `feedback=${feedbackLabel}/${feedbackAction} gen=${feedbackGenerate} lifecycle=${feedbackLifecycle} confirm=${feedbackConfirm}; attribution=${attributionLabel}/${attributionAction} gen=${attributionGenerate} lifecycle=${attributionLifecycle} confirm=${attributionConfirm}`,
     };
   } },
-  { id: "improvement-assets", phase: "P3", desc: "改进详情含 typed TestDataset 快照、生命周期修订管理和本事项沉淀资产区", async fn(page) {
+  { id: "improvement-assets", phase: "P3", desc: "Workspace pytest 与通用治理资产分开呈现，测试文件不进入通用资产生命周期", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("testRelease", "imp-demo04")))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("improvement-detail").waitFor({ timeout: 6000 }).catch(() => {});
-    // §11 能力存在的两种合法态：未采纳→候选卡(regression-guarantee+adopt)；已采纳→沉淀资产区(sediment-assets)。
-    const rg = await has(page, "regression-guarantee");
-    const adopt = await has(page, "adopt-regression");
+    const design = await has(page, "regression-test-design");
+    const filesText = await page.getByTestId("workspace-test-files").innerText().catch(() => "");
     const sediment = await has(page, "sediment-assets");
-    const lifecycle = await has(page, "test-dataset-lifecycle-management");
-    observedApiRequests.length = 0;
-    if (lifecycle) {
-      await page.getByTestId("test-dataset-lifecycle-target").selectOption("deprecated");
-      await page.getByTestId("test-dataset-lifecycle-reason").fill("设计基线生命周期验证");
-      await page.getByTestId("test-dataset-lifecycle-submit").click();
-      await waitForObservedRequest((request) => request.path === "/api/test-datasets/tds-demo04/lifecycle");
-    }
-    const lifecycleRequest = observedApiRequests.find((request) => request.path === "/api/test-datasets/tds-demo04/lifecycle");
-    const lifecycleBody = JSON.parse(lifecycleRequest?.postData || "{}");
-    const lifecycleBound = lifecycleRequest?.method === "POST"
-      && lifecycleBody.target_state === "deprecated"
-      && lifecycleBody.expected_revision === 1
-      && lifecycleBody.operator === "ui"
-      && lifecycleBody.reason === "设计基线生命周期验证";
-    return { ok: ((rg && adopt) || sediment) && lifecycle && lifecycleBound, detail: `回归保障候选=${rg} 采纳=${adopt} 沉淀资产=${sediment} 生命周期=${lifecycle}/${lifecycleBound}` };
+    const sedimentTypes = await page.getByTestId("sediment-asset-item").evaluateAll((items) => items.map((item) => item.getAttribute("data-asset-type") || ""));
+    const legacyLifecycle = await page.locator('[data-testid="test-dataset-lifecycle-management"], [data-testid="adopt-regression"]').count();
+    const oldRequests = observedApiRequests.filter((request) => request.path.includes("/api/test-datasets") || request.path.includes("/test-dataset/")).length;
+    const ok = design
+      && filesText.includes("3 个文件")
+      && sediment
+      && sedimentTypes.includes("methodology")
+      && !sedimentTypes.includes("test_dataset")
+      && legacyLifecycle === 0
+      && oldRequests === 0;
+    return {
+      ok,
+      detail: "design=" + design + " files=" + filesText.includes("3 个文件") + " sediment=" + sediment + " types=" + sedimentTypes.join(",") + " legacy=" + legacyLifecycle + " oldRequests=" + oldRequests,
+    };
   } },
   { id: "asset-browse-first", phase: "P1", desc: "资产 Registry 默认浏览/追溯优先，创建资产进入抽屉", async fn(page) {
     await page.getByTestId("nav-asset").click();

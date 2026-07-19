@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Asset, TestDataset, TestDatasetRevision } from "../api/assets";
+import type { Asset } from "../api/assets";
 import type {
   Attribution,
   ExecutionRecord,
@@ -7,7 +7,7 @@ import type {
   ImprovementItem,
   NormalizedFeedback,
   OptimizationPlan,
-  RegressionAssessment,
+  RegressionTestDesign,
 } from "../api/improvements";
 import type { ImprovementStageView } from "../improvementStage";
 import {
@@ -19,15 +19,13 @@ import { hasAppliedExecution } from "../improvementExecutionState";
 import { DiffPreviewDetail, type AppliedDiff } from "./ImprovementDiffPreviewDetail";
 import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
 import { ImprovementStageProcessingRecord } from "./ImprovementStageProcessingRecord";
-import { RegressionCaseDetails, RegressionCaseSummaryList } from "./RegressionCaseDetails";
+import { RegressionTestCodeDetails, RegressionTestCodeSummaryList } from "./RegressionTestCodeDetails";
 import type { StageDetail } from "./StageDetailDrawer";
-import type { EvalRunResponse, RuntimeClientConfig } from "../types/runtime";
+import type { RuntimeClientConfig } from "../types/runtime";
 import { TraceButton, TraceDetail } from "./ImprovementGenerationTrace";
 import { concreteLangfuseTraceUrl } from "../langfuseTraceUrl";
-import { formatEvalResultStatus } from "../utils/domainLabels";
 import { SourceFeedbackList } from "./ImprovementSourceFeedbackList";
 import { StageCard } from "./ImprovementStageCard";
-import { TestDatasetLifecycleControls } from "./TestDatasetLifecycleControls";
 import { Dl, GenerationError, GenerationStatus, Lines } from "./ImprovementStagePrimitives";
 import { ImprovementCrossStageGenerationStatus } from "./ImprovementCrossStageGenerationStatus";
 interface AttrDraft {
@@ -48,12 +46,7 @@ export function ImprovementStagePanels({
   feedbacks,
   optimizationPlan,
   execution,
-  regressionAssessment,
-  testDataset,
-  testDatasetError,
-  testDatasetRevisions,
-  testDatasetRevisionError,
-  latestEvalRun,
+  regressionTestDesign,
   assets,
   editingAttribution,
   attrDraft,
@@ -71,9 +64,7 @@ export function ImprovementStagePanels({
   onCancelAttribution,
   onAttrDraftChange,
   onGenerateOpt,
-  onAdoptTestDataset,
-  onRetryTestDatasetLoad,
-  onTransitionTestDataset,
+  onConfirmRegressionTests,
   testReleaseWorkbench,
   onOpenContext,
   onOpenDetail,
@@ -86,12 +77,7 @@ export function ImprovementStagePanels({
   feedbacks: ImprovementFeedback[];
   optimizationPlan: OptimizationPlan | null;
   execution: ExecutionRecord | null;
-  regressionAssessment: RegressionAssessment | null;
-  testDataset: TestDataset | null;
-  testDatasetError?: string;
-  testDatasetRevisions: TestDatasetRevision[];
-  testDatasetRevisionError?: string;
-  latestEvalRun: EvalRunResponse | null;
+  regressionTestDesign: RegressionTestDesign | null;
   assets: Asset[];
   editingAttribution: boolean;
   attrDraft: AttrDraft;
@@ -109,9 +95,7 @@ export function ImprovementStagePanels({
   onCancelAttribution: () => void;
   onAttrDraftChange: (value: AttrDraft) => void;
   onGenerateOpt: () => void;
-  onAdoptTestDataset: () => void;
-  onRetryTestDatasetLoad: () => void;
-  onTransitionTestDataset: (targetState: TestDataset["lifecycle_state"], reason: string) => void;
+  onConfirmRegressionTests: () => void;
   testReleaseWorkbench?: ReactNode;
   onOpenContext: () => void;
   onOpenDetail: (detail: StageDetail) => void;
@@ -198,21 +182,14 @@ export function ImprovementStagePanels({
             item={item}
             feedbacks={feedbacks}
             execution={execution}
-            regressionAssessment={regressionAssessment}
-            testDataset={testDataset}
-            testDatasetError={testDatasetError}
-            testDatasetRevisions={testDatasetRevisions}
-            testDatasetRevisionError={testDatasetRevisionError}
-            latestEvalRun={latestEvalRun}
+            regressionTestDesign={regressionTestDesign}
             assets={assets}
             busy={busy}
             pendingOperation={pendingOperation}
             operationError={operationError}
             readOnly={readOnly}
             onOpenTrace={openGenerationTrace}
-            onAdoptTestDataset={onAdoptTestDataset}
-            onRetryTestDatasetLoad={onRetryTestDatasetLoad}
-            onTransitionTestDataset={onTransitionTestDataset}
+            onConfirmRegressionTests={onConfirmRegressionTests}
             onOpenDetail={onOpenDetail}
           />
           {testReleaseWorkbench}
@@ -223,7 +200,7 @@ export function ImprovementStagePanels({
         attribution={attribution}
         optimizationPlan={optimizationPlan}
         execution={execution}
-        regressionAssessment={regressionAssessment}
+        regressionTestDesign={regressionTestDesign}
         pendingOperation={pendingOperation}
       />
     </div>
@@ -546,16 +523,16 @@ function OptimizationPanels({
           key: "rollback", title: "回滚方案详情", size: "narrow",
           content: <>
             <Dl rows={[
-              ["当前版本", execution?.agent_version || "当前主版本"],
-              ["目标版本", execution?.applied_agent_version_id || "候选版本待生成"],
-              ["回滚策略", execution?.rollback_strategy || "回滚到执行前基线 Agent 版本（待执行后产出）"],
+              ["修复前版本", execution?.agent_version || "当前发布版本"],
+              ["待发布版本", execution?.applied_agent_version_id || "待执行生成"],
+              ["回滚策略", execution?.rollback_strategy || "回滚到执行前 Agent 版本（待执行后产出）"],
             ]} />
             <h4>回滚步骤</h4><Lines items={execution?.rollback_instructions ?? []} empty="待执行后由治理 Agent 产出。" />
           </>,
         })}>
         <dl className="iw-compact-dl">
-          <div><dt>当前版本</dt><dd>{execution?.agent_version || "当前主版本"}</dd></div>
-          <div><dt>目标版本</dt><dd>{execution?.applied_agent_version_id || "候选版本待生成"}</dd></div>
+          <div><dt>修复前版本</dt><dd>{execution?.agent_version || "当前发布版本"}</dd></div>
+          <div><dt>待发布版本</dt><dd>{execution?.applied_agent_version_id || "待执行生成"}</dd></div>
           <div><dt>回滚方式</dt><dd data-testid="rollback-strategy">{execution?.rollback_strategy || "待执行后产出"}</dd></div>
         </dl>
       </StageCard>
@@ -566,8 +543,8 @@ function OptimizationPanels({
             <div className="iw-detail-summary">{execution?.summary || "尚未执行。"}</div>
             <Dl rows={[
               ["风险级别", execution?.risk_level || "待评估"],
-              ["候选版本", execution?.applied_agent_version_id || "-"],
-              ["绑定状态", executionApplied ? "已绑定候选变更集" : "待执行生成候选变更集"],
+              ["待发布版本", execution?.applied_agent_version_id || "-"],
+              ["绑定状态", executionApplied ? "已绑定待发布变更" : "待执行生成待发布变更"],
             ]} />
             <h4>已应用变更</h4><Lines items={execution?.changes_applied ?? []} empty="暂无已应用变更。" />
           </>,
@@ -589,178 +566,145 @@ function TestReleasePanels({
   item,
   feedbacks,
   execution,
-  regressionAssessment,
-  testDataset,
-  testDatasetError,
-  testDatasetRevisions,
-  testDatasetRevisionError,
-  latestEvalRun,
+  regressionTestDesign,
   assets,
   busy,
   pendingOperation,
   operationError,
   readOnly,
   onOpenTrace,
-  onAdoptTestDataset,
-  onRetryTestDatasetLoad,
-  onTransitionTestDataset,
+  onConfirmRegressionTests,
   onOpenDetail,
 }: {
   item: ImprovementItem;
   feedbacks: ImprovementFeedback[];
   execution: ExecutionRecord | null;
-  regressionAssessment: RegressionAssessment | null;
-  testDataset: TestDataset | null;
-  testDatasetError?: string;
-  testDatasetRevisions: TestDatasetRevision[];
-  testDatasetRevisionError?: string;
-  latestEvalRun: EvalRunResponse | null;
+  regressionTestDesign: RegressionTestDesign | null;
   assets: Asset[];
   busy: boolean;
   pendingOperation?: ImprovementPendingOperation | null;
   operationError?: ImprovementOperationError | null;
   readOnly: boolean;
   onOpenTrace: (traceId: string, traceUrl: string, title: string) => void;
-  onAdoptTestDataset: () => void;
-  onRetryTestDatasetLoad: () => void;
-  onTransitionTestDataset: (targetState: TestDataset["lifecycle_state"], reason: string) => void;
+  onConfirmRegressionTests: () => void;
   onOpenDetail: (detail: StageDetail) => void;
 }) {
-  const datasetId = testDataset?.dataset_id || "尚未固化";
-  const cases = testDataset?.cases ?? regressionAssessment?.cases ?? [];
-  const caseCount = cases.length;
-  const sourceRefs = testDataset?.provenance.source_feedback_ids ?? feedbacks.map((feedback) => feedback.feedback_id);
-  const baselineVersion = testDataset?.provenance.baseline_agent_version_id
-    || feedbacks.find((feedback) => feedback.agent_version_id)?.agent_version_id
+  const tests = regressionTestDesign?.tests ?? [];
+  const testCount = tests.length;
+  const sourceRefs = feedbacks.map((feedback) => feedback.feedback_id);
+  const baselineVersion = feedbacks.find((feedback) => feedback.agent_version_id)?.agent_version_id
     || "未记录";
-  const candidateVersion = testDataset?.provenance.candidate_agent_version_id
+  const candidateVersion = regressionTestDesign?.candidate_commit_sha
     || execution?.applied_agent_version_id
     || execution?.agent_version
     || "未记录";
-  const gateThresholds = regressionAssessment?.suggested_gate_thresholds ?? {};
-  const gateRows: [string, ReactNode][] = Object.keys(gateThresholds).length
-    ? Object.entries(gateThresholds).map(([k, v]) => [k, v])
-    : [["通过率", "≥95%"], ["新增严重问题", "0"], ["关键指标", "不劣于基线"]];
+  const candidateVersionLabel = item.improvement_status === "done" ? "发布版本" : "待发布版本";
+  const generatedFiles = regressionTestDesign?.generated_test_files ?? [];
+  const testsMaterialized = generatedFiles.some((path) => path.startsWith("tests/") && path.endsWith(".py"));
+  const gateRows: [string, ReactNode][] = [
+    ["测试范围", "待发布版本完整 tests/"],
+    ["版本绑定", "测试 commit 必须与待发布 commit 完全一致"],
+    ["默认条件", "平台 pytest 全部通过"],
+  ];
   const regressionPending = isPendingOperation(pendingOperation, "generate_regression");
   const regressionError = operationError?.kind === "generate_regression" ? operationError.message : "";
-  const runStatus = latestEvalRun
-    ? formatEvalResultStatus(latestEvalRun.result_status)
-    : testDataset
-      ? "等待执行"
-      : "尚未固化测试数据集";
-  const runSummary = latestEvalRun?.summary;
-  const gateStatus = latestEvalRun ? formatEvalResultStatus(latestEvalRun.gate_result.status) : "待回归运行";
 
   return (
     <>
       <div className="iw-stage-panel-grid test-release">
-        <StageCard letter="A" title="测试资产" actionLabel={MANAGE} testId="test-dataset-asset" className="is-stage-wide"
+        <StageCard letter="A" title="回归测试代码候选" actionLabel={VIEW} testId="regression-test-design" className="is-stage-wide"
           onAction={() => onOpenDetail({
-            key: "test-dataset", title: "测试资产详情", size: "medium",
+            key: "regression-test-design", title: "回归测试代码候选详情", size: "medium",
             content: <>
               <Dl rows={[
-                ["dataset_id", datasetId],
-                ["生命周期", testDataset?.lifecycle_state || "尚未采用"],
-                ["修订", testDataset ? String(testDataset.revision) : "-"],
-                ["归属", testDataset ? `${testDataset.owner_kind}:${testDataset.owner_id}` : item.agent_id],
-                ["来源改进", testDataset?.source_improvement_id || item.improvement_id],
-                ["基线 / 候选", `${baselineVersion} → ${candidateVersion}`],
+                ["归属业务 Agent", item.agent_id],
+                ["来源改进", item.improvement_id],
+                ["状态", regressionTestDesign?.status || "尚未生成"],
+                ["修复前版本", baselineVersion],
+                [candidateVersionLabel, candidateVersion],
+                ["候选测试文件", String(tests.length)],
               ]} />
-              <h4>修订记录</h4>
-              <Lines items={testDatasetRevisions.map((revision) => `r${revision.revision} · ${revision.lifecycle_state} · ${revision.reason}`)} empty="暂无修订记录。" />
+              <h4>候选目标路径</h4>
+              <Lines items={tests.map((test) => test.target_path)} empty={regressionTestDesign?.no_action_reason || "尚未生成可执行 pytest 代码。"} />
             </>,
           })}>
           <div className="iw-test-plan-card-body">
             <dl className="iw-compact-dl">
-              <div><dt>dataset_id</dt><dd data-testid="test-dataset-id">{datasetId}</dd></div>
-              <div><dt>归属业务 Agent</dt><dd>{testDataset?.owner_id || item.agent_id}</dd></div>
-              <div><dt>来源改进</dt><dd>{testDataset?.source_improvement_id || item.improvement_id}</dd></div>
-              <div><dt>生命周期 / 修订</dt><dd>{testDataset ? `${testDataset.lifecycle_state} / r${testDataset.revision}` : "尚未采用"}</dd></div>
-              <div><dt>基线 / 候选版本</dt><dd>{baselineVersion} → {candidateVersion}</dd></div>
+              <div><dt>归属业务 Agent</dt><dd>{item.agent_id}</dd></div>
+              <div><dt>来源改进</dt><dd>{item.improvement_id}</dd></div>
+              <div><dt>候选状态</dt><dd>{regressionTestDesign?.status || "尚未生成"}</dd></div>
+              <div><dt>修复前版本</dt><dd>{baselineVersion}</dd></div>
+              <div><dt>{candidateVersionLabel}</dt><dd>{candidateVersion}</dd></div>
             </dl>
             <div className="iw-test-plan-side">
               <div className="iw-test-plan-stats">
-                <span>默认回归用例 <strong>{caseCount}</strong></span>
+                <span>候选测试文件 <strong>{testCount}</strong></span>
                 <span>反馈来源数 <strong>{sourceRefs.length}</strong></span>
               </div>
               {!readOnly ? <div className="iw-action-row iw-test-plan-actions">
-                <button className="iw-primary-button" type="button" data-testid="adopt-regression" disabled={busy || !!testDataset || !!testDatasetError} onClick={onAdoptTestDataset}>{testDataset ? "已纳入测试集" : "纳入测试集"}</button>
-                <TraceButton source={regressionAssessment} label="测试发布" onOpenTrace={onOpenTrace} />
+                <button
+                  className="iw-primary-button"
+                  type="button"
+                  data-testid="confirm-regression-tests"
+                  disabled={busy || !regressionTestDesign || testCount === 0 || testsMaterialized}
+                  onClick={onConfirmRegressionTests}
+                >
+                  {testsMaterialized ? "待发布变更已确认" : "确认待发布变更"}
+                </button>
+                <TraceButton source={regressionTestDesign} label="测试发布" onOpenTrace={onOpenTrace} />
               </div> : null}
-              {readOnly ? <TraceButton source={regressionAssessment} label="测试发布" onOpenTrace={onOpenTrace} /> : null}
+              {readOnly ? <TraceButton source={regressionTestDesign} label="测试发布" onOpenTrace={onOpenTrace} /> : null}
             </div>
           </div>
-          {testDataset ? (
-            <TestDatasetLifecycleControls
-              dataset={testDataset}
-              revisions={testDatasetRevisions}
-              revisionError={testDatasetRevisionError}
-              busy={busy}
-              readOnly={readOnly}
-              onTransition={onTransitionTestDataset}
-            />
-          ) : null}
           {regressionPending ? <GenerationStatus operation={pendingOperation!} testId="regression-generation-status" /> : null}
           {regressionError ? <GenerationError message={regressionError} testId="regression-generation-error" /> : null}
-          {testDatasetError ? (
-            <div className="iw-error" data-testid="test-dataset-load-error">
-              <span>{testDatasetError}</span>
-              <button className="iw-secondary-button" type="button" data-testid="test-dataset-load-retry" onClick={onRetryTestDatasetLoad}>重试</button>
-            </div>
-          ) : null}
         </StageCard>
-        <StageCard letter="B" title="回归执行状态" actionLabel={VIEW} testId="regression-guarantee"
+        <StageCard letter="B" title="测试文件" actionLabel={VIEW} testId="workspace-test-files"
           onAction={() => onOpenDetail({
-            key: "regression-status", title: "回归执行状态详情", size: "medium",
-            content: <Dl rows={[
-              ["数据集", datasetId],
-              ["EvalRun", latestEvalRun?.eval_run_id || "-"],
-              ["状态", runStatus],
-              ["用例数", String(caseCount)],
-              ["通过 / 失败 / 待复核", runSummary ? `${runSummary.passed} / ${runSummary.failed} / ${runSummary.needs_human_review}` : "-"],
-            ]} />,
+            key: "workspace-test-files", title: "Workspace 测试文件", size: "medium",
+            content: <Lines items={generatedFiles} empty="确认待发布变更后，平台将在待发布版本中新增 tests/test_*.py。" />,
           })}>
           <div className="iw-regression-empty" data-testid="regression-run-status">
-            <strong>{runStatus}</strong>
-            <span>{latestEvalRun ? `${latestEvalRun.eval_run_id} · ${latestEvalRun.dataset_id}` : testDataset?.dataset_id || "-"}</span>
+            <strong>{testsMaterialized ? item.improvement_status === "done" ? "已写入发布版本" : "已写入待发布版本" : "尚未生成"}</strong>
+            <span>{generatedFiles.length ? `${generatedFiles.length} 个文件` : "tests/ 是测试资产唯一来源"}</span>
           </div>
         </StageCard>
-        <StageCard letter="C" title="测试用例详情" actionLabel={VIEW} testId="stage-panel-coverage"
+        <StageCard letter="C" title="测试代码详情" actionLabel={VIEW} testId="stage-panel-coverage"
           onAction={() => onOpenDetail({
-            key: "regression-case-details", title: "测试用例详情", size: "medium",
-            content: <RegressionCaseDetails
-              cases={cases}
-              datasetId={datasetId}
+            key: "regression-test-code-details", title: "测试代码详情", size: "medium",
+            content: <RegressionTestCodeDetails
+              tests={tests}
+              designId={regressionTestDesign?.regression_test_design_id || "尚未生成"}
               sourceCount={sourceRefs.length}
               baselineVersion={baselineVersion}
               candidateVersion={candidateVersion}
             />,
           })}>
-          <RegressionCaseSummaryList cases={cases} />
+          <RegressionTestCodeSummaryList tests={tests} />
         </StageCard>
-        <StageCard letter="D" title="执行环境 / 基线" actionLabel={VIEW} testId="stage-panel-execution-baseline"
+        <StageCard letter="D" title="版本范围" actionLabel={VIEW} testId="stage-panel-execution-baseline"
           onAction={() => onOpenDetail({
-            key: "execution-baseline", title: "执行环境 / 基线详情", size: "narrow",
-            content: <Dl rows={[["基线 / 候选版本", `${baselineVersion} → ${candidateVersion}`], ["回归运行引用", datasetId]]} />,
+            key: "execution-baseline", title: "版本范围详情", size: "narrow",
+            content: <Dl rows={[["修复前版本", baselineVersion], [candidateVersionLabel, candidateVersion]]} />,
           })}>
           <dl className="iw-compact-dl">
-            <div><dt>基线 / 候选版本</dt><dd>{baselineVersion} → {candidateVersion}</dd></div>
-            <div><dt>回归运行引用</dt><dd data-testid="regression-run-dataset-ref">{datasetId}</dd></div>
+            <div><dt>修复前版本</dt><dd>{baselineVersion}</dd></div>
+            <div><dt>{candidateVersionLabel}</dt><dd>{candidateVersion}</dd></div>
           </dl>
         </StageCard>
-        <StageCard letter="E" title="发布门禁预览" actionLabel={VIEW} testId="stage-panel-release-gate"
+        <StageCard letter="E" title="平台发布门" actionLabel={VIEW} testId="stage-panel-release-gate"
           onAction={() => onOpenDetail({
-            key: "release-gate", title: "发布门禁详情", size: "medium",
+            key: "release-gate", title: "平台发布门详情", size: "medium",
             content: <>
-              <h4>门禁阈值（治理 Agent 建议）</h4>
+              <h4>确定性发布条件</h4>
               <Dl rows={gateRows} />
-              <div className="iw-regression-empty"><span>门禁评估：{gateStatus}</span></div>
+              <div className="iw-regression-empty"><span>{item.improvement_status === "done" ? "本次发布以已通过平台 pytest 的精确 commit 为准。" : "实际发布条件以当前待发布 commit 的平台 pytest 结果为准。"}</span></div>
             </>,
           })}>
           <ul className="iw-check-list" data-testid="release-gate-thresholds">
             {gateRows.map(([k, v]) => <li key={k}>{k}：{v}</li>)}
           </ul>
-          <div className="iw-regression-empty" data-testid="persisted-release-gate"><span>门禁评估：{gateStatus}</span></div>
+          <div className="iw-regression-empty" data-testid="persisted-release-gate"><span>发布判断只使用当前待发布 commit 的平台测试记录。</span></div>
         </StageCard>
       </div>
       {assets.length ? (

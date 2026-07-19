@@ -251,17 +251,23 @@ def test_runtime_db_migrates_improvement_detail_columns_on_existing_tables(tmp_p
         rollback_strategy="回滚策略",
         rollback_instructions=["恢复版本"],
     )
-    content.upsert_regression_assessment(
+    content.upsert_regression_test_design(
         "imp-0019",
         summary="回归",
-        cases=[{"prompt": "case"}],
-        suggested_gate_thresholds={"pass_rate": 1.0},
+        tests=[
+            {
+                "target_path": "tests/test_case.py",
+                "test_code": "def test_case(agent):\n    result = agent.run('case')\n    assert 'case' in result.text\n",
+                "test_intent": "case",
+                "assertion_rationale": "case result",
+            }
+        ],
     )
 
     with factory.kw["bind"].connect() as connection:
         cols = {
             table: {str(r[1]) for r in connection.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()}
-            for table in ("attributions", "optimization_plans", "execution_records", "regression_assessments")
+            for table in ("attributions", "optimization_plans", "execution_records", "regression_test_designs")
         }
         migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0019_improvement_detail_columns'").fetchone()
 
@@ -271,8 +277,9 @@ def test_runtime_db_migrates_improvement_detail_columns_on_existing_tables(tmp_p
     assert {"generation_trace_id", "generation_trace_url"} <= cols["optimization_plans"]
     assert {"risk_level", "rollback_strategy", "rollback_instructions_json"} <= cols["execution_records"]
     assert {"generation_trace_id", "generation_trace_url"} <= cols["execution_records"]
-    assert "suggested_gate_thresholds_json" in cols["regression_assessments"]
-    assert {"generation_trace_id", "generation_trace_url"} <= cols["regression_assessments"]
+    assert {"tests_json", "no_action_reason"} <= cols["regression_test_designs"]
+    assert "suggested_gate_thresholds_json" not in cols["regression_test_designs"]
+    assert {"generation_trace_id", "generation_trace_url"} <= cols["regression_test_designs"]
     assert migration is not None
 
 
@@ -721,7 +728,7 @@ def test_runtime_db_repairs_stage_shell_even_when_0028_was_already_applied(tmp_p
         ImprovementItemModel,
         NormalizedFeedbackModel,
         OptimizationPlanModel,
-        RegressionAssessmentModel,
+        RegressionTestDesignModel,
     )
     from app.runtime.runtime_db import AgentReleaseModel, SchemaMigration
 
@@ -768,11 +775,11 @@ def test_runtime_db_repairs_stage_shell_even_when_0028_was_already_applied(tmp_p
                     improvement_id="imp-shell",
                     summary="empty shell",
                 ),
-                RegressionAssessmentModel(
-                    regression_assessment_id="reg-shell",
+                RegressionTestDesignModel(
+                    regression_test_design_id="reg-shell",
                     improvement_id="imp-shell",
                     summary="empty shell",
-                    cases_json=[],
+                    tests_json=[],
                 ),
                 AgentReleaseModel(
                     release_id="agr-published",

@@ -12,14 +12,17 @@ export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)
 PYTHON_TYPECHECK_TARGETS := \
 	app/openapi_contract.py \
 	app/routers/agent_workspace_packages.py \
+	app/agent_testing \
 	app/routers/claude_user_input.py \
 	app/routers/conversations.py \
 	app/routers/responses.py \
 	app/runtime/advisory_lock.py \
 	app/runtime/agent_git_raw_storage.py \
+	app/runtime/agent_git_worktree_operations.py \
 	app/runtime/agent_job_types.py \
 	app/runtime/agent_workspace_package_schemas.py \
-	app/runtime/business_agent_seed_catalog.py \
+	app/runtime/runtime_bootstrap.py \
+	app/runtime/runtime_db_migrations_0033.py \
 	app/runtime/business_agent_workspace.py \
 	app/runtime/claude_prompt_suggestions.py \
 	app/runtime/claude_runtime_permissions.py \
@@ -38,14 +41,15 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/runtime_initialization.py \
 	app/runtime/service_launcher.py \
 	app/services/agent_change_set_queries.py \
+	app/services/agent_workspace_git_operations.py \
 	app/services/agent_workspace_package_codec.py \
 	app/services/agent_workspace_packages.py \
+	app/services/generated_agent_tests.py \
 	app/services/improvement_execution_service.py \
 	app/services/improvement_governor_service.py \
 	app/services/workspace_execution_applier.py \
 	app/runtime/stores/agent_job_store.py \
 	app/runtime/stores/feedback_case_store.py \
-	app/runtime/stores/feedback_eval_store.py \
 	app/runtime/stores/feedback_store.py \
 	app/runtime/stores/improvement_content_store.py \
 	app/runtime/stores/improvement_store.py \
@@ -72,10 +76,11 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/test_quality/models.py \
 	scripts/test_quality/policy.py \
 	scripts/diagnose_runtime_health.py \
+	packages/agentgov-testkit/src/agentgov_testkit \
 	scripts/snapshot_legacy_release_controller_audit.py \
 	scripts/verify_agent_gov_ci_evidence.py \
-	scripts/runtime_template_secret_assignments.py \
-	scripts/runtime_template_safety.py \
+	scripts/runtime_bootstrap_secret_assignments.py \
+	scripts/runtime_bootstrap_safety.py \
 	scripts/runtime_cleanup.py \
 	scripts/cleanup_runtime_artifacts.py \
 	scripts/run_main_flow_tests.py
@@ -86,7 +91,7 @@ QUALITY_POLICY ?= tests/quality_policy.json
 GOVERNANCE_BASE_REF ?=
 GOVERNANCE_BASE_REF_ARG := $(if $(strip $(GOVERNANCE_BASE_REF)),--base-ref $(GOVERNANCE_BASE_REF),)
 
-.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test ci-static openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test ci-static openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -172,6 +177,12 @@ runtime-validate:
 runtime-clean:
 	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --env-file "$(COMPOSE_ENV_FILE)" --runtime-artifacts
 
+runtime-migrate-workspace-tests-scan:
+	$(PYTHON_RUN) scripts/migrate_workspace_test_assets.py --env-file "$(COMPOSE_ENV_FILE)"
+
+runtime-migrate-workspace-tests:
+	$(PYTHON_RUN) scripts/migrate_workspace_test_assets.py --env-file "$(COMPOSE_ENV_FILE)" --apply
+
 local-debug-env:
 	cp -n docker/.env.local-debug.example docker/.env.local-debug || true
 
@@ -184,13 +195,13 @@ local-debug-validate: local-debug-env
 local-debug-clean: local-debug-env
 	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug --runtime-artifacts
 
-runtime-volume-seeds-scan:
-	$(PYTHON_RUN) scripts/runtime_template_safety.py verify docker/runtime-volume-seeds
+runtime-bootstrap-scan:
+	$(PYTHON_RUN) scripts/runtime_bootstrap_safety.py verify docker/runtime-bootstrap
 
-runtime-volume-seeds-clean:
-	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --template-artifacts
+runtime-bootstrap-clean:
+	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --bootstrap-artifacts
 
-clean-runtime-artifacts: runtime-clean local-debug-clean runtime-volume-seeds-clean
+clean-runtime-artifacts: runtime-clean local-debug-clean runtime-bootstrap-clean
 
 smoke:
 	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py --env-file "$(COMPOSE_ENV_FILE)" --require-ready
@@ -247,7 +258,7 @@ pyright:
 
 typecheck: ruff-check ruff-format-check pyright
 
-ci-static: codex-guard typecheck runtime-volume-seeds-scan
+ci-static: codex-guard typecheck runtime-bootstrap-scan
 
 test-backend:
 	mkdir -p $(BACKEND_TEST_ARTIFACT_DIR)

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.runtime.json_types import JsonObject
-from app.runtime.schemas import EvalRunResponse, ExtensibleResponse
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+from app.runtime.schemas import ExtensibleResponse
 
 
 class AgentRepositoryStatusResponse(ExtensibleResponse):
@@ -102,15 +103,10 @@ class AgentPublicationErrorResponse(BaseModel):
     updated_at: str
 
 
-class AgentRegressionErrorResponse(BaseModel):
-    error_type: str
-    updated_at: str
-
-
 class AgentChangeSetResponse(ExtensibleResponse):
     schema_version: str = "agent-change-set/v1"
     change_set_id: str
-    agent_id: str = "main-agent"
+    agent_id: str = DEFAULT_BUSINESS_AGENT_ID
     created_at: str
     updated_at: str
     status: str
@@ -122,8 +118,8 @@ class AgentChangeSetResponse(ExtensibleResponse):
     title: Optional[str] = None
     note: Optional[str] = None
     diff_summary: JsonObject = Field(default_factory=dict)
-    latest_eval_run_id: Optional[str] = None
-    latest_eval_run: Optional[EvalRunResponse] = None
+    latest_test_run_id: Optional[str] = None
+    latest_test_run: Optional[JsonObject] = None
     latest_release_id: Optional[str] = None
     source_improvement_id: Optional[str] = None
     source_attribution_id: Optional[str] = None
@@ -131,17 +127,15 @@ class AgentChangeSetResponse(ExtensibleResponse):
     publication_provenance_blocker: Optional[str] = None
     publication_blocker: Optional[str] = None
     publication_error: Optional[AgentPublicationErrorResponse] = None
-    regression_error: Optional[AgentRegressionErrorResponse] = None
     worktree_cleanup_pending: bool = False
     worktree_cleanup: Optional[JsonObject] = None
 
     @model_validator(mode="before")
     @classmethod
     def hide_internal_publication_intent(cls, value: object) -> object:
-        if isinstance(value, dict) and ({"publication_intent", "regression_dataset_id"} & value.keys()):
+        if isinstance(value, dict) and "publication_intent" in value:
             public_value = dict(value)
             public_value.pop("publication_intent", None)
-            public_value.pop("regression_dataset_id", None)
             return public_value
         return value
 
@@ -149,7 +143,7 @@ class AgentChangeSetResponse(ExtensibleResponse):
 class AgentReleaseResponse(ExtensibleResponse):
     schema_version: str = "agent-release/v1"
     release_id: str
-    agent_id: str = "main-agent"
+    agent_id: str = DEFAULT_BUSINESS_AGENT_ID
     created_at: str
     updated_at: str
     status: str
@@ -162,6 +156,10 @@ class AgentReleaseResponse(ExtensibleResponse):
     archive_path: Optional[str] = None
     archive_sha256: Optional[str] = None
     note: Optional[str] = None
+    operator: Optional[str] = None
+    force_published: bool = False
+    force_publication_blocker: Optional[str] = None
+    force_publish_reason: Optional[str] = None
 
 
 class AgentChangeSetCreateRequest(BaseModel):
@@ -177,35 +175,22 @@ class AgentChangeSetActionRequest(BaseModel):
     note: Optional[str] = None
 
 
-class AgentChangeSetRegressionRunRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    dataset_id: str = Field(min_length=1)
-
-
-class AgentChangeSetRegressionReviewItemRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    dataset_case_id: str = Field(min_length=1, max_length=128)
-    decision: Literal["approve", "reject"]
-    note: str = Field(default="", max_length=2048)
-
-
-class AgentChangeSetRegressionReviewRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    review_id: str = Field(min_length=1, max_length=128)
-    operator: str = Field(min_length=1, max_length=128)
-    reason: str = Field(min_length=1, max_length=2048)
-    scope: Literal["current_eval_run"]
-    decisions: list[AgentChangeSetRegressionReviewItemRequest] = Field(min_length=1)
-
-
 class AgentChangeSetPublishRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     operator: str = "runtime"
     tag_name: Optional[str] = None
     note: Optional[str] = None
     force: bool = False
+    force_reason: Optional[str] = Field(default=None, min_length=1, max_length=2048)
+
+    @model_validator(mode="after")
+    def require_force_reason(self) -> AgentChangeSetPublishRequest:
+        if self.force and not (self.force_reason or "").strip():
+            raise ValueError("force_reason is required when force=true")
+        if not self.force and self.force_reason is not None:
+            raise ValueError("force_reason is only valid when force=true")
+        return self
 
 
 class AgentReleaseRollbackRequest(BaseModel):

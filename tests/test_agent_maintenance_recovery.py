@@ -20,22 +20,29 @@ from feedback_store_test_utils import _settings
 def _governance(tmp_path):
     settings = _settings(tmp_path)
     git_store = GitAgentVersionStore(
-        repository_dir=settings.main_workspace_dir,
+        repository_dir=settings.default_workspace_dir,
         worktrees_dir=settings.agent_git_worktrees_dir,
         releases_dir=settings.agent_release_archives_dir,
     )
     git_store.ensure_bootstrap()
     feedback_store = FeedbackStore(
         data_dir=settings.data_dir,
-        workspace_dir=settings.main_workspace_dir,
+        workspace_dir=settings.default_workspace_dir,
         agent_version_provider=lambda _aid=None: git_store.current_version_id(),
     )
-    return AgentGovernanceService(
+    governance = AgentGovernanceService(
         feedback_store=feedback_store,
         agent_version_store=git_store,
         runtime_mode=settings.runtime_volume_mode,
         runtime_env={"MCP_SERVER_URL": "http://localhost:58001/mcp"},
-    ), git_store
+    )
+    governance.latest_passed_test_run = lambda agent_id, commit_sha: {
+        "test_run_id": f"atr-{commit_sha[:12]}",
+        "agent_id": agent_id,
+        "commit_sha": commit_sha,
+        "status": "passed",
+    }
+    return governance, git_store
 
 
 def _publish(governance, git_store, content: str):

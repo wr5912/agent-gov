@@ -26,6 +26,6 @@ export const SOURCE_LABEL: Record<string, string> = {
 export const LINK_KIND_LABEL: Record<string, string> = {
   attribution: "归因",
   optimization_plan: "优化方案",
-  eval_run: "评估",
-  change_set: "变更集",
+  test_run: "测试运行",
+  change_set: "待发布变更",
 };

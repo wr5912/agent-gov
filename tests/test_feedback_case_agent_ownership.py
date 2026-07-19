@@ -434,7 +434,7 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
 
     evidence = store.create_evidence_package("case-claim-winner")
     assert evidence is not None
-    assert evidence["main_agent_version_id"] == "version-agent-a"
+    assert evidence["business_agent_version_id"] == "version-agent-a"
     assert evidence["source_refs"]["event_ids"] == ["event-claimed"]
     assert evidence["source_refs"]["run_ids"] == ["run-claimed"]
     event_file = store.get_evidence_package_file(evidence["evidence_package_id"], "soc_events.json")

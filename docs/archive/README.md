@@ -14,8 +14,8 @@
 | `docs/反馈优化产品调整方案.md` | `docs/archive/obsolete/反馈优化产品调整方案.md` | `docs/反馈闭环当前实现基线.md` | `2026-06-23` |
 | `docs/反馈优化闭环多智能体架构.md` | `docs/archive/obsolete/反馈优化闭环多智能体架构.md` | `docs/反馈闭环当前实现基线.md` | `2026-06-23` |
 | `docs/反馈闭环机制全景画像.md` | `docs/archive/obsolete/反馈闭环机制全景画像.md` | `docs/反馈闭环当前实现基线.md` | `2026-06-23` |
-| `docs/反馈闭环长期回归资产升级方案.md` 旧完整稿 | `docs/archive/obsolete/反馈闭环长期回归资产升级方案_旧完整稿.md` | `docs/反馈闭环长期回归资产升级方案.md` | `2026-06-23` |
-| `docs/design_review_report/反馈闭环长期回归资产升级方案评审报告.md` | `docs/archive/design/反馈闭环长期回归资产升级方案评审报告.md` | `docs/反馈闭环长期回归资产升级方案.md` | `2026-06-23` |
+| `docs/反馈闭环长期回归资产升级方案.md` 旧完整稿 | `docs/archive/obsolete/反馈闭环长期回归资产升级方案_旧完整稿.md` | `docs/engineering/业务AgentWorkspace原生pytest测试资产实现方案.md` | `2026-06-23` |
+| `docs/design_review_report/反馈闭环长期回归资产升级方案评审报告.md` | `docs/archive/design/反馈闭环长期回归资产升级方案评审报告.md` | `docs/engineering/业务AgentWorkspace原生pytest测试资产实现方案.md` | `2026-06-23` |
 | `docs/engineering/Claude原生业务Agent人类确认机制整改实现方案.md` | `docs/archive/design/Claude原生业务Agent人类确认机制整改实现方案.md` | `docs/AgentGov集成指南.md` | `2026-07-10` |
 | `docs/engineering/Claude原生业务Agent人类确认机制对抗审查整改计划.md` | `docs/archive/design/Claude原生业务Agent人类确认机制对抗审查整改计划.md` | `docs/AgentGov集成指南.md` | `2026-07-10` |
 | `docs/engineering/AgentGov目标达成分阶段执行计划.md` | `docs/archive/design/AgentGov目标达成分阶段执行计划.md` | `docs/AgentGov核心功能测试用例.md` | `2026-07-10` |
@@ -25,7 +25,8 @@
 | 同名活跃文档的 2026-07-16 旧完整稿 | `docs/archive/design/CI-CD可信发布与生产准入远期蓝图.md` | `docs/engineering/CI-CD宪法与交付链两阶段整改计划.md` | `2026-07-16` |
 | `docs/engineering/PAT-only持续交付与Staging发布.md` | `docs/archive/design/PAT-only持续交付与Staging发布.md` | `docs/engineering/Multica持续CI与联调环境部署.md` | `2026-07-16` |
 | 同名活跃文档的复杂安全旧稿 | `docs/archive/design/业务AgentWorkspace包导入与热加载产品工程方案_复杂安全旧稿.md` | `docs/业务AgentWorkspace包导入与热加载产品工程方案.md` | `2026-07-16` |
-| 同名活跃文档的旧复杂稿 | `docs/archive/design/业务Agent工作区资产闭环产品工程方案_旧复杂稿.md` | `docs/业务Agent工作区资产闭环产品工程方案.md` | `2026-07-16` |
+| 同名活跃文档的旧复杂稿 | `docs/archive/design/业务Agent工作区资产闭环产品工程方案_旧复杂稿.md` | `docs/业务AgentWorkspace包导入与热加载产品工程方案.md` | `2026-07-16` |
+| `docs/业务Agent工作区资产闭环产品工程方案.md` | `docs/archive/design/业务Agent工作区资产闭环产品工程方案.md` | `docs/业务AgentWorkspace包导入与热加载产品工程方案.md` | `2026-07-17` |
 
 ## 归档图片资产
 

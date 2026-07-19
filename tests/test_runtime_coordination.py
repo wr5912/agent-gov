@@ -11,6 +11,7 @@ from app.runtime.advisory_lock import advisory_lock
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_paths import business_agent_layout
 from app.runtime.managed_agent_policy import ManagedAgentPolicyError
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_coordination import (
     RuntimeCoordinationPaths,
     prepare_runtime_contract,
@@ -30,21 +31,27 @@ _GENERIC_MUTATION_ASK = [
 ]
 
 
-def _settings(tmp_path: Path) -> AppSettings:
+def _settings(tmp_path: Path, *, initialize_workspace: bool = True) -> AppSettings:
     root = tmp_path / "runtime"
-    return AppSettings(
+    settings = AppSettings(
         _env_file=None,
         DATA_DIR=root / "data",
         GOVERNOR_WORKSPACE_DIR=root / "governor-workspace",
         GOVERNOR_CLAUDE_ROOT=root / "claude-roots" / "governor",
         RUNTIME_VOLUME_MODE="local-debug",
     )
+    if initialize_workspace:
+        workspace = settings.default_workspace_dir
+        (workspace / ".claude").mkdir(parents=True)
+        (workspace / ".claude" / "settings.json").write_text(json.dumps(_workspace_settings()), encoding="utf-8")
+        (workspace / ".mcp.json").write_text('{"mcpServers": {}}\n', encoding="utf-8")
+        (workspace / "hooks").mkdir()
+        (workspace / "hooks" / "pre_tool_guard.py").write_text("# managed test hook\n", encoding="utf-8")
+    return settings
 
 
-def _template(tmp_path: Path) -> Path:
-    root = tmp_path / "seeds"
-    workspace = root / "data" / "business-agents" / "main-agent" / "workspace"
-    settings = {
+def _workspace_settings() -> dict:
+    return {
         "permissions": {
             "allow": ["Read(./**)", "Glob", "Grep", "Skill"],
             "ask": ["Bash(*)", "Edit(./**)", "Write(./**)", *_GENERIC_MUTATION_ASK],
@@ -58,27 +65,35 @@ def _template(tmp_path: Path) -> Path:
             "allowUnsandboxedCommands": False,
         },
     }
+
+
+def _bootstrap(tmp_path: Path) -> Path:
+    root = tmp_path / "runtime-bootstrap"
+    workspace = root / "business-agents" / "security-operations-expert" / "workspace"
     (workspace / ".claude").mkdir(parents=True)
-    (workspace / ".claude" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    (workspace / ".claude" / "settings.json").write_text(json.dumps(_workspace_settings()), encoding="utf-8")
     (workspace / ".mcp.json").write_text('{"mcpServers": {}}\n', encoding="utf-8")
     (workspace / "hooks").mkdir()
     (workspace / "hooks" / "pre_tool_guard.py").write_text("# managed test hook\n", encoding="utf-8")
+    governor = root / "governor-workspace"
+    governor.mkdir()
+    (governor / "CLAUDE.md").write_text("# Governor\n", encoding="utf-8")
     return root
 
 
-def _prepare(settings: AppSettings, template: Path, env: dict[str, str] | None = None):
+def _prepare(settings: AppSettings, bootstrap: Path, env: dict[str, str] | None = None):
     paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
     with advisory_lock(paths.phase_lock, mode="exclusive") as lease:
         return prepare_runtime_contract(
             settings=settings,
-            template_dir=template,
+            bootstrap_dir=bootstrap,
             env=env or {},
             lease=lease,
         )
 
 
-def _main_store(settings: AppSettings) -> GitAgentVersionStore:
-    layout = business_agent_layout(settings.data_dir, "main-agent")
+def _default_store(settings: AppSettings) -> GitAgentVersionStore:
+    layout = business_agent_layout(settings.data_dir, DEFAULT_BUSINESS_AGENT_ID)
     return GitAgentVersionStore(
         repository_dir=layout.workspace,
         worktrees_dir=layout.version_base / "worktrees",
@@ -87,8 +102,8 @@ def _main_store(settings: AppSettings) -> GitAgentVersionStore:
 
 
 def _remove_managed_ask(settings: AppSettings, *, commit: bool) -> GitAgentVersionStore:
-    store = _main_store(settings)
-    path = settings.main_workspace_dir / ".claude" / "settings.json"
+    store = _default_store(settings)
+    path = settings.default_workspace_dir / ".claude" / "settings.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["permissions"]["ask"].remove(_GENERIC_MUTATION_ASK[-1])
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -99,11 +114,11 @@ def _remove_managed_ask(settings: AppSettings, *, commit: bool) -> GitAgentVersi
 
 def test_runtime_receipt_is_idempotent_and_not_bound_to_runtime_endpoint_env(tmp_path):
     settings = _settings(tmp_path)
-    template = _template(tmp_path)
+    template = _bootstrap(tmp_path)
 
     first = _prepare(settings, template)
     receipt_payload = json.loads(RuntimeCoordinationPaths.from_data_dir(settings.data_dir).receipt.read_text(encoding="utf-8"))
-    status = runtime_contract_status(settings=settings, template_dir=template, env={})
+    status = runtime_contract_status(settings=settings, bootstrap_dir=template, env={})
     second = _prepare(settings, template)
 
     assert set(receipt_payload) == {
@@ -119,37 +134,37 @@ def test_runtime_receipt_is_idempotent_and_not_bound_to_runtime_endpoint_env(tmp
     assert second.volume_id == first.volume_id
     assert runtime_contract_status(
         settings=settings,
-        template_dir=template,
+        bootstrap_dir=template,
         env={"MCP_SERVER_URL": "http://different.example/mcp"},
     ).valid
     assert runtime_contract_status(
         settings=settings,
-        template_dir=template,
+        bootstrap_dir=template,
         env={"CLAUDE_ALLOWED_NETWORK_DOMAINS": "soc.internal"},
     ).valid
 
 
 def test_runtime_receipt_is_bound_to_local_runtime_root(tmp_path):
     settings = _settings(tmp_path / "first")
-    template = _template(tmp_path)
+    template = _bootstrap(tmp_path)
     _prepare(settings, template)
-    relocated = _settings(tmp_path / "relocated")
+    relocated = _settings(tmp_path / "relocated", initialize_workspace=False)
     relocated_root = relocated.data_dir.parent
     relocated_root.parent.mkdir(parents=True, exist_ok=True)
     settings.data_dir.parent.rename(relocated_root)
 
-    status = runtime_contract_status(settings=relocated, template_dir=template, env={})
+    status = runtime_contract_status(settings=relocated, bootstrap_dir=template, env={})
 
     assert status.reason == "desired_digest_mismatch"
 
 
 def test_clean_historical_workspace_is_not_rewritten_or_recommitted(tmp_path):
     settings = _settings(tmp_path)
-    template = _template(tmp_path)
+    template = _bootstrap(tmp_path)
     _prepare(settings, template)
     store = _remove_managed_ask(settings, commit=True)
     historical_head = store.current_commit_sha()
-    settings_path = settings.main_workspace_dir / ".claude" / "settings.json"
+    settings_path = settings.default_workspace_dir / ".claude" / "settings.json"
     historical_bytes = settings_path.read_bytes()
 
     _prepare(settings, template)
@@ -161,11 +176,11 @@ def test_clean_historical_workspace_is_not_rewritten_or_recommitted(tmp_path):
 
 def test_invalid_historical_workspace_fails_read_only_validation_without_rewrite(tmp_path):
     settings = _settings(tmp_path)
-    template = _template(tmp_path)
+    template = _bootstrap(tmp_path)
     _prepare(settings, template)
-    store = _main_store(settings)
+    store = _default_store(settings)
     historical_head = store.current_commit_sha()
-    settings_path = settings.main_workspace_dir / ".claude" / "settings.json"
+    settings_path = settings.default_workspace_dir / ".claude" / "settings.json"
     settings_path.write_text("{", encoding="utf-8")
 
     with pytest.raises(ManagedAgentPolicyError, match="invalid_settings"):
@@ -178,11 +193,11 @@ def test_invalid_historical_workspace_fails_read_only_validation_without_rewrite
 
 def test_dirty_workspace_does_not_block_receipt_refresh_or_get_committed(tmp_path):
     settings = _settings(tmp_path)
-    template = _template(tmp_path)
+    template = _bootstrap(tmp_path)
     _prepare(settings, template)
     store = _remove_managed_ask(settings, commit=False)
     historical_head = store.current_commit_sha()
-    settings_path = settings.main_workspace_dir / ".claude" / "settings.json"
+    settings_path = settings.default_workspace_dir / ".claude" / "settings.json"
     dirty_bytes = settings_path.read_bytes()
 
     _prepare(settings, template)
@@ -194,7 +209,7 @@ def test_dirty_workspace_does_not_block_receipt_refresh_or_get_committed(tmp_pat
 
 def test_open_change_set_does_not_trigger_workspace_migration(tmp_path):
     settings = _settings(tmp_path)
-    template = _template(tmp_path)
+    template = _bootstrap(tmp_path)
     _prepare(settings, template)
     store = _remove_managed_ask(settings, commit=True)
     historical_head = store.current_commit_sha()
@@ -203,7 +218,7 @@ def test_open_change_set_does_not_trigger_workspace_migration(tmp_path):
         connection.execute("CREATE TABLE agent_change_sets (change_set_id TEXT, agent_id TEXT, status TEXT)")
         connection.execute(
             "INSERT INTO agent_change_sets VALUES (?, ?, ?)",
-            ("agc-open", "main-agent", "draft"),
+            ("agc-open", DEFAULT_BUSINESS_AGENT_ID, "draft"),
         )
 
     _prepare(settings, template)

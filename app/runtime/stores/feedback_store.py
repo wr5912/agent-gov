@@ -12,20 +12,19 @@ from ..collection_utils import unique_strings
 from ..execution_targets import WorkspaceExecutionTargetPolicy
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
 from ..json_types import JsonObject
+from ..protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from ..runtime_db import (
     make_session_factory,
     runtime_db_path_from_data_dir,
 )
 from .agent_job_store import AgentJobStoreMixin
 from .feedback_case_store import FeedbackCaseStoreMixin
-from .feedback_eval_store import FeedbackEvalStoreMixin
 from .feedback_evidence_store import FeedbackEvidenceStoreMixin
 from .feedback_source_store import FeedbackSourceStoreMixin
 
 
 class FeedbackStore(
     AgentJobStoreMixin,
-    FeedbackEvalStoreMixin,
     FeedbackEvidenceStoreMixin,
     FeedbackCaseStoreMixin,
     FeedbackSourceStoreMixin,
@@ -44,10 +43,10 @@ class FeedbackStore(
     ) -> None:
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.main_workspace_dir = workspace_dir or business_agent_layout(data_dir, "main-agent").workspace
-        # main-agent workspace 在 /data 下，确保存在（与 get_settings 一致；执行/证据写入依赖它）。
-        self.main_workspace_dir.mkdir(parents=True, exist_ok=True)
-        self.execution_targets = WorkspaceExecutionTargetPolicy(self.main_workspace_dir)
+        self.default_workspace_dir = workspace_dir or business_agent_layout(data_dir, DEFAULT_BUSINESS_AGENT_ID).workspace
+        # 默认业务 Agent Workspace 在 /data 下；执行/证据兼容投影依赖该入口。
+        self.default_workspace_dir.mkdir(parents=True, exist_ok=True)
+        self.execution_targets = WorkspaceExecutionTargetPolicy(self.default_workspace_dir)
         self.db_path = runtime_db_path_from_data_dir(data_dir)
         self.Session = make_session_factory(self.db_path)
         self.agent_version_provider = agent_version_provider
@@ -73,10 +72,10 @@ class FeedbackStore(
 
     def _resolve_task_agent_id(self, *, feedback_case_id: Optional[str] = None) -> str:
         if not feedback_case_id:
-            return "main-agent"
+            return DEFAULT_BUSINESS_AGENT_ID
         feedback_case = self.find_case(feedback_case_id)
         if not feedback_case:
-            return "main-agent"
+            return DEFAULT_BUSINESS_AGENT_ID
         case_agent_id = self._string(feedback_case.get("agent_id"))
         if case_agent_id:
             return case_agent_id
@@ -85,20 +84,19 @@ class FeedbackStore(
             agent_id = self._string((signal or {}).get("agent_id"))
             if agent_id:
                 return agent_id
-        return "main-agent"
+        return DEFAULT_BUSINESS_AGENT_ID
 
     def _agent_git_paths_context(self, agent_id: Optional[str] = None) -> JsonObject:
-        # 执行 prompt 的仓库/worktrees/releases 路径按归属业务 Agent 解析；main-agent 与动态
-        # 业务 Agent 同构，版本治理工件一律落 data/business-agents/<id>/version。
-        normalized = (agent_id or "main-agent").strip()
+        # 执行 prompt 的仓库/worktrees/releases 路径按归属业务 Agent 解析。
+        normalized = (agent_id or DEFAULT_BUSINESS_AGENT_ID).strip()
         layout = business_agent_layout(self.data_dir, normalized)
         repository, worktrees, releases = (
-            self.main_workspace_dir if normalized == "main-agent" else layout.workspace,
+            self.default_workspace_dir if normalized == DEFAULT_BUSINESS_AGENT_ID else layout.workspace,
             layout.version_base / "worktrees",
             layout.version_base / "releases",
         )
         return {
-            "main_agent_repository_path": str(repository),
+            "agent_repository_path": str(repository),
             "agent_change_set_worktrees_path": str(worktrees),
             "agent_release_archives_path": str(releases),
             "agent_version_source": "git",
@@ -108,7 +106,7 @@ class FeedbackStore(
         # #24-B：执行目标的 sha/存在性必须按归属业务 Agent 的 workspace 计算（与 apply 目标 worktree 同源），
         # 否则拿 main 的 sha 比对 AAA worktree 文件 → 'Target file changed'/存在性 409。main 复用主 policy。
         normalized = (agent_id or "").strip()
-        if not normalized or normalized == "main-agent":
+        if not normalized or normalized == DEFAULT_BUSINESS_AGENT_ID:
             return self.execution_targets
         return WorkspaceExecutionTargetPolicy(business_agent_layout(self.data_dir, normalized).workspace)
 

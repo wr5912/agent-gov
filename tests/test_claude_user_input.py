@@ -32,7 +32,7 @@ async def _start_wait(
     tool_name: str = "Bash",
     input_data: object | None = None,
     run_id: str = "run-1",
-    business_agent_id: str = "main-agent",
+    business_agent_id: str = "test-business-agent",
 ):
     event_queue: asyncio.Queue = asyncio.Queue()
     task = asyncio.create_task(
@@ -60,7 +60,7 @@ def test_tool_permission_allow_once_resolves_sdk_wait_and_keeps_debug_input(tmp_
         assert request["request_type"] == "tool_permission"
         assert request["input"]["api_key"] == "sk-secret"
         assert request["context"]["tool_use_id"] == "toolu-1"
-        assert request["business_agent_id"] == "main-agent"
+        assert request["business_agent_id"] == "test-business-agent"
 
         record = service.submit_decision(
             request["request_id"],
@@ -175,7 +175,7 @@ def test_tool_permission_allow_for_run_is_scoped_to_current_low_risk_category(tm
 
         second_decision = await service.create_and_wait(
             event_queue=event_queue,
-            business_agent_id="main-agent",
+            business_agent_id="test-business-agent",
             run_id="run-1",
             api_session_id="sess-1",
             sdk_session_id="sdk-1",
@@ -190,7 +190,7 @@ def test_tool_permission_allow_for_run_is_scoped_to_current_low_risk_category(tm
         other_category_task = asyncio.create_task(
             service.create_and_wait(
                 event_queue=event_queue,
-                business_agent_id="main-agent",
+                business_agent_id="test-business-agent",
                 run_id="run-1",
                 api_session_id="sess-1",
                 sdk_session_id="sdk-1",
@@ -259,13 +259,13 @@ def test_read_only_bash_run_grant_auto_allows_next_safe_probe(tmp_path):
 
         second_decision = await service.create_and_wait(
             event_queue=event_queue,
-            business_agent_id="main-agent",
+            business_agent_id="test-business-agent",
             run_id="run-1",
             api_session_id="sess-1",
             sdk_session_id="sdk-1",
             tool_name="Bash",
             input_data={
-                "command": "find /data/business-agents/main-agent/workspace -maxdepth 4 -type f 2>/dev/null | grep -v node_modules | grep -v .git | head -60"
+                "command": "find /data/business-agents/test-business-agent/workspace -maxdepth 4 -type f 2>/dev/null | grep -v node_modules | grep -v .git | head -60"
             },
             context={"tool_use_id": "toolu-2", "agent_id": "subagent-1"},
         )
@@ -283,7 +283,7 @@ def test_read_only_bash_run_grant_auto_allows_next_safe_probe(tmp_path):
         "find . -delete",
         "sed -i s/a/b/ templates/reports/daily-secops-report.md",
         "cat /data/runtime.sqlite3",
-        "cat /data/business-agents/main-agent/workspace/.env",
+        "cat /data/business-agents/test-business-agent/workspace/.env",
         "cat .env*",
         "cat $HOME/.ssh/id_rsa",
         "grep -R token .",
@@ -345,7 +345,7 @@ def test_allow_for_run_does_not_cross_run_boundary(tmp_path):
         high_risk_task = asyncio.create_task(
             service.create_and_wait(
                 event_queue=_event_queue,
-                business_agent_id="main-agent",
+                business_agent_id="test-business-agent",
                 run_id="run-1",
                 api_session_id="sess-1",
                 sdk_session_id="sdk-1",

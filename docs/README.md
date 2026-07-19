@@ -6,7 +6,7 @@
 
 1. 先读“权威入口”，明确产品边界、术语和验收锚点。
 2. 需要理解当前代码和运行态时，读“当前实现基线”。
-3. 需要理解业务 Agent workspace 资产闭环时，读“当前实现基线”中的对应工程契约。
+3. 需要理解业务 Agent Workspace 包、创建入口和运行卷初始化时，读“当前实现基线”中的对应工程契约。
 4. 需要评审四阶段改进治理目标方案时，读“四阶段改进治理工作台权威方案”。
 5. 需要落地工程质量、GSD 或治理硬门时，读“工程治理”。
 6. 需要追溯旧评审、旧补充方案或治理反思时，读“归档入口”。
@@ -33,14 +33,13 @@
 这些文档解释当前代码、API、数据库、测试和用户可见运行态。当前反馈闭环主对象是 `ImprovementItem`；文档中若出现 `优化批次`、`proposal` 等历史术语，只能作为迁移来源或归档证据阅读，不作为当前 API 或 UI 主流程依据。四阶段改进治理用户主流程术语以 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md) 为准；与旧设计冲突时，以 [AgentGov 四阶段改进治理工作台 UI 整改方案](./AgentGov_四阶段改进治理工作台UI整改方案.md) 和四张效果图为准。
 
 - [反馈闭环当前实现基线](./反馈闭环当前实现基线.md)：`docs/反馈闭环当前实现基线.md`
-- [反馈闭环长期回归治理升级方案](./反馈闭环长期回归资产升级方案.md)：`docs/反馈闭环长期回归资产升级方案.md`
+- [业务 Agent Workspace 原生 pytest 测试资产实现方案](./engineering/业务AgentWorkspace原生pytest测试资产实现方案.md)：
+  `docs/engineering/业务AgentWorkspace原生pytest测试资产实现方案.md`，定义测试资产唯一真相、
+  `agentgov_testkit`、精确提交运行、服务重启恢复和发布条件
 - [业务 Agent Workspace 包导入与热加载产品工程方案](./业务AgentWorkspace包导入与热加载产品工程方案.md)：
-  `docs/业务AgentWorkspace包导入与热加载产品工程方案.md`，定义 workspace 原样导入、同 ID 覆盖、
-  下一 turn 生效、Git 审计与恢复的当前产品工程契约；字段级真相源仍是 OpenAPI
-- [业务 Agent 工作区资产闭环产品工程方案](./业务Agent工作区资产闭环产品工程方案.md)：
-  `docs/业务Agent工作区资产闭环产品工程方案.md`，定义 workspace 在线导出、seed 跨 ID 原样实例化、
-  业务 Agent 删除（清运行态存储与 seed catalog 条目）、
-  原生环境变量解析和离线归档为 seed 的当前产品工程契约
+  `docs/业务AgentWorkspace包导入与热加载产品工程方案.md`，定义普通 Agent 仅由 Workspace 包创建、
+  原样导入/导出、同 ID 覆盖、下一 turn 生效、Git 审计、删除与运行卷初始化的当前工程契约；
+  字段级真相源仍是 OpenAPI
 
 ## 四阶段改进治理工作台权威方案
 
@@ -59,7 +58,7 @@
 
 ## 工程治理
 
-- [AgentGov 工程宪法与当前交付边界](./engineering/CI-CD宪法与交付链两阶段整改计划.md)：`docs/engineering/CI-CD宪法与交付链两阶段整改计划.md`，定义价值优先、workspace 原样、repo seed 分级准入与运行态 seed catalog、机器事实、单一 CI/部署入口和最小充分论证等稳定原则
+- [AgentGov 工程宪法与当前交付边界](./engineering/CI-CD宪法与交付链两阶段整改计划.md)：`docs/engineering/CI-CD宪法与交付链两阶段整改计划.md`，定义价值优先、Workspace 原样、运行卷初始化源准入、机器事实、单一 CI/部署入口和最小充分论证等稳定原则
 - [Multica 持续 CI 与联调环境部署](./engineering/Multica持续CI与联调环境部署.md)：`docs/engineering/Multica持续CI与联调环境部署.md`，定义 GitHub CI 终态进入 Multica AID/研发协作会话，以及人工精确 SHA 部署到联调环境的当前可执行契约
 - [测试资产组合治理](./engineering/测试资产组合治理.md)：`docs/engineering/测试资产组合治理.md`，测试分类、生命周期、执行通道、可信证据、TIA/xdist 晋级和 mutation 的权威工程契约
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`

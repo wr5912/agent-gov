@@ -21,21 +21,21 @@ from .feedback_schemas import (
     ImprovementOptimizationPlanOutput,
     NormalizedFeedbackFormatterOutput,
     NormalizedFeedbackOutput,
-    RegressionAssessmentFormatterOutput,
-    RegressionAssessmentOutput,
+    RegressionTestDesignFormatterOutput,
+    RegressionTestDesignOutput,
 )
 from .json_types import JsonObject
 from .prompts.feedback_prompt_contexts import (
     build_attribution_prompt_context,
     build_execution_prompt_context,
     build_improvement_optimization_prompt_context,
-    build_regression_assessment_prompt_context,
+    build_regression_test_design_prompt_context,
 )
 from .prompts.feedback_prompts import (
     attribution_prompt,
     execution_plan_prompt,
     improvement_optimization_plan_prompt,
-    regression_assessment_prompt,
+    regression_test_design_prompt,
 )
 
 
@@ -45,24 +45,24 @@ FormatterOutputModel: TypeAlias = (
     AttributionFormatterOutput
     | ImprovementOptimizationPlanFormatterOutput
     | ExecutionPlanFormatterOutput
-    | RegressionAssessmentFormatterOutput
+    | RegressionTestDesignFormatterOutput
     | NormalizedFeedbackFormatterOutput
 )
 ProjectedOutputModel: TypeAlias = (
-    AttributionOutput | ImprovementOptimizationPlanOutput | ExecutionPlanOutput | RegressionAssessmentOutput | NormalizedFeedbackOutput
+    AttributionOutput | ImprovementOptimizationPlanOutput | ExecutionPlanOutput | RegressionTestDesignOutput | NormalizedFeedbackOutput
 )
 FormatterOutputModelClass: TypeAlias = (
     type[AttributionFormatterOutput]
     | type[ImprovementOptimizationPlanFormatterOutput]
     | type[ExecutionPlanFormatterOutput]
-    | type[RegressionAssessmentFormatterOutput]
+    | type[RegressionTestDesignFormatterOutput]
     | type[NormalizedFeedbackFormatterOutput]
 )
 ProjectedOutputModelClass: TypeAlias = (
     type[AttributionOutput]
     | type[ImprovementOptimizationPlanOutput]
     | type[ExecutionPlanOutput]
-    | type[RegressionAssessmentOutput]
+    | type[RegressionTestDesignOutput]
     | type[NormalizedFeedbackOutput]
 )
 
@@ -71,7 +71,7 @@ class AgentJobType(StrEnum):
     ATTRIBUTION = "attribution"
     OPTIMIZATION_PLAN = "optimization_plan"
     EXECUTION = "execution"
-    REGRESSION_ASSESSMENT = "regression_assessment"
+    REGRESSION_TEST_DESIGN = "regression_test_design"
     NORMALIZED_FEEDBACK = "normalized_feedback"
 
 
@@ -106,16 +106,19 @@ class ExecutionFormattingSignature(dspy.Signature):
     )
 
 
-class RegressionAssessmentFormattingSignature(dspy.Signature):
-    """把回归保障治理结果转换为四阶段回归评估输出模型。
+class RegressionTestDesignFormattingSignature(dspy.Signature):
+    """把回归保障治理结果转换为可直接写入 Workspace 的 pytest 代码候选。
 
-    只能使用 raw_agent_output 中已有的业务要点。每项只包含 expected_behavior、
-    checks_json 和 labels；复测输入由后端从原始证据绑定，证据不足时输出 no_action_reason。
+    只能使用 raw_agent_output 中已有的测试代码、测试意图和断言依据。目标路径、Agent ID、
+    改进事项 ID、commit 和时间戳由后端绑定；证据不足时输出 no_action_reason。
     """
 
     raw_agent_output: str = dspy.InputField(desc="回归保障治理 Agent 原始输出。")
-    formatted_output: RegressionAssessmentFormatterOutput = dspy.OutputField(
-        desc="四阶段回归评估业务内容，不包含 prompt、job、scope、标识、时间戳和生命周期字段。"
+    formatted_output: RegressionTestDesignFormatterOutput = dspy.OutputField(
+        desc=(
+            "只包含至多一个 tests item（完整 pytest 模块）的 test_code、test_intent、assertion_rationale，或 no_action_reason。"
+            "test_code 必须保留真实换行符，不得改写为含字面量反斜杠加 n 的单行字符串；不得自行定义 agent fixture。"
+        )
     )
 
 
@@ -134,6 +137,7 @@ class AgentJobSpec:
     output_model: ProjectedOutputModelClass
     formatter_output_model: FormatterOutputModelClass
     formatter_signature: type[dspy.Signature]
+    use_native_structured_output: bool = False
 
 
 def _attribution_prompt_builder(job_input: JsonObject) -> str:
@@ -148,8 +152,8 @@ def _execution_prompt_builder(job_input: JsonObject) -> str:
     return execution_plan_prompt(prompt_context=build_execution_prompt_context(job_input))
 
 
-def _regression_assessment_prompt_builder(job_input: JsonObject) -> str:
-    return regression_assessment_prompt(prompt_context=build_regression_assessment_prompt_context(job_input))
+def _regression_test_design_prompt_builder(job_input: JsonObject) -> str:
+    return regression_test_design_prompt(prompt_context=build_regression_test_design_prompt_context(job_input))
 
 
 def _normalized_feedback_prompt_builder(job_input: JsonObject) -> str:
@@ -181,14 +185,16 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         output_model=ExecutionPlanOutput,
         formatter_output_model=ExecutionPlanFormatterOutput,
         formatter_signature=ExecutionFormattingSignature,
+        use_native_structured_output=True,
     ),
-    AgentJobType.REGRESSION_ASSESSMENT: AgentJobSpec(
-        job_type=AgentJobType.REGRESSION_ASSESSMENT,
+    AgentJobType.REGRESSION_TEST_DESIGN: AgentJobSpec(
+        job_type=AgentJobType.REGRESSION_TEST_DESIGN,
         profile_name=GOVERNOR_PROFILE,
-        prompt_builder=_regression_assessment_prompt_builder,
-        output_model=RegressionAssessmentOutput,
-        formatter_output_model=RegressionAssessmentFormatterOutput,
-        formatter_signature=RegressionAssessmentFormattingSignature,
+        prompt_builder=_regression_test_design_prompt_builder,
+        output_model=RegressionTestDesignOutput,
+        formatter_output_model=RegressionTestDesignFormatterOutput,
+        formatter_signature=RegressionTestDesignFormattingSignature,
+        use_native_structured_output=True,
     ),
     AgentJobType.NORMALIZED_FEEDBACK: AgentJobSpec(
         job_type=AgentJobType.NORMALIZED_FEEDBACK,

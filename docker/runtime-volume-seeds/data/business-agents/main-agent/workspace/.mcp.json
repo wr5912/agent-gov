@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "sec-ops-data": {
-      "type": "http",
-      "url": "${MCP_SERVER_URL}"
-    }
-  }
-}

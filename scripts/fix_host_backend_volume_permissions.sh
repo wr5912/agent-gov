@@ -15,11 +15,11 @@ if [[ -z "$IMAGE" ]]; then
   exit 1
 fi
 
-docker run --rm --user 0:0 \
+docker run --rm --user 0:0 --entrypoint sh \
   -e HOST_UID="$HOST_UID_VALUE" \
   -e HOST_GID="$HOST_GID_VALUE" \
   -v "$TARGET_ROOT:/target" \
-  "$IMAGE" sh -eu -c '
+  "$IMAGE" -eu -c '
     for path in \
       main-workspace governor-workspace \
       data \

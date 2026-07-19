@@ -6,8 +6,10 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
+from pydantic import ValidationError
+
 from .agent_job_errors import AgentAuthenticationRequiredError, provider_api_key_configured
-from .agent_job_types import AgentJobType, FormatterOutputModel
+from .agent_job_types import AgentJobType, FormatterOutputModel, FormatterOutputModelClass, agent_job_spec
 from .agent_profiles import AgentRuntimeProfile
 from .json_types import JsonObject
 from .message_utils import extract_text, to_plain
@@ -21,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 class ClaudeCodeResultError(RuntimeError):
     """Raised when Claude Code reports a structured result error."""
+
+
+class ClaudeNativeStructuredOutputError(RuntimeError):
+    """Raised when a native Claude structured result is absent or invalid."""
 
 
 class AgentJobRunner:
@@ -41,10 +47,21 @@ class AgentJobRunner:
         self.output_formatter = output_formatter
         self.provider_router = provider_router or ModelProviderRouter(settings)
 
-    def build_options(self, profile: AgentRuntimeProfile) -> Any:
+    def build_options(
+        self,
+        profile: AgentRuntimeProfile,
+        *,
+        structured_output_model: FormatterOutputModelClass | None = None,
+    ) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
         env = self.env_builder(profile)
+        if env.get("CLAUDE_CODE_ENABLE_TELEMETRY") == "1":
+            # Governor traces already project complete SDK messages as sdk.tool/sdk.llm children.
+            # Native Claude Code spans duplicate them with empty I/O and misleading
+            # tool.blocked_on_user timing events, so keep one authoritative trace surface.
+            env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "0"
+            env.pop("CLAUDE_CODE_ENHANCED_TELEMETRY_BETA", None)
         env.update(self.provider_router.claude_env())
 
         kwargs: dict[str, object] = {
@@ -69,6 +86,11 @@ class AgentJobRunner:
             # The SDK only selects project discovery; it does not duplicate that policy.
             "setting_sources": ["project"],
         }
+        if structured_output_model is not None:
+            kwargs["output_format"] = {
+                "type": "json_schema",
+                "schema": structured_output_model.model_json_schema(),
+            }
         kwargs = {key: value for key, value in kwargs.items() if value is not None}
         return ClaudeAgentOptions(**kwargs)
 
@@ -83,14 +105,17 @@ class AgentJobRunner:
         from claude_agent_sdk import ResultMessage, query
 
         profile = self.profiles[profile_name]
+        spec = agent_job_spec(job_type)
         self.raise_if_missing_model_credentials(profile)
         self.provider_router.ensure_agent_runtime_ready()
         answer_parts: list[str] = []
         errors: list[str] = []
         plain_messages: list[JsonObject] = []
-        options = self.build_options(profile)
+        native_output_model = spec.formatter_output_model if spec.use_native_structured_output else None
+        options = self.build_options(profile, structured_output_model=native_output_model)
 
         async def collect() -> FormatterOutputModel:
+            structured_output: object | None = None
             async for msg in query(prompt=self.single_prompt_stream(prompt, session_id=f"governor-job-{uuid.uuid4()}"), options=options):
                 plain_messages.append(to_plain(msg))
                 text = extract_text(msg)
@@ -107,9 +132,20 @@ class AgentJobRunner:
                         raise RuntimeError(f"Agent output exceeded {profile.max_output_bytes} bytes")
                 if isinstance(msg, ResultMessage):
                     errors.extend(self.result_errors(msg))
+                    if msg.structured_output is not None:
+                        structured_output = msg.structured_output
             # 治理 job 无 claude_sdk_query generation；把逐工具/逐轮 I/O 子观测挂到 ambient governor root span
             self._emit_sdk_child_observations(plain_messages)
             answer = self.dedupe_answer_parts(answer_parts)
+            if native_output_model is not None:
+                if errors:
+                    raise ClaudeCodeResultError("; ".join(errors))
+                if structured_output is None:
+                    raise ClaudeNativeStructuredOutputError(f"Claude Code returned no structured_output for {spec.job_type.value}")
+                try:
+                    return native_output_model.model_validate(structured_output)
+                except ValidationError as exc:
+                    raise ClaudeNativeStructuredOutputError(f"Claude Code returned invalid structured_output for {spec.job_type.value}: {exc}") from exc
             if errors and not answer:
                 raise ClaudeCodeResultError("; ".join(errors))
             return await self.format_agent_text(

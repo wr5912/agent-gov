@@ -16,7 +16,7 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock
 
-from claude_runtime_test_utils import main_profile_resolver
+from claude_runtime_test_utils import default_profile_resolver
 from test_claude_runtime import _settings
 
 
@@ -305,8 +305,10 @@ def test_runtime_emits_backend_owned_suggestion_without_persisting_it(tmp_path, 
     monkeypatch.setattr(prompt_suggestions, "query_with_prompt_suggestions", fake_query)
     monkeypatch.setattr("app.runtime.claude_runtime_stream.read_requires_web_hitl", lambda _workspace: False)
     settings = _settings(tmp_path)
-    store = FeedbackStore(data_dir=settings.data_dir, workspace_dir=settings.main_workspace_dir)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings), feedback_store=store)
+    store = FeedbackStore(data_dir=settings.data_dir, workspace_dir=settings.default_workspace_dir)
+    runtime = ClaudeRuntime(
+        settings, LocalSessionStore(settings.session_dir), business_profile_resolver=default_profile_resolver(settings), feedback_store=store
+    )
 
     async def collect():
         return [event async for event in runtime.stream(ChatRequest(message="hello", session_id="api-session"))]
@@ -329,9 +331,7 @@ def test_runtime_emits_backend_owned_suggestion_without_persisting_it(tmp_path, 
     # ——否则交互模式下没有建议时，每一轮都要为它白等满 3 秒尾随窗口。
     # 迟到帧仍会送达：Responses 投影层把 prompt_suggestion 豁免于 done 守卫，
     # 前端也按 session 存建议，与 run/流生命周期解耦。
-    assert events.index(suggestion) > events.index(
-        next(event for event in events if event["event"] == "done")
-    )
+    assert events.index(suggestion) > events.index(next(event for event in events if event["event"] == "done"))
     assert {event["event"] for event in events} >= {"result", "done", "prompt_suggestion"}
     assert record is not None
     assert all(message.get("event") != "PromptSuggestionMessage" for message in record["messages"])

@@ -122,7 +122,7 @@ function routeData(path) {
   if (path === "/api/sessions" || path === "/api/agents" || path === "/api/skills" || path === "/api/agent-change-sets" || path === "/api/agent-releases") return [];
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-registry") return [
-    { agent_id: "main-agent", name: "Main Agent", category: "baseline", workspace_dir: "/runtime/main", created_at: "2026-06-29T00:00:00Z", status: "active" },
+    { agent_id: "security-operations-expert", name: "Security Operations Expert", category: "baseline", workspace_dir: "/runtime/main", created_at: "2026-06-29T00:00:00Z", status: "active" },
   ];
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
   if (path === "/api/agent-repository/current") return { agent_version_id: "v-remote-api-base", commit_sha: "mock", created_at: "2026-06-29T00:00:00Z", reason: "current" };

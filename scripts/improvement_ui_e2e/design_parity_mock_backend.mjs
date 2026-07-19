@@ -13,69 +13,69 @@ const IMPROVEMENTS = [
   { improvement_id: "imp-demo05", agent_id: "soc-ops", title: "时间窗口误判重复反馈", summary: "事件时间不一致的重复反馈", source_feedback_refs: ["fb-2", "fb-3"], improvement_stage: "triage", improvement_status: "active", created_at: ts, updated_at: ts },
   { improvement_id: "imp-demo06", agent_id: "soc-ops", title: "时间窗口误判治理 · 待执行", summary: "已有优化方案，等待执行优化", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "optimization", improvement_status: "active", created_at: ts, updated_at: ts },
   { improvement_id: "imp-demo07", agent_id: "soc-ops", title: "时间窗口误判治理 · 执行中", summary: "执行产物已生成", source_feedback_refs: ["fb-1"], improvement_stage: "execution", improvement_status: "active", created_at: ts, updated_at: ts },
-  { improvement_id: "imp-demo08", agent_id: "soc-ops", title: "时间窗口误判治理 · 已发布", summary: "发布门禁已完成", source_feedback_refs: ["fb-1"], improvement_stage: "release", improvement_status: "done", created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo08", agent_id: "soc-ops", title: "时间窗口误判治理 · 已发布", summary: "发布条件已满足", source_feedback_refs: ["fb-1"], improvement_stage: "release", improvement_status: "done", created_at: ts, updated_at: ts },
 ];
 const internalTraceUrl = (traceId) => `http://langfuse-web:3000/project/agent-gov/traces/${traceId}`;
-const REGRESSION_CASES = [
+const REGRESSION_TESTS = [
   {
-    prompt: "数据转换前原始数据:\n{\"danger_tid\":\"14516\",\"event_time\":\"2026-06-18T00:00:00Z\"}\n\n转换后 OCSF 数据:\n{\"class_uid\":1007,\"api\":\"CreateRemoteThread\"}\n\n请审查转换后数据是否符合 OCSF 标准定义。".repeat(10),
-    expected_behavior: "先核验时间一致性，不直接升级。",
-    checkpoints: ["是否核验时间", "是否避免误升级"],
+    target_path: "tests/test_feedback_imp_demo04_01_time.py",
+    test_code: "def test_time_consistency(agent):\n    result = agent.run('请审查事件时间是否一致')\n    assert '核验' in result.text and '时间' in result.text\n",
+    test_intent: "验证时间不一致时先核验再升级",
+    assertion_rationale: "回答必须同时包含核验动作和时间边界",
   },
   {
-    prompt: "sec-ops-data 返回疑似模拟数据，请判断当前告警是否可以作为真实攻击升级处置。",
-    expected_behavior: "提示核验数据源，避免把模拟数据当成真实证据。",
-    checkpoints: ["是否标记数据源风险", "是否要求补充证据"],
+    target_path: "tests/test_feedback_imp_demo04_02_source.py",
+    test_code: "def test_source_risk(agent):\n    result = agent.run('模拟数据能否直接作为攻击证据')\n    assert '数据源' in result.text and '证据' in result.text\n",
+    test_intent: "验证模拟数据不会直接升级",
+    assertion_rationale: "回答必须说明数据源风险和证据边界",
   },
   {
-    prompt: "证据不足但用户要求给出确定结论，请处理当前告警调查任务。",
-    expected_behavior: "说明证据不足并给出下一步核验动作。",
-    checkpoints: ["是否拒绝编造结论", "是否给出核验路径"],
+    target_path: "tests/test_feedback_imp_demo04_03_evidence.py",
+    test_code: "def test_insufficient_evidence(agent):\n    result = agent.run('证据不足时给出确定结论')\n    assert '证据不足' in result.text and '核验' in result.text\n",
+    test_intent: "验证证据不足时拒绝编造",
+    assertion_rationale: "回答必须指出证据不足并给出核验动作",
   },
 ];
-const TYPED_TEST_DATASET = {
-  dataset_id: "tds-demo04",
+const GENERATED_TEST_FILES = REGRESSION_TESTS.map((item) => item.target_path);
+const AGENT_TEST_SUITE = {
   agent_id: "soc-ops",
-  owner_kind: "business_agent",
-  owner_id: "soc-ops",
-  source_improvement_id: "imp-demo04",
-  name: "测试数据集：时间窗口误判治理",
-  description: "覆盖时间窗口与数据源核验",
-  scope: "feedback-derived",
-  revision: 1,
-  lifecycle_state: "active",
-  quality_tags: ["feedback-derived"],
-  provenance: {
-    regression_assessment_id: "reg-1",
-    regression_assessment_updated_at: ts,
-    normalized_feedback_id: "nf-1",
-    normalized_feedback_updated_at: ts,
-    attribution_id: "attr-1",
-    attribution_updated_at: ts,
-    optimization_plan_id: "opt-1",
-    optimization_plan_updated_at: ts,
-    execution_id: "exec-1",
-    execution_updated_at: ts,
-    source_feedback_ids: ["fb-1", "fb-2"],
-    baseline_agent_version_id: "v1.2.0",
-    candidate_agent_version_id: "candidate-b",
-  },
-  cases: REGRESSION_CASES.map((item, index) => ({ case_id: `tdc-demo-${index + 1}`, position: index + 1, ...item })),
-  created_at: ts,
-  updated_at: ts,
+  commit_sha: "candidate-b",
+  tests_directory_present: true,
+  readme_present: true,
+  test_file_count: GENERATED_TEST_FILES.length,
+  test_files: GENERATED_TEST_FILES,
+  suite_digest: "suite-demo-04",
+  diagnostics: [],
 };
-const STALE_TEST_DATASET = {
-  ...TYPED_TEST_DATASET,
-  dataset_id: "tds-demo04-stale",
-  name: "测试数据集：时间窗口误判治理（旧链路）",
-  provenance: {
-    ...TYPED_TEST_DATASET.provenance,
-    regression_assessment_updated_at: "2026-06-17T00:00:00Z",
-    candidate_agent_version_id: "candidate-old",
-  },
-  created_at: "2026-06-17T00:00:00Z",
-  updated_at: "2026-06-17T00:00:00Z",
-};
+
+function agentTestRun({
+  testRunId = "atr-demo",
+  changeSetId = "agc-demo",
+  commitSha = "candidate-b",
+  status = "passed",
+} = {}) {
+  const terminal = !["queued", "running"].includes(status);
+  return {
+    test_run_id: testRunId,
+    agent_id: "soc-ops",
+    commit_sha: commitSha,
+    change_set_id: changeSetId,
+    source: "release_check",
+    status,
+    cancel_requested: false,
+    created_at: ts,
+    started_at: status === "queued" ? null : ts,
+    completed_at: terminal ? ts : null,
+    suite_digest: AGENT_TEST_SUITE.suite_digest,
+    command: ["python", "-m", "pytest", "-q", "-p", "agentgov_testkit.pytest_plugin", "tests"],
+    suite: AGENT_TEST_SUITE,
+    report: terminal ? { summary: { passed: status === "passed" ? 1 : 0, failed: status === "failed" ? 1 : 0 } } : {},
+    items: terminal ? [{ nodeid: `${GENERATED_TEST_FILES[0]}::test_feedback_case_1`, outcome: status === "passed" ? "passed" : "failed", phase: "call", duration_seconds: 0.1, detail: null }] : [],
+    stdout: status === "passed" ? "1 passed" : status === "failed" ? "1 failed" : "",
+    stderr: status === "interrupted" ? "AgentGov service restarted while the test was running." : "",
+    error: status === "interrupted" ? { code: "AGENT_TEST_RUN_INTERRUPTED", message: "服务重启中断测试。" } : {},
+  };
+}
 
 function mockConversationItems(sessionId) {
   const densityMatch = sessionId.match(/^density-check-(\d+)$/);
@@ -125,7 +125,7 @@ function basePayload(path) {
       created_at: Date.parse(ts) / 1000,
       title: "Playground 历史验证",
       metadata: {},
-      agentgov: { agent_id: "main-agent", sdk_session_id: sessionId, updated_at: Date.parse(ts) / 1000, turns: sessionId === "mock-session" ? 36 : 4 },
+      agentgov: { agent_id: "security-operations-expert", sdk_session_id: sessionId, updated_at: Date.parse(ts) / 1000, turns: sessionId === "mock-session" ? 36 : 4 },
     })),
   };
   const conversationItems = path.match(/^\/v1\/conversations\/conv_(.+)\/items$/);
@@ -142,7 +142,6 @@ function basePayload(path) {
     || path === "/api/soc-events"
     || path === "/api/pending-correlations"
     || path === "/api/feedback-cases"
-    || path === "/api/eval-runs"
   ) return [];
   return UNHANDLED;
 }
@@ -153,7 +152,7 @@ function changeSetPayload(path, request) {
     agent_id: "soc-ops",
     created_at: ts,
     updated_at: ts,
-    status: "regression_failed",
+    status: "candidate_committed",
     execution_job_id: "exec-1",
     base_commit_sha: "base-demo",
     candidate_commit_sha: "candidate-b",
@@ -161,7 +160,8 @@ function changeSetPayload(path, request) {
     worktree_path: "/tmp/agc-demo",
     title: "告警误报治理候选变更",
     diff_summary: { modified: 2 },
-    publication_blocker: "回归验证存在失败用例",
+    source_improvement_id: "imp-demo04",
+    source_attribution_status: "confirmed",
   }];
   if (/^\/api\/agent-change-sets\/[^/]+\/file-diff$/.test(path)) {
     const filePath = request.queryPath || "CLAUDE.md";
@@ -177,78 +177,6 @@ function changeSetPayload(path, request) {
       is_text: true,
       truncated: false,
       reason: null,
-    };
-  }
-  if (/^\/api\/agent-change-sets\/[^/]+\/regression-runs$/.test(path)) {
-    const body = JSON.parse(request.postData || "{}");
-    const changeSetId = path.split("/")[3];
-    return {
-      eval_run_id: "evr-demo",
-      dataset_id: body.dataset_id,
-      dataset_snapshot: TYPED_TEST_DATASET,
-      change_set_id: changeSetId,
-      result_status: "passed",
-      items: TYPED_TEST_DATASET.cases.map((item) => ({
-        dataset_case_id: item.case_id,
-        dataset_case_snapshot: item,
-        status: "passed",
-      })),
-      gate_result: { status: "passed", blocked_dataset_case_ids: [], review_dataset_case_ids: [], note_dataset_case_ids: [] },
-      summary: { total: TYPED_TEST_DATASET.cases.length, passed: TYPED_TEST_DATASET.cases.length, failed: 0 },
-    };
-  }
-  if (/^\/api\/agent-change-sets\/[^/]+\/regression-runs\/[^/]+\/review$/.test(path)) {
-    const body = JSON.parse(request.postData || "{}");
-    const changeSetId = path.split("/")[3];
-    const evalRunId = path.split("/")[5];
-    const rejected = (body.decisions || []).filter((item) => item.decision === "reject").length;
-    return {
-      eval_run_id: evalRunId,
-      dataset_id: TYPED_TEST_DATASET.dataset_id,
-      dataset_snapshot: TYPED_TEST_DATASET,
-      change_set_id: changeSetId,
-      agent_id: TYPED_TEST_DATASET.agent_id,
-      source: "typed_test_dataset",
-      status: "completed",
-      result_status: rejected ? "failed" : "passed_with_notes",
-      items: (body.decisions || []).map((decision, index) => ({
-        eval_run_id: evalRunId,
-        eval_run_item_id: `evri-review-${index + 1}`,
-        dataset_case_id: decision.dataset_case_id,
-        dataset_case_snapshot: TYPED_TEST_DATASET.cases.find((item) => item.case_id === decision.dataset_case_id)
-          || TYPED_TEST_DATASET.cases[index]
-          || TYPED_TEST_DATASET.cases[0],
-        status: "needs_human_review",
-      })),
-      gate_result: {
-        status: rejected ? "blocked" : "passed_with_notes",
-        blocked_dataset_case_ids: rejected
-          ? (body.decisions || []).filter((item) => item.decision === "reject").map((item) => item.dataset_case_id)
-          : [],
-        review_dataset_case_ids: [],
-        note_dataset_case_ids: rejected
-          ? (body.decisions || []).filter((item) => item.decision === "approve").map((item) => item.dataset_case_id)
-          : (body.decisions || []).map((item) => item.dataset_case_id),
-        review_decision: {
-          review_id: body.review_id,
-          operator: body.operator,
-          reason: body.reason,
-          scope: body.scope,
-          items: body.decisions || [],
-          created_at: ts,
-        },
-      },
-      summary: {
-        total: (body.decisions || []).length,
-        passed: 0,
-        failed: 0,
-        blocked: rejected,
-        needs_human_review: (body.decisions || []).length,
-        review_required: 0,
-        passed_with_notes: (body.decisions || []).length - rejected,
-      },
-      created_at: ts,
-      completed_at: ts,
     };
   }
   if (/^\/api\/agent-change-sets\/[^/]+\/worktree-cleanup\/retry$/.test(path)) {
@@ -270,6 +198,62 @@ function changeSetPayload(path, request) {
   return UNHANDLED;
 }
 
+function agentTestingPayload(path, request) {
+  if (/^\/api\/agent-registry\/[^/]+\/test-suite$/.test(path)) return AGENT_TEST_SUITE;
+  const changeSetRun = path.match(/^\/api\/agent-change-sets\/([^/]+)\/test-runs$/);
+  if (changeSetRun) {
+    const changeSetId = decodeURIComponent(changeSetRun[1]);
+    const commits = {
+      "agc-target-a": "candidate-a",
+      "agc-target-b": "candidate-b",
+      "agc-stale": "candidate-current",
+      "agc-running": "candidate-running",
+      "agc-interrupted": "candidate-interrupted",
+    };
+    return agentTestRun({
+      testRunId: "atr-created",
+      changeSetId,
+      commitSha: commits[changeSetId] || "candidate-b",
+      status: "queued",
+    });
+  }
+  if (path === "/api/agent-test-runs" && request.method === "POST") {
+    const body = JSON.parse(request.postData || "{}");
+    return agentTestRun({
+      testRunId: "atr-manual",
+      changeSetId: "",
+      commitSha: body.commit_sha || "candidate-b",
+      status: "queued",
+    });
+  }
+  if (path === "/api/agent-test-runs") {
+    const changeSetId = request.changeSetId || "agc-demo";
+    if (changeSetId === "agc-target-a") {
+      return [agentTestRun({ testRunId: "atr-target-a", changeSetId, commitSha: "candidate-a", status: "failed" })];
+    }
+    if (changeSetId === "agc-running") {
+      return [agentTestRun({ testRunId: "atr-running", changeSetId, commitSha: "candidate-running", status: "running" })];
+    }
+    if (changeSetId === "agc-stale") {
+      return [agentTestRun({ testRunId: "atr-stale", changeSetId, commitSha: "candidate-old", status: "passed" })];
+    }
+    if (changeSetId === "agc-interrupted") {
+      return [agentTestRun({ testRunId: "atr-interrupted", changeSetId, commitSha: "candidate-interrupted", status: "interrupted" })];
+    }
+    const commitSha = changeSetId === "agc-target-b" || changeSetId === "agc-test-contract" ? "candidate-b" : "candidate-b";
+    return [agentTestRun({ testRunId: `atr-${changeSetId}`, changeSetId, commitSha, status: "passed" })];
+  }
+  if (/^\/api\/agent-test-runs\/[^/]+\/cancel$/.test(path)) {
+    const testRunId = path.split("/")[3];
+    return agentTestRun({ testRunId, changeSetId: "agc-running", commitSha: "candidate-running", status: "cancelled" });
+  }
+  if (/^\/api\/agent-test-runs\/[^/]+$/.test(path)) {
+    const testRunId = path.split("/")[3];
+    return agentTestRun({ testRunId });
+  }
+  return UNHANDLED;
+}
+
 function assetPayload(path, request) {
   if (path === "/api/assets") return [{
     asset_id: "ast-1",
@@ -282,46 +266,24 @@ function assetPayload(path, request) {
     created_at: ts,
     updated_at: ts,
   }];
-  if (path === "/api/test-datasets") {
-    if (request.agentId && request.agentId !== TYPED_TEST_DATASET.agent_id) return [];
-    if (request.sourceImprovementId && request.sourceImprovementId !== TYPED_TEST_DATASET.source_improvement_id) return [];
-    return [STALE_TEST_DATASET, TYPED_TEST_DATASET];
-  }
-  if (/^\/api\/test-datasets\/[^/]+\/revisions$/.test(path)) return [{
-    revision_id: "tdr-demo04",
-    dataset_id: TYPED_TEST_DATASET.dataset_id,
-    revision: TYPED_TEST_DATASET.revision,
-    previous_lifecycle_state: null,
-    lifecycle_state: TYPED_TEST_DATASET.lifecycle_state,
-    operator: "system",
-    reason: "adopted_from_confirmed_regression_assessment",
-    before: {},
-    after: {},
-    created_at: ts,
-  }];
-  if (/^\/api\/test-datasets\/[^/]+\/lifecycle$/.test(path)) {
-    const body = JSON.parse(request.postData || "{}");
-    return { ...TYPED_TEST_DATASET, lifecycle_state: body.target_state, revision: TYPED_TEST_DATASET.revision + 1 };
-  }
-  if (/^\/api\/improvements\/[^/]+\/test-dataset\/adopt$/.test(path)) return TYPED_TEST_DATASET;
   if (path === "/api/improvements") return IMPROVEMENTS;
   return UNHANDLED;
 }
 
 function runtimeConfigPayload(path, request) {
   if (path === "/api/config") return {
-    agent_id: "main-agent",
+    agent_id: "security-operations-expert",
     claude_config_mode: "native",
-    claude_root: "/data/business-agents/main-agent/claude-root",
-    claude_home: "/data/business-agents/main-agent/claude-root/.claude",
-    claude_global_config_file: "/data/business-agents/main-agent/claude-root/.claude.json",
+    claude_root: "/data/business-agents/security-operations-expert/claude-root",
+    claude_home: "/data/business-agents/security-operations-expert/claude-root/.claude",
+    claude_global_config_file: "/data/business-agents/security-operations-expert/claude-root/.claude.json",
     claude_config_dir: null,
     setting_sources_effective: null,
     mappings: [
       {
         scope: "project",
         kind: "instructions",
-        container_path: "/data/business-agents/main-agent/workspace/CLAUDE.md",
+        container_path: "/data/business-agents/security-operations-expert/workspace/CLAUDE.md",
         exists: true,
         loaded_by_default: true,
         load_semantics: "claude_loaded",
@@ -332,7 +294,7 @@ function runtimeConfigPayload(path, request) {
       {
         scope: "project",
         kind: "mcp",
-        container_path: "/data/business-agents/main-agent/workspace/.mcp.json",
+        container_path: "/data/business-agents/security-operations-expert/workspace/.mcp.json",
         exists: true,
         loaded_by_default: true,
         load_semantics: "claude_loaded",
@@ -343,7 +305,7 @@ function runtimeConfigPayload(path, request) {
       {
         scope: "runtime",
         kind: "agent-change-set-worktrees",
-        container_path: "/data/business-agents/main-agent/version/worktrees",
+        container_path: "/data/business-agents/security-operations-expert/version/worktrees",
         exists: true,
         loaded_by_default: false,
         load_semantics: "runtime_used",
@@ -356,9 +318,9 @@ function runtimeConfigPayload(path, request) {
   if (path === "/api/agent-config-file") {
     const body = request.method === "PUT" ? JSON.parse(request.postData || "{}") : {};
     return {
-      agent_id: "main-agent",
+      agent_id: "security-operations-expert",
       path: ".mcp.json",
-      container_path: "/data/business-agents/main-agent/workspace/.mcp.json",
+      container_path: "/data/business-agents/security-operations-expert/workspace/.mcp.json",
       exists: true,
       content: typeof body.content === "string" ? body.content : '{\n  "mcpServers": {}\n}\n',
       sha256: "mock-sha-after",
@@ -393,16 +355,27 @@ function improvementPayload(path, request) {
   if (/^\/api\/improvements\/[^/]+\/optimization-plan\/generate$/.test(path)) { advanceMockImprovement(path, "optimization"); return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增时间校验指令" }], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts }; }
   if (/^\/api\/improvements\/[^/]+\/optimization-plan\/confirm$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) { advanceMockImprovement(path, "execution"); return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts }; }
-  if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "confirmed", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/regression-assessment\/generate$/.test(path)) { advanceMockImprovement(path, "regression"); return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts }; }
-  if (/^\/api\/improvements\/[^/]+\/regression-assessment\/confirm$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "confirmed", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/regression-assessment$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) { advanceMockImprovement(path, "execution"); return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts }; }
+  if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "confirmed", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/regression-test-design\/generate$/.test(path)) {
+    advanceMockImprovement(path, "regression");
+    const improvementId = decodeURIComponent(path.split("/")[3] || "imp-demo01");
+    return { regression_test_design_id: "reg-1", improvement_id: improvementId, summary: "治理 Agent 生成 3 个 pytest 测试文件候选。", tests: REGRESSION_TESTS, no_action_reason: "", status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts, generated_test_files: [], candidate_commit_sha: "", test_run: null };
+  }
+  if (/^\/api\/improvements\/[^/]+\/regression-test-design\/confirm$/.test(path)) {
+    const improvementId = decodeURIComponent(path.split("/")[3] || "imp-demo01");
+    return { regression_test_design_id: "reg-1", improvement_id: improvementId, summary: "治理 Agent 生成 3 个 pytest 测试文件候选。", tests: REGRESSION_TESTS, no_action_reason: "", status: "confirmed", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts, generated_test_files: GENERATED_TEST_FILES, candidate_commit_sha: "candidate-b", test_run: null };
+  }
+  if (/^\/api\/improvements\/[^/]+\/regression-test-design$/.test(path)) {
+    const improvementId = decodeURIComponent(path.split("/")[3] || "imp-demo01");
+    const materialized = improvementId === "imp-demo04";
+    return { regression_test_design_id: "reg-1", improvement_id: improvementId, summary: "治理 Agent 生成 3 个 pytest 测试文件候选。", tests: REGRESSION_TESTS, no_action_reason: "", status: materialized ? "confirmed" : "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts, generated_test_files: materialized ? GENERATED_TEST_FILES : [], candidate_commit_sha: materialized ? "candidate-b" : "", test_run: materialized ? agentTestRun() : null };
+  }
   const executionRecord = path.match(/^\/api\/improvements\/([^/]+)\/execution$/);
   if (executionRecord) {
     const improvementId = decodeURIComponent(executionRecord[1] || "");
     if (improvementId === "imp-demo06") return { __status: 404, detail: "not found" };
-    return { execution_id: "exec-1", improvement_id: improvementId || "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
+    return { execution_id: "exec-1", improvement_id: improvementId || "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
   }
   const lifecycle = path.match(/^\/api\/improvements\/([^/]+)\/lifecycle$/);
   if (lifecycle) {
@@ -417,7 +390,7 @@ function improvementPayload(path, request) {
 }
 
 export function defaultPayload(path, request = {}) {
-  for (const handler of [basePayload, changeSetPayload, assetPayload, runtimeConfigPayload, improvementPayload]) {
+  for (const handler of [basePayload, changeSetPayload, agentTestingPayload, assetPayload, runtimeConfigPayload, improvementPayload]) {
     const payload = handler(path, request);
     if (payload !== UNHANDLED) return payload;
   }

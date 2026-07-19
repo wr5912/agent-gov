@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Literal
 
 from .agent_paths import InvalidAgentId, business_agent_layout, business_agents_root, validate_agent_id
-from .business_agent_seed_catalog import declared_business_agent_ids, runtime_seed_catalog_dir
 from .settings import AppSettings
 
 
@@ -29,12 +28,11 @@ def read_requires_web_hitl(workspace_dir: Path) -> bool:
 
 
 AgentRole = Literal[
-    "main-agent",
     "business-agent",
     "governor",
 ]
 
-# 动态注册业务 Agent 的通用角色（main-agent 是内置首个业务 Agent）。
+# 动态注册业务 Agent 的通用角色。
 BUSINESS_AGENT_ROLE = "business-agent"
 
 # 业务 Agent 是被治理对象，治理 Agent 是闭环执行者（AGV-005）。
@@ -49,7 +47,6 @@ def agent_category(role: AgentRole) -> AgentCategory:
     return "governance" if role in GOVERNANCE_AGENT_ROLES else "business"
 
 
-MAIN_AGENT_PROFILE = "main-agent"
 # 单一治理 Agent profile；归因/方案/执行/用例/回归影响按 job_type 复用同一执行者身份。
 GOVERNOR_PROFILE = "governor"
 
@@ -75,6 +72,8 @@ class AgentRuntimeProfile:
     max_output_bytes: int = 2_000_000
     # 只读观测值，从 .claude/settings.json 的 permissions.ask 派生，不是第二份权限声明。
     requires_web_hitl: bool = False
+    # Claude Code 会把 Git worktree 归入主 workspace 的 project trust key。
+    trust_workspace_dirs: tuple[Path, ...] = ()
 
     @property
     def category(self) -> AgentCategory:
@@ -90,10 +89,9 @@ def agents_requiring_web_hitl(profiles: dict[str, AgentRuntimeProfile]) -> list[
 def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
     """静态 profile：只有 governor。
 
-    这里曾预制 main-agent 条目。main 是可删除的普通业务 Agent，预制条目会让它被删除后
-    `profiles["main-agent"]` 仍返回一个幽灵 profile——workspace 已不在磁盘上，运行会在更深处
-    炸掉，且掩盖了「该 Agent 已不存在」这个事实。main 现在与其它业务 Agent 一样，由
-    `discover_seeded_business_agents`（磁盘发现）与注册表提供：workspace 在则在，删了就没有。
+    业务 Agent 不在静态 profile 中预制，否则在线删除后仍可能返回指向已清理目录的幽灵
+    profile。业务 Agent 统一由
+    `discover_business_agents`（磁盘发现）与注册表提供：workspace 在则在，删了就没有。
 
     governor 不同：它是平台治理执行者，不是被治理的业务对象，不参与注册表与删除。
     """
@@ -101,8 +99,8 @@ def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
     return {GOVERNOR_PROFILE: _governor_profile(settings)}
 
 
-def discover_seeded_business_agents(settings: AppSettings) -> list[AgentRuntimeProfile]:
-    """发现运行卷 ``data/business-agents/*`` 下已落盘（seed 预置或历史创建）的业务 Agent profile。
+def discover_business_agents(settings: AppSettings) -> list[AgentRuntimeProfile]:
+    """发现运行卷 ``data/business-agents/*`` 下已落盘的业务 Agent profile。
 
     每个直接子目录名即 ``agent_id``（与 ``build_business_agent_profile`` 的路径约定同源）；
     经 ``validate_agent_id`` 防目录穿越，非法名静默跳过，并要求其下存在 ``workspace/`` 才视为
@@ -110,12 +108,8 @@ def discover_seeded_business_agents(settings: AppSettings) -> list[AgentRuntimeP
     ``business_agent_layout`` 这一单一真相派生，与运行时 profile 完全一致（返回的 ``profile.name``
     即 ``agent_id``，调用方据此归并）。
 
-    用途：启动时把 seed 预置的多业务 Agent 幂等纳入注册表（main-agent 之外的 AAA/BBB…），
-    使其与 main-agent 走同一注册/路由/治理抽象。main-agent 也会被发现，但与 ``build_profiles``
-    的预制 main-agent 同 ``workspace_dir``，合并时幂等无冲突。
-
-    语义：以磁盘为发现源——经 API 删除某 Agent 只移除注册表行、不清磁盘，故重启会重新发现登记。
-    在“seed 声明基线业务 Agent”模型下这是预期行为；不在此引入 tombstone（超出本职责）。
+    启动时将内置初始化或 Workspace 包导入产生的业务 Agent 幂等纳入注册表。注册表 tombstone
+    仍是可见性的权威边界，因此同步逻辑不会复活已删除记录。
     """
     root = business_agents_root(settings.data_dir)
     discovered: list[AgentRuntimeProfile] = []
@@ -135,31 +129,12 @@ def discover_seeded_business_agents(settings: AppSettings) -> list[AgentRuntimeP
     return discovered
 
 
-def seed_business_agent_ids(settings: AppSettings) -> frozenset[str]:
-    """当前运行态声明了哪些 seed 业务 Agent——读运行态 seed catalog，不读仓库出生配置。
-
-    读 catalog 而非仓库，是因为 seed 可被在线删除：仓库出生配置永远保留全部内置 Agent，
-    拿它做判定会让已删除的 seed 在每次启动被重新标记为声明基线。catalog 是「这套运行态里
-    现在还有哪些 seed」的答案。
-
-    该集合只用于派生 `origin`（展示与出生来源），不再决定能否删除——删除保护由
-    `protected_business_agents.PROTECTED_BUSINESS_AGENT_IDS` 显式裁决。
-    """
-    catalog_root = runtime_seed_catalog_dir(settings.data_dir)
-    ids: set[str] = set()
-    for raw_agent_id in declared_business_agent_ids(seed_root=catalog_root):
-        try:
-            ids.add(validate_agent_id(raw_agent_id))
-        except InvalidAgentId:
-            continue
-    return frozenset(ids)
-
-
 def candidate_profile(settings: AppSettings, *, agent_id: str, workspace_dir: Path, candidate_id: str) -> AgentRuntimeProfile:
     """候选版本 profile：cwd=候选 worktree，claude-root 隔离到 candidate-claude-roots/<id>，
-    其余边界与该 Agent 的业务 profile 同构（不再 main 专属）。"""
+    其余边界与该 Agent 的业务 profile 同构。"""
     base = build_business_agent_profile(settings, agent_id=agent_id, workspace_dir=workspace_dir)
-    claude_root = business_agent_layout(settings.data_dir, agent_id).version_base / "candidate-claude-roots" / candidate_id
+    layout = business_agent_layout(settings.data_dir, agent_id)
+    claude_root = layout.version_base / "candidate-claude-roots" / candidate_id
     return AgentRuntimeProfile(
         name=f"{agent_id}-candidate",
         agent_id=agent_id,
@@ -174,6 +149,7 @@ def candidate_profile(settings: AppSettings, *, agent_id: str, workspace_dir: Pa
         max_turns=base.max_turns,
         max_runtime_seconds=base.max_runtime_seconds,
         max_output_bytes=base.max_output_bytes,
+        trust_workspace_dirs=(layout.workspace,),
     )
 
 

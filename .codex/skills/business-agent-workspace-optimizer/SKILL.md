@@ -1,111 +1,123 @@
 ---
 name: "business-agent-workspace-optimizer"
-description: "开发、配置和优化 AgentGov 业务 Agent 自身 workspace 配置资产。用户要求提升某个业务 Agent 能力、修改该 Agent 的 CLAUDE.md、.mcp.json、.claude/settings.json、skills、agents、rules、hooks、commands、evals、templates，或要求离线修改 ${HOST_RUNTIME_VOLUME_ROOT} / docker/runtime-volume-seeds 中业务 Agent workspace 配置时使用。"
+description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 Workspace。用户要求修改某个业务 Agent 的 CLAUDE.md、.mcp.json、.claude/settings.json、skills、agents、rules、hooks、commands、tests，或离线修改运行态及内置业务 Agent Workspace 时使用。"
 ---
 
 # 业务 Agent Workspace 优化
 
-本技能给工程师、Codex、Claude 在本仓库离线开发时使用：按用户需求直接开发/优化某个业务 Agent 的 workspace 配置资产（prompt、skill、agent、rule、hook、command、MCP、eval、template）。它不是产品内置的业务 Agent 自优化能力，不是新的治理 Agent，也不是业务 Agent 运行时可调用的工具。
+本技能供工程师、Codex 和 Claude 离线开发业务 Agent Workspace。它不提供产品内自优化能力，
+不创建治理 Agent，也不替代 Workspace 包导入、change set、release 或反馈治理流程。
 
-## 适用与不适用
+## 稳定边界
 
-- 适用：离线修改业务 Agent 的 workspace 配置资产；以业务 Agent 为主目标，`main-agent` 仅作样板（不是长期唯一边界）。
-- 不适用：新增产品 API、新增注册/生命周期/版本/反馈归属数据模型、让业务 Agent 运行时自改、修改治理 Agent（governor）合并方案、绕过 runtime-volume-seeds 脱敏边界、自动发生产。
-- 治理 Agent（`governor`，见 `GOVERNANCE_AGENT_ROLES`）默认不作为目标；仅当用户明确要求改 governor 配置时纳入，并说明这是治理 Agent 而非业务 Agent。
+- 所有注册业务 Agent（含 `main-agent`）遵循同一运行态路径和治理机制；不得把 `main-agent`
+  当作默认、模板或隐式兜底。
+- `security-operations-expert` 是当前唯一内置、默认且受保护的业务 Agent。这三个属性彼此独立，
+  不得用一个 `seed` 或 `origin` 字段合并表达。
+- 普通业务 Agent 只能通过完整的业务 Agent Workspace 包导入创建。仓库不提供通用创建模板，
+  也不存在运行态 seed catalog。
+- `docker/runtime-bootstrap/` 是运行卷初始化源，不是模板 catalog，也不是运行态副本。它只承载
+  `governor-workspace/` 和显式声明的内置业务 Agent Workspace。
+- 导出 `security-operations-expert` 后可以将其 Workspace 包作为新 Agent 的修改起点；导入不会
+  重写包内身份文本或权限配置，运行归属由目标 `agent_id` 和注册表决定。
 
-## 治理对象预检（先做再改）
+## 适用范围
 
-| 维度 | 结论 |
-| --- | --- |
-| 被治理对象 | 某业务 Agent 的 workspace 配置资产（执行资产为主） |
-| 治理执行者 | 开发者 / Codex / Claude 离线执行，非运行时自改 |
-| 资产类型 | prompt、skill、agent、rule、hook、command、MCP、eval、template |
-| 反馈归属 | 若改动来自反馈，实施记录标明目标 agent_id、反馈来源、影响文件、验收方式；不改数据库归属模型 |
-| 当前边界 | `/api/chat?agent_id=` 跑注册业务 Agent；业务 profile 从其 workspace 加载 `.mcp.json` / `.claude/settings.json`（`build_business_agent_profile`） |
+- 运行态业务 Agent Workspace：
+  `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/`。
+- 仓库内唯一内置业务 Agent Workspace：
+  `docker/runtime-bootstrap/business-agents/security-operations-expert/workspace/`。
+- 用户明确要求时，可处理 `docker/runtime-bootstrap/governor-workspace/`，但必须说明它是治理
+  Agent，不属于业务 Agent。
 
-闭环：业务 Agent → workspace 配置资产 → 离线修改 → 格式/边界验证 → 本地运行或 seed 实例化验证 → 下一 turn 生效与后续版本治理。
+以下任务不适用：新增注册表/API/生命周期模型、修改反馈归属、让业务 Agent 运行时自行改配置、
+修改 `version/` 或 Claude 会话状态、绕过 Workspace 包导入、自动发布生产版本。
 
-## 工作流（强制顺序）
+## 目标解析矩阵
 
-### 1. 目标确认
+动文件前填写：
 
-- 明确目标是「运行态 workspace」还是「模板 workspace」。
-- 明确目标 agent_id、workspace 路径、业务用途。
-- 先填写目标解析矩阵，再动文件：
+| 用户目标 | 对象 | 允许路径 | 证据 | 验收 |
+| --- | --- | --- | --- | --- |
+| 已注册业务 Agent | 运行态 Workspace | `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/` | 用户给定路径或 `GET /api/agent-registry` 的 `workspace_dir` | 配置、权限、目标测试、下一 turn |
+| 内置安全运营 Agent | 运行卷初始化源 | `docker/runtime-bootstrap/business-agents/security-operations-expert/workspace/` | 明确要求修改内置配置 | 准入扫描、专项测试、空卷初始化 |
+| governor | 治理 Agent Workspace | `${RUNTIME_ROOT}/governor-workspace/` 或仓库初始化源 | 用户明确指定 governor | 治理 Agent 专项验证 |
+| runtime 父目录或并列层 | 非 Workspace | `data/`、`business-agents/`、`<agent_id>/version/`、`claude-root/` | 只是父目录或状态目录 | no-op 并重新定位 |
 
-| 用户目标 | 对象类型 | 解析到的路径 | 是否可编辑 | 证据 | 验收 |
-| --- | --- | --- | --- | --- | --- |
-| 单个业务 Agent（含预制 main-agent） | 业务 Agent workspace | `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace` | 是，必须精确到单个业务 Agent 的 `workspace/` 配置层 | `agent_id`、registry `workspace_dir` 或用户给出的绝对路径 | JSON/Markdown/权限/脱敏扫描 |
-| 预制 main | 业务 Agent workspace | `${RUNTIME_ROOT}/data/business-agents/main-agent/workspace`（main 已归一为预制业务 Agent，不再是顶层样板） | 是 | 用户要求改 main | 同业务 Agent 验收 |
-| governor | 治理 Agent workspace | `${RUNTIME_ROOT}/governor-workspace` 或 `docker/runtime-volume-seeds/governor-workspace` | 仅用户明确要求 | 说明这是治理 Agent，不是业务 Agent | 同步治理 Agent 相关验证 |
-| runtime 父目录 / 并列层 | 非 workspace | `${RUNTIME_ROOT}/data`、`.../business-agents`、或 `<agent_id>/`（claude-root/version 并列层） | 否 | 只是父/并列目录，不是配置层 | no-op 并重新定位 |
+只说“业务 Agent”且无法唯一定位时先确认目标，不默认选择 `main-agent`。
+不得把 `${RUNTIME_ROOT}/data` 或 `data/business-agents/` 父目录当作修改目标；必须定位到单个业务 Agent 的 Workspace。
 
-- 离线解析 agent_id → workspace（不要直接读 `runtime.sqlite3`，不得把 `${RUNTIME_ROOT}/data` 或 `${RUNTIME_ROOT}/data/business-agents` 父目录作为修改目标）：
-  - 运行态业务 Agent：约定路径 `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace` 指向单个业务 Agent 配置层（容器 `/data/business-agents/<agent_id>/workspace`，本机调试 `/tmp/local-debug-volume-agent-gov/data/business-agents/<agent_id>/workspace`）；或经运行中的 `GET /api/agent-registry` 查 `workspace_dir`。`claude-root/`、`version/` 与 workspace 并列、勿改。
-  - 种子：仓库内 `docker/runtime-volume-seeds/`（镜像运行卷）——`governor-workspace/`、预制业务 Agent `data/business-agents/<id>/workspace/`（当前 `main-agent`）、新业务 Agent 创建模板 `templates/business-agent/<template_id>/`。
-- 只说「业务 Agent」而无法唯一定位时先提问，不得默认改 `main-agent`。
+## 路径硬门
 
-### 2. 路径边界检查
+允许修改单个已确认 Workspace 内的 `CLAUDE.md`、`.mcp.json`、`.claude/`、hooks、commands、
+`tests/` 和业务文件。默认拒绝：
 
-允许目标解析到以下其一：
+- 任意 `.../version/` 和其中的 per-Agent Git 管理文件；
+- 任意 `.../claude-root/`、`claude-roots/`；
+- `data/runtime.sqlite3*`、`data/agent-governance/`、`data/outputs/`、`data/transcripts/`、
+  `data/uploads/`、`langfuse/` 和 `.git/`；
+- 仓库初始化源中的 `.env*`、`.mcp.local.json`、`settings.local.json`、`CLAUDE.local.md`、
+  `secrets/` 或任何真实凭据。
 
-- `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/`（含预制 main-agent；可编辑配置：`CLAUDE.md`、`.claude/`、`.mcp.json` 等；**勿改**并列的 `claude-root/`、`version/`）
-- 仓库 `docker/runtime-volume-seeds/`（`governor-workspace/`、预制 `data/business-agents/<id>/workspace/`、`templates/business-agent/`）
-- 用户明确给出的业务 Agent workspace 绝对路径
+不能整目录拒绝 `data/`，因为运行态业务 Agent Workspace 位于其下；但 `data/` 和 `data/business-agents/` 父目录本身也不是优化目标。
 
-默认拒绝（即使在允许根之下也不得改）：
+运行态 Workspace 可以按字节保留真实 endpoint、header、凭据型配置和本机路径。除非用户明确
+要求，不修改这些值，也不在日志、diff 摘要或最终回复中回显。该例外不延伸到仓库初始化源。
 
-- 任意 `.../version/`（业务 Agent 的 per-agent git 版本库，B3；直接改会破坏版本治理）
-- 任意 `.../claude-root/`、`claude-roots/`（运行态 Claude 状态）
-- `data/runtime.sqlite3`、`data/agent-governance/`（worktrees/releases）、`data/outputs/`、`data/transcripts/`、`data/uploads/`、`langfuse/`、`.git/`
-- repo seed/template 中的 `.env*`、`.mcp.local.json`、`settings.local.json`、`CLAUDE.local.md`、`secrets/`
+## 工作流
 
-注：业务 Agent workspace 在 `data/` 下，故不能整目录拒绝 `data/`；但 `data/` 和 `data/business-agents/` 父目录本身也不是优化目标，只能改已确认的单个 workspace，并拒绝上面列出的子路径。
-live workspace 可以原样包含真实 endpoint、header 或私有配置；只有用户明确要求时才修改这类文件，
-不得在输出、日志、diff 摘要或最终回复中回显实际秘密。该许可不延伸到 repo seed/template；
-把 live workspace 归档为 repo builtin 前必须先满足仓库边界，不得把“实例化原样”解释为
-“任意运行态文件无条件原样入库”。
+### 1. 读取现状
 
-### 3. 现状读取
+- 读取 `CLAUDE.md`、`.mcp.json`、`.claude/settings.json`。
+- 检查 `.claude/skills/`、`.claude/agents/`、`.claude/rules/`、hooks、commands 和 `tests/`。
+- 简要列出已有能力、工具、权限边界、缺口以及目标文件。
 
-- 读 `CLAUDE.md`、`.mcp.json`、`.claude/settings.json`。
-- 查 `.claude/skills/`、`.claude/agents/`、`.claude/rules/`、hooks、commands、evals、templates。
-- 产出简短资产清单：已有能力 / 工具 / 权限边界 / 缺口。
+### 2. 映射需求
 
-### 4. 需求拆解（按资产类别）
+- 角色、行为边界和输出契约：`CLAUDE.md`。
+- 可复用流程：`.claude/skills/<skill>/SKILL.md`。
+- 子角色：`.claude/agents/*.md`。
+- 工具接入：`.mcp.json`，同时核对 `.claude/settings.json` 权限。
+- 硬拒绝或审计：`.claude/rules/*` 或 hooks。
+- 行为验收：Workspace `tests/test_*.py`、专项测试或可重复验证命令。
 
-- prompt / 角色边界 → `CLAUDE.md`
-- 能力流程 → `.claude/skills/<skill>/SKILL.md`
-- 子角色 → `.claude/agents/*.md`
-- 工具接入 → `.mcp.json`（同步 `.claude/settings.json` 权限）
-- 强约束 → `.claude/rules/*` 或 hooks
-- 验收 → evals / 示例输入 / 验证命令
+### 3. 修改
 
-### 5. 直接修改
+- 只改已确认的单个 Workspace，不跨 Agent 搬运私有配置。
+- 修改前说明目标路径、文件清单、权限变化、验证方式和运行卷影响。
+- 运行态高风险修改先备份到 `/tmp/agentgov-workspace-optimizer-backups/<timestamp>/`。
+- 运行态 Workspace 同时是其 Git 版本源。直接修改会留下未提交变更；需要固化时走现有
+  change set/release 流程，不直接编辑 `version/`。
 
-- 只改目标 workspace 内资产，不跨 Agent。
-- 不把业务 Agent 私有配置或真实秘密写入 `docker/runtime-volume-seeds`；live workspace 中已有的私有运行配置不要求自动脱敏或改写。
-- 改前输出：目标路径 + 预计修改文件清单。
-- 回滚依据：repo-tracked（模板）用 `git diff`；运行态用文件清单 + 变更摘要，高风险修改先备份到 `/tmp/agentgov-workspace-optimizer-backups/<timestamp>/`。
-- 运行态业务 Agent workspace 同时是其 git 版本源（B3 `GitAgentVersionStore`）：直接改会在该仓库工作树留未提交改动；不要碰 `version/`；如需固化为版本，提示用户走现有 change set / release 流程。
+### 4. 验证
 
-### 6. 修改后验证
+- `.mcp.json` 与 `.claude/settings.json` 必须是 JSON object。
+- `SKILL.md` 必须有合法 `name` 和 `description` frontmatter。
+- 通用业务 Agent 的宽泛 Bash 默认进入 `ask`；只允许审计过的具体低风险规则进入 `allow`。
+  run 级授权必须按低风险类别隔离，高风险或未分类请求不得整轮放行。
+- `security-operations-expert` 的 `soc_api__create` / `soc_api__manual` 走 Claude 原生逐次确认，
+  其他处置 mutation 与 `AskUserQuestion` 拒绝；后端不得按 Agent ID 添加第二套授权。
+- 仓库初始化源改动运行 `make runtime-bootstrap-scan`。唯一扫描实现是
+  `scripts/runtime_bootstrap_safety.py` 的 `scan_path`；不得新建并行扫描器。只有用户明确要求
+  替换敏感值时才使用其 `sanitize`，并复核 diff。
+- 初始化行为用空运行卷验证；已有业务 Agent Workspace 必须整体跳过，不逐文件回灌，不生成
+  隐式 Git commit。
+- 普通新 Agent 通过 `POST /api/agent-registry/{agent_id}/workspace/import` 验证创建；不得调用或
+  恢复旧 `POST /api/agent-registry`、模板列表或 seed 来源参数。
+- Workspace 测试使用 `agentgov_testkit` 的 pytest `agent` fixture、`agent.run()` 和结果
+  `.text`；本机和平台运行都通过 `AGENTGOV_API_BASE`、`AGENTGOV_API_KEY`、
+  `AGENTGOV_AGENT_ID` 绑定远程业务 Agent，省略 `AGENTGOV_COMMIT_SHA` 时只在 pytest session
+  开始时解析一次当前提交。
+- 手工平台运行调用 `POST /api/agent-test-runs`；待发布变更调用
+  `POST /api/agent-change-sets/{change_set_id}/test-runs`。客户端不得提交命令、状态、报告或
+  `change_set_id` 归属。
 
-- JSON：`.mcp.json`、`.claude/settings.json` 可解析。
-- Markdown：`SKILL.md` 有合法 frontmatter（`name` / `description`）。
-- 权限模型：generic template 的项目基线把 `Bash(*)` 放在 `ask`，仅将经过审计的具体低风险 Bash 规则放入 `allow`；run 级授权必须按低风险类别隔离，高风险或未分类请求不得整轮放行。声明 seed 跨 ID 实例化和 live workspace 导入保留来源权限，不被 generic 基线覆盖。`security-operations-expert` 通过原生 project settings 将精确 `soc_api__create` / `soc_api__manual` 交给用户逐次确认，其他处置 mutation 与 `AskUserQuestion` 均拒绝；不得按 Agent ID 在后端增加第二套授权。普通优化不得随意放大 allow。
-- 安全：repo seed/template 无 api_key、token、Authorization、私有 header、数据库凭据和本机绝对私有路径；这些是硬阻断。声明 seed 中的非秘密真实 endpoint、内网地址和较宽权限只提示复核，不自动替换。live workspace 允许业务所需真实值，但验证和报告不得回显。
-- repo seed/template 改动：复用 `make runtime-volume-seeds-scan` 做只读准入扫描；底层唯一实现是
-  `scripts/runtime_template_safety.py` 的 `scan_path`，不要另写一套扫描。只有用户明确选择替换时
-  才调用其 `sanitize` 命令，且必须复核 diff。live workspace 不走该扫描门。
-- 运行态生效：修改 seed 后通过 `make up` 或 `make local-debug-bootstrap` 验证缺失 workspace 的原样播种；seed 更新不回灌已有 workspace，也不生成隐式 Git commit。直接修改 live workspace 时由 per-Agent Git 记录版本，新的 Claude Code turn 读取新配置。
-- 报告：输出「已改文件 / 未改文件 / 需人工配置项 / 验证结果 / 下一 turn 或缺失 workspace 播种步骤」。
+### 5. 报告
 
-## 为什么不走产品 change set
+报告已改文件、未改边界、需人工配置项、验证结果，以及配置从下一 turn 生效还是需要空卷初始化。
 
-本任务是开发者离线工作流，优化的是 workspace 配置资产本身；先用 skill 收敛流程比先改产品 API 成本低。若该流程稳定，再升级为产品内「业务 Agent 配置变更集」能力。
+## 关联治理
 
-## 与其他治理 skill 的关系
-
-- 涉及 MCP / env / volume / 本机 vs 容器边界时，按 `runtime-env-governance` 的 Consumer × Mode × Boundary 口径。
-- 本技能为 `.codex` / `.claude` 镜像同源，改动两侧同步；镜像范围由 `check_docs_governance.py` 自动发现。
+- MCP、env、volume、本机与容器边界遵循 `runtime-env-governance`。
+- 功能行为变化先按 `test-sync-governance` 决定测试增删改。
+- 本技能由 `.codex` 与 `.claude` 同源镜像；修改后运行 docs/config 治理检查。

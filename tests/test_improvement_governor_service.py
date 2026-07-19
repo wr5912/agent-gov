@@ -1,4 +1,4 @@
-"""四阶段改进治理 §17.5：改进事项归因/方案 governor 生成服务（真 LLM 路径 + 确定性回退 + 字段所有权）。"""
+"""四阶段改进治理：归因、优化与可执行 pytest 代码的 Governor 字段所有权。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from app.runtime.errors import BusinessRuleViolation
+from app.runtime.errors import RuntimeUnavailableError
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.services.improvement_governor_service import ImprovementGovernorService
@@ -33,7 +33,9 @@ def _item() -> SimpleNamespace:
 
 def _service(tmp_path: Path, run_profile_json, find_run_by_id=None) -> tuple[ImprovementGovernorService, ImprovementContentStore]:
     content = _content(tmp_path)
-    content.upsert_normalized_feedback("imp-1", problem="告警误报", possible_object="MCP 数据", possible_reason="时间不一致", suggestion="加时间校验", user_quote="这是误报")
+    content.upsert_normalized_feedback(
+        "imp-1", problem="告警误报", possible_object="MCP 数据", possible_reason="时间不一致", suggestion="加时间校验", user_quote="这是误报"
+    )
     content.create_feedback(
         "imp-1",
         summary="告警时间窗口与事件时间不一致",
@@ -52,6 +54,7 @@ def _service(tmp_path: Path, run_profile_json, find_run_by_id=None) -> tuple[Imp
 
 def test_attribution_governor_path_maps_agent_owned_fields(tmp_path: Path) -> None:
     """governor 成功：映射 rationale/responsibility_boundary/evidence_refs，标 generated_by=governor。"""
+
     async def fake_run(**_kwargs):
         return {
             "rationale": "MCP 返回的事件时间与告警时间窗口不一致，导致误判",
@@ -60,6 +63,7 @@ def test_attribution_governor_path_maps_agent_owned_fields(tmp_path: Path) -> No
             "evidence_refs": [{"type": "trace", "id": "run-1", "reason": "list_events 时间窗口不一致"}],
             "status": "confirmed",  # hostile: LLM 不能设 backend-owned 状态
         }
+
     svc, content = _service(tmp_path, fake_run)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.generated_by == "governor"
@@ -115,7 +119,7 @@ def test_attribution_rejects_governor_workspace_as_business_agent_evidence(tmp_p
     async def contaminated(**_kwargs):
         return {
             "problem_type": "tool_unavailable",
-            "optimization_object_type": "main_agent_claude_md",
+            "optimization_object_type": "business_agent_claude_md",
             "actionability": "workspace_config_change",
             "confidence": "high",
             "human_review_required": False,
@@ -141,7 +145,7 @@ def test_attribution_accepts_target_business_agent_config_evidence(tmp_path: Pat
     async def grounded(**_kwargs):
         return {
             "problem_type": "tool_unavailable",
-            "optimization_object_type": "main_agent_claude_md",
+            "optimization_object_type": "business_agent_claude_md",
             "actionability": "workspace_config_change",
             "confidence": "high",
             "human_review_required": False,
@@ -166,6 +170,7 @@ def test_attribution_accepts_target_business_agent_config_evidence(tmp_path: Pat
 def test_attribution_falls_back_to_heuristic_on_governor_failure(tmp_path: Path) -> None:
     async def boom(**_kwargs):
         raise RuntimeError("missing model credentials")
+
     svc, _ = _service(tmp_path, boom)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.generated_by == "heuristic"
@@ -180,6 +185,7 @@ def test_attribution_none_runner_is_heuristic(tmp_path: Path) -> None:
 
 def test_hostile_formatter_output_does_not_crash_or_pollute(tmp_path: Path) -> None:
     """恶意/畸形 agent-owned 输出：缺字段、错类型、注入 backend-owned 字段，服务防御性映射且不污染。"""
+
     async def hostile(**_kwargs):
         return {
             "rationale": "",  # 空 → 退回启发式 summary
@@ -188,6 +194,7 @@ def test_hostile_formatter_output_does_not_crash_or_pollute(tmp_path: Path) -> N
             "attribution_id": "attacker-controlled",  # 不得被采纳
             "generated_by": "user-spoofed",  # 不得被采纳
         }
+
     svc, content = _service(tmp_path, hostile)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.generated_by == "governor"  # 来源由后端判定，非 LLM 字段
@@ -206,10 +213,9 @@ def test_optimization_plan_governor_maps_tasks_to_changes(tmp_path: Path) -> Non
                 {"target_path": "skills/triage.md", "title": "补充误报判定 SOP"},
             ],
         }
+
     content = _content(tmp_path)
-    svc = ImprovementGovernorService(
-        improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=fake_run, data_dir=Path("/data")
-    )
+    svc = ImprovementGovernorService(improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=fake_run, data_dir=Path("/data"))
     rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
     assert rec.generated_by == "governor"
     assert rec.generation_trace_id == "tr-plan"
@@ -231,95 +237,141 @@ def test_optimization_plan_rejects_governor_workspace_target(tmp_path: Path) -> 
         }
 
     content = _content(tmp_path)
-    svc = ImprovementGovernorService(
-        improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=contaminated, data_dir=Path("/data")
-    )
+    svc = ImprovementGovernorService(improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=contaminated, data_dir=Path("/data"))
     rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
 
     assert rec.generated_by == "heuristic"
     assert all("/governor-workspace" not in change["target"] for change in rec.changes)
 
 
-def test_regression_governor_maps_eval_cases(tmp_path: Path) -> None:
-    """governor REGRESSION_ASSESSMENT 生成候选；prompt 由后端原始输入覆盖。"""
-    seen: dict[str, object] = {}
-
-    async def fake_run(**kwargs):
-        assert kwargs["job_type"] == "regression_assessment"
-        seen.update(kwargs["job_input"])
-        kwargs["trace_callback"]({"trace_id": "tr-regression", "trace_url": "http://lf/tr-regression"})
-        return {"eval_cases": [
-            {"prompt": "Agent 不应决定输入字段", "expected_behavior": "先核验时间一致性，不直接升级", "checks_json": {"c1": "是否核验时间", "c2": "是否避免误升级"}},
-        ]}
-    svc, content = _service(
-        tmp_path,
-        fake_run,
-        find_run_by_id=lambda run_id: {"run_id": run_id, "message": "数据转换前原始数据:\n{\"danger_tid\":\"14516\"}", "answer_summary": "误报分析"},
-    )
-    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
-    assert rec.generated_by == "governor"
-    assert rec.generation_trace_id == "tr-regression"
-    assert rec.cases and rec.cases[0]["prompt"].startswith("数据转换前原始数据")
-    assert "Agent 不应决定输入字段" not in rec.cases[0]["prompt"]
-    assert rec.cases[0]["checkpoints"] == ["是否核验时间", "是否避免误升级"]
-    assert seen["feedback_cases"][0]["source_run"]["message"].startswith("数据转换前原始数据")  # type: ignore[index]
-    assert content.get_regression_assessment("imp-1").status == "draft"
-
-
-def test_regression_heuristic_fallback(tmp_path: Path) -> None:
-    async def boom(**_kwargs):
-        raise RuntimeError("no governor")
-    svc, _ = _service(tmp_path, boom)
-    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
-    assert rec.generated_by == "heuristic" and rec.cases and rec.cases[0]["checkpoints"]
-    assert rec.cases[0]["prompt"].startswith("原始用户输入")
-    assert "复现场景" not in rec.cases[0]["prompt"]
-
-
-def test_regression_governor_no_action_keeps_heuristic_source_prompt(tmp_path: Path) -> None:
-    async def no_action(**kwargs):
-        kwargs["trace_callback"]({"trace_id": "tr-no-action", "trace_url": "http://lf/tr-no-action"})
-        return {"eval_cases": [], "no_action_reason": "证据不足，不编造用例。"}
-
-    svc, _ = _service(tmp_path, no_action)
-    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
-
-    assert rec.generated_by == "heuristic"
-    assert rec.generation_trace_id == ""
-    assert rec.cases and rec.cases[0]["prompt"].startswith("原始用户输入")
-    assert "复现场景" not in rec.cases[0]["prompt"]
-
-
-def test_regression_without_original_input_does_not_fabricate_prompt(tmp_path: Path) -> None:
-    async def boom(**_kwargs):
-        raise RuntimeError("no governor")
+def test_optimization_plan_cannot_expand_explicit_normalized_feedback_path_scope(tmp_path: Path) -> None:
+    async def expanded(**_kwargs):
+        return {
+            "summary": "扩大到多个配置资产",
+            "changes": [
+                {"target": "CLAUDE.md", "change": "补充冲突规则"},
+                {"target": ".claude/skills/alert-triage/SKILL.md", "change": "同步修改 skill"},
+            ],
+        }
 
     content = _content(tmp_path)
+    content.upsert_normalized_feedback(
+        "imp-1",
+        problem="多源冲突",
+        possible_object="目标业务 Agent 根 CLAUDE.md",
+        possible_reason="缺少约束",
+        suggestion="仅修改目标业务 Agent 根 CLAUDE.md，不涉及 skill、settings 或 MCP 配置",
+        user_quote="不要扩大范围",
+    )
     svc = ImprovementGovernorService(
         improvement_store=_FakeImprovements(_item()),
         content_store=content,
-        run_profile_json=boom,
+        run_profile_json=expanded,
         data_dir=Path("/data"),
     )
-    with pytest.raises(BusinessRuleViolation, match="requires at least one case"):
-        asyncio.run(svc.generate_regression_assessment("imp-1"))
 
-    assert content.get_regression_assessment("imp-1") is None
+    rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
+
+    assert rec.generated_by == "heuristic"
+    assert all("skill" not in change["target"].casefold() for change in rec.changes)
+
+
+def test_regression_governor_maps_executable_test_code_and_owns_path(tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_run(**kwargs):
+        assert kwargs["job_type"] == "regression_test_design"
+        seen.update(kwargs["job_input"])
+        kwargs["trace_callback"]({"trace_id": "tr-regression", "trace_url": "http://lf/tr-regression"})
+        return {
+            "tests": [
+                {
+                    "target_path": "/attacker/owned.py",
+                    "test_code": (
+                        "def test_time_consistency(agent):\n"
+                        "    result = agent.run('数据转换前原始数据：时间不一致')\n"
+                        "    assert not result.errors\n"
+                        "    normalized_text = ''.join(result.text.split())\n"
+                        "    assert '核验' in normalized_text\n"
+                        "    assert '升级' in normalized_text\n"
+                    ),
+                    "test_intent": "验证时间不一致时先核验再升级",
+                    "assertion_rationale": "回答必须同时包含核验动作与升级边界",
+                },
+            ]
+        }
+
+    svc, content = _service(
+        tmp_path,
+        fake_run,
+        find_run_by_id=lambda run_id: {"run_id": run_id, "message": '数据转换前原始数据:\n{"danger_tid":"14516"}', "answer_summary": "误报分析"},
+    )
+    rec = asyncio.run(svc.generate_regression_test_design("imp-1"))
+    assert rec.generated_by == "governor"
+    assert rec.generation_trace_id == "tr-regression"
+    assert rec.tests and rec.tests[0]["target_path"].startswith("tests/test_feedback_imp_1_01_")
+    assert "/attacker/owned.py" not in rec.tests[0]["target_path"]
+    assert "assert '核验' in normalized_text" in rec.tests[0]["test_code"]
+    assert rec.tests[0]["test_intent"] == "验证时间不一致时先核验再升级"
+    assert seen["feedback_cases"][0]["source_run"]["message"].startswith("数据转换前原始数据")  # type: ignore[index]
+    assert content.get_regression_test_design("imp-1").status == "draft"
+
+
+def test_regression_governor_failure_does_not_fabricate_tests(tmp_path: Path) -> None:
+    async def boom(**_kwargs):
+        raise RuntimeError("no governor")
+
+    svc, content = _service(tmp_path, boom)
+    with pytest.raises(RuntimeUnavailableError, match="可执行的 pytest"):
+        asyncio.run(svc.generate_regression_test_design("imp-1"))
+    assert content.get_regression_test_design("imp-1") is None
+
+
+def test_regression_governor_no_action_is_persisted_without_fake_test(tmp_path: Path) -> None:
+    async def no_action(**kwargs):
+        kwargs["trace_callback"]({"trace_id": "tr-no-action", "trace_url": "http://lf/tr-no-action"})
+        return {"tests": [], "no_action_reason": "证据不足，不编造测试代码。"}
+
+    svc, _ = _service(tmp_path, no_action)
+    rec = asyncio.run(svc.generate_regression_test_design("imp-1"))
+
+    assert rec.generated_by == "governor"
+    assert rec.generation_trace_id == "tr-no-action"
+    assert rec.tests == []
+    assert rec.no_action_reason == "证据不足，不编造测试代码。"
+
+
+def test_regression_rejects_static_only_assertion_from_governor(tmp_path: Path) -> None:
+    async def weak_test(**_kwargs):
+        return {
+            "tests": [
+                {
+                    "test_code": "def test_weak(agent):\n    result = agent.run('x')\n    assert result.text.strip()\n",
+                    "test_intent": "weak",
+                    "assertion_rationale": "weak",
+                }
+            ]
+        }
+
+    svc, content = _service(tmp_path, weak_test)
+    with pytest.raises(RuntimeUnavailableError, match="可执行的 pytest"):
+        asyncio.run(svc.generate_regression_test_design("imp-1"))
+    assert content.get_regression_test_design("imp-1") is None
 
 
 def test_optimization_plan_heuristic_fallback(tmp_path: Path) -> None:
     async def boom(**_kwargs):
         raise TimeoutError("governor timeout")
+
     content = _content(tmp_path)
-    svc = ImprovementGovernorService(
-        improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=boom, data_dir=Path("/data")
-    )
+    svc = ImprovementGovernorService(improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=boom, data_dir=Path("/data"))
     rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
     assert rec.generated_by == "heuristic" and rec.changes and rec.status == "draft"
 
 
 def test_attribution_governor_maps_counter_evidence_uncertainty_verification(tmp_path: Path) -> None:
     """归因新增 agent-owned 字段（反证/不确定性/验证建议）正确映射、空项过滤，backend-owned 不污染。"""
+
     async def fake_run(**_kwargs):
         return {
             "rationale": "时间窗口不一致导致误判",
@@ -329,6 +381,7 @@ def test_attribution_governor_maps_counter_evidence_uncertainty_verification(tmp
             "attribution_id": "attacker-controlled",  # hostile：不得采纳
             "status": "confirmed",  # hostile：不得污染
         }
+
     svc, content = _service(tmp_path, fake_run)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.counter_evidence == ["非边界时段未出现同类误判"]  # 空白项过滤
@@ -340,6 +393,7 @@ def test_attribution_governor_maps_counter_evidence_uncertainty_verification(tmp
 def test_attribution_heuristic_provides_uncertainty_and_verification(tmp_path: Path) -> None:
     async def boom(**_kwargs):
         raise RuntimeError("no governor")
+
     svc, _ = _service(tmp_path, boom)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.generated_by == "heuristic"
@@ -349,10 +403,9 @@ def test_attribution_heuristic_provides_uncertainty_and_verification(tmp_path: P
 def test_optimization_plan_maps_risk_level(tmp_path: Path) -> None:
     async def fake_run(**_kwargs):
         return {"summary": "收紧校验", "risk": "中", "tasks": [{"target_type": "prompt", "recommendation": "加时间一致性校验"}]}
+
     content = _content(tmp_path)
-    svc = ImprovementGovernorService(
-        improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=fake_run, data_dir=Path("/data")
-    )
+    svc = ImprovementGovernorService(improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=fake_run, data_dir=Path("/data"))
     rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
     assert rec.risk_level == "中" and rec.generated_by == "governor"
 
@@ -360,31 +413,11 @@ def test_optimization_plan_maps_risk_level(tmp_path: Path) -> None:
 def test_optimization_plan_heuristic_provides_risk_level(tmp_path: Path) -> None:
     async def boom(**_kwargs):
         raise RuntimeError("no governor")
+
     content = _content(tmp_path)
-    svc = ImprovementGovernorService(
-        improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=boom, data_dir=Path("/data")
-    )
+    svc = ImprovementGovernorService(improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=boom, data_dir=Path("/data"))
     rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
     assert rec.risk_level  # 启发式给出风险级别
-
-
-def test_regression_maps_suggested_gate_thresholds(tmp_path: Path) -> None:
-    async def fake_run(**_kwargs):
-        return {
-            "eval_cases": [{"prompt": "时间不一致如何处置？", "expected_behavior": "先核验时间一致性"}],
-            "suggested_gate_thresholds": {"pass_rate": "≥97%", "new_critical": "0", "blank": ""},
-        }
-    svc, content = _service(tmp_path, fake_run)
-    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
-    assert rec.suggested_gate_thresholds == {"pass_rate": "≥97%", "new_critical": "0"}  # 空值过滤
-
-
-def test_regression_heuristic_provides_default_gate_thresholds(tmp_path: Path) -> None:
-    async def boom(**_kwargs):
-        raise RuntimeError("no governor")
-    svc, _ = _service(tmp_path, boom)
-    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
-    assert rec.generated_by == "heuristic" and rec.suggested_gate_thresholds  # 标准 SLA 默认非空
 
 
 def test_execution_store_roundtrips_risk_and_rollback(tmp_path: Path) -> None:
@@ -392,8 +425,11 @@ def test_execution_store_roundtrips_risk_and_rollback(tmp_path: Path) -> None:
     content = _content(tmp_path)
     _seed_execution_record(
         content,
-        "imp-1", summary="已应用", risk_level="中",
-        rollback_strategy="回滚到执行前基线 Agent 版本", rollback_instructions=["放弃 change_set", "恢复版本"],
+        "imp-1",
+        summary="已应用",
+        risk_level="中",
+        rollback_strategy="回滚到执行前基线 Agent 版本",
+        rollback_instructions=["放弃 change_set", "恢复版本"],
     )
     got = content.get_execution("imp-1")
     assert got is not None
@@ -405,7 +441,7 @@ def test_execution_store_roundtrips_risk_and_rollback(tmp_path: Path) -> None:
 def _config_attribution(evidence_refs: list[dict], *, problem_type: str = "instruction_gap") -> dict:
     return {
         "problem_type": problem_type,
-        "optimization_object_type": "main_agent_claude_md",
+        "optimization_object_type": "business_agent_claude_md",
         "actionability": "workspace_config_change",
         "confidence": "high",
         "human_review_required": False,
@@ -417,8 +453,10 @@ def _config_attribution(evidence_refs: list[dict], *, problem_type: str = "instr
 
 def test_attribution_accepts_relative_claude_md_evidence(tmp_path: Path) -> None:
     """整改：governor 用相对路径 CLAUDE.md 引用目标 workspace 配置，应被采纳为 governor（不再误拒）。"""
+
     async def grounded(**_kwargs):
         return _config_attribution([{"type": "file", "id": "CLAUDE.md", "reason": "目标业务 Agent 系统 prompt 缺时间校验。"}])
+
     svc, _ = _service(tmp_path, grounded)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.generated_by == "governor"
@@ -430,6 +468,7 @@ def test_attribution_accepts_relative_skill_md_evidence(tmp_path: Path) -> None:
             [{"type": "file", "id": ".claude/skills/ocsf-stix-analysis/SKILL.md", "reason": "skill 描述不当。"}],
             problem_type="skill_gap",
         )
+
     svc, _ = _service(tmp_path, grounded)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.generated_by == "governor"
@@ -438,6 +477,7 @@ def test_attribution_accepts_relative_skill_md_evidence(tmp_path: Path) -> None:
 def test_attribution_rejects_path_traversal_evidence(tmp_path: Path) -> None:
     async def evil(**_kwargs):
         return _config_attribution([{"type": "file", "id": "../other-agent/CLAUDE.md", "reason": "越界。"}])
+
     svc, _ = _service(tmp_path, evil)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.generated_by == "heuristic"
@@ -445,9 +485,8 @@ def test_attribution_rejects_path_traversal_evidence(tmp_path: Path) -> None:
 
 def test_attribution_rejects_other_agent_absolute_evidence(tmp_path: Path) -> None:
     async def cross(**_kwargs):
-        return _config_attribution(
-            [{"type": "file", "id": "file:/data/business-agents/attacker/workspace/CLAUDE.md", "reason": "他 Agent。"}]
-        )
+        return _config_attribution([{"type": "file", "id": "file:/data/business-agents/attacker/workspace/CLAUDE.md", "reason": "他 Agent。"}])
+
     svc, _ = _service(tmp_path, cross)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.generated_by == "heuristic"
@@ -455,8 +494,10 @@ def test_attribution_rejects_other_agent_absolute_evidence(tmp_path: Path) -> No
 
 def test_attribution_config_type_with_only_trace_evidence_rejected(tmp_path: Path) -> None:
     """config 类归因只给 trace/log 非文件证据、未引用目标 workspace 配置 → 拒（缺配置证据）。"""
+
     async def ungrounded(**_kwargs):
         return _config_attribution([{"type": "trace", "id": "run-9", "reason": "运行轨迹。"}], problem_type="skill_gap")
+
     svc, _ = _service(tmp_path, ungrounded)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.generated_by == "heuristic"
@@ -464,11 +505,11 @@ def test_attribution_config_type_with_only_trace_evidence_rejected(tmp_path: Pat
 
 def test_guard_rejection_is_logged_not_silent(tmp_path: Path, caplog) -> None:
     """整改：guard 拒绝不再静默——回退时 WARNING 记录 reason + trace_id，区别于 governor 失败。"""
+
     async def forbidden(**_kwargs):
-        kwargs_trace = _config_attribution(
-            [{"type": "file", "id": "file:/governor-workspace/.claude/settings.json", "reason": "治理自身配置。"}]
-        )
+        kwargs_trace = _config_attribution([{"type": "file", "id": "file:/governor-workspace/.claude/settings.json", "reason": "治理自身配置。"}])
         return kwargs_trace
+
     svc, _ = _service(tmp_path, forbidden)
     with caplog.at_level("WARNING"):
         rec = asyncio.run(svc.generate_attribution("imp-1"))

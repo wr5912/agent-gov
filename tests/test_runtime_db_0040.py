@@ -172,7 +172,7 @@ def test_0040_archive_and_destructive_changes_roll_back_together(tmp_path) -> No
         assert connection.exec_driver_sql("SELECT asset_id FROM governance_assets ORDER BY asset_id").scalars().all() == ["ast-methodology", "ast-regression"]
 
 
-def test_fresh_schema_has_only_typed_evaluation_tables(tmp_path) -> None:
+def test_fresh_schema_has_only_workspace_pytest_tables(tmp_path) -> None:
     path = tmp_path / "fresh.sqlite3"
     make_session_factory(path)
     engine = make_engine(path)
@@ -180,15 +180,13 @@ def test_fresh_schema_has_only_typed_evaluation_tables(tmp_path) -> None:
     with engine.connect() as connection:
         tables = _tables(connection)
         assert set(LEGACY_EVALUATION_TABLES).isdisjoint(tables)
-        assert {"test_datasets", "test_dataset_cases", "eval_runs", "eval_run_items"} <= tables
-        assert (
-            connection.exec_driver_sql(
-                "SELECT COUNT(*) FROM governance_assets WHERE asset_type = ?",
-                (LEGACY_REGRESSION_ASSET_TYPE,),
-            ).scalar_one()
-            == 0
-        )
+        assert {"agent_test_runs", "agent_test_run_items", "agent_workspace_import_records"} <= tables
+        assert {"test_datasets", "test_dataset_cases", "eval_runs", "eval_run_items"}.isdisjoint(tables)
         assert (
             connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0040_archive_and_remove_legacy_evaluation_chain'").one()[0]
             == "0040_archive_and_remove_legacy_evaluation_chain"
+        )
+        assert (
+            connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0048_workspace_pytest_source_of_truth'").one()[0]
+            == "0048_workspace_pytest_source_of_truth"
         )

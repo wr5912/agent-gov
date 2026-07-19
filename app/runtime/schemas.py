@@ -4,8 +4,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.types import JsonValue
 
 from app.runtime.json_types import JsonObject
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
-from app.runtime.test_dataset_schemas import TestCaseResponse, TestDatasetResponse
 
 
 class ExtensibleResponse(BaseModel):
@@ -19,7 +19,7 @@ class ChatRequest(BaseModel):
             "examples": [
                 {
                     "message": "请说明当前 workspace 中有哪些 subagents 和 skills",
-                    "agent_id": "main-agent",
+                    "agent_id": "security-operations-expert",
                     "max_turns": 8,
                 }
             ]
@@ -32,7 +32,7 @@ class ChatRequest(BaseModel):
     case_id: Optional[str] = Field(default=None, description="Optional SOC case id used by the feedback loop.")
     agent_id: Optional[str] = Field(
         default=None,
-        description="Business agent to run, e.g. 'main-agent' (the prebuilt default) or any id from /api/agent-registry. Required by /api/chat and /api/chat/stream — requests without it are rejected with 422.",
+        description="Registered business agent to run. Required by /api/chat and /api/chat/stream; requests without it are rejected with 422.",
     )
     max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Per-request turn cap. Defaults to MAX_TURNS.")
     model: Optional[str] = Field(default=None, description="Per-request model override. Defaults to AGENT_MODEL.")
@@ -89,7 +89,7 @@ class ConfigMappingItem(BaseModel):
 
 
 class ConfigMappingResponse(BaseModel):
-    agent_id: str = "main-agent"
+    agent_id: str = "security-operations-expert"
     claude_config_mode: str
     claude_root: str
     claude_home: str
@@ -227,26 +227,22 @@ class FeedbackSignalCreateRequest(BaseModel):
     metadata: JsonObject = Field(default_factory=dict)
 
 
-# 多业务 Agent 治理 schema 拆至 agent_governance_schemas.py（控 schemas.py 行数），此处 re-export 保持导入路径稳定。
+# 多业务 Agent 治理 schema 拆至 agent_governance_schemas.py（控 schemas.py 行数）。
 from app.runtime.agent_governance_schemas import (  # noqa: E402,F401
-    AgentCreateRequest,
     AgentDeleteResponse,
     AgentDeletionImpact,
     AgentLifecycleTransitionRequest,
     AgentSummaryResponse,
     AssetProvenanceImprovement,
     AssetProvenanceResponse,
-    BusinessAgentTemplatesResponse,
     FeedbackSignalReassignRequest,
 )
 
 __all_agent_governance__ = [
-    "AgentCreateRequest",
     "AgentDeleteResponse",
     "AgentDeletionImpact",
     "AgentLifecycleTransitionRequest",
     "AgentSummaryResponse",
-    "BusinessAgentTemplatesResponse",
     "AssetProvenanceImprovement",
     "AssetProvenanceResponse",
     "FeedbackSignalReassignRequest",
@@ -430,7 +426,7 @@ class FeedbackCaseCreateRequest(BaseModel):
 
 class FeedbackCaseResponse(BaseModel):
     feedback_case_id: str
-    agent_id: str = "main-agent"
+    agent_id: str = DEFAULT_BUSINESS_AGENT_ID
     created_at: str
     updated_at: str
     status: str
@@ -446,88 +442,6 @@ class FeedbackCaseResponse(BaseModel):
     case_ids: list[str] = Field(default_factory=list)
     evidence_package_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
-
-
-class FeedbackEvalRunCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    dataset_id: str = Field(min_length=1)
-
-
-class EvalRunCheckResultResponse(ExtensibleResponse):
-    name: str
-    passed: bool = False
-    required: bool = False
-    detail: Optional[str] = None
-
-
-class EvalRunItemResponse(ExtensibleResponse):
-    eval_run_item_id: str
-    eval_run_id: str
-    dataset_case_id: str
-    agent_run_id: Optional[str] = None
-    agent_version_id: Optional[str] = None
-    status: str
-    score: Optional[float] = None
-    check_results: list[EvalRunCheckResultResponse] = Field(default_factory=list)
-    dataset_case_snapshot: TestCaseResponse
-    answer_summary: Optional[str] = None
-    error_json: Optional[FeedbackJobErrorResponse] = None
-    created_at: Optional[str] = None
-
-
-class EvalRunSummaryResponse(BaseModel):
-    total: int = 0
-    passed: int = 0
-    failed: int = 0
-    needs_human_review: int = 0
-    blocked: int = 0
-    review_required: int = 0
-    passed_with_notes: int = 0
-
-
-class EvalRunReviewItemDecisionResponse(BaseModel):
-    dataset_case_id: str
-    decision: Literal["approve", "reject"]
-    note: str = ""
-
-
-class EvalRunReviewDecisionResponse(BaseModel):
-    review_id: str
-    operator: str
-    reason: str
-    scope: Literal["current_eval_run"]
-    items: list[EvalRunReviewItemDecisionResponse]
-    created_at: str
-
-
-class EvalRunGateResultResponse(BaseModel):
-    status: str
-    blocked_dataset_case_ids: list[str] = Field(default_factory=list)
-    review_dataset_case_ids: list[str] = Field(default_factory=list)
-    note_dataset_case_ids: list[str] = Field(default_factory=list)
-    review_decision: Optional[EvalRunReviewDecisionResponse] = None
-
-
-class EvalRunResponse(ExtensibleResponse):
-    eval_run_id: str
-    dataset_id: str
-    dataset_snapshot: TestDatasetResponse
-    created_at: str
-    completed_at: Optional[str] = None
-    status: str
-    result_status: Optional[str] = None
-    agent_id: str
-    agent_version_id: Optional[str] = None
-    source: str
-    change_set_id: Optional[str] = None
-    regression_attempt_id: Optional[str] = None
-    candidate_commit_sha: Optional[str] = None
-    candidate_worktree_path: Optional[str] = None
-    summary: EvalRunSummaryResponse = Field(default_factory=EvalRunSummaryResponse)
-    gate_result: EvalRunGateResultResponse
-    items: list[EvalRunItemResponse] = Field(default_factory=list)
-    error_json: Optional[FeedbackJobErrorResponse] = None
 
 
 class EvidenceSourceRefsResponse(BaseModel):
@@ -558,7 +472,7 @@ class EvidenceCompletenessResponse(BaseModel):
     has_runs: bool = False
     has_tool_calls: bool = False
     has_trace_summary: bool = False
-    has_main_agent_version: bool = False
+    has_business_agent_version: bool = False
     has_messages: bool = False
     has_agent_activity: bool = False
     has_langfuse_trace_refs: bool = False
@@ -571,7 +485,7 @@ class EvidencePackageResponse(BaseModel):
     feedback_case_id: str
     created_at: str
     created_by: str
-    main_agent_version_id: Optional[str] = None
+    business_agent_version_id: Optional[str] = None
     source_refs: EvidenceSourceRefsResponse = Field(default_factory=EvidenceSourceRefsResponse)
     included_files: list[EvidenceIncludedFileResponse] = Field(default_factory=list)
     redaction: EvidenceRedactionResponse = Field(default_factory=EvidenceRedactionResponse)

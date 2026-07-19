@@ -3,6 +3,7 @@
 // browser UI loads from the Compose UI container, Playground sends /v1/responses,
 // and hostile/boundary requests hit the Compose API container without mocks.
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -113,8 +114,8 @@ async function waitForCondition(check, message, timeoutMs = 30000) {
 async function runHostileAndBoundaryChecks() {
   await expectStatus("/v1/responses", 422, { input: "hi", agentgov: {} });
   await expectStatus("/v1/responses", 422, { input: "hi", instructions: "replace the governed system prompt" });
-  await expectStatus("/v1/responses", 422, { input: "hi", agentgov: { agent_id: "main-agent", updated_input: { command: "rm -rf /" } } });
-  await expectStatus("/v1/responses", 422, { input: "hi", agentgov: { agent_id: "main-agent", max_turns: 0 } });
+  await expectStatus("/v1/responses", 422, { input: "hi", agentgov: { agent_id: "security-operations-expert", updated_input: { command: "rm -rf /" } } });
+  await expectStatus("/v1/responses", 422, { input: "hi", agentgov: { agent_id: "security-operations-expert", max_turns: 0 } });
   await expectStatus("/api/chat", 422, { message: "legacy native chat must still require agent_id" });
   await expectStatus("/api/chat/stream", 422, { message: "legacy stream must still require agent_id" });
   await api("/v1/conversations/conv_missing/items", { expected: [404] });
@@ -135,6 +136,7 @@ async function main() {
 
   const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
   const page = await browser.newPage({ viewport: { width: 1440, height: 920 } });
+  const isolatedSessionId = randomUUID();
   const apiRequests = [];
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(String(error)));
@@ -145,11 +147,11 @@ async function main() {
   });
 
   try {
-    await page.addInitScript(({ base, key }) => {
+    await page.addInitScript(({ base, key, sessionId }) => {
       window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: base, apiKey: key }));
       window.localStorage.removeItem("playground-session-messages");
-      window.localStorage.removeItem("playground-active-session");
-    }, { base: browserApiBase, key: apiKey });
+      window.localStorage.setItem("playground-active-session", JSON.stringify(sessionId));
+    }, { base: browserApiBase, key: apiKey, sessionId: isolatedSessionId });
 
     await page.goto(uiBase, { waitUntil: "domcontentloaded" });
     await page.getByTestId("playground").waitFor({ timeout: 30000 });
@@ -168,10 +170,11 @@ async function main() {
       "business agent options did not render in topbar",
     );
     const optionValues = await agentSelect.locator("option").evaluateAll((options) => options.map((option) => option.value).filter(Boolean));
-    const selectedAgent = optionValues.includes("main-agent") ? "main-agent" : optionValues[0];
+    const selectedAgent = optionValues.includes("security-operations-expert") ? "security-operations-expert" : optionValues[0];
     assert(selectedAgent, "no runnable business agent option found in topbar");
     await agentSelect.selectOption(selectedAgent);
 
+    const messageActionsBefore = await page.getByTestId("message-actions").count();
     const requestPromise = page.waitForRequest((request) => {
       const url = new URL(request.url());
       return apiOrigins.has(url.origin) && url.pathname === "/v1/responses" && request.method() === "POST";
@@ -182,9 +185,13 @@ async function main() {
     const runBody = JSON.parse(runRequest.postData() || "{}");
     assert(runBody.stream === true, "Playground did not request stream=true");
     assert(runBody.agentgov?.agent_id === selectedAgent, "Playground did not pass the selected business agent through agentgov.agent_id");
-    assert(typeof runBody.conversation === "string" && runBody.conversation.startsWith("conv_"), "Playground did not send a /v1 conversation id");
+    assert(runBody.conversation === `conv_${isolatedSessionId}`, "Playground did not keep the isolated conversation id");
 
-    await page.getByTestId("message-actions").last().waitFor({ timeout: liveTimeoutMs });
+    await waitForCondition(
+      async () => await page.getByTestId("message-actions").count() > messageActionsBefore,
+      "Playground did not render an action row for the current response",
+      liveTimeoutMs,
+    );
     const assistantTexts = await page.locator('[data-message-role="assistant"] [data-testid="message-markdown"]').allTextContents();
     const assistantText = (assistantTexts.at(-1) || "").trim();
     assert(assistantText.length > 0, "assistant response text did not render");

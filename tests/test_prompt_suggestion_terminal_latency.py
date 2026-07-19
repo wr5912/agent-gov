@@ -26,22 +26,20 @@ import time
 
 import pytest
 from app.runtime import claude_prompt_suggestions
-from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 
-from claude_runtime_test_utils import main_profile_resolver
+from business_agent_test_utils import create_test_business_agent_workspace
+from claude_runtime_test_utils import default_profile_resolver
 
 TRAILING_WINDOW = claude_prompt_suggestions._TRAILING_TIMEOUT_SECONDS
 
 
 def test_the_production_trailing_window_is_still_what_we_think_it_is() -> None:
     """若有人把默认窗口调小，下面的时延断言就不再证明原问题——先钉住前提。"""
-    assert TRAILING_WINDOW >= 1.0, (
-        "尾随窗口已被调小；请重新评估本文件的时延断言是否仍在证明「终态被扣住」"
-    )
+    assert TRAILING_WINDOW >= 1.0, "尾随窗口已被调小；请重新评估本文件的时延断言是否仍在证明「终态被扣住」"
 
 
 def _result_raw(session_id: str) -> dict:
@@ -121,6 +119,7 @@ def _install_live_cli(monkeypatch, *, suggestion_delay: float | None = None) -> 
 
         async def connect(self, prompt=None) -> None:
             if prompt is not None and hasattr(prompt, "__aiter__"):
+
                 async def drain() -> None:
                     async for _ in prompt:
                         pass
@@ -150,15 +149,14 @@ def _runtime(tmp_path) -> ClaudeRuntime:
         GOVERNOR_CLAUDE_ROOT=tmp_path / "docker" / "volume" / "claude-roots" / "governor",
         RUNTIME_VOLUME_MODE="local-debug",
     )
-    workspace = settings.main_workspace_dir
-    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    workspace = settings.default_workspace_dir
+    create_test_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
     # 使用真实 endpoint fixture，覆盖 Claude Runtime 对 live workspace 原样配置的读取。
     (workspace / ".mcp.json").write_text(
-        json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}, indent=2)
-        + "\n",
+        json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}, indent=2) + "\n",
         encoding="utf-8",
     )
-    return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings))
+    return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=default_profile_resolver(settings))
 
 
 async def _stream_until_done(runtime: ClaudeRuntime) -> tuple[list[str], float, float]:
@@ -187,17 +185,14 @@ def test_terminal_does_not_wait_for_the_optional_suggestion(tmp_path, monkeypatc
     _install_live_cli(monkeypatch, suggestion_delay=suggestion_delay)
     runtime = _runtime(tmp_path)
 
-    events, result_at, done_at = asyncio.run(
-        asyncio.wait_for(_stream_until_done(runtime), timeout=TRAILING_WINDOW + 10)
-    )
+    events, result_at, done_at = asyncio.run(asyncio.wait_for(_stream_until_done(runtime), timeout=TRAILING_WINDOW + 10))
 
     assert "result" in events
     # 断言的是「答案到终态」的净差，而不是绝对时延——后者含 runtime 启动开销，
     # 会随环境浮动，测不准这笔税。
     tax = done_at - result_at
     assert tax < TRAILING_WINDOW / 3, (
-        f"答案完成后又白等了 {tax:.2f}s 才收尾（尾随窗口 {TRAILING_WINDOW}s）："
-        "这段时间「停止」按钮还挂着、发不出下一句，而每个业务 Agent 每一轮都要交这笔税"
+        f"答案完成后又白等了 {tax:.2f}s 才收尾（尾随窗口 {TRAILING_WINDOW}s）：这段时间「停止」按钮还挂着、发不出下一句，而每个业务 Agent 每一轮都要交这笔税"
     )
 
 
@@ -222,6 +217,4 @@ def test_a_late_suggestion_still_reaches_the_client_after_the_terminal(tmp_path,
     events = asyncio.run(asyncio.wait_for(collect(), timeout=TRAILING_WINDOW + 10))
 
     assert "prompt_suggestion" in events, "建议被丢了——修时延不能把功能一起修没"
-    assert events.index("done") < events.index("prompt_suggestion"), (
-        "终态应先于迟到的建议：这正是「不让可选增强扣住终态」的形状"
-    )
+    assert events.index("done") < events.index("prompt_suggestion"), "终态应先于迟到的建议：这正是「不让可选增强扣住终态」的形状"

@@ -14,6 +14,7 @@ from app.runtime.openai_responses_stream import iter_responses_sse
 from app.runtime.schemas import ChatRequest
 from fastapi.testclient import TestClient
 
+from test_agent_workspace_packages import _import_new_agent
 from test_api_execution_optimizer import _load_app
 
 
@@ -466,7 +467,7 @@ def _fake_capturing_stream(captured: dict, frames):
 
 
 def _register_biz(client: TestClient, agent_id: str = "soc-ops") -> None:
-    assert client.post("/api/agent-registry", json={"name": "客服", "agent_id": agent_id}).status_code == 201
+    assert _import_new_agent(client, agent_id=agent_id, name="客服").status_code == 200
 
 
 def test_endpoint_stream_control(monkeypatch, tmp_path: Path) -> None:
@@ -603,7 +604,12 @@ def test_endpoint_stream_fails_closed_for_unmigratable_previous_response_session
     with TestClient(module.app) as client:
         resp = client.post(
             "/v1/responses",
-            json={"input": "continue", "stream": True, "previous_response_id": "resp_prev-stale"},
+            json={
+                "input": "continue",
+                "stream": True,
+                "previous_response_id": "resp_prev-stale",
+                "agentgov": {"agent_id": "main-agent"},
+            },
         )
         assert resp.status_code == 200, resp.text
 
@@ -764,6 +770,33 @@ def test_stream_persists_exactly_once(monkeypatch, tmp_path: Path) -> None:
     assert calls["n"] == 1  # 恰好落库一次
 
 
+def test_stream_syncs_trace_before_done_allows_client_to_disconnect(monkeypatch, tmp_path: Path) -> None:
+    _patch_sdk_query(monkeypatch, _fake_sdk_query_success("sdk-trace-before-done"))
+    module = _load_app(monkeypatch, tmp_path)
+    trace_upserts = []
+    monkeypatch.setattr(module.runtime.langfuse, "current_trace_ref", lambda: ("trace-before-done", None))
+    monkeypatch.setattr(
+        module.runtime.langfuse,
+        "upsert_trace",
+        lambda trace_id, **kwargs: trace_upserts.append({"trace_id": trace_id, **kwargs}),
+    )
+
+    async def consume_until_done() -> None:
+        source = module.runtime.stream(ChatRequest(message="hi", session_id="sess-trace-before-done"))
+        try:
+            async for event in source:
+                if event.get("event") == "done":
+                    assert trace_upserts
+                    break
+        finally:
+            await close_async_iterator(source)
+
+    asyncio.run(consume_until_done())
+
+    assert trace_upserts[0]["trace_id"] == "trace-before-done"
+    assert trace_upserts[0]["output"]["answer"] == "收到"
+
+
 def test_stream_error_path_persists_once_in_finally(monkeypatch, tmp_path: Path) -> None:
     # error/无 ResultMessage 路径：finally 兜底落库一次，仍发 error+done。
     async def fake_query(*, prompt, options, transport=None):
@@ -787,6 +820,42 @@ def test_stream_error_path_persists_once_in_finally(monkeypatch, tmp_path: Path)
     assert "error" in names and "done" in names
     saved = module.session_store.get("sess-err")
     assert saved is not None and saved.turns == 0 and saved.active_run_id is None
+
+
+def test_endpoint_empty_sdk_stream_fails_and_retrieve_preserves_error(monkeypatch, tmp_path: Path) -> None:
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        if False:
+            yield None
+
+    _patch_sdk_query(monkeypatch, fake_query)
+    module = _load_app(monkeypatch, tmp_path)
+
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        response = client.post(
+            "/v1/responses",
+            json={
+                "input": "empty SDK stream",
+                "stream": True,
+                "conversation": "conv_missing-result-stream",
+                "agentgov": {"agent_id": "soc-ops"},
+            },
+        )
+        events = _parse(response.text)
+        by = dict(events)
+        run_id = by["agentgov.session"]["payload"]["run_id"]
+        retrieved = client.get(f"/v1/responses/resp_{run_id}")
+
+    names = [name for name, _ in events]
+    assert response.status_code == 200
+    assert names.count("response.failed") == 1
+    assert "response.completed" not in names
+    assert by["response.failed"]["error"]["error_code"] == "STREAM_TERMINATED_WITHOUT_RESULT"
+    assert retrieved.status_code == 200
+    assert retrieved.json()["status"] == "failed"
+    assert retrieved.json()["agentgov"]["errors"] == ["SDK query ended without ResultMessage"]
 
 
 @pytest.mark.parametrize("failure_point", ["before_commit", "after_commit"])

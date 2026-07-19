@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, TypeAlias
 
 from .errors import FeedbackStoreError
 
@@ -21,10 +20,24 @@ CASE_STATES = {
     "needs_human_review",
 }
 
-EVAL_RUN_STATES = {
+AGENT_TEST_RUN_STATES = {
+    "queued",
     "running",
-    "completed",
+    "passed",
     "failed",
+    "error",
+    "cancelled",
+    "interrupted",
+}
+
+AGENT_TEST_RUN_TRANSITIONS: Mapping[str, set[str]] = {
+    "queued": {"running", "cancelled", "interrupted"},
+    "running": {"passed", "failed", "error", "cancelled", "interrupted"},
+    "passed": set(),
+    "failed": set(),
+    "error": set(),
+    "cancelled": set(),
+    "interrupted": set(),
 }
 
 PENDING_CORRELATION_STATES = {
@@ -39,10 +52,6 @@ AGENT_CHANGE_SET_STATES = {
     "pending_approval",
     "approved",
     "rejected",
-    "regression_running",
-    "regression_review_required",
-    "regression_passed",
-    "regression_failed",
     "publishing",
     "published",
     "abandoned",
@@ -86,10 +95,6 @@ AGENT_LIFECYCLE_TRANSITIONS: Mapping[str, set[str]] = {
     "deprecated": {"active", "archived"},
     "archived": set(),
 }
-
-# TestDataset shares this lifecycle graph, but remains a separately named
-# machine so every persisted transition passes through the central validator.
-TestDatasetLifecycleState: TypeAlias = Literal["draft", "active", "evaluating", "deprecated", "archived"]
 
 # 可参与新运行选择的生命周期状态（AGV-020 criterion 3：archived 等不参与新运行）。
 AGENT_RUNNABLE_LIFECYCLE_STATES = {"active", "evaluating"}
@@ -176,11 +181,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "pending_review": {"pending_attribution", "needs_human_review"},
         "needs_human_review": {"pending_attribution", "attribution_queued", "pending_review"},
     },
-    "eval_run": {
-        "running": {"completed", "failed"},
-        "completed": set(),
-        "failed": set(),
-    },
+    "agent_test_run": AGENT_TEST_RUN_TRANSITIONS,
     "pending_correlation": {
         "pending": {"resolved"},
         "resolved": set(),
@@ -188,15 +189,11 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     "agent_change_set": {
         "draft": {"execution_ready", "candidate_committed", "pending_approval", "abandoned", "failed"},
         "execution_ready": {"candidate_committed", "abandoned", "failed"},
-        "candidate_committed": {"pending_approval", "regression_running", "approved", "publishing", "rejected", "abandoned", "failed"},
-        "pending_approval": {"approved", "rejected", "regression_running", "abandoned", "failed"},
-        "approved": {"regression_running", "regression_passed", "publishing", "rejected", "abandoned", "failed"},
+        "candidate_committed": {"pending_approval", "approved", "publishing", "rejected", "abandoned", "failed"},
+        "pending_approval": {"candidate_committed", "approved", "rejected", "abandoned", "failed"},
+        "approved": {"candidate_committed", "publishing", "rejected", "abandoned", "failed"},
         "rejected": {"abandoned"},
-        "regression_running": {"regression_review_required", "regression_passed", "regression_failed", "failed"},
-        "regression_review_required": {"regression_running", "regression_passed", "regression_failed", "rejected", "abandoned", "failed"},
-        "regression_passed": {"approved", "publishing", "regression_running", "abandoned"},
-        "regression_failed": {"regression_running", "rejected", "abandoned", "failed", "publishing"},
-        "publishing": {"candidate_committed", "approved", "regression_passed", "regression_failed", "published"},
+        "publishing": {"candidate_committed", "approved", "published"},
         "published": set(),
         "abandoned": set(),
         "failed": {"draft", "abandoned"},
@@ -209,7 +206,6 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     },
     "agent_release_operation": AGENT_RELEASE_OPERATION_TRANSITIONS,
     "agent_lifecycle": AGENT_LIFECYCLE_TRANSITIONS,
-    "test_dataset": AGENT_LIFECYCLE_TRANSITIONS,
     "agent_provision": AGENT_PROVISION_TRANSITIONS,
     "session_turn_intent": SESSION_TURN_INTENT_TRANSITIONS,
     "improvement_stage": IMPROVEMENT_STAGE_TRANSITIONS,
@@ -218,13 +214,12 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
 
 _KNOWN_STATES = {
     "case": CASE_STATES,
-    "eval_run": EVAL_RUN_STATES,
+    "agent_test_run": AGENT_TEST_RUN_STATES,
     "pending_correlation": PENDING_CORRELATION_STATES,
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,
     "agent_release_operation": AGENT_RELEASE_OPERATION_STATES,
     "agent_lifecycle": AGENT_LIFECYCLE_STATES,
-    "test_dataset": AGENT_LIFECYCLE_STATES,
     "agent_provision": AGENT_PROVISION_STATES,
     "session_turn_intent": SESSION_TURN_INTENT_STATES,
     "improvement_stage": IMPROVEMENT_STAGES,

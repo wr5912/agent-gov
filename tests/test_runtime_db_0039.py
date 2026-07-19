@@ -29,12 +29,12 @@ def test_0039_adds_revision_provenance_columns_to_existing_typed_dataset(tmp_pat
         assert _columns(connection) >= EXPECTED_COLUMNS
 
 
-def test_fresh_typed_dataset_schema_contains_revision_provenance(tmp_path) -> None:
+def test_fresh_schema_excludes_superseded_typed_dataset_table(tmp_path) -> None:
     path = tmp_path / "fresh.sqlite3"
     make_session_factory(path)
 
     with make_engine(path).connect() as connection:
-        assert _columns(connection) >= EXPECTED_COLUMNS
+        assert not _columns(connection)
 
 
 def test_0039_add_columns_rolls_back_with_outer_transaction(tmp_path) -> None:

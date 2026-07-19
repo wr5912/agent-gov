@@ -1,4 +1,4 @@
-"""bootstrap 对 data/business-agents/* 只做存在性对账，绝不覆盖活配置或改写新 seed。"""
+"""运行卷初始化只创建内置 Agent，且绝不覆盖已有运行态 Workspace。"""
 
 from __future__ import annotations
 
@@ -6,31 +6,39 @@ from pathlib import Path
 
 from scripts.bootstrap_runtime_volume import bootstrap_runtime_volume
 
-
-def _seed_agent(root: Path, agent_id: str, content: str) -> Path:
-    ws = root / "data" / "business-agents" / agent_id / "workspace"
-    ws.mkdir(parents=True, exist_ok=True)
-    claude_md = ws / "CLAUDE.md"
-    claude_md.write_text(content, encoding="utf-8")
-    return claude_md
+BUILTIN_AGENT_ID = "security-operations-expert"
 
 
-def test_bootstrap_preserves_optimized_business_agent_and_copies_new_seed(tmp_path: Path) -> None:
-    seed = tmp_path / "seed"
-    root = tmp_path / "root"
-    # seed 声明 AAA（卷里已存在、已优化）+ CCC（卷里缺失，开发者新增的预置 Agent）
-    _seed_agent(seed, "AAA", "AAA seed birth config\n")
-    _seed_agent(seed, "CCC", "CCC seed birth config\n")
-    # 卷里 AAA 已被反馈优化闭环改写（与 seed 不同）——绝不能被 seed 覆盖
-    optimized = _seed_agent(root, "AAA", "AAA OPTIMIZED by feedback loop — must NOT be overwritten\n")
+def _write(path: Path, content: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
 
-    # 已存在 workspace 只做存在性对账，不逐文件回灌 seed。
-    result = bootstrap_runtime_volume(runtime_root=root, template_dir=seed)
 
-    # AAA 优化配置原样保留（未被 seed 覆盖、未被 repair）
-    assert optimized.read_text(encoding="utf-8") == "AAA OPTIMIZED by feedback loop — must NOT be overwritten\n"
-    # CCC（新 seed Agent，卷里缺失）按 seed 原始字节补全（存在性对账）
-    ccc = root / "data" / "business-agents" / "CCC" / "workspace" / "CLAUDE.md"
-    assert ccc.read_text(encoding="utf-8") == "CCC seed birth config\n"
-    # AAA 未出现在 copied（整个 workspace 被保护跳过）。
-    assert not any("business-agents/AAA/" in p for p in result["copied"])
+def _bootstrap_source(tmp_path: Path) -> Path:
+    root = tmp_path / "runtime-bootstrap"
+    _write(root / "governor-workspace" / "CLAUDE.md", "Governor\n")
+    _write(
+        root / "business-agents" / BUILTIN_AGENT_ID / "workspace" / "CLAUDE.md",
+        "Built-in birth configuration\n",
+    )
+    return root
+
+
+def test_bootstrap_preserves_existing_workspace_and_initializes_missing_builtin(tmp_path: Path) -> None:
+    source = _bootstrap_source(tmp_path)
+    runtime_root = tmp_path / "runtime"
+    existing = _write(
+        runtime_root / "data" / "business-agents" / BUILTIN_AGENT_ID / "workspace" / "CLAUDE.md",
+        "Optimized runtime configuration\n",
+    )
+
+    result = bootstrap_runtime_volume(runtime_root=runtime_root, bootstrap_dir=source)
+
+    assert existing.read_text(encoding="utf-8") == "Optimized runtime configuration\n"
+    assert existing.parent.as_posix() in result["skipped_existing"]
+
+    other_runtime = tmp_path / "other-runtime"
+    bootstrap_runtime_volume(runtime_root=other_runtime, bootstrap_dir=source)
+    initialized = other_runtime / "data" / "business-agents" / BUILTIN_AGENT_ID / "workspace" / "CLAUDE.md"
+    assert initialized.read_text(encoding="utf-8") == "Built-in birth configuration\n"

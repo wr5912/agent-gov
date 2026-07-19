@@ -26,12 +26,11 @@ def _settings() -> AppSettings:
 
 def test_governance_roles_are_single_source_of_truth() -> None:
     all_roles = set(get_args(AgentRole))
-    assert all_roles - {"main-agent", "business-agent"} == GOVERNANCE_AGENT_ROLES
-    assert GOVERNANCE_AGENT_ROLES.isdisjoint({"main-agent", "business-agent"})
+    assert all_roles - {"business-agent"} == GOVERNANCE_AGENT_ROLES
+    assert GOVERNANCE_AGENT_ROLES.isdisjoint({"business-agent"})
 
 
 def test_agent_categories_are_derived_from_role() -> None:
-    assert agent_category("main-agent") == "business"
     assert agent_category("business-agent") == "business"
     for role in GOVERNANCE_AGENT_ROLES:
         assert agent_category(role) == "governance"
@@ -66,11 +65,7 @@ def test_candidate_profile_keeps_runtime_name_separate_from_business_agent_owner
 
 
 def test_build_profiles_exposes_only_governance_profiles() -> None:
-    """静态 profile 只有治理执行者；业务 Agent（含 main-agent）不预制。
-
-    main-agent 曾是预制条目。它是可删除的普通业务 Agent，预制会让删除后仍能取到幽灵 profile。
-    业务 Agent 一律由磁盘发现与注册表提供。
-    """
+    """静态 profile 只有治理执行者；业务 Agent 一律由磁盘发现与注册表提供。"""
 
     profiles = build_profiles(_settings())
     assert "main-agent" not in profiles
@@ -80,7 +75,7 @@ def test_build_profiles_exposes_only_governance_profiles() -> None:
 
 def test_governor_workspace_owns_read_only_policy() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    path = repo_root / "docker/runtime-volume-seeds/governor-workspace/.claude/settings.json"
+    path = repo_root / "docker/runtime-bootstrap/governor-workspace/.claude/settings.json"
     policy = json.loads(path.read_text(encoding="utf-8"))
     permissions = policy["permissions"]
 

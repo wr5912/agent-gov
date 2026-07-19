@@ -14,7 +14,7 @@ from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, valid
 from app.runtime.errors import ConflictError, FeedbackStoreError
 from app.runtime.json_types import JsonObject
 from app.runtime.managed_agent_policy import ManagedAgentPolicyError, require_runtime_workspace_policy
-from app.runtime.records.eval_run_records import EvalRunProjectionRecord
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import (
     AgentChangeSetEventModel,
     AgentChangeSetModel,
@@ -23,7 +23,6 @@ from app.runtime.runtime_db import (
 )
 from app.runtime.runtime_db_base import begin_sqlite_write_transaction
 from app.runtime.state_machines import validate_transition
-from app.runtime.stores.feedback_eval_store import EvalRunReviewPlan
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_change_set_provisioner import (
     ChangeSetProvisionConflict,
@@ -39,7 +38,6 @@ from app.services.agent_governance_projections import (
     diff_summary,
     event_to_payload,
     release_to_payload,
-    safe_int,
 )
 from app.services.agent_publication import (
     PublicationFinalizationLost,
@@ -54,7 +52,6 @@ from app.services.agent_publication import (
 from app.services.agent_publication_finalization import finalize_publication_once
 from app.services.agent_publication_provenance import project_current_attribution
 from app.services.agent_ref_policy import build_ref_policy_validator
-from app.services.agent_regression import AgentRegressionMixin
 from app.services.agent_release_workflows import (
     publish_change_set,
     reconcile_release_operations,
@@ -65,9 +62,7 @@ from app.services.agent_version_maintenance import AgentVersionMaintenanceCoordi
 
 TERMINAL_CHANGE_SET_STATES = {"published", "rejected", "abandoned", "failed"}
 # pending_approval 不可直接发布：高风险变更必须先经 approve_change_set 转为 approved（AGV-041）。
-PUBLISHABLE_CHANGE_SET_STATES = {"candidate_committed", "approved", "regression_passed"}
-REGRESSION_BLOCKING_STATUSES = {"blocked", "review_required", "failed", "needs_human_review"}
-MAIN_AGENT_ID = "main-agent"
+PUBLISHABLE_CHANGE_SET_STATES = {"candidate_committed", "approved"}
 
 
 class AgentGovernanceError(FeedbackStoreError):
@@ -85,7 +80,7 @@ class AgentGovernanceError(FeedbackStoreError):
             self.error_code = "AGENT_GOVERNANCE_ERROR"
 
 
-class AgentGovernanceService(AgentRegressionMixin):
+class AgentGovernanceService:
     """Coordinates Git-backed Agent change sets, releases, and rollback."""
 
     def __init__(
@@ -107,6 +102,7 @@ class AgentGovernanceService(AgentRegressionMixin):
         # 业务 Agent 必须在注册表中存在才允许建/取其版本库，杜绝幽灵 Agent。
         # 由 app 装配后注入（None 则不校验，便于单测）。
         self.agent_exists: Callable[[str], bool] | None = None
+        self.latest_passed_test_run: Callable[[str, str], JsonObject | None] | None = None
 
     def evict_agent_store(self, agent_id: str) -> None:
         """丢弃某 Agent 的版本 store 缓存。
@@ -118,7 +114,7 @@ class AgentGovernanceService(AgentRegressionMixin):
         self._agent_stores.pop((agent_id or "").strip(), None)
 
     def _normalize_agent_id(self, agent_id: str | None) -> str:
-        normalized = (agent_id or MAIN_AGENT_ID).strip()
+        normalized = (agent_id or DEFAULT_BUSINESS_AGENT_ID).strip()
         try:
             return validate_agent_id(normalized)
         except InvalidAgentId as exc:
@@ -205,41 +201,6 @@ class AgentGovernanceService(AgentRegressionMixin):
             row = db.get(AgentChangeSetModel, change_set_id)
             return self._change_set_to_payload(row) if row else None
 
-    def _get_persisted_regression_eval_run(self, eval_run_id: str) -> JsonObject | None:
-        return self.feedback_store.get_eval_run(eval_run_id)
-
-    def _get_persisted_regression_eval_run_by_attempt(self, regression_attempt_id: str) -> JsonObject | None:
-        return self.feedback_store._get_eval_run_by_regression_attempt_id(regression_attempt_id)
-
-    def _plan_regression_review(
-        self,
-        eval_run_id: str,
-        *,
-        review_id: str,
-        operator: str,
-        reason: str,
-        scope: str,
-        items: list[JsonObject],
-    ) -> EvalRunReviewPlan:
-        return self.feedback_store.plan_eval_run_review(
-            eval_run_id,
-            review_id=review_id,
-            operator=operator,
-            reason=reason,
-            scope=scope,
-            items=items,
-        )
-
-    def _apply_regression_review(self, db: object, plan: EvalRunReviewPlan) -> None:
-        self.feedback_store.apply_eval_run_review(db, plan)
-
-    def validate_regression_dataset(self, *, change_set_id: str, dataset_id: str, candidate_commit_sha: str) -> None:
-        self.feedback_store.validate_regression_eval_dataset(
-            dataset_id=dataset_id,
-            change_set_id=change_set_id,
-            candidate_commit_sha=candidate_commit_sha,
-        )
-
     def list_change_set_events(self, change_set_id: str) -> list[JsonObject]:
         with self.feedback_store.Session() as db:
             rows = db.scalars(
@@ -297,9 +258,10 @@ class AgentGovernanceService(AgentRegressionMixin):
             raise AgentGovernanceError(404, "Agent change set not found")
         bound_candidate = str(change_set.get("candidate_commit_sha") or "")
         if bound_candidate:
-            if bound_candidate != candidate_commit_sha:
-                raise AgentGovernanceError(409, "Agent change set already owns a different candidate commit")
-            return change_set
+            if bound_candidate == candidate_commit_sha:
+                return change_set
+            if str(change_set.get("status") or "") in TERMINAL_CHANGE_SET_STATES | {"publishing"}:
+                raise AgentGovernanceError(409, "Published or terminal Agent change set cannot bind a newer candidate commit")
         bound_execution = str(change_set.get("execution_job_id") or "")
         if execution_job_id and bound_execution and bound_execution != execution_job_id:
             raise AgentGovernanceError(409, "Agent change set belongs to a different execution")
@@ -310,6 +272,8 @@ class AgentGovernanceService(AgentRegressionMixin):
             "execution_job_id": execution_job_id or change_set.get("execution_job_id"),
             "note": note or change_set.get("note"),
             "diff_summary": diff_summary(diff),
+            "latest_test_run_id": None,
+            "latest_test_run": None,
         }
         return self._transition_change_set(
             change_set_id,
@@ -570,6 +534,8 @@ class AgentGovernanceService(AgentRegressionMixin):
                 raise AgentGovernanceError(409, "Agent change set has no candidate commit")
             publication_blocker = self._publication_blocker_for_change_set(payload)
             self._validate_publication_start(row.status, publication_blocker=publication_blocker, force=force)
+            if force and not (note or "").strip():
+                raise AgentGovernanceError(422, "Force publication requires an explicit reason")
             existing_release = self._release_row_for_change_set(db, change_set_id)
             if existing_release and existing_release.commit_sha != candidate:
                 raise AgentGovernanceError(409, "Agent change set release metadata points to a different commit")
@@ -654,7 +620,7 @@ class AgentGovernanceService(AgentRegressionMixin):
     def _validate_publication_start(status: str, *, publication_blocker: str | None, force: bool) -> None:
         if publication_blocker and not force:
             raise AgentGovernanceError(409, publication_blocker)
-        if force and status not in (PUBLISHABLE_CHANGE_SET_STATES | {"regression_failed"}):
+        if force and status not in PUBLISHABLE_CHANGE_SET_STATES:
             raise AgentGovernanceError(409, f"Agent change set cannot be force-published from status {status}")
         if not force and status not in PUBLISHABLE_CHANGE_SET_STATES:
             raise AgentGovernanceError(409, f"Agent change set cannot be published from status {status}")
@@ -722,46 +688,32 @@ class AgentGovernanceService(AgentRegressionMixin):
             }
         )
         payload = project_current_attribution(self.feedback_store.Session, payload)
-        payload["publication_blocker"] = self._eval_run_publication_blocker(payload.get("latest_eval_run")) or payload.get("publication_provenance_blocker")
+        candidate = str(row.candidate_commit_sha or "")
+        passed_run = self._matching_passed_test_run(agent_id=str(row.agent_id), commit_sha=candidate)
+        payload["latest_test_run_id"] = passed_run.get("test_run_id") if passed_run else None
+        payload["latest_test_run"] = passed_run
+        payload["publication_blocker"] = payload.get("publication_provenance_blocker") or (
+            None if passed_run else "待发布版本缺少 commit_sha 完全匹配且通过的平台测试运行记录。"
+        )
         return payload
+
+    def _matching_passed_test_run(self, *, agent_id: str, commit_sha: str) -> JsonObject | None:
+        if not commit_sha or self.latest_passed_test_run is None:
+            return None
+        candidate = self.latest_passed_test_run(agent_id, commit_sha)
+        if not isinstance(candidate, dict):
+            return None
+        if (
+            str(candidate.get("agent_id") or "") != agent_id
+            or str(candidate.get("commit_sha") or "") != commit_sha
+            or str(candidate.get("status") or "") != "passed"
+        ):
+            return None
+        return candidate
 
     def _publication_blocker_for_change_set(self, change_set: JsonObject) -> str | None:
         blocker = change_set.get("publication_blocker")
-        return str(blocker) if blocker else self._eval_run_publication_blocker(change_set.get("latest_eval_run"))
-
-    @staticmethod
-    def _eval_run_publication_blocker(eval_run: object) -> str | None:
-        if not isinstance(eval_run, dict):
-            return None
-        try:
-            record = EvalRunProjectionRecord.model_validate(eval_run)
-        except ValueError:
-            record = None
-        if (
-            record is not None
-            and record.result_status == "passed_with_notes"
-            and record.gate_result.status == "passed_with_notes"
-            and record.gate_result.review_decision is not None
-        ):
-            return None
-        if record is not None and record.gate_result.review_decision is not None:
-            rejected_case_ids = record.gate_result.blocked_dataset_case_ids
-            if rejected_case_ids:
-                return f"回归验证存在失败用例（{len(rejected_case_ids)} 条用例经人工复核拒绝），禁止发布。请修复后重新运行回归并确认通过。"
-        failed_case_ids = [
-            str(item.get("dataset_case_id"))
-            for item in eval_run.get("items") or []
-            if isinstance(item, dict) and item.get("dataset_case_id") and str(item.get("status") or "") in {"failed", "needs_human_review"}
-        ]
-        summary = eval_run.get("summary") if isinstance(eval_run.get("summary"), dict) else {}
-        summary_failed = safe_int(summary.get("failed")) + safe_int(summary.get("needs_human_review"))
-        gate_result = eval_run.get("gate_result") if isinstance(eval_run.get("gate_result"), dict) else {}
-        status = str(eval_run.get("result_status") or gate_result.get("status") or "")
-        if not failed_case_ids and summary_failed <= 0 and status not in REGRESSION_BLOCKING_STATUSES:
-            return None
-        failed_count = len(failed_case_ids) or summary_failed
-        detail = f"{failed_count} 条用例失败" if failed_count else f"状态 {status}"
-        return f"回归验证存在失败用例（{detail}），禁止发布。请修复后重新运行回归并确认通过。"
+        return str(blocker) if blocker else None
 
     def change_set_worktree_path(self, change_set: JsonObject) -> Path:
         return Path(str(change_set.get("worktree_path") or ""))

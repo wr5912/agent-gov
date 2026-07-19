@@ -5,7 +5,7 @@ import type {
   ImprovementItem,
   NormalizedFeedback,
   OptimizationPlan,
-  RegressionAssessment,
+  RegressionTestDesign,
 } from "./api/improvements";
 import { hasAppliedExecution, hasUnboundExecutionRecord } from "./improvementExecutionState";
 import { describeImprovementStage } from "./improvementStage";
@@ -36,7 +36,7 @@ export interface ImprovementDecisionInputs {
   attribution: Attribution | null;
   optimizationPlan: OptimizationPlan | null;
   execution: ExecutionRecord | null;
-  regressionAssessment: RegressionAssessment | null;
+  regressionTestDesign: RegressionTestDesign | null;
   feedbacks: ImprovementFeedback[];
 }
 
@@ -48,9 +48,9 @@ export function deriveImprovementListDecisionLabel(item: ImprovementItem): strin
     case "attribution_analysis":
       return "生成优化方案";
     case "optimization_execution":
-      return item.improvement_stage === "execution" ? "生成回归方案" : "执行优化";
+      return item.improvement_stage === "execution" ? "生成回归测试" : "执行优化";
     case "test_release":
-      return item.improvement_stage === "release" ? "查看发布状态" : "生成回归方案";
+      return item.improvement_stage === "release" ? "查看发布状态" : "生成回归测试";
   }
 }
 
@@ -59,7 +59,7 @@ export function deriveImprovementPrimaryDecision({
   attribution,
   optimizationPlan,
   execution,
-  regressionAssessment,
+  regressionTestDesign,
   feedbacks,
 }: ImprovementDecisionInputs): ImprovementPrimaryDecision | null {
   if (item.improvement_status === "archived" || item.improvement_stage === "release") return null;
@@ -121,10 +121,10 @@ export function deriveImprovementPrimaryDecision({
       const staleExecution = hasUnboundExecutionRecord(execution);
       return decision("apply_execution", {
         label: "执行优化",
-        question: staleExecution ? "当前执行记录未绑定变更集，是否重新执行优化？" : "确认当前优化方案并执行优化？",
+        question: staleExecution ? "当前执行记录未绑定待发布变更，是否重新执行优化？" : "确认当前优化方案并执行优化？",
         summary: staleExecution
-          ? "点击后会确认方案，并让治理 Agent 在隔离变更集中重新执行，生成候选版本与可追溯 Diff。"
-          : "点击后会确认方案，并让治理 Agent 在隔离变更集中执行优化。",
+          ? "点击后会确认方案，并让治理 Agent 在隔离的待发布变更中重新执行，生成待发布版本与可追溯 Diff。"
+          : "点击后会确认方案，并让治理 Agent 在隔离的待发布变更中执行优化。",
         evidence: staleExecution ? "旧执行记录缺少 change_set_id / applied_diff" : optimizationPlan.status === "confirmed" ? "方案已确认" : "将隐式确认方案",
         score: 90,
         scoreLabel: "执行准备度",
@@ -133,9 +133,9 @@ export function deriveImprovementPrimaryDecision({
       });
     }
     return decision("generate_regression", {
-      label: "生成回归方案",
-      question: "基于执行结果生成回归方案？",
-      summary: "点击后会确认执行结果，并生成回归评估与候选用例；不会执行测试。",
+      label: "生成回归测试",
+      question: "基于执行结果生成可执行回归测试？",
+      summary: "点击后会确认执行结果，并生成完整 pytest 代码、测试意图和断言依据；不会写入 Workspace 或执行测试。",
       evidence: execution?.status === "confirmed" ? "执行已确认" : "将隐式确认执行",
       score: 88,
       scoreLabel: "方案准备度",
@@ -146,13 +146,13 @@ export function deriveImprovementPrimaryDecision({
 
   if (visibleKey === "test_release") {
     return decision("generate_regression", {
-      label: regressionAssessment ? "重新生成回归方案" : "生成回归方案",
-      question: regressionAssessment ? "根据当前执行结果重新生成回归方案？" : "根据当前执行结果生成回归方案？",
-      summary: "点击后会生成回归评估与候选用例，供后续测试执行；不会直接运行测试。",
-      evidence: regressionAssessment ? "已有回归方案，可重新生成" : "回归方案缺失",
+      label: regressionTestDesign ? "重新生成回归测试" : "生成回归测试",
+      question: regressionTestDesign ? "根据当前执行结果重新生成可执行回归测试？" : "根据当前执行结果生成可执行回归测试？",
+      summary: "点击后只生成完整 pytest 代码候选；确认待发布变更后写入 Workspace，测试仍需单独运行。",
+      evidence: regressionTestDesign ? "已有回归测试代码候选，可重新生成" : "回归测试代码候选缺失",
       score: 84,
       scoreLabel: "方案准备度",
-      level: regressionAssessment ? "可重新生成" : "待生成",
+      level: regressionTestDesign ? "可重新生成" : "待生成",
       icon: "✓",
     });
   }

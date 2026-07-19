@@ -96,22 +96,18 @@ Agent 行为证据：agent_id + per-Agent Git commit
 - Docker Compose 每次选择一份完整 env；不是 layered override。
 - 容器运行态根目录保持 `${HOME}/volume-agent-gov`。
 - 本机调试根目录保持 `/tmp/local-debug-volume-agent-gov`。
-- `docker/runtime-volume-seeds/` 是只读出生配置：随代码版本发布、可审计、可复现，容器内只读挂载，
-  不接受运行态写入。它回答的是「换一个空运行卷时平台自带什么」。
-- 运行卷内的 `data/seed-catalog/` 是运行态 seed catalog：由 bootstrap 从只读出生配置填充，可被在线
-  删除（留 `<id>.deleted` 标记使删除跨重启保持）。它回答的是「当前这套运行态里还有哪些 seed」。
-  业务 Agent 的出生与 origin 判定读 catalog，不读仓库——否则在线删除的 seed 会在每次重启复活。
-  受保护 Agent（配置与 seed 在仓库维护）例外：bootstrap 强制确保其 catalog 条目存在并清除删除标记。
-- 已有 live workspace 不被重启或部署回灌。
+- `docker/runtime-bootstrap/` 是只读运行卷初始化源：随代码版本发布、可审计、可复现，容器内只读
+  挂载，不接受运行态写入。当前只包含 governor Workspace 与内置
+  `security-operations-expert` Workspace。
+- 初始化只以“整个 Workspace 是否缺失”为条件；已存在的 live Workspace 不被重启、部署、receipt
+  变化或代码升级逐文件回灌。
+- 运行态不建立 `data/seed-catalog/`、删除标记或 `origin` 来源投影。普通业务 Agent 只通过 Workspace
+  包导入创建；删除后不会被初始化源复活。受保护业务 Agent 的在线删除由独立保护名单拒绝。
 - 本机调试结果不能冒充真实 Compose 或联调环境验收。
 
-**受控例外（catalog 常量双份）**：`scripts/bootstrap_runtime_volume.py` 必须能作为独立脚本运行——
-Dockerfile 只 COPY 它本身（不带 `app` 包），runtime-init 与 Makefile 都直接执行它。因此 catalog
-目录名、删除标记后缀和受保护 Agent 名单在该脚本与 `app/runtime/` 各存一份，违反单一真相源的字面
-要求。这是有意的：给该脚本加 `app.*` import 会让容器启动直接崩，而 pytest 因 rootdir 在 sys.path
-上仍然全绿——这个失败模式只有真实容器才暴露。两份常量由
-`tests/test_seed_catalog_bootstrap.py` 的一致性断言与独立运行子进程断言共同锁住；新增 catalog
-常量时必须同步两侧并扩这两条测试。
+内置、默认、受保护是三个独立属性；当前三个集合都只有 `security-operations-expert`，但不得用一个
+来源字段合并表达。`app/runtime/protected_business_agents.py` 是这些属性的代码真相源，初始化脚本直接
+引用其中的内置集合。`tests/test_runtime_bootstrap_tools.py` 负责验证初始化源与声明集合精确一致。
 
 ### 2.6 业务 Agent workspace 原样原则
 
@@ -127,37 +123,33 @@ live workspace 可以包含 `.env`、真实 endpoint、凭据型 header、数据
 本原则解决的是“平台是否应改写业务 Agent 自有资产”，不授权执行上传包中的代码，也不放宽
 运行时工具权限、网络权限或宿主机挂载边界。
 
-### 2.7 Repo template、声明 seed 与 builtin 准入
+### 2.7 运行卷初始化源、Workspace 包与内置准入
 
 “原样”必须说明复制方向，不能把不同对象混称为模板：
 
 | 对象与方向 | 稳定裁决 |
 | --- | --- |
-| generic template → live | 除明确的身份 token 外原样；generic template 采用保守出生权限，不绑定真实秘密或具体私有环境 |
-| repo 声明 seed/builtin → 运行态 seed catalog | bootstrap 按字节复制；已被在线删除（有删除标记）的条目跳过，使删除跨重启保持；受保护 Agent 强制确保存在并清标记 |
-| 运行态 seed catalog → live | 同 ID、跨 ID 都按字节和权限配置原样复制；generic template 的保守权限不得覆盖专用 seed |
-| 运行态 seed catalog 条目删除 | 随 Agent 删除一并移除并留删除标记；仓库出生配置不受影响，换新卷时该 seed 仍会重新出生 |
-| live workspace ↔ workspace 包/per-Agent Git | 原样往返，可含真实私有运行配置；按敏感资产保管 |
-| live workspace → repo seed/builtin | 先在项目仓库外生成逐字节候选，再执行仓库准入；不是无条件原样提交 |
+| `runtime-bootstrap` → 空运行卷 | 只初始化 governor 与声明的内置业务 Agent；目标 Workspace 整体存在即跳过 |
+| live Workspace ↔ Workspace 包/per-Agent Git | 原样往返，可含真实私有运行配置；按敏感运行资产保管 |
+| 内置 Workspace 导出包 → 新 Agent | 可作为修改起点并跨 ID 导入；平台不提供模板 catalog，也不覆盖导入包权限 |
+| live Workspace → `runtime-bootstrap` | 先在项目仓库外生成逐字节候选，再执行仓库准入；不是无条件原样提交 |
+| 在线删除普通业务 Agent | 删除完整运行态 Agent 根目录；重启不复活，不维护来源 catalog 或删除标记 |
 
 项目源码仓库的准入采用分级门，而不是对 live workspace 统一脱敏：
 
 - 明确 API key/token、凭据型 Authorization/MCP header、数据库密码、私钥、带凭据 URL、
   本机个人路径、`.env`/local override、运行态数据库、日志和 Claude 私有状态属于硬阻断；
-- 声明 seed 中不带凭据的真实 endpoint、IP、端口、内网域名以及宽权限属于可移植性或
-  能力风险，必须提示提交者复核，但不冒充泄密问题、不自动替换；generic template 仍须使用
-  可由部署环境解析的变量引用和保守出生权限；
+- 初始化源中不带凭据的真实 endpoint、IP、端口、内网域名以及宽权限属于可移植性或能力风险，
+  必须提示提交者复核，但不冒充泄密问题、不自动替换；
 - 扫描默认只读。只有用户明确选择替换时才能运行 sanitize，并必须复核 diff；
-- 通过仓库准入后的声明 seed 经 bootstrap 进入运行态 seed catalog，由 catalog 承担“原样实例化”的来源；
-  仓库准入仍是进入 catalog 的唯一入口，运行态只能删除 catalog 条目，不能绕过仓库新增一个 seed。
+- 通过仓库准入的初始化源只负责空运行卷初始化；普通业务 Agent 创建仍必须走 Workspace 包导入。
 
-业务 Agent 的删除权限由受保护名单显式裁决，不由 `origin` 派生：`origin` 只表达出生来源，会随
-catalog 内容漂移，把删除权限挂在它上面会让保护也跟着漂。受保护 Agent 的配置与 seed 在仓库维护，
-在线删除一律拒绝；其余业务 Agent（含出厂默认的 main-agent）都可删除，删除会清理其运行态目录与
-catalog 条目。
+业务 Agent 的删除权限由受保护名单显式裁决，不由 `origin` 或是否内置派生。当前
+`security-operations-expert` 在线删除一律拒绝；其余业务 Agent（含 `main-agent`）都可删除，删除会
+清理其完整运行态目录。内置与默认属性也分别派生，未来即使集合成员不同，也不得互相推断。
 
-若未来确实需要含真实秘密、仍须逐字节复用的 builtin，应设计 Git 仓库外的私有只读 catalog；
-不得通过放宽项目源码仓库边界实现。是否建设该 catalog 由真实使用需求触发，当前不预埋。
+若未来确实需要含真实秘密、仍须逐字节复用的内置 Workspace，应设计 Git 仓库外的私有只读
+初始化源；不得通过放宽项目源码仓库边界实现。是否建设由真实使用需求触发，当前不预埋。
 
 ## 3. 最小充分论证
 
@@ -207,8 +199,8 @@ gap，不能用文档把目标态冒充成当前事实。
 - ReleaseBundle、Cosign、SBOM/provenance 和外置信任锚；
 - Staging 到生产的制品晋级；
 - 蓝绿、PostgreSQL、PITR、RPO/RTO；
-- seed catalog 签名与恶意 env 重定向防护；
-- 仓库外私有 seed/builtin catalog；
+- 运行卷初始化源签名与恶意 env 重定向防护；
+- 仓库外私有内置 Workspace 初始化源；
 - AgentGov 产品内的通用协作 adapter；
 - 自动部署、自动生产发布和多方审批。
 

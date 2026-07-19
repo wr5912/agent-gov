@@ -6,27 +6,30 @@
 字段所有权：improvement / NormalizedFeedback / Feedback 为 backend-owned 输入（作为 prompt grounding，不要求 LLM 输出）；
 formatter 输出（rationale / responsibility_boundary / tasks 等）为 agent-owned。generated_by 为 boundary-owned 标注。
 
-离线/健壮性：governor 不可用或调用失败时回退到确定性启发式（与旧 `/generate` 同口径），保证 `/generate` 不依赖远程服务。
+回归测试代码不允许启发式伪造。治理模型不可用、输出不可执行或证据不足时，分别返回结构化错误或 no_action_reason。
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, TypedDict
 
 from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout
+from app.runtime.errors import RuntimeUnavailableError
 from app.runtime.json_types import JsonObject
 from app.runtime.stores.improvement_content_store import (
     AttributionRecord,
     ImprovementContentStore,
     NormalizedFeedbackRecord,
     OptimizationPlanRecord,
-    RegressionAssessmentRecord,
+    RegressionTestDesignRecord,
 )
 from app.runtime.stores.improvement_store import ImprovementStore
+from app.services.generated_agent_tests import build_generated_agent_test
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +44,11 @@ class OptimizationChangeItem(TypedDict):
     change: str
 
 
-class RegressionCaseItem(TypedDict):
-    prompt: str
-    expected_behavior: str
-    checkpoints: list[str]
+class RegressionTestItem(TypedDict):
+    target_path: str
+    test_code: str
+    test_intent: str
+    assertion_rationale: str
 
 
 class RegressionSourceCase(TypedDict):
@@ -75,13 +79,35 @@ def _contains_any_root(text: str, roots: list[str]) -> bool:
     return any(root and root in text for root in roots)
 
 
+_EXCLUSIVE_SCOPE_MARKERS = ("仅修改", "只修改", "仅更新", "只更新", "only modify", "only update")
+_EXPLICIT_WORKSPACE_PATH = re.compile(
+    r"(?:CLAUDE\.md|\.mcp\.json|\.claude/settings\.json|\.claude/skills/[^\s，。；:]+/SKILL\.md|\.claude/agents/[^\s，。；:]+\.md)",
+    re.IGNORECASE,
+)
+
+
+def _exclusive_feedback_targets(job_input: JsonObject) -> set[str]:
+    normalized = _json_dict(job_input.get("normalized_feedback"))
+    scope_text = "\n".join(_text(normalized.get(key)) for key in ("possible_object", "suggestion"))
+    if not any(marker in scope_text.casefold() for marker in _EXCLUSIVE_SCOPE_MARKERS):
+        return set()
+    return {Path(match).as_posix().casefold() for match in _EXPLICIT_WORKSPACE_PATH.findall(scope_text)}
+
+
+def _plan_target_allowed_by_exclusive_scope(target: str, allowed: set[str]) -> bool:
+    normalized = Path(target.strip().replace("\\", "/")).as_posix().casefold()
+    if normalized in {"prompt", "system_prompt"}:
+        normalized = "claude.md"
+    return any(path == normalized or path in normalized for path in allowed)
+
+
 def _requires_target_config_evidence(data: JsonObject) -> bool:
     problem_type = _text(data.get("problem_type"))
     optimization_object_type = _text(data.get("optimization_object_type"))
     actionability = _text(data.get("actionability"))
     return (
         problem_type in {"tool_misuse", "tool_unavailable", "instruction_gap", "skill_gap", "mcp_description_gap"}
-        or optimization_object_type in {"main_agent_claude_md", "skill", "subagent", "mcp_config", "mcp_description"}
+        or optimization_object_type in {"business_agent_claude_md", "skill", "subagent", "mcp_config", "mcp_description"}
         or actionability in {"direct_workspace_change", "workspace_config_change"}
     )
 
@@ -331,56 +357,55 @@ class ImprovementGovernorService:
             advance_to_stage=advance_to_stage,
         )
 
-    # ---- 回归保障评估（§11/§17.5）----
-    async def generate_regression_assessment(
+    # ---- 回归测试设计（§11/§17.5）----
+    async def generate_regression_test_design(
         self,
         improvement_id: str,
         *,
         advance_to_stage: str | None = None,
-    ) -> RegressionAssessmentRecord:
+    ) -> RegressionTestDesignRecord:
         item = self._improvements.get_improvement(improvement_id)
-        nf = self._content.get_normalized_feedback(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
         attr = self._content.get_attribution(improvement_id)
         plan = self._content.get_optimization_plan(improvement_id)
         source_cases = self._regression_source_cases(feedbacks)
-        summary, cases, thresholds, generated_by = self._heuristic_regression(nf, source_cases)
+        if self._run_profile_json is None:
+            raise RuntimeUnavailableError("回归测试代码生成需要可用的治理模型运行时。")
         trace_ref: dict[str, str] = {}
-        if self._run_profile_json is not None:
-            try:
-                output = await self._run_governor(
-                    AgentJobType.REGRESSION_ASSESSMENT,
-                    self._build_regression_input(item, source_cases, attr, plan),
-                    improvement_id,
-                    trace_ref=trace_ref,
-                )
-                governor_summary, governor_cases, thresholds = self._map_regression(
-                    output,
-                    summary,
-                    thresholds,
-                    [case["original_input"] for case in source_cases if case["original_input"]],
-                )
-                if governor_cases:
-                    summary, cases, generated_by = governor_summary, governor_cases, "governor"
-                elif cases:
-                    summary = f"回归保障候选（启发式）：{len(cases)} 条基于原始输入生成；治理 Agent 未生成可采纳用例。"
-                else:
-                    summary = governor_summary
-            except Exception as exc:  # noqa: BLE001 — governor 失败回退确定性；记录以便区分
-                logger.warning(
-                    "governor regression assessment failed; fallback=heuristic improvement_id=%s trace_id=%s error=%s",
-                    improvement_id,
-                    trace_ref.get("trace_id", ""),
-                    exc.__class__.__name__,
-                )
-        return self._content.upsert_regression_assessment(
+        try:
+            output = await self._run_governor(
+                AgentJobType.REGRESSION_TEST_DESIGN,
+                self._build_regression_input(item, source_cases, attr, plan),
+                improvement_id,
+                trace_ref=trace_ref,
+            )
+            summary, tests, no_action_reason = self._map_regression(output, improvement_id)
+        except Exception as exc:
+            logger.warning(
+                "governor regression test code generation failed improvement_id=%s trace_id=%s error=%s",
+                improvement_id,
+                trace_ref.get("trace_id", ""),
+                exc.__class__.__name__,
+            )
+            if isinstance(exc, RuntimeUnavailableError):
+                raise
+            raise RuntimeUnavailableError(
+                "治理 Agent 未能生成可执行的 pytest 测试代码。",
+                error_details={
+                    "improvement_id": improvement_id,
+                    "trace_id": trace_ref.get("trace_id", ""),
+                    "error_type": exc.__class__.__name__,
+                    "detail": str(exc),
+                },
+            ) from exc
+        return self._content.upsert_regression_test_design(
             improvement_id,
             summary=summary,
-            cases=cases,
-            suggested_gate_thresholds=thresholds,
-            generated_by=generated_by,
-            generation_trace_id=trace_ref.get("trace_id", "") if generated_by == "governor" else "",
-            generation_trace_url=trace_ref.get("trace_url", "") if generated_by == "governor" else "",
+            tests=tests,
+            no_action_reason=no_action_reason,
+            generated_by="governor",
+            generation_trace_id=trace_ref.get("trace_id", ""),
+            generation_trace_url=trace_ref.get("trace_url", ""),
             advance_to_stage=advance_to_stage,
         )
 
@@ -472,48 +497,27 @@ class ImprovementGovernorService:
 
     @staticmethod
     def _map_regression(
-        output: FormatterOutputModel, summary: str, thresholds: dict[str, str], source_prompts: list[str]
-    ) -> tuple[str, list[RegressionCaseItem], dict[str, str]]:
+        output: FormatterOutputModel,
+        improvement_id: str,
+    ) -> tuple[str, list[RegressionTestItem], str]:
         d = output.model_dump() if hasattr(output, "model_dump") else dict(output)
-        eval_cases = d.get("eval_cases") or []
-        mapped: list[RegressionCaseItem] = []
-        for index, c in enumerate(eval_cases):
-            if not isinstance(c, dict):
+        generated_tests = d.get("tests") or []
+        mapped: list[RegressionTestItem] = []
+        for index, item in enumerate(generated_tests, start=1):
+            if not isinstance(item, dict):
                 continue
-            prompt = source_prompts[min(index, len(source_prompts) - 1)] if source_prompts else ""
-            if not prompt:
-                continue
-            checks = c.get("checks_json") or {}
-            checkpoints = list(checks.values()) if isinstance(checks, dict) else []
-            mapped.append(
-                RegressionCaseItem(
-                    prompt=prompt,
-                    expected_behavior=_text(c.get("expected_behavior")),
-                    checkpoints=[str(x) for x in checkpoints][:6],
-                )
+            candidate = build_generated_agent_test(
+                improvement_id=improvement_id,
+                index=index,
+                test_code=_text(item.get("test_code")),
+                test_intent=_text(item.get("test_intent")),
+                assertion_rationale=_text(item.get("assertion_rationale")),
             )
-        gt = d.get("suggested_gate_thresholds")
-        new_thresholds = {str(k): _text(v) for k, v in gt.items() if _text(v)} if isinstance(gt, dict) and gt else thresholds
-        new_summary = (_text(d.get("no_action_reason")) or summary) if not mapped else f"治理 Agent 生成 {len(mapped)} 条回归用例候选。"
-        return new_summary, mapped, new_thresholds
-
-    @staticmethod
-    def _heuristic_regression(nf: Any, source_cases: list[RegressionSourceCase]) -> tuple[str, list[RegressionCaseItem], dict[str, str], str]:
-        problem = getattr(nf, "problem", "") if nf else "反馈问题"
-        cases = [
-            RegressionCaseItem(
-                prompt=source["original_input"],
-                expected_behavior=f"复测原始输入，回答应正确识别并避免重演：{problem}。",
-                checkpoints=["是否覆盖原始输入中的关键条件", "是否提示需核验数据源", "是否避免重复错误处置"],
-            )
-            for source in source_cases
-            if source["original_input"]
-        ]
-        # 发布门禁阈值：标准 SLA 默认（治理 Agent 可细化），非 mock。
-        thresholds = {"通过率": "≥95%", "新增严重问题": "0", "关键指标": "不劣于基线"}
-        if not cases:
-            return "回归保障候选缺少原始输入：未找到可复测的 run message 或反馈原文。", [], thresholds, "heuristic"
-        return f"回归保障候选（启发式）：{len(cases)} 条基于原始输入生成。", cases, thresholds, "heuristic"
+            mapped.append(RegressionTestItem(**candidate.to_payload()))
+        no_action_reason = _text(d.get("no_action_reason"))
+        if not mapped:
+            return no_action_reason or "治理 Agent 未生成可执行的 pytest 测试代码。", [], no_action_reason
+        return f"治理 Agent 生成 {len(mapped)} 个可执行 pytest 测试文件候选。", mapped, ""
 
     # ---- governor 调用 ----
     async def _run_governor(
@@ -558,7 +562,7 @@ class ImprovementGovernorService:
                 ],
             },
             "task": getattr(item, "title", ""),
-            "main_agent_version_id": agent_id,
+            "business_agent_id": agent_id,
             "target_agent_context": self._target_agent_context(agent_id),
         }
 
@@ -585,7 +589,7 @@ class ImprovementGovernorService:
                 "evidence": list(getattr(attr, "evidence", []) or []) if attr else [],
             },
             "task": getattr(item, "title", ""),
-            "main_agent_version_id": agent_id,
+            "business_agent_id": agent_id,
             "target_agent_context": self._target_agent_context(agent_id),
         }
 
@@ -631,6 +635,7 @@ class ImprovementGovernorService:
         target_context = _json_dict(job_input.get("target_agent_context"))
         allowed_roots = _string_list(target_context.get("allowed_evidence_roots"))
         forbidden_roots = _string_list(target_context.get("forbidden_evidence_roots"))
+        exclusive_targets = _exclusive_feedback_targets(job_input)
         if not allowed_roots and not forbidden_roots:
             return
 
@@ -648,6 +653,9 @@ class ImprovementGovernorService:
             absolute_targets = [_clean_token(part) for part in target_text.split() if _clean_token(part).startswith("/")]
             if absolute_targets and not any(_contains_any_root(part, allowed_roots) for part in absolute_targets):
                 raise _GuardRejection("optimization plan 的绝对路径 target 越出目标业务 Agent workspace")
+            target = _text(task.get("target")) or _text(task.get("target_type")) or _text(task.get("target_path")) or "prompt"
+            if exclusive_targets and not _plan_target_allowed_by_exclusive_scope(target, exclusive_targets):
+                raise _GuardRejection("optimization plan 扩大了 normalized feedback 明确限定的 Workspace 变更范围")
 
     @staticmethod
     def _map_attribution(

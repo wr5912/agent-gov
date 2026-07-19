@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.agent_testing.schemas import AgentTestRunResponse
+
 from .improvement_feedback_contract import FEEDBACK_CASE_ATTACH_ONLY_MESSAGE, has_feedback_case_semantics
 
 
@@ -152,24 +154,28 @@ class OptimizationPlanResponse(BaseModel):
     updated_at: str
 
 
-class RegressionCase(BaseModel):
-    prompt: str = Field(min_length=1, description="回归用例输入：原始用户输入文本，实际发给业务 Agent 的 prompt。")
-    expected_behavior: str = Field(default="", description="期望行为。")
-    checkpoints: list[str] = Field(default_factory=list, description="检查点。")
+class RegressionGeneratedTest(BaseModel):
+    target_path: str = Field(min_length=1, description="后端确定的 Workspace pytest 目标路径。")
+    test_code: str = Field(min_length=1, description="治理 Agent 生成的完整 pytest 模块代码。")
+    test_intent: str = Field(min_length=1, description="测试意图。")
+    assertion_rationale: str = Field(min_length=1, description="断言为何能验证修复效果。")
 
 
-class RegressionAssessmentResponse(BaseModel):
-    regression_assessment_id: str
+class RegressionTestDesignResponse(BaseModel):
+    regression_test_design_id: str
     improvement_id: str
     summary: str
-    cases: list[RegressionCase]
-    suggested_gate_thresholds: dict[str, str] = Field(default_factory=dict, description="建议发布门禁阈值（agent-owned）。")
+    tests: list[RegressionGeneratedTest]
+    no_action_reason: str = ""
     status: str
     generated_by: str = "heuristic"
     generation_trace_id: str = ""
     generation_trace_url: str = ""
     created_at: str
     updated_at: str
+    generated_test_files: list[str] = Field(default_factory=list)
+    candidate_commit_sha: str = ""
+    test_run: AgentTestRunResponse | None = None
 
 
 class ExecutionResponse(BaseModel):

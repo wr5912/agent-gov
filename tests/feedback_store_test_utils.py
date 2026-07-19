@@ -5,13 +5,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.improvement_db import ExecutionRecordModel
-from app.runtime.runtime_db import TestDatasetCaseModel, TestDatasetModel, utc_now
+from app.runtime.runtime_db import utc_now
 from app.runtime.schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
 from app.runtime.settings import AppSettings
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import advance_improvement_stage_in_transaction
+
+from business_agent_test_utils import create_test_business_agent_workspace
 
 
 def _settings(tmp_path):
@@ -28,10 +29,10 @@ def _settings(tmp_path):
         MODEL_PROVIDER_API_KEY="sk-test-provider",
         RUNTIME_VOLUME_MODE="local-debug",
     )
-    workspace = settings.main_workspace_dir
+    workspace = settings.default_workspace_dir
     workspace.mkdir(parents=True, exist_ok=True)
-    (settings.main_claude_root / ".claude").mkdir(parents=True, exist_ok=True)
-    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Test Agent")
+    (settings.default_claude_root / ".claude").mkdir(parents=True, exist_ok=True)
+    create_test_business_agent_workspace(workspace, agent_id="main-agent", name="Test Agent")
     (workspace / "CLAUDE.md").write_text("# Test Agent\n", encoding="utf-8")
     (workspace / ".mcp.json").write_text(
         json.dumps(
@@ -77,60 +78,6 @@ def _record_run(store: FeedbackStore):
             "completed_at": "2026-05-20T00:00:01+00:00",
         }
     )
-
-
-def _seed_test_dataset(
-    store: FeedbackStore,
-    *,
-    agent_id: str,
-    dataset_id: str,
-    candidate_agent_version_id: str | None = None,
-    source_improvement_id: str | None = None,
-    source_execution_id: str | None = None,
-) -> str:
-    now = utc_now()
-    with store.Session.begin() as db:
-        db.add(
-            TestDatasetModel(
-                dataset_id=dataset_id,
-                agent_id=agent_id,
-                owner_kind="business_agent",
-                owner_id=agent_id,
-                source_improvement_id=source_improvement_id or f"fixture-{dataset_id}",
-                name=f"Fixture {dataset_id}",
-                description="",
-                scope="test",
-                revision=1,
-                lifecycle_state="active",
-                source_regression_assessment_id=f"reg-{dataset_id}",
-                source_regression_assessment_updated_at=now,
-                source_normalized_feedback_id=f"nf-{dataset_id}",
-                source_normalized_feedback_updated_at=now,
-                source_attribution_id=f"attr-{dataset_id}",
-                source_attribution_updated_at=now,
-                source_optimization_plan_id=f"opt-{dataset_id}",
-                source_optimization_plan_updated_at=now,
-                source_execution_id=source_execution_id or f"exec-{dataset_id}",
-                source_execution_updated_at=now,
-                candidate_agent_version_id=candidate_agent_version_id or f"candidate-{dataset_id}",
-                source_feedback_ids_json=[],
-                quality_tags_json=[],
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        db.flush()
-        db.add(
-            TestDatasetCaseModel(
-                case_id=f"tdc-{dataset_id}",
-                dataset_id=dataset_id,
-                position=1,
-                prompt="验证 typed dataset 执行路径",
-                expected_behavior="返回非空且无运行错误的结果",
-                checkpoints_json=["输出非空"],
-            )
-        )
-    return dataset_id
 
 
 def _seed_execution_record(
@@ -198,7 +145,6 @@ __all__ = [
     "SocEventIngestRequest",
     "_record_run",
     "_seed_execution_record",
-    "_seed_test_dataset",
     "_settings",
     "_store",
     "pytest",

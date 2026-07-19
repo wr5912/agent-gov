@@ -8,10 +8,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SEEDS = REPO_ROOT / "docker" / "runtime-volume-seeds"
-GENERAL_WORKSPACE = SEEDS / "templates" / "business-agent" / "general"
-SEEDED_WORKSPACES = tuple(sorted((SEEDS / "data" / "business-agents").glob("*/workspace")))
-BUSINESS_WORKSPACES = (*SEEDED_WORKSPACES, GENERAL_WORKSPACE)
+BUSINESS_WORKSPACES = (REPO_ROOT / "docker" / "runtime-bootstrap" / "business-agents" / "security-operations-expert" / "workspace",)
 RISKY_COMMANDS = (
     "rm -rf /",
     "rm -rf /*",

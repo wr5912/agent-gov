@@ -64,8 +64,8 @@ jobs:
           }
           if any("\n" in value or "\r" in value for value in overrides.values()):
               raise SystemExit("container-live-acceptance secrets must be single-line values")
-          found: set[str] = set()
-          output: list[str] = []
+          found = set()
+          output = []
           for line in path.read_text(encoding="utf-8").splitlines():
               key = line.split("=", 1)[0]
               if key in overrides:

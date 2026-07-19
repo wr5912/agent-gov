@@ -8,7 +8,6 @@ from sqlalchemy.orm import sessionmaker
 from ..asset_db import AssetModel
 from ..errors import BusinessRuleViolation, NotFoundError
 from ..runtime_db import utc_now
-from .test_dataset_store import TestDatasetStore
 
 ASSET_TYPES = {"methodology", "execution", "audit"}
 
@@ -31,7 +30,6 @@ class AssetStore:
 
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory
-        self.test_datasets = TestDatasetStore(session_factory)
 
     def list_assets(
         self,

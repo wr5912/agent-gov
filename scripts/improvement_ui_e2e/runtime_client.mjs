@@ -27,12 +27,17 @@ export function runtimeConfigFromEnv() {
   if (!Number.isFinite(actionTimeoutMs) || actionTimeoutMs < 1000) {
     throw new Error("REAL_ACTION_TIMEOUT_MS must be a finite number of at least 1000 milliseconds");
   }
+  const testRunTimeoutMs = Number(process.env.REAL_TEST_RUN_TIMEOUT_MS || 900000);
+  if (!Number.isFinite(testRunTimeoutMs) || testRunTimeoutMs < 1000) {
+    throw new Error("REAL_TEST_RUN_TIMEOUT_MS must be a finite number of at least 1000 milliseconds");
+  }
   return {
     uiBase,
     apiBase,
     apiKey: String(process.env.RUNTIME_API_KEY || ""),
     screenshotDir,
     actionTimeoutMs,
+    testRunTimeoutMs,
   };
 }
 
@@ -78,13 +83,20 @@ const IMPROVEMENT_FIXTURES = {
     title: "多源证据冲突降级治理",
     summary: "多个权威来源对同一 IOC 给出冲突结论时，必须显式降级置信度并等待复核。",
     feedbackSummary: "多源证据冲突时仍输出高置信度结论",
-    rawText: "MCP 与本地知识库对同一 IOC 的结论相反，当前回答却静默选边并标记为高置信度。",
+    rawText: "可复现输入中，来源 A（MCP，2026-07-18T09:00:00Z）判定 IOC 203.0.113.10 为恶意，来源 B（本地知识库，2026-07-18T09:01:00Z）判定同一 IOC 为良性；当前回答却静默选择来源 A 并标记为高置信度。",
     scenario: "evidence-conflict",
     problem: "同一 IOC 的多个权威来源冲突时，Agent 未列出冲突并降级置信度",
     possibleReason: "根 CLAUDE.md 只要求追溯来源，尚未定义多源证据冲突时的决策规则",
     possibleObject: "目标业务 Agent 根 CLAUDE.md 的默认分析流程（不涉及 skill、settings 或 MCP 配置）",
     suggestion: "仅修改目标业务 Agent 根 CLAUDE.md：多源证据冲突时必须并列来源、采集时间和冲突值，未消解前降为低置信度且不得升级或执行高风险动作；不得静默选边，不涉及 skill、settings 或 MCP 配置",
-    userQuote: "两个权威来源结论相反，不能静默选边后仍给出高置信度。",
+    userQuote: "来源 A 判定恶意、来源 B 判定良性，不能静默选边后仍给出高置信度。",
+    authorizedTargetPaths: ["CLAUDE.md"],
+    requiredTestLiterals: ["来源A", "来源B", "低"],
+    requiredTestCodeFragments: [
+      '仅依据以下已给定事实回答，不调用任何工具或读取文件。',
+      'assert result.raw["agent_activity"]["tool_calls"] == []',
+      'normalized_text = "".join(result.text.split())',
+    ],
   },
   "pagination-integrity": {
     title: "分页证据完整性治理",
@@ -149,17 +161,31 @@ export async function seedBaseImprovement(config, fixtureName = "evidence-confli
     user_quote: fixture.userQuote,
   }));
   await apiJson(config, `/api/improvements/${item.improvement_id}/normalized-feedback/confirm`, jsonInit("POST", {}));
-  return { agent, feedback: feedbacks[0], feedbacks, item, stamp };
+  return {
+    agent,
+    authorizedTargetPaths: [...(fixture.authorizedTargetPaths || [])],
+    requiredTestLiterals: [...(fixture.requiredTestLiterals || [])],
+    requiredTestCodeFragments: [...(fixture.requiredTestCodeFragments || [])],
+    feedback: feedbacks[0],
+    feedbacks,
+    item,
+    stamp,
+  };
 }
 
-export async function assertHostileAdoptionRejected(config, improvementId) {
+export async function assertHostileTestRunRejected(config, agentId, commitSha) {
   const result = await apiRequest(
     config,
-    `/api/improvements/${improvementId}/test-dataset/adopt`,
-    jsonInit("POST", { dataset_id: "client-owned-is-forbidden" }),
+    "/api/agent-test-runs",
+    jsonInit("POST", {
+      agent_id: agentId,
+      commit_sha: commitSha,
+      command: ["python", "-c", "raise SystemExit(0)"],
+      status: "passed",
+    }),
   );
   if (result.status !== 422) {
-    throw new Error(`typed TestDataset adoption must reject client-owned fields with 422; got ${result.status}`);
+    throw new Error(`agent test run must reject client-owned command/result fields with 422; got ${result.status}`);
   }
   return { status: result.status, path: result.path };
 }

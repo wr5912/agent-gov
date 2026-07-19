@@ -1,0 +1,15 @@
+agent:
+  name: 治理智能体
+  version: 0.1.0
+  language: zh-CN
+  runtime: claude-code
+  profile: governor
+
+paths:
+  # 以下路径均以 governor workspace 为基准。
+  workspace: .
+  claude_home: ../claude-roots/governor/.claude
+  data_root: ../data
+
+outputs:
+  schema: per-job-type

@@ -3,18 +3,15 @@ from __future__ import annotations
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from threading import Event
 
 import pytest
-from app.runtime.agent_paths import business_agent_layout
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.agent_registry_db import AgentRegistryModel
-from app.runtime.business_agent_seed_catalog import declared_business_agent_ids
 from app.runtime.business_agent_workspace import (
-    WorkspaceSafetyError,
-    prepare_business_agent_workspace,
-    prepare_declared_business_agent_workspace,
+    WorkspaceProvisionEntry,
+    WorkspaceProvisionPlan,
 )
 from app.runtime.errors import ConflictError, NotFoundError
 from app.runtime.runtime_db import make_session_factory
@@ -23,14 +20,30 @@ from app.runtime.state_machines import StateTransitionError, validate_transition
 from app.runtime.stores.agent_registry_store import AgentProvisionReservation, AgentRegistryStore
 from app.services import business_agent_provisioning
 from app.services.business_agent_provisioning import provision_business_agent
-from fastapi.testclient import TestClient
-
-from test_api_execution_optimizer import _load_app
 
 
 def _store(tmp_path: Path) -> tuple[AgentRegistryStore, object]:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     return AgentRegistryStore(factory), factory
+
+
+def _plan(*entries: tuple[str, bytes]) -> WorkspaceProvisionPlan:
+    if not entries:
+        entries = (
+            ("CLAUDE.md", b"# SOC\n"),
+            (".mcp.json", b'{"mcpServers": {}}\n'),
+            (".claude/settings.json", b'{"permissions":{"ask":["Bash(*)"]}}\n'),
+        )
+    return WorkspaceProvisionPlan(
+        entries=tuple(
+            WorkspaceProvisionEntry(
+                relative_path=PurePosixPath(relative_path),
+                content=content,
+                mode=0o644,
+            )
+            for relative_path, content in entries
+        )
+    )
 
 
 def _provision(store: AgentRegistryStore, workspace: Path, *, agent_id: str = "soc-ops", name: str = "SOC"):
@@ -39,7 +52,7 @@ def _provision(store: AgentRegistryStore, workspace: Path, *, agent_id: str = "s
         agent_id=agent_id,
         name=name,
         workspace_dir=workspace,
-        template_id="general",
+        plan=_plan(),
     )
 
 
@@ -111,44 +124,6 @@ def test_success_finalizes_after_workspace_and_derives_hitl_from_settings(tmp_pa
     settings_path = workspace / ".claude" / "settings.json"
     settings_path.write_text('{"permissions":{"ask":[]}}\n', encoding="utf-8")
     assert store.get_agent("soc-ops").requires_web_hitl is False
-
-
-def test_post_and_list_derive_the_same_live_hitl_value(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
-    with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "SOC", "agent_id": "soc-ops"})
-        listed = {item["agent_id"]: item for item in client.get("/api/agent-registry").json()}
-        assert created.status_code == 201
-        assert created.json()["requires_web_hitl"] is True
-        assert listed["soc-ops"]["requires_web_hitl"] is True
-
-        settings_path = Path(created.json()["workspace_dir"]) / ".claude" / "settings.json"
-        settings_path.write_text('{"permissions":{"ask":[]}}\n', encoding="utf-8")
-        refreshed = {item["agent_id"]: item for item in client.get("/api/agent-registry").json()}
-        assert refreshed["soc-ops"]["requires_web_hitl"] is False
-
-
-def test_post_rejects_workspace_symlink_and_agent_never_becomes_runnable(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
-    workspace = business_agent_layout(module.settings.data_dir, "linked-agent").workspace
-    target = tmp_path / "external"
-    target.mkdir()
-    (target / "sentinel.txt").write_text("safe", encoding="utf-8")
-    workspace.parent.mkdir(parents=True)
-    workspace.symlink_to(target, target_is_directory=True)
-
-    with TestClient(module.app) as client:
-        created = client.post(
-            "/api/agent-registry",
-            json={"name": "Linked", "agent_id": "linked-agent"},
-        )
-        listed_ids = {item["agent_id"] for item in client.get("/api/agent-registry").json()}
-        chat = client.post("/api/chat", json={"message": "hi", "agent_id": "linked-agent"})
-
-    assert created.status_code == 409
-    assert "linked-agent" not in listed_ids
-    assert chat.status_code == 404
-    assert [path.name for path in target.iterdir()] == ["sentinel.txt"]
 
 
 def test_finalize_failure_rolls_back_new_workspace_and_deletes_new_row(monkeypatch, tmp_path: Path) -> None:
@@ -244,13 +219,7 @@ def test_workspace_symlink_fails_closed_without_touching_target(monkeypatch, tmp
         assert row is not None and row.deleted_at
 
 
-def test_workspace_intermediate_symlink_cannot_escape_template_publish(monkeypatch, tmp_path: Path) -> None:
-    template_root = tmp_path / "templates"
-    template_entry = template_root / "general" / "linked" / "nested" / "escaped.txt"
-    template_entry.parent.mkdir(parents=True)
-    template_entry.write_text("template-owned", encoding="utf-8")
-    monkeypatch.setenv("BUSINESS_AGENT_TEMPLATES_DIR", str(template_root))
-
+def test_workspace_intermediate_symlink_cannot_escape_package_publish(tmp_path: Path) -> None:
     store, factory = _store(tmp_path)
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
     outside = tmp_path / "external"
@@ -262,7 +231,13 @@ def test_workspace_intermediate_symlink_cannot_escape_template_publish(monkeypat
     (workspace / "linked").symlink_to(outside, target_is_directory=True)
 
     with pytest.raises(ConflictError):
-        _provision(store, workspace)
+        provision_business_agent(
+            store=store,
+            agent_id="soc-ops",
+            name="SOC",
+            workspace_dir=workspace,
+            plan=_plan(("linked/nested/escaped.txt", b"package-owned")),
+        )
 
     assert sentinel.read_text(encoding="utf-8") == "external-owner"
     assert not (outside_nested / "escaped.txt").exists()
@@ -330,77 +305,6 @@ def test_concurrent_same_agent_id_has_exactly_one_winner(monkeypatch, tmp_path: 
 
     assert winner.agent_id == "soc-ops"
     assert [record.agent_id for record in store.list_agents()] == ["soc-ops"]
-
-
-@pytest.mark.parametrize(
-    ("relative_path", "content"),
-    [
-        ("__pycache__/hook.pyc", "cache"),
-        (".claude/settings.json", "not-json"),
-    ],
-)
-def test_template_preflight_rejects_cache_and_invalid_json(
-    monkeypatch,
-    tmp_path: Path,
-    relative_path: str,
-    content: str,
-) -> None:
-    root = tmp_path / "templates"
-    template = root / "general"
-    target = template / relative_path
-    target.parent.mkdir(parents=True)
-    target.write_text(content, encoding="utf-8")
-    monkeypatch.setenv("BUSINESS_AGENT_TEMPLATES_DIR", str(root))
-
-    with pytest.raises(WorkspaceSafetyError):
-        prepare_business_agent_workspace(agent_id="soc-ops", name="SOC", template_id="general")
-
-
-def test_template_preflight_rejects_symlink(monkeypatch, tmp_path: Path) -> None:
-    root = tmp_path / "templates"
-    template = root / "general"
-    template.mkdir(parents=True)
-    outside = tmp_path / "outside.txt"
-    outside.write_text("secret", encoding="utf-8")
-    (template / "CLAUDE.md").symlink_to(outside)
-    monkeypatch.setenv("BUSINESS_AGENT_TEMPLATES_DIR", str(root))
-
-    with pytest.raises(WorkspaceSafetyError):
-        prepare_business_agent_workspace(agent_id="soc-ops", name="SOC", template_id="general")
-
-
-def test_declared_seed_cross_id_plan_preserves_all_file_bytes(monkeypatch, tmp_path: Path) -> None:
-    # 这里只验证 catalog -> live 的原样复制；repo 准入分级由 runtime_template_safety 专项测试覆盖。
-    seed_root = tmp_path / "seeds"
-    workspace = seed_root / "data" / "business-agents" / "source-agent" / "workspace"
-    workspace.mkdir(parents=True)
-    (workspace / "CLAUDE.md").write_bytes(b"# {{AGENT_ID}}\n")
-    (workspace / ".mcp.json").write_bytes(b'{"mcpServers":{"live":{"type":"http","url":"http://live.internal/mcp"}}}\n')
-    (workspace / "asset.bin").write_bytes(b"\x00\xfflive-workspace")
-    (workspace / "README.md").write_bytes(b"workspace-owned readme\n")
-    monkeypatch.setenv("RUNTIME_VOLUME_SEEDS_DIR", str(seed_root))
-
-    plan = prepare_declared_business_agent_workspace(
-        source_agent_id="source-agent",
-    )
-
-    assert plan is not None
-    assert plan.template_id == "declared:source-agent"
-    entries = {entry.relative_path.as_posix(): entry.content for entry in plan.entries}
-    assert entries == {
-        ".mcp.json": b'{"mcpServers":{"live":{"type":"http","url":"http://live.internal/mcp"}}}\n',
-        "CLAUDE.md": b"# {{AGENT_ID}}\n",
-        "README.md": b"workspace-owned readme\n",
-        "asset.bin": b"\x00\xfflive-workspace",
-    }
-
-
-def test_declared_seed_catalog_filters_invalid_agent_directory_names(tmp_path: Path) -> None:
-    seed_root = tmp_path / "seeds"
-    for agent_id in ("valid-agent", "invalid agent", "bad@id"):
-        (seed_root / "data" / "business-agents" / agent_id / "workspace").mkdir(parents=True)
-
-    assert declared_business_agent_ids(seed_root=seed_root) == frozenset({"valid-agent"})
 
 
 def test_startup_recovery_restores_tombstone_and_hides_new_orphan(tmp_path: Path) -> None:

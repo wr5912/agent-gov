@@ -20,9 +20,13 @@ def test_case_state_machine_rejects_review_to_pending_evidence():
         validate_transition("case", "pending_review", "pending_evidence")
 
 
-def test_eval_run_state_machine_rejects_completed_to_failed():
-    with pytest.raises(StateTransitionError, match="completed -> failed"):
-        validate_transition("eval_run", "completed", "failed")
+def test_agent_test_run_state_machine_has_terminal_results():
+    validate_transition("agent_test_run", "queued", "running")
+    validate_transition("agent_test_run", "queued", "cancelled")
+    for terminal in ("passed", "failed", "error", "cancelled", "interrupted"):
+        validate_transition("agent_test_run", "running", terminal)
+        with pytest.raises(StateTransitionError, match=f"{terminal} -> running"):
+            validate_transition("agent_test_run", terminal, "running")
 
 
 def test_pending_correlation_state_machine_rejects_resolved_to_pending():
@@ -33,23 +37,11 @@ def test_pending_correlation_state_machine_rejects_resolved_to_pending():
 
 def test_agent_change_set_state_machine_allows_current_publish_lifecycle():
     validate_transition("agent_change_set", "draft", "candidate_committed")
-    validate_transition("agent_change_set", "candidate_committed", "regression_running")
-    validate_transition("agent_change_set", "regression_running", "regression_review_required")
-    validate_transition("agent_change_set", "regression_review_required", "regression_passed")
-    validate_transition("agent_change_set", "regression_review_required", "regression_failed")
-    validate_transition("agent_change_set", "regression_running", "regression_passed")
-    validate_transition("agent_change_set", "regression_passed", "publishing")
+    validate_transition("agent_change_set", "candidate_committed", "publishing")
     validate_transition("agent_change_set", "publishing", "published")
     validate_transition("agent_change_set", "publishing", "candidate_committed")
-    with pytest.raises(StateTransitionError, match="regression_passed -> published"):
-        validate_transition("agent_change_set", "regression_passed", "published")
-
-
-def test_test_dataset_uses_central_lifecycle_state_machine():
-    validate_transition("test_dataset", "draft", "active")
-    validate_transition("test_dataset", "active", "evaluating")
-    with pytest.raises(StateTransitionError, match="active -> draft"):
-        validate_transition("test_dataset", "active", "draft")
+    with pytest.raises(StateTransitionError, match="candidate_committed -> published"):
+        validate_transition("agent_change_set", "candidate_committed", "published")
 
 
 def test_improvement_stage_state_machine_allows_four_stage_flow_with_refinement_edges():

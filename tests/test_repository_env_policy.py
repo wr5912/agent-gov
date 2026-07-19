@@ -19,6 +19,7 @@ RUNTIME_ENV_KEYS = (
     "DATA_DIR",
     "DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS",
     "GOVERNANCE_AGENT_TIMEOUT_SECONDS",
+    "AGENT_TEST_RUN_TIMEOUT_SECONDS",
     "HITL_TIMEOUT_SECONDS",
     "LOG_LEVEL",
     "MODEL_PROVIDER_API_KEY",
@@ -80,7 +81,7 @@ CONTAINER_ONLY_ENV_KEYS = {
     "LANGFUSE_TELEMETRY_ENABLED",
     "LANGFUSE_WEB_IMAGE",
     "LANGFUSE_WORKER_IMAGE",
-    "RUNTIME_VOLUME_SEEDS_HOST_DIR",
+    "RUNTIME_BOOTSTRAP_HOST_DIR",
 }
 
 
@@ -164,15 +165,15 @@ def test_tracked_text_files_do_not_commit_private_debug_port_family() -> None:
     assert offenders == []
 
 
-def test_dockerfile_installs_claude_code_sandbox_dependencies_when_seed_sandbox_enabled() -> None:
-    business_agents_dir = REPO_ROOT / "docker/runtime-volume-seeds/data/business-agents"
+def test_dockerfile_installs_claude_code_sandbox_dependencies_when_builtin_sandbox_enabled() -> None:
+    business_agents_dir = REPO_ROOT / "docker/runtime-bootstrap/business-agents"
     settings_files = sorted(business_agents_dir.glob("*/workspace/.claude/settings.json"))
     sandbox_enabled = False
     for path in settings_files:
         text = path.read_text(encoding="utf-8")
         sandbox_enabled = sandbox_enabled or ('"sandbox"' in text and '"enabled": true' in text)
 
-    assert sandbox_enabled, "The runtime workspace seeds are expected to keep Claude Code sandbox enabled."
+    assert sandbox_enabled, "The built-in runtime Workspace is expected to keep Claude Code sandbox enabled."
 
     packages = _dockerfile_apt_packages(REPO_ROOT / "docker/Dockerfile")
 
@@ -234,7 +235,7 @@ def test_clean_checkout_compose_config_uses_the_one_selected_env_file(
     environment = {
         **os.environ,
         "AGENT_GOV_COMPOSE_ENV_FILE": str(selected_env),
-        "RUNTIME_VOLUME_SEEDS_HOST_DIR": str(REPO_ROOT / "docker/runtime-volume-seeds"),
+        "RUNTIME_BOOTSTRAP_HOST_DIR": str(REPO_ROOT / "docker/runtime-bootstrap"),
     }
     result = subprocess.run(
         [
@@ -472,15 +473,15 @@ def test_litellm_sidecar_does_not_receive_full_runtime_env_file() -> None:
     assert "\n      API_KEY:" not in sidecar
 
 
-def test_runtime_volume_seeds_are_bound_read_only_for_api() -> None:
+def test_runtime_bootstrap_source_is_bound_read_only_for_api() -> None:
     compose = (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
     api = compose.split("  claude-agent-api:", 1)[1].split("\n  claude-agent-ui:", 1)[0]
 
-    assert "source: ${RUNTIME_VOLUME_SEEDS_HOST_DIR:-./runtime-volume-seeds}" in compose
-    assert "target: /app/docker/runtime-volume-seeds" in compose
+    assert "source: ${RUNTIME_BOOTSTRAP_HOST_DIR:-./runtime-bootstrap}" in compose
+    assert "target: /app/docker/runtime-bootstrap" in compose
     assert "read_only: true" in compose
     assert "create_host_path: false" in compose
-    assert "- *runtime-volume-seeds" in api
+    assert "- *runtime-bootstrap" in api
 
 
 def test_compose_healthcheck_uses_local_liveness_without_provider_dependency() -> None:

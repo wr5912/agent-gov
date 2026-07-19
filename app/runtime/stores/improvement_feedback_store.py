@@ -17,6 +17,7 @@ from ..improvement_feedback_contract import (
     FEEDBACK_CASE_SOURCE,
     has_feedback_case_semantics,
 )
+from ..protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from ..runtime_db import utc_now
 
 
@@ -44,7 +45,7 @@ class ImprovementFeedbackStoreMixin:
         self,
         improvement_id: str,
         *,
-        agent_id: str = "main-agent",
+        agent_id: str = DEFAULT_BUSINESS_AGENT_ID,
         summary: str,
         source: str = "playground_run",
         status: str = "merged",

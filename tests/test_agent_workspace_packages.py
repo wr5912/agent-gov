@@ -11,7 +11,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 
 import pytest
-from app.runtime.business_agent_seed_catalog import declared_business_agent_workspace, runtime_seed_catalog_dir
 from app.runtime.runtime_db import SessionTurnIntentModel
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSession
@@ -34,6 +33,27 @@ def _workspace_package(files: dict[str, bytes], *, executable: frozenset[str] = 
             member.mode = 0o755 if path in executable else 0o644
             archive.addfile(member, io.BytesIO(content))
     return buffer.getvalue()
+
+
+def _import_new_agent(
+    client: TestClient,
+    *,
+    agent_id: str,
+    name: str,
+    package: bytes | None = None,
+):
+    content = package or _workspace_package(
+        {
+            "CLAUDE.md": f"# {name}\n".encode(),
+            ".mcp.json": b'{"mcpServers": {}}\n',
+            ".claude/settings.json": b'{"permissions":{"ask":["Bash(*)"]}}\n',
+        }
+    )
+    return client.post(
+        f"/api/agent-registry/{agent_id}/workspace/import",
+        data={"name": name},
+        files={"package": (f"{agent_id}.tar.gz", content, "application/gzip")},
+    )
 
 
 def _package_from_workspace(workspace: Path, *, overrides: dict[str, bytes]) -> bytes:
@@ -202,42 +222,26 @@ def _package_with_sparse_pax() -> bytes:
     return buffer.getvalue()
 
 
-def test_cross_id_seed_creation_copies_bytes_and_rejects_ambiguous_source(monkeypatch, tmp_path: Path) -> None:
+def test_builtin_workspace_package_can_create_a_new_agent_without_identity_rewrite(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
+    source = Path(__file__).resolve().parents[1] / "docker" / "runtime-bootstrap" / "business-agents" / "security-operations-expert" / "workspace"
+    package = _package_from_workspace(source, overrides={})
     with TestClient(module.app) as client:
-        catalog = client.get("/api/agent-registry/templates")
-        ambiguous = client.post(
-            "/api/agent-registry",
-            json={
-                "name": "ambiguous",
-                "agent_id": "ambiguous",
-                "template_id": "general",
-                "source_seed_id": "security-operations-expert",
-            },
-        )
-        created = client.post(
-            "/api/agent-registry",
-            json={
-                "name": "SOC derived agent",
-                "agent_id": "security-operations-derived",
-                "source_seed_id": "security-operations-expert",
-            },
+        created = _import_new_agent(
+            client,
+            agent_id="security-operations-derived",
+            name="SOC derived agent",
+            package=package,
         )
 
-    assert catalog.status_code == 200
-    assert "security-operations-expert" in catalog.json()["seed_agent_ids"]
-    assert ambiguous.status_code == 422
-    assert created.status_code == 201
-    assert created.json()["agent_id"] == "security-operations-derived"
-    assert created.json()["status"] == "active"
-    assert created.json()["requires_web_hitl"] is True
-    target = Path(created.json()["workspace_dir"])
-    # 实例化源是运行态 seed catalog，不是仓库出生配置——已被在线删除的 seed 不应还能实例化，
-    # 因此这里必须显式传 catalog root，否则比的是一份该 Agent 根本没读过的字节。
-    source = declared_business_agent_workspace(
-        "security-operations-expert",
-        seed_root=runtime_seed_catalog_dir(module.settings.data_dir),
-    )
+    assert created.status_code == 200
+    assert created.json()["action"] == "created"
+    assert created.json()["agent"]["agent_id"] == "security-operations-derived"
+    assert created.json()["agent"]["status"] == "active"
+    assert created.json()["test_suite_status"] == "ready"
+    assert created.json()["test_file_count"] == 2
+    assert created.json()["import_record_id"].startswith("awi-")
+    target = Path(created.json()["agent"]["workspace_dir"])
     source_files = {path.relative_to(source).as_posix(): path for path in source.rglob("*") if path.is_file()}
     target_files = {path.relative_to(target).as_posix(): path for path in target.rglob("*") if path.is_file() and ".git" not in path.relative_to(target).parts}
     assert set(target_files) == set(source_files)
@@ -250,8 +254,8 @@ def test_cross_id_seed_creation_copies_bytes_and_rejects_ambiguous_source(monkey
 def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "source", "agent_id": "source"})
-        source = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="source", name="source")
+        source = Path(created.json()["agent"]["workspace_dir"])
         binary = b"\x00\x01endpoint=http://real.internal:9080\n"
         (source / "payload.bin").write_bytes(binary)
         script = source / "hooks" / "raw-tool"
@@ -299,6 +303,9 @@ def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(mo
     body = imported.json()
     assert body["action"] == "created"
     assert body["activation_mode"] == "next_turn"
+    assert body["test_suite_status"] == "warning"
+    assert body["test_file_count"] == 0
+    assert {item["code"] for item in body["test_suite_warnings"]} == {"AGENT_TESTS_DIRECTORY_MISSING"}
     target = Path(body["agent"]["workspace_dir"])
     assert (target / "payload.bin").read_bytes() == binary
     assert (target / ".env").read_bytes() == b"REAL_ENDPOINT=http://real.internal:9080\nTOKEN=workspace-owned\n"
@@ -314,8 +321,8 @@ def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(mo
 def test_workspace_export_restores_exec_tracking_when_existing_git_disabled_filemode(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "filemode", "agent_id": "filemode"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="filemode", name="filemode")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         client.get("/api/agent-repository/current?agent_id=filemode")
         script = workspace / "hooks" / "tracked-tool"
         script.parent.mkdir(parents=True, exist_ok=True)
@@ -355,8 +362,8 @@ def test_workspace_export_reads_many_large_blobs_with_one_batch_process(monkeypa
 
     monkeypatch.setattr(workspace_codec.subprocess, "Popen", counted_popen)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "batch export", "agent_id": "batch-export"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="batch-export", name="batch export")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         for index in range(20):
             workspace.joinpath(f"blob-{index:02d}.bin").write_bytes(bytes([index]) * (96 * 1024 + index))
         exported = client.post("/api/agent-registry/batch-export/workspace/export")
@@ -439,8 +446,8 @@ def test_workspace_overwrite_requires_cas_and_restore_creates_new_commit(monkeyp
     module = _load_app(monkeypatch, tmp_path)
     package = _workspace_package({"CLAUDE.md": b"# replacement\n", "binary.bin": b"\x00raw"})
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "target", "agent_id": "target"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="target", name="target")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline_text = (workspace / "CLAUDE.md").read_bytes()
         (workspace / ".gitignore").write_bytes(b"*.secret\n")
         (workspace / "stale.secret").write_bytes(b"must-be-deleted-by-replacement\n")
@@ -491,8 +498,8 @@ def test_workspace_overwrite_requires_cas_and_restore_creates_new_commit(monkeyp
 def test_workspace_import_invalidates_sdk_resume_and_next_turn_reads_applied_commit(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "session target", "agent_id": "session-target"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="session-target", name="session target")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=session-target").json()["commit_sha"]
         session = LocalSession(
             session_id="existing-api-session",
@@ -553,11 +560,8 @@ def test_runtime_admission_holds_version_snapshot_stable_against_workspace_impor
     allow_version_resolver = threading.Event()
     import_lease_requested = threading.Event()
     with TestClient(module.app) as client:
-        created = client.post(
-            "/api/agent-registry",
-            json={"name": "admission race", "agent_id": "admission-race"},
-        )
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="admission-race", name="admission race")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=admission-race").json()["commit_sha"]
         package = _package_from_workspace(
             workspace,
@@ -640,8 +644,8 @@ def test_runtime_admission_holds_version_snapshot_stable_against_workspace_impor
 def test_workspace_import_rejects_active_first_turn_without_changing_head(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "active turn", "agent_id": "active-turn"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="active-turn", name="active turn")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
         baseline = client.get("/api/agent-repository/current?agent_id=active-turn").json()["commit_sha"]
         session = module.session_store.get_or_create_owned("active-first-turn", agent_id="active-turn")
@@ -673,8 +677,8 @@ def test_workspace_import_rejects_active_first_turn_without_changing_head(monkey
 def test_workspace_restore_rejects_historical_non_regular_tree_without_changing_head(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "restore-guard", "agent_id": "restore-guard"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="restore-guard", name="restore guard")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=restore-guard").json()["commit_sha"]
         (workspace / "unsafe-link").symlink_to("CLAUDE.md")
         _run_git(workspace, "add", "-A", "--", ".")
@@ -701,8 +705,8 @@ def test_workspace_restore_rejects_historical_non_regular_tree_without_changing_
 def test_workspace_restore_projects_size_and_session_invalidation_failures_without_changing_head(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "restore failures", "agent_id": "restore-failures"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="restore-failures", name="restore failures")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
         baseline = client.get("/api/agent-repository/current?agent_id=restore-failures").json()["commit_sha"]
 

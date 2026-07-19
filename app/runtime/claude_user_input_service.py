@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from app.runtime.agent_paths import InvalidAgentId, validate_agent_id
 from app.runtime.claude_user_input_schemas import ClaudeUserInputDecisionRequest
 from app.runtime.json_types import JsonObject
 from app.runtime.message_utils import to_plain
@@ -40,11 +41,7 @@ _BASH_ALLOWED_STDERR_REDIRECTS = {"2>/dev/null", "2>&1"}
 _BASH_FALLBACK_COMMANDS = {"echo", "true"}
 _BASH_READ_ONLY_COMMANDS = {"cat", "find", "grep", "head", "ls", "sed", "wc"}
 _BASH_DANGEROUS_FIND_ARGS = {"-delete", "-exec", "-execdir", "-fls", "-fprint", "-fprintf", "-ok", "-okdir"}
-_BASH_SAFE_ABSOLUTE_READ_ROOTS = (
-    "/data/business-agents/main-agent/workspace",
-    "/data/outputs",
-    "/data/reports",
-)
+_BASH_SAFE_SHARED_READ_ROOTS = ("/data/outputs", "/data/reports")
 _BASH_UNSAFE_RELATIVE_READ_PREFIXES = (".env", "secrets", "./.env", "./secrets")
 _BASH_UNSAFE_COMMAND_MARKERS = ("\n", "\r", "`", "$")
 
@@ -127,7 +124,12 @@ class ClaudeUserInputService:
         loop = asyncio.get_running_loop()
         raw_input = json_object(input_data)
         context_json = json_object(context)
-        low_risk_category = _low_risk_run_allow_category(tool_name, request_type, raw_input)
+        low_risk_category = _low_risk_run_allow_category(
+            tool_name,
+            request_type,
+            raw_input,
+            business_agent_id=business_agent_id,
+        )
         if request_type == "tool_permission" and low_risk_category is not None and self._has_run_grant(business_agent_id, run_id, low_risk_category):
             return SdkUserInputDecision(action="allow_once")
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=self._timeout_seconds)).isoformat()
@@ -328,7 +330,13 @@ def _optional_str(value: Any) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def _low_risk_run_allow_category(tool_name: str, request_type: str, input_data: JsonObject) -> str | None:
+def _low_risk_run_allow_category(
+    tool_name: str,
+    request_type: str,
+    input_data: JsonObject,
+    *,
+    business_agent_id: str,
+) -> str | None:
     if request_type != "tool_permission":
         return None
     if tool_name in {"Read", "Glob", "Grep", "Skill"}:
@@ -336,7 +344,7 @@ def _low_risk_run_allow_category(tool_name: str, request_type: str, input_data: 
     if tool_name == "Write" and _is_report_output_path(_tool_input_path(input_data)):
         return "report_write"
     if tool_name == "Bash":
-        return _bash_run_allow_category(input_data)
+        return _bash_run_allow_category(input_data, business_agent_id=business_agent_id)
     if _is_read_only_mcp_tool(tool_name):
         return "mcp_read"
     return None
@@ -363,7 +371,7 @@ def _normalized_absolute_path(path: str | None) -> str | None:
     return posixpath.normpath(path)
 
 
-def _bash_run_allow_category(input_data: JsonObject) -> str | None:
+def _bash_run_allow_category(input_data: JsonObject, *, business_agent_id: str) -> str | None:
     command = input_data.get("command")
     if not isinstance(command, str) or not command.strip():
         return None
@@ -385,7 +393,7 @@ def _bash_run_allow_category(input_data: JsonObject) -> str | None:
         return "bash_template_read"
     if executable == "mkdir" and args[:1] == ["-p"] and args[1:] and all(_is_report_output_path(arg) for arg in args[1:]):
         return "bash_report_dir"
-    if _is_safe_read_only_bash(parts):
+    if _is_safe_read_only_bash(parts, business_agent_id=business_agent_id):
         return "bash_read_only"
     return None
 
@@ -402,7 +410,7 @@ def _is_read_only_mcp_tool(tool_name: str) -> bool:
     return not any(part in lowered for part in _MCP_MUTATION_PARTS)
 
 
-def _is_safe_read_only_bash(parts: list[str]) -> bool:
+def _is_safe_read_only_bash(parts: list[str], *, business_agent_id: str) -> bool:
     segments = _split_safe_bash_segments(parts)
     if segments is None:
         return False
@@ -414,7 +422,7 @@ def _is_safe_read_only_bash(parts: list[str]) -> bool:
             if not _is_safe_fallback_segment(segment):
                 return False
             continue
-        if not _is_read_only_segment(segment):
+        if not _is_read_only_segment(segment, business_agent_id=business_agent_id):
             return False
     return True
 
@@ -456,7 +464,7 @@ def _is_safe_fallback_segment(segment: list[str]) -> bool:
     return bool(segment) and segment[0] in _BASH_FALLBACK_COMMANDS
 
 
-def _is_read_only_segment(segment: list[str]) -> bool:
+def _is_read_only_segment(segment: list[str], *, business_agent_id: str) -> bool:
     if not segment:
         return False
     executable, *args = segment
@@ -468,16 +476,16 @@ def _is_read_only_segment(segment: list[str]) -> bool:
         return False
     if executable == "sed" and any(arg == "-i" or arg.startswith("--in-place") for arg in args):
         return False
-    return all(_is_safe_read_only_arg(arg) for arg in args)
+    return all(_is_safe_read_only_arg(arg, business_agent_id=business_agent_id) for arg in args)
 
 
-def _is_safe_read_only_arg(arg: str) -> bool:
+def _is_safe_read_only_arg(arg: str, *, business_agent_id: str) -> bool:
     if arg.startswith("-") or arg.isdigit():
         return True
     if arg in {"f", "d", "l"}:
         return True
     if _is_path_like_token(arg):
-        return _is_safe_read_path(arg)
+        return _is_safe_read_path(arg, business_agent_id=business_agent_id)
     return True
 
 
@@ -485,14 +493,15 @@ def _is_path_like_token(value: str) -> bool:
     return value in {".", ".."} or value.startswith(("/", "./", "../", "~")) or "/" in value
 
 
-def _is_safe_read_path(path: str) -> bool:
+def _is_safe_read_path(path: str, *, business_agent_id: str) -> bool:
     if path.startswith("~"):
         return False
     normalized = posixpath.normpath(path)
     if normalized == ".." or normalized.startswith("../"):
         return False
     if path.startswith("/"):
-        for root in _BASH_SAFE_ABSOLUTE_READ_ROOTS:
+        roots = (*_BASH_SAFE_SHARED_READ_ROOTS, _business_agent_workspace_root(business_agent_id))
+        for root in (candidate for candidate in roots if candidate is not None):
             if normalized != root and not normalized.startswith(f"{root}/"):
                 continue
             if root.endswith("/workspace"):
@@ -502,6 +511,14 @@ def _is_safe_read_path(path: str) -> bool:
         return False
     relative = normalized[2:] if normalized.startswith("./") else normalized
     return _is_safe_relative_read_path(relative)
+
+
+def _business_agent_workspace_root(agent_id: str) -> str | None:
+    try:
+        normalized = validate_agent_id(agent_id)
+    except InvalidAgentId:
+        return None
+    return f"/data/business-agents/{normalized}/workspace"
 
 
 def _is_safe_relative_read_path(relative: str) -> bool:

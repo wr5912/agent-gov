@@ -427,4 +427,7 @@ def release_payload(
         "archive_sha256": archive.get("sha256"),
         "note": intent.note,
         "operator": intent.operator,
+        "force_published": intent.force,
+        "force_publication_blocker": intent.force_publication_blocker if intent.force else None,
+        "force_publish_reason": intent.note if intent.force else None,
     }

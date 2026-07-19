@@ -222,6 +222,36 @@ def test_git_store_resets_and_removes_abandoned_worktree(tmp_path):
     assert not store._git(["show-ref", "--verify", "refs/heads/change-set/agc-cleanup-test"], cwd=repo, check=False).strip()
 
 
+def test_git_store_squashes_configuration_and_tests_into_one_commit_over_base(tmp_path):
+    repo = tmp_path / "workspace"
+    repo.mkdir()
+    repo.joinpath("CLAUDE.md").write_text("base\n", encoding="utf-8")
+    store = GitAgentVersionStore(
+        repository_dir=repo,
+        worktrees_dir=tmp_path / "worktrees",
+        releases_dir=tmp_path / "releases",
+    )
+    base = str(store.ensure_bootstrap()["agent_version_id"])
+    worktree = store.create_worktree("agc-squash-test", base_ref=base)
+    worktree.worktree_path.joinpath("CLAUDE.md").write_text("optimized\n", encoding="utf-8")
+    intermediate = store.commit_worktree(worktree.worktree_path, message="configuration candidate")
+    tests_dir = worktree.worktree_path / "tests"
+    tests_dir.mkdir()
+    tests_dir.joinpath("test_feedback.py").write_text("def test_feedback():\n    assert 2 == 2\n", encoding="utf-8")
+
+    candidate = store.commit_squashed_worktree(
+        worktree.worktree_path,
+        base_ref=base,
+        message="configuration and regression tests",
+    )
+
+    assert candidate != intermediate
+    assert store._git(["rev-parse", f"{candidate}^"], cwd=repo).strip() == base
+    assert store._git(["rev-list", "--count", f"{base}..{candidate}"], cwd=repo).strip() == "1"
+    assert _git_bytes(repo, "show", f"{candidate}:CLAUDE.md") == b"optimized\n"
+    assert _git_bytes(repo, "show", f"{candidate}:tests/test_feedback.py") == b"def test_feedback():\n    assert 2 == 2\n"
+
+
 def test_existing_tag_does_not_bypass_clean_workspace_or_fast_forward(tmp_path):
     repo = tmp_path / "workspace"
     repo.mkdir()

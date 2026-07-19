@@ -113,11 +113,32 @@
   border-bottom: 0;
 }
 
-.settings-workspace-agent-row > span {
+.settings-workspace-agent-main {
   min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.settings-workspace-agent-main > span {
   display: flex;
   align-items: baseline;
   gap: 8px;
+}
+
+.settings-workspace-agent-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-workspace-agent-status.is-error,
+.settings-workspace-agent-status .is-warning,
+.settings-workspace-receipt .is-warning {
+  color: #b45309;
 }
 
 .settings-workspace-agent-row strong {

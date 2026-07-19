@@ -3,21 +3,22 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 
-def main_profile_resolver(settings: Any) -> Any:
-    """最小 business profile resolver，把任意 agent_id 解析到 main workspace。
 
-    runtime 不再持有预制 main profile——main 是可删除的普通业务 Agent，profile 一律由 resolver
-    从注册表解析（生产装配见 main.py）。用例测的是 SDK/session/HITL 语义，profile 只是载体，
-    因此这里直接构造，不引入注册表依赖。
+def default_profile_resolver(settings: Any) -> Any:
+    """最小 business profile resolver，把任意 agent_id 解析到默认测试 workspace。
+
+    profile 一律由 resolver 从注册表解析（生产装配见 main.py）。用例只验证 SDK/session/HITL
+    语义，profile 是测试载体，因此这里直接构造，不引入注册表依赖。
     """
 
     from app.runtime.agent_profiles import build_business_agent_profile
 
     return lambda agent_id: build_business_agent_profile(
         settings,
-        agent_id=agent_id or "main-agent",
-        workspace_dir=settings.main_workspace_dir,
+        agent_id=agent_id or DEFAULT_BUSINESS_AGENT_ID,
+        workspace_dir=settings.default_workspace_dir,
     )
 
 

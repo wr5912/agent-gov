@@ -11,7 +11,6 @@ from app.runtime.runtime_db import EvidenceFileModel, EvidencePackageModel
 from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
 
-
 EvidencePackageSchemaVersion = Literal["evidence-package/v1"]
 
 
@@ -91,7 +90,7 @@ class EvidenceCompletenessRecord(StrictRuntimeRecord):
     has_mcp_connection_summary: bool = False
     has_runtime_env_snapshot: bool = False
     has_workspace_placeholder_summary: bool = False
-    has_main_agent_version: bool = False
+    has_business_agent_version: bool = False
     has_messages: bool = False
     has_agent_activity: bool = False
     has_langfuse_trace_refs: bool = False
@@ -106,14 +105,14 @@ class EvidencePackageRecord(StrictRuntimeRecord):
     feedback_case_id: str
     created_at: str
     created_by: str
-    main_agent_version_id: Optional[str] = None
+    business_agent_version_id: Optional[str] = None
     source_refs: EvidenceSourceRefsRecord
     included_files: list[EvidenceIncludedFileRecord] = Field(default_factory=list)
     redaction: EvidenceRedactionRecord
     completeness: EvidenceCompletenessRecord
 
     @model_validator(mode="after")
-    def validate_manifest_shape(self) -> "EvidencePackageRecord":
+    def validate_manifest_shape(self) -> EvidencePackageRecord:
         if not self.evidence_package_id.strip():
             raise ValueError("evidence_package_id cannot be empty")
         if not self.feedback_case_id.strip():
@@ -131,7 +130,7 @@ class EvidencePackageRecord(StrictRuntimeRecord):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_row(cls, row: EvidencePackageModel) -> "EvidencePackageRecord":
+    def from_row(cls, row: EvidencePackageModel) -> EvidencePackageRecord:
         payload = dict(row.manifest_json or {})
         payload.update(
             {
@@ -162,7 +161,7 @@ class EvidencePackageFileRecord(StrictRuntimeRecord):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_row(cls, row: EvidenceFileModel) -> "EvidencePackageFileRecord":
+    def from_row(cls, row: EvidenceFileModel) -> EvidencePackageFileRecord:
         return cls.model_validate(
             {
                 "evidence_package_id": row.evidence_package_id,

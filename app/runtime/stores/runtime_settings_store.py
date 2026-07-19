@@ -8,7 +8,7 @@ from ..json_types import JsonObject
 from ..runtime_db import RuntimeSettingModel, utc_now
 
 # /v1/chat/completions（OpenAI 兼容入口）跑哪个 Agent，由运营者经设置 API 配置；
-# 未配置时由 /v1 走 main agent。该值是 backend-owned 运行时配置。
+# 未配置时由调用方选择 DEFAULT_BUSINESS_AGENT_ID。该值是 backend-owned 运行时配置。
 OPENAI_COMPAT_AGENT_KEY = "openai_compat_agent_id"
 
 
@@ -26,8 +26,8 @@ class RuntimeSettingsStore:
         """The explicitly-configured /v1 出口 Agent id.
 
         Returns ``None`` only when the operator has **never** configured it (no row): that is a
-        distinct state from an explicit ``"main-agent"`` choice, even though both run main. The
-        caller derives the effective agent as ``configured or MAIN_AGENT_PROFILE``.
+        distinct state from an explicit Agent choice. The caller derives the effective Agent from
+        ``configured or DEFAULT_BUSINESS_AGENT_ID``.
         """
         value = self._get(OPENAI_COMPAT_AGENT_KEY)
         agent_id = value.get("agent_id") if isinstance(value, dict) else None
@@ -38,7 +38,7 @@ class RuntimeSettingsStore:
         self._set(OPENAI_COMPAT_AGENT_KEY, {"agent_id": agent_id})
 
     def clear_openai_compat_agent_id(self) -> bool:
-        """Reset to unconfigured (back to the implicit main default). Returns True if a row existed."""
+        """Reset to unconfigured (back to the platform default). Returns True if a row existed."""
         return self._delete(OPENAI_COMPAT_AGENT_KEY)
 
     def _get(self, key: str) -> Optional[JsonObject]:

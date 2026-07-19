@@ -65,7 +65,6 @@ class AgentJobRecord(StrictRuntimeRecord):
     evidence_package_id: Optional[str] = None
     attribution_job_id: Optional[str] = None
     improvement_id: Optional[str] = None
-    eval_run_id: Optional[str] = None
     compensations: list[JsonObject] = Field(default_factory=list)
 
     @field_validator("status")
@@ -123,7 +122,6 @@ class AgentJobRecord(StrictRuntimeRecord):
             "evidence_package_id",
             "attribution_job_id",
             "improvement_id",
-            "eval_run_id",
         ):
             if input_json.get(key) is not None:
                 payload[key] = input_json.get(key)
@@ -194,5 +192,4 @@ class AgentJobProjectionRecord(StrictRuntimeRecord):
     evidence_package_id: Optional[str] = None
     attribution_job_id: Optional[str] = None
     improvement_id: Optional[str] = None
-    eval_run_id: Optional[str] = None
     compensations: list[JsonObject] = Field(default_factory=list)

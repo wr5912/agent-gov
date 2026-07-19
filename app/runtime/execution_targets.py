@@ -31,7 +31,7 @@ class WorkspaceExecutionTargetPolicy:
 
     def policy_json(self) -> dict[str, object]:
         return {
-            "type": "main_workspace_managed_full_with_excludes",
+            "type": "business_agent_workspace_managed_full_with_excludes",
             "workspace_root": str(self.workspace_dir),
             "excluded_names": sorted(WORKSPACE_EXCLUDED_NAMES),
             "excluded_patterns": list(WORKSPACE_EXCLUDED_PATTERNS),

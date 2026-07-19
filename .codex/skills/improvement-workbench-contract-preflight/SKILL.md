@@ -37,7 +37,7 @@ description: "当整改 AgentGov 四阶段改进治理工作台、反馈闭环 U
 
 ## 字段所有权
 
-- backend-owned：改进事项 ID、业务 Agent ID、source feedback refs、run/session/task/case IDs、真实用户输入、status/stage、change_set_id、applied_agent_version_id、applied_diff、Langfuse browser URL、候选版本绑定、时间戳和 provenance。
+- backend-owned：改进事项 ID、业务 Agent ID、source feedback refs、run/session/task/case IDs、真实用户输入、status/stage、change_set_id、applied_agent_version_id、applied_diff、Langfuse browser URL、待发布版本绑定、时间戳和 provenance。
 - agent-owned：归因摘要、证据解释、优化方案正文、业务假设、风险说明、预期输出、检查点、回滚建议和验证语义。
 - boundary-owned：HTTP response、SQLite JSON、文件 diff、日志、Langfuse metadata 和浏览器链接。
 
@@ -49,10 +49,12 @@ description: "当整改 AgentGov 四阶段改进治理工作台、反馈闭环 U
 
 ## 动作与状态
 
-- 决策卡只承载当前主业务动作，例如生成归因分析、生成优化方案、执行优化、执行回归测试。
+- 决策卡只承载当前主业务动作，例如生成归因分析、生成优化方案、执行优化、生成回归测试。
+- 测试发布严格区分“生成回归测试”“确认待发布变更”“运行测试”：生成只产生完整新增文件 Diff，
+  确认只形成配置与测试同一待发布 commit，运行才创建平台测试记录；三个动作不得互相隐式触发。
 - 状态推进只能作为业务动作副作用；不得把 `/lifecycle` 当作主动作验收。
 - 阶段卡主职责是展示对应业务产物；浏览详情、查看 Diff、查看 Trace、查看日志等入口下沉到面板或抽屉。
-- fallback/no-action 是一等状态：没有候选版本、变更集或文件 diff 时，文案必须说明“未生成/未绑定/需执行优化”，不能写成已应用成功。
+- fallback/no-action 是一等状态：没有待发布版本、变更集或文件 diff 时，文案必须说明“未生成/未绑定/需执行优化”，不能写成已应用成功。
 - “重新生成优化方案”只保留一个当前主入口；如果决策卡已经提供，A 优化方案卡不得重复提供。
 
 ## 容器归属
@@ -65,15 +67,15 @@ description: "当整改 AgentGov 四阶段改进治理工作台、反馈闭环 U
 | B Diff / 变更预览 | 变更摘要、文件列表、可展开 unified diff | 方案确认按钮、执行记录 |
 | C 执行计划 | 执行对象、风险、步骤、执行准备状态 | 已执行结果 |
 | D 回滚方案 | 当前/目标版本、回滚策略、步骤 | Diff 正文、测试用例详情 |
-| E 执行记录 | 执行摘要、应用来源、候选版本/变更集绑定、已应用变更 | 优化方案正文的重复编辑入口 |
+| E 执行记录 | 执行摘要、应用来源、待发布版本/变更集绑定、已应用变更 | 优化方案正文的重复编辑入口 |
 
 测试发布阶段默认归属：
 
-- 测试数据集卡展示数据集和资产关系。
-- 回归执行卡展示 run 和执行状态。
-- 测试用例详情卡展示名称、原始输入、期望输出和检查点。
-- 执行环境 / 基线卡展示 baseline/candidate/environment。
-- 发布门禁预览卡展示 gate、阻断和发布风险。
+- Workspace 测试文件卡展示可执行文件、数量和精确提交。
+- 平台测试运行卡展示 run、执行状态、日志和 invocation trace。
+- 测试代码详情卡展示后端确定的目标路径、完整 pytest 代码、测试意图和断言依据。
+- 版本范围卡展示修复前版本、待发布版本和执行环境。
+- 发布条件预览卡展示条件、阻断项和发布风险。
 
 ## 验证要求
 
@@ -84,6 +86,7 @@ description: "当整改 AgentGov 四阶段改进治理工作台、反馈闭环 U
 - A 优化方案卡不包含“变更项”、Diff 或执行记录。
 - Diff 抽屉在有 `change_set_id` 和文件路径时能展示 unified diff。
 - 测试用例输入不包含“复现场景：”类生成描述。
+- 测试生成失败时不出现启发式伪造测试，确认动作不自动创建测试运行。
 - Langfuse 浏览器链接不含容器内 host，且包含具体 `/project/.../traces/...` URI。
 
 影响主流程、UI tab 状态、API response 或 coverage manifest 时，运行 `make main-flow-test`；仅 docs/skill 改动按项目 docs/skill 治理命令验证。

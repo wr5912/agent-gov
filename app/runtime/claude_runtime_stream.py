@@ -139,13 +139,6 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject
                 finally:
                     await close_async_iterator(source)
     await asyncio.to_thread(runtime._flush_langfuse)
-    if stream_run.final_output is not None:
-        await asyncio.to_thread(
-            runtime._sync_langfuse_trace,
-            context,
-            stream_run.propagation,
-            stream_run.final_output,
-        )
 
 
 def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObject | None]) -> Any:
@@ -328,6 +321,24 @@ async def _publish_result_event(
     )
 
 
+async def _publish_missing_result_error(
+    stream_run: StreamRun,
+    event_queue: asyncio.Queue[JsonObject | None],
+) -> None:
+    missing_result_error = stream_run.runtime._ensure_query_terminal_error(stream_run.query_state)
+    if missing_result_error is None:
+        return
+    await event_queue.put(
+        {
+            "event": "error",
+            "data": {
+                "error_code": "STREAM_TERMINATED_WITHOUT_RESULT",
+                "errors": list(stream_run.query_state.errors),
+            },
+        }
+    )
+
+
 async def _run_sdk_query(
     stream_run: StreamRun,
     event_queue: asyncio.Queue[JsonObject | None],
@@ -350,6 +361,7 @@ async def _run_sdk_query(
         if stream_run.finalized:
             return
         stream_run.finalized = True
+        await _publish_missing_result_error(stream_run, event_queue)
         try:
             await _complete_stream_run(stream_run, root_span, generation)
         except Exception as exc:
@@ -437,18 +449,17 @@ def _abort_stream_run(
         return
     if stream_run.turn_heartbeat is not None:
         stream_run.turn_heartbeat.stop()
-    answer, _, output = stream_run.runtime._runtime_output_from_state(
-        stream_run.req,
-        stream_run.request_context,
-        stream_run.query_state,
-    )
-    stream_run.final_output = output
     stream_run.runtime._abort_runtime_request(
         stream_run.req,
         stream_run.request_context,
         stream_run.query_state,
         terminal_status=terminal_status,
         error=error,
+    )
+    _, _, stream_run.final_output = stream_run.runtime._runtime_output_from_state(
+        stream_run.req,
+        stream_run.request_context,
+        stream_run.query_state,
     )
     stream_run.persisted = True
 
@@ -473,7 +484,7 @@ def _complete_stream_run_sync(
         _abort_stream_run(
             stream_run,
             terminal_status="failed",
-            error=(stream_run.query_state.mirror_errors[-1] if stream_run.query_state.mirror_errors else "SDK query ended without ResultMessage"),
+            error=(stream_run.query_state.mirror_errors[-1] if stream_run.query_state.mirror_errors else stream_run.query_state.errors[-1]),
         )
     runtime._update_runtime_observations(
         root_span,
@@ -482,6 +493,12 @@ def _complete_stream_run_sync(
         stream_run.query_state,
         stream_run.final_output or {},
         stream_run.propagation,
+    )
+    # trace 顶层字段必须在 done 前提交；客户端收到 done 后即可断开，不能把关键观测写入留在流尾。
+    runtime._sync_langfuse_trace(
+        stream_run.request_context,
+        stream_run.propagation,
+        stream_run.final_output or {},
     )
     if runtime.user_input_service is not None:
         runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)

@@ -154,10 +154,35 @@ def check_latest_trace(env: Mapping[str, str], langfuse_url: str) -> list[str]:
         )
 
     names = {str(item.get("name") or "") for item in observations}
+    error_observation_names = {
+        str(item.get("name") or "")
+        for item in observations
+        if str(item.get("level") or "").upper() == "ERROR"
+    }
     trace_name = str(runtime_trace.get("name") or "")
     print(f"Langfuse latest runtime trace: {trace_id} ({trace_name})")
     print(f"  observations={len(observations)}")
 
+    errors = runtime_trace_observation_errors(
+        trace_id=str(trace_id),
+        trace_name=trace_name,
+        names=names,
+        error_observation_names=error_observation_names,
+    )
+    if trace.get("input") is None:
+        errors.append(f"trace {trace_id} is missing root input")
+    if trace.get("output") is None:
+        errors.append(f"trace {trace_id} is missing root output")
+    return errors
+
+
+def runtime_trace_observation_errors(
+    *,
+    trace_id: str,
+    trace_name: str,
+    names: set[str],
+    error_observation_names: set[str] | frozenset[str] = frozenset(),
+) -> list[str]:
     errors: list[str] = []
     if trace_name.startswith("runtime.output_formatter."):
         errors.append(f"trace {trace_id} is named after formatter child span instead of runtime root")
@@ -165,12 +190,20 @@ def check_latest_trace(env: Mapping[str, str], langfuse_url: str) -> list[str]:
         errors.append(f"trace {trace_id} does not include a runtime root observation")
     if trace_name.startswith("runtime.governor.") and trace_name not in names:
         errors.append(f"governor trace {trace_id} is missing matching root observation {trace_name}")
-    if not any(name.startswith("claude_code.") for name in names):
-        errors.append(f"trace {trace_id} does not include Claude Code observations")
-    if trace.get("input") is None:
-        errors.append(f"trace {trace_id} is missing root input")
-    if trace.get("output") is None:
-        errors.append(f"trace {trace_id} is missing root output")
+    if trace_name.startswith("runtime.governor."):
+        if not any(name.startswith("sdk.tool.") for name in names):
+            errors.append(f"governor trace {trace_id} does not include projected SDK tool observations")
+        if not any(name.startswith("sdk.llm.") for name in names):
+            errors.append(f"governor trace {trace_id} does not include projected SDK LLM observations")
+        if any(name.startswith("claude_code.") for name in names):
+            errors.append(f"governor trace {trace_id} includes duplicate Claude Code native observations")
+        if error_observation_names:
+            errors.append(
+                f"governor trace {trace_id} includes error observations: "
+                + ", ".join(sorted(error_observation_names))
+            )
+    elif not any(name.startswith(("sdk.tool.", "sdk.llm.", "claude_code.")) for name in names):
+        errors.append(f"trace {trace_id} does not include Agent SDK or Claude Code observations")
     return errors
 
 

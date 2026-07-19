@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from app.runtime.errors import FeedbackStoreError
@@ -10,6 +11,7 @@ from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
 # 写入结构化配置文件的安全护栏回调：(target_path, new_bytes, original_bytes) -> None，违规抛错。
 ContentGuard = Callable[..., None]
 WorkspaceGuard = Callable[[Path], None]
+MIN_MARKDOWN_RETAINED_LINE_RATIO = 0.5
 
 
 class WorkspaceExecutionApplyError(FeedbackStoreError):
@@ -98,8 +100,29 @@ class WorkspaceExecutionApplier:
                 raise WorkspaceExecutionApplyError(f"{op} operation requires content: {target_path}")
             if op == "create_file" and original is not None:
                 raise WorkspaceExecutionApplyError(f"create_file target already exists: {target_path}")
-            return content.encode("utf-8")
+            data = content.encode("utf-8")
+            if op == "replace_file" and original is not None:
+                self._guard_markdown_replacement(target_path, original=original, replacement=data)
+            return data
         raise WorkspaceExecutionApplyError(f"Unsupported operation: {op}")
+
+    @staticmethod
+    def _guard_markdown_replacement(target_path: str, *, original: bytes, replacement: bytes) -> None:
+        if not target_path.casefold().endswith(".md"):
+            return
+        try:
+            original_lines = [line.strip() for line in original.decode("utf-8").splitlines() if line.strip()]
+            replacement_lines = [line.strip() for line in replacement.decode("utf-8").splitlines() if line.strip()]
+        except UnicodeDecodeError as exc:
+            raise WorkspaceExecutionApplyError(f"replace_file Markdown target is not UTF-8 text: {target_path}") from exc
+        if len(original_lines) < 8:
+            return
+        retained_lines = sum(block.size for block in SequenceMatcher(None, original_lines, replacement_lines).get_matching_blocks())
+        retained_ratio = retained_lines / len(original_lines)
+        if retained_ratio < MIN_MARKDOWN_RETAINED_LINE_RATIO:
+            raise WorkspaceExecutionApplyError(
+                f"replace_file would discard too much existing Markdown content: {target_path} (retained_line_ratio={retained_ratio:.2f})"
+            )
 
     def _write_with_rollback(
         self,

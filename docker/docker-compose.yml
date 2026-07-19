@@ -56,10 +56,10 @@ x-logging: &default-logging
     max-size: "50m"
     max-file: "5"
 
-x-runtime-volume-seeds: &runtime-volume-seeds
+x-runtime-bootstrap: &runtime-bootstrap
   type: bind
-  source: ${RUNTIME_VOLUME_SEEDS_HOST_DIR:-./runtime-volume-seeds}
-  target: /app/docker/runtime-volume-seeds
+  source: ${RUNTIME_BOOTSTRAP_HOST_DIR:-./runtime-bootstrap}
+  target: /app/docker/runtime-bootstrap
   read_only: true
   bind:
     create_host_path: false
@@ -106,9 +106,9 @@ services:
       AGENT_GIT_SERVICE_PROVIDER: ${AGENT_GIT_SERVICE_PROVIDER:-local}
       AGENT_GIT_SERVICE_URL: ${AGENT_GIT_SERVICE_URL:-}
       AGENT_GIT_SERVICE_PUBLIC_URL: ${AGENT_GIT_SERVICE_PUBLIC_URL:-}
-      AGENT_GIT_REPOSITORY_NAME: ${AGENT_GIT_REPOSITORY_NAME:-main-agent-config}
-      AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/business-agents/main-agent/version/worktrees}
-      AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/business-agents/main-agent/version/releases}
+      AGENT_GIT_REPOSITORY_NAME: ${AGENT_GIT_REPOSITORY_NAME:-security-operations-expert-config}
+      AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/business-agents/security-operations-expert/version/worktrees}
+      AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/business-agents/security-operations-expert/version/releases}
       GOVERNOR_WORKSPACE_DIR: ${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       DATA_DIR: ${DATA_DIR:-/data}
       GOVERNOR_CLAUDE_ROOT: ${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
@@ -120,6 +120,7 @@ services:
       MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS: ${MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS:-30}
       MODEL_PROVIDER_WARNING_TTL_SECONDS: ${MODEL_PROVIDER_WARNING_TTL_SECONDS:-300}
       GOVERNANCE_AGENT_TIMEOUT_SECONDS: ${GOVERNANCE_AGENT_TIMEOUT_SECONDS:-300}
+      AGENT_TEST_RUN_TIMEOUT_SECONDS: ${AGENT_TEST_RUN_TIMEOUT_SECONDS:-1800}
       HITL_TIMEOUT_SECONDS: ${HITL_TIMEOUT_SECONDS:-300}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-http://host.docker.internal:58001/mcp}
       SEC_OPS_MCP_URL: ${SEC_OPS_MCP_URL:-http://host.docker.internal:58001/mcp}
@@ -133,7 +134,7 @@ services:
       UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
-      - *runtime-volume-seeds
+      - *runtime-bootstrap
       - ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}:${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}

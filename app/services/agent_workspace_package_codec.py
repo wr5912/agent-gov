@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
-from app.runtime.business_agent_workspace import WorkspaceTemplateEntry
+from app.runtime.business_agent_workspace import WorkspaceProvisionEntry
 from app.runtime.errors import FeedbackStoreError
 
 MAX_COMPRESSED_PACKAGE_BYTES = 64 * 1024 * 1024
@@ -46,7 +46,7 @@ class WorkspaceGitReadError(RuntimeError):
 
 @dataclass(frozen=True)
 class ValidatedWorkspacePackage:
-    entries: tuple[WorkspaceTemplateEntry, ...]
+    entries: tuple[WorkspaceProvisionEntry, ...]
     package_sha256: str
     tree_sha256: str
 
@@ -84,7 +84,7 @@ def read_workspace_package(
     )
 
 
-def validate_workspace_config_entries(entries: tuple[WorkspaceTemplateEntry, ...]) -> None:
+def validate_workspace_config_entries(entries: tuple[WorkspaceProvisionEntry, ...]) -> None:
     required_objects = {".mcp.json", ".claude/settings.json"}
     for entry in entries:
         path = entry.relative_path.as_posix()
@@ -126,12 +126,12 @@ def read_commit_entries(
     commit_sha: str,
     *,
     run_git: Callable[[Path, list[str]], bytes],
-) -> tuple[WorkspaceTemplateEntry, ...]:
+) -> tuple[WorkspaceProvisionEntry, ...]:
     raw_tree = run_git(repository, ["ls-tree", "-r", "-z", "-l", "--full-tree", commit_sha])
     specs = _parse_commit_blob_specs(raw_tree)
     contents = _read_commit_blob_contents(repository, specs)
     entries = tuple(
-        WorkspaceTemplateEntry(
+        WorkspaceProvisionEntry(
             relative_path=spec.relative_path,
             content=content,
             mode=spec.mode,
@@ -299,7 +299,7 @@ def _batch_failure_message(stderr_output: BinaryIO, return_code: int | None) -> 
     return f"git cat-file --batch failed with exit code {code}{suffix}"
 
 
-def write_workspace_archive(destination: Path, entries: tuple[WorkspaceTemplateEntry, ...]) -> None:
+def write_workspace_archive(destination: Path, entries: tuple[WorkspaceProvisionEntry, ...]) -> None:
     with destination.open("wb") as raw_output:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw_output, mtime=0) as gzip_output:
             with tarfile.open(fileobj=gzip_output, mode="w|", format=tarfile.PAX_FORMAT) as archive:
@@ -320,7 +320,7 @@ def write_workspace_archive(destination: Path, entries: tuple[WorkspaceTemplateE
                     archive.addfile(member, io.BytesIO(entry.content))
 
 
-def tree_sha256(entries: tuple[WorkspaceTemplateEntry, ...]) -> str:
+def tree_sha256(entries: tuple[WorkspaceProvisionEntry, ...]) -> str:
     digest = hashlib.sha256()
     for entry in entries:
         path = entry.relative_path.as_posix().encode("utf-8")
@@ -363,9 +363,9 @@ def _copy_limited_package(source: BinaryIO, destination: Path) -> str:
     return digest.hexdigest()
 
 
-def _read_tar_entries(path: Path) -> tuple[WorkspaceTemplateEntry, ...]:
+def _read_tar_entries(path: Path) -> tuple[WorkspaceProvisionEntry, ...]:
     _preflight_tar_stream(path)
-    entries: list[WorkspaceTemplateEntry] = []
+    entries: list[WorkspaceProvisionEntry] = []
     seen: dict[str, bool] = {}
     descendant_prefixes: set[str] = set()
     member_count = 0
@@ -406,7 +406,7 @@ def _read_tar_entries(path: Path) -> tuple[WorkspaceTemplateEntry, ...]:
                 if len(content) != member.size:
                     raise WorkspacePackageError(422, "WORKSPACE_PACKAGE_MEMBER_INVALID", f"Package member size mismatch: {member.name}")
                 entries.append(
-                    WorkspaceTemplateEntry(
+                    WorkspaceProvisionEntry(
                         relative_path=relative_path,
                         content=content,
                         mode=0o755 if member.mode & 0o111 else 0o644,

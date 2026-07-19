@@ -4,13 +4,13 @@ from app.runtime.prompts.feedback_prompt_contexts import (
     build_attribution_prompt_context,
     build_execution_prompt_context,
     build_improvement_optimization_prompt_context,
-    build_regression_assessment_prompt_context,
+    build_regression_test_design_prompt_context,
 )
 from app.runtime.prompts.feedback_prompts import (
     attribution_prompt,
     execution_plan_prompt,
     improvement_optimization_plan_prompt,
-    regression_assessment_prompt,
+    regression_test_design_prompt,
 )
 
 
@@ -68,7 +68,7 @@ def test_prompt_context_builders_prune_backend_and_boundary_fields():
             "target_file_contexts": [{"path": "CLAUDE.md", "exists": True, "content_text": "A" * 30_000}],
         }
     )
-    regression_context = build_regression_assessment_prompt_context(
+    regression_context = build_regression_test_design_prompt_context(
         {
             "job_id": "job-hidden",
             "scope_kind": "improvement",
@@ -134,7 +134,7 @@ def test_feedback_prompts_do_not_expose_formatter_implementation_details():
         attribution_prompt(),
         improvement_optimization_plan_prompt(),
         execution_plan_prompt(),
-        regression_assessment_prompt(),
+        regression_test_design_prompt(),
     ]
 
     forbidden = (
@@ -160,12 +160,28 @@ def test_execution_prompt_requires_exact_backend_allowed_target_path():
     assert "target_paths 之外的目标" in prompt
 
 
+def test_only_grounding_stages_invite_workspace_tool_reads():
+    attribution = attribution_prompt(prompt_context={"target_agent_context": {"agent_id": "main-agent"}})
+    optimization = improvement_optimization_plan_prompt(
+        prompt_context={"target_agent_context": {"agent_id": "main-agent"}}
+    )
+    execution = execution_plan_prompt(prompt_context={"target_paths": ["CLAUDE.md"]})
+    regression = regression_test_design_prompt(prompt_context={"feedback": {"problem": "冲突证据"}})
+
+    assert "read-business-agent-config skill" in attribution
+    assert "target_agent_context.workspace_dir" in optimization
+    assert "不要调用 Skill、Read、Glob、Grep、Bash、Write、Edit 或其他工具" in execution
+    assert "不要调用 Skill、Read、Glob、Grep、Bash、Write、Edit 或其他工具" in regression
+    assert "可用 Read/Glob/Grep 按需读取" not in execution
+    assert "可用 Read/Glob/Grep 按需读取" not in regression
+
+
 def test_feedback_prompts_are_structured():
     for prompt in (
         attribution_prompt(),
         improvement_optimization_plan_prompt(),
         execution_plan_prompt(),
-        regression_assessment_prompt(),
+        regression_test_design_prompt(),
     ):
         assert prompt.startswith("## 角色\n")
         assert "\n\n## 输入\n" in prompt
@@ -187,20 +203,41 @@ def test_feedback_prompts_spell_out_current_business_information_points():
         ),
         "optimization_plan": ("summary", "changes", "risk_level"),
         "execution": ("operations[].operation", "expected_sha256", "content 或 append_text", "no_action_reason"),
-        "regression_assessment": ("eval_cases", "expected_behavior", "checks_json", "labels", "no_action_reason"),
+        "regression_test_design": ("tests", "test_code", "test_intent", "assertion_rationale", "no_action_reason"),
     }
     prompts = {
         "attribution": attribution_prompt(),
         "optimization_plan": improvement_optimization_plan_prompt(),
         "execution": execution_plan_prompt(),
-        "regression_assessment": regression_assessment_prompt(),
+        "regression_test_design": regression_test_design_prompt(),
     }
     for prompt_name, required_texts in expected.items():
         prompt = prompts[prompt_name]
         for text in required_texts:
             assert text in prompt
 
-    assert "Agent 不得复述 prompt" in prompts["regression_assessment"]
+    assert "文件路径" in prompts["regression_test_design"] and "由后端绑定" in prompts["regression_test_design"]
+    assert "必须使用真实换行符" in prompts["regression_test_design"]
+    assert "不得自行定义、导入、实例化或覆盖 agent fixture" in prompts["regression_test_design"]
+    assert "Python 标准库、pytest 和 agentgov_testkit" in prompts["regression_test_design"]
+    assert "tests 最多包含一个 item" in prompts["regression_test_design"]
+    assert "不超过 60 行" in prompts["regression_test_design"]
+    assert "只定义验证本次修复所必需的一个同步 test_* 函数" in prompts["regression_test_design"]
+    assert "不得定义其他 fixture" in prompts["regression_test_design"]
+    assert "assert not result.errors" in prompts["regression_test_design"]
+    assert "result.errors == []" in prompts["regression_test_design"]
+    assert 'normalized_text = "".join(result.text.split())' in prompts["regression_test_design"]
+    assert "Markdown 排版" in prompts["regression_test_design"]
+    assert "每个独立可观察的修复结果都必须有一条单独的正向断言" in prompts["regression_test_design"]
+    assert "将置信度降为低" in prompts["regression_test_design"]
+    assert "test_intent 或 assertion_rationale" in prompts["regression_test_design"]
+    assert "仅依据以下已给定事实回答，不调用任何工具或读取文件。" in prompts["regression_test_design"]
+    assert 'assert result.raw["agent_activity"]["tool_calls"] == []' in prompts["regression_test_design"]
+    assert "不能只断言相反结果未出现" in prompts["regression_test_design"]
+    assert "不得用 any(...)、A or B" in prompts["regression_test_design"]
+    assert "from agentgov_testkit import agent" in prompts["regression_test_design"]
+    assert "测试必须可重复" in prompts["regression_test_design"]
+    assert "不得改写成依赖未声明 MCP、数据库或网络数据的查询" in prompts["regression_test_design"]
 
 
 def test_attribution_and_optimization_prompts_require_chinese_user_facing_text():

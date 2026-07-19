@@ -227,7 +227,7 @@ def _change_set_payload(
         "title": title,
         "note": note,
         "diff_summary": {},
-        "latest_eval_run_id": None,
+        "latest_test_run_id": None,
         "latest_release_id": None,
         "source_improvement_id": source.improvement_id if source else None,
         "source_attribution_id": source.attribution_id if source else None,

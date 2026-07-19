@@ -18,7 +18,6 @@ import json
 
 import pytest
 from app.runtime import claude_runtime_stream as crs
-from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.prompt_suggestion_generator import PromptSuggestionGenerator, _clean, _clean_many
 from app.runtime.schemas import ChatRequest
@@ -26,7 +25,8 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
-from claude_runtime_test_utils import main_profile_resolver
+from business_agent_test_utils import create_test_business_agent_workspace
+from claude_runtime_test_utils import default_profile_resolver
 
 
 def _settings(tmp_path, **overrides) -> AppSettings:
@@ -171,8 +171,7 @@ def _runtime(tmp_path, monkeypatch, *, enabled: bool):
             [{"type": "user", "uuid": "be-entry"}],
         )
         yield AssistantMessage(content=[TextBlock(text="答案正文")], model="m", session_id=sid)
-        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False,
-                            num_turns=1, session_id=sid, result="答案正文")
+        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False, num_turns=1, session_id=sid, result="答案正文")
 
     import claude_agent_sdk
 
@@ -188,13 +187,13 @@ def _runtime(tmp_path, monkeypatch, *, enabled: bool):
     monkeypatch.setattr(claude_prompt_suggestions, "_prompt_suggestions_supported", _unsupported)
 
     settings = _settings(tmp_path, ENABLE_BACKEND_PROMPT_SUGGESTION=enabled)
-    workspace = settings.main_workspace_dir
-    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    workspace = settings.default_workspace_dir
+    create_test_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
     (workspace / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}) + "\n",
         encoding="utf-8",
     )
-    return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings))
+    return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=default_profile_resolver(settings))
 
 
 def test_runtime_emits_backend_generated_suggestion_after_done(tmp_path, monkeypatch) -> None:
@@ -301,8 +300,7 @@ def test_both_emitters_produce_the_same_frame_shape(tmp_path, monkeypatch) -> No
             [{"type": "user", "uuid": "cli-entry"}],
         )
         yield AssistantMessage(content=[TextBlock(text="答案正文")], model="m", session_id=sid)
-        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False,
-                            num_turns=1, session_id=sid, result="答案正文")
+        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False, num_turns=1, session_id=sid, result="答案正文")
         yield PromptSuggestionMessage("跑测试", "u1", sid)
 
     from app.runtime import claude_prompt_suggestions
@@ -322,8 +320,7 @@ def test_both_emitters_produce_the_same_frame_shape(tmp_path, monkeypatch) -> No
     be_frame = next(e for e in be_events if e["event"] == "prompt_suggestion")
 
     assert set(cli_frame["data"]) == set(be_frame["data"]), (
-        f"两个 emitter 的帧字段漂了 —— schema 双轨:\n"
-        f"  CLI:  {sorted(cli_frame['data'])}\n  后端: {sorted(be_frame['data'])}"
+        f"两个 emitter 的帧字段漂了 —— schema 双轨:\n  CLI:  {sorted(cli_frame['data'])}\n  后端: {sorted(be_frame['data'])}"
     )
     for frame in (cli_frame, be_frame):
         assert frame["data"]["suggestions"] == ["跑测试"]

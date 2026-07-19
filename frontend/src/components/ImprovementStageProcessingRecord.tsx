@@ -2,7 +2,7 @@ import type {
   Attribution,
   ExecutionRecord,
   OptimizationPlan,
-  RegressionAssessment,
+  RegressionTestDesign,
 } from "../api/improvements";
 import { hasAppliedExecution } from "../improvementExecutionState";
 import type { ImprovementPendingOperation } from "../improvementOperationState";
@@ -21,22 +21,23 @@ export function ImprovementStageProcessingRecord({
   attribution,
   optimizationPlan,
   execution,
-  regressionAssessment,
+  regressionTestDesign,
   pendingOperation,
 }: {
   stageView: ImprovementStageView;
   attribution: Attribution | null;
   optimizationPlan: OptimizationPlan | null;
   execution: ExecutionRecord | null;
-  regressionAssessment: RegressionAssessment | null;
+  regressionTestDesign: RegressionTestDesign | null;
   pendingOperation?: ImprovementPendingOperation | null;
 }) {
   const records = localRecords(stageView.visibleKey, {
     attribution,
     optimizationPlan,
     execution,
-    regressionAssessment,
+    regressionTestDesign,
     pendingOperation,
+    completed: stageView.isCompleted,
   });
   return (
     <section className="iw-stage-card iw-processing-record" data-testid="stage-local-record">
@@ -46,9 +47,10 @@ export function ImprovementStageProcessingRecord({
           <summary>查看完整链路</summary>
           <ol className="iw-chain">
             {stageView.stages.map((stage, index) => {
-              const word = index < stageView.stageIndex ? "已完成" : index === stageView.stageIndex ? "当前阶段" : "待开始";
+              const done = index < stageView.stageIndex || (stageView.isCompleted && index === stageView.stageIndex);
+              const word = done ? "已完成" : index === stageView.stageIndex ? "当前阶段" : "待开始";
               return (
-                <li key={stage.key} data-testid="full-chain-step" className={index === stageView.stageIndex ? "is-current" : index < stageView.stageIndex ? "is-done" : ""}>
+                <li key={stage.key} data-testid="full-chain-step" className={done ? "is-done" : index === stageView.stageIndex ? "is-current" : ""}>
                   <strong>{stage.label}</strong> - {word}
                 </li>
               );
@@ -79,17 +81,24 @@ function localRecords(
     attribution,
     optimizationPlan,
     execution,
-    regressionAssessment,
+    regressionTestDesign,
     pendingOperation,
+    completed,
   }: {
     attribution: Attribution | null;
     optimizationPlan: OptimizationPlan | null;
     execution: ExecutionRecord | null;
-    regressionAssessment: RegressionAssessment | null;
+    regressionTestDesign: RegressionTestDesign | null;
     pendingOperation?: ImprovementPendingOperation | null;
+    completed: boolean;
   },
 ) {
   const executionApplied = hasAppliedExecution(execution);
+  const generatedTestFiles = regressionTestDesign?.generated_test_files ?? [];
+  const testsMaterialized = generatedTestFiles.some((path) => path.startsWith("tests/") && path.endsWith(".py"));
+  const testRun = regressionTestDesign?.test_run;
+  const testPassed = testRun?.status === "passed";
+  const testRunState: LocalRecordState = testPassed ? "done" : testRun ? "current" : "pending";
   switch (stage) {
     case "feedback_sorting":
       return [
@@ -112,15 +121,20 @@ function localRecords(
         rec("进入优化执行", "done"),
         rec("生成优化方案", pendingOperation?.kind === "generate_optimization_plan" ? "current" : optimizationPlan ? "done" : "pending"),
         rec("风险评估", optimizationPlan ? "done" : "pending"),
-        rec("执行优化", pendingOperation?.kind === "apply_execution" ? "current" : executionApplied ? "done" : "pending", execution && !executionApplied ? "未绑定变更集" : undefined),
-        rec("生成回归方案", pendingOperation?.kind === "generate_regression" ? "current" : regressionAssessment ? "done" : "pending"),
+        rec("执行优化", pendingOperation?.kind === "apply_execution" ? "current" : executionApplied ? "done" : "pending", execution && !executionApplied ? "未绑定待发布变更" : undefined),
+        rec("生成回归测试", pendingOperation?.kind === "generate_regression" ? "current" : regressionTestDesign ? "done" : "pending"),
       ];
     case "test_release":
       return [
         rec("进入测试发布", "done"),
-        rec("生成回归方案", pendingOperation?.kind === "generate_regression" ? "current" : regressionAssessment ? "done" : "pending"),
-        rec("确认测试集", "pending", regressionAssessment ? "待确认" : "待生成"),
-        rec("发布门禁预览", regressionAssessment ? "done" : "pending"),
+        rec("生成回归测试", pendingOperation?.kind === "generate_regression" ? "current" : regressionTestDesign ? "done" : "pending"),
+        rec("确认待发布变更", testsMaterialized ? "done" : "pending", testsMaterialized ? `${generatedTestFiles.length} 个测试文件已写入` : regressionTestDesign ? "待用户确认" : "待生成测试"),
+        rec("运行测试", testRunState, testRun ? testRun.status : testsMaterialized ? "待显式运行" : "待确认变更"),
+        rec(
+          "发布版本",
+          completed ? "done" : testPassed ? "current" : "pending",
+          completed ? "已发布" : testPassed ? "平台测试已通过，待发布" : "等待当前待发布版本通过",
+        ),
       ];
   }
 }

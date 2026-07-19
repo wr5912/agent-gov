@@ -13,12 +13,14 @@ from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.agent_paths import business_agent_layout
 from app.runtime.session_store import LocalSession
 from app.services import agent_version_maintenance
+from app.services import agent_workspace_git_operations as workspace_git_operations
 from app.services import agent_workspace_package_codec as workspace_codec
 from app.services import agent_workspace_packages as workspace_packages
 from app.services.agent_governance import AgentGovernanceError
 from fastapi.testclient import TestClient
 
 from test_agent_workspace_packages import (
+    _import_new_agent,
     _load_app,
     _package_with_empty_pax_path,
     _package_with_large_reversed_conflict,
@@ -88,10 +90,10 @@ def test_workspace_import_rejects_missing_or_invalid_http_multipart_contract(mon
 def test_workspace_package_operation_conflicts_with_active_agent_maintenance(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "busy", "agent_id": "busy"})
-        assert created.status_code == 201
-        workspace = Path(created.json()["workspace_dir"])
-        assert not (workspace / ".git").exists()
+        created = _import_new_agent(client, agent_id="busy", name="busy")
+        assert created.status_code == 200
+        workspace = Path(created.json()["agent"]["workspace_dir"])
+        assert (workspace / ".git").is_dir()
         with module.agent_governance.version_maintenance.lease(
             agent_id="busy",
             kind="workspace_import",
@@ -112,13 +114,13 @@ def test_workspace_package_operation_conflicts_with_active_agent_maintenance(mon
     assert response.json()["error_code"] == "WORKSPACE_MAINTENANCE_CONFLICT"
     assert conflict.value.status_code == 409
     assert reverse.status_code == 409
-    assert not (workspace / ".git").exists()
+    assert (workspace / ".git").is_dir()
 
 
 def test_workspace_package_checks_all_open_change_sets_without_list_window(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        assert client.post("/api/agent-registry", json={"name": "open-set", "agent_id": "open-set"}).status_code == 201
+        assert _import_new_agent(client, agent_id="open-set", name="open-set").status_code == 200
         module.agent_governance.create_change_set(agent_id="open-set", title="must block package operations")
         monkeypatch.setattr(module.agent_governance, "list_change_sets", lambda **_kwargs: [])
         response = client.post("/api/agent-registry/open-set/workspace/export")
@@ -130,7 +132,7 @@ def test_workspace_package_checks_all_open_change_sets_without_list_window(monke
 def test_workspace_git_bootstrap_failure_is_structured(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        assert client.post("/api/agent-registry", json={"name": "git-failure", "agent_id": "git-failure"}).status_code == 201
+        assert _import_new_agent(client, agent_id="git-failure", name="git-failure").status_code == 200
 
         def fail_bootstrap(_store: GitAgentVersionStore):
             raise AgentGitError(f"fatal: cannot read {tmp_path}/private-workspace")
@@ -310,8 +312,8 @@ def test_workspace_import_maps_tarfile_recursion_error_to_invalid_package(monkey
 def test_workspace_export_rejects_symlink_and_oversized_tree_without_advancing_head(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "export-guard", "agent_id": "export-guard"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="export-guard", name="export guard")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=export-guard").json()["commit_sha"]
         (workspace / "linked").symlink_to("CLAUDE.md")
         symlinked = client.post("/api/agent-registry/export-guard/workspace/export")
@@ -331,8 +333,8 @@ def test_workspace_export_rejects_symlink_and_oversized_tree_without_advancing_h
 def test_workspace_export_snapshots_deletion_when_only_git_metadata_remains(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "empty export", "agent_id": "empty-export"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="empty-export", name="empty export")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=empty-export").json()["commit_sha"]
         for child in workspace.iterdir():
             if child.name == ".git":
@@ -353,11 +355,11 @@ def test_workspace_export_snapshots_deletion_when_only_git_metadata_remains(monk
 def test_workspace_export_reports_unsafe_raw_attributes_path_without_advancing_head(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "raw path", "agent_id": "raw-path"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="raw-path", name="raw path")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=raw-path").json()["commit_sha"]
         monkeypatch.setattr(
-            workspace_packages,
+            workspace_git_operations,
             "configure_raw_git_storage",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RawGitStorageError("Git did not resolve info/attributes")),
         )
@@ -372,10 +374,10 @@ def test_workspace_export_reports_unsafe_raw_attributes_path_without_advancing_h
 
 def test_workspace_export_unstages_original_dirty_state_when_snapshot_commit_fails(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    original_git = workspace_packages._git
+    original_git = workspace_git_operations.run_git
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "commit failure", "agent_id": "commit-failure"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="commit-failure", name="commit failure")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=commit-failure").json()["commit_sha"]
         original_content = (workspace / "CLAUDE.md").read_bytes()
         changed_content = original_content + b"\n# dirty before failed export\n"
@@ -383,10 +385,10 @@ def test_workspace_export_unstages_original_dirty_state_when_snapshot_commit_fai
 
         def fail_snapshot_commit(repository: Path, args: list[str], *, check: bool = True) -> bytes:
             if args[:3] == ["commit", "-m", "Snapshot live workspace before package operation"]:
-                raise workspace_packages._GitCommandError(f"cannot commit {tmp_path}/private-workspace")
+                raise workspace_git_operations.GitCommandError(f"cannot commit {tmp_path}/private-workspace")
             return original_git(repository, args, check=check)
 
-        monkeypatch.setattr(workspace_packages, "_git", fail_snapshot_commit)
+        monkeypatch.setattr(workspace_git_operations, "run_git", fail_snapshot_commit)
         response = client.post("/api/agent-registry/commit-failure/workspace/export")
         current = client.get("/api/agent-repository/current?agent_id=commit-failure").json()["commit_sha"]
 
@@ -414,8 +416,8 @@ def test_workspace_import_rechecks_lease_immediately_before_activation(monkeypat
         original_assert(lease)
 
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "lease-target", "agent_id": "lease-target"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="lease-target", name="lease target")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
         baseline = client.get("/api/agent-repository/current?agent_id=lease-target").json()["commit_sha"]
         monkeypatch.setattr(agent_version_maintenance.AgentVersionMaintenanceLease, "assert_active", fail_second_assert)
@@ -436,8 +438,8 @@ def test_workspace_import_reports_success_after_merge_even_if_lease_release_is_l
     module = _load_app(monkeypatch, tmp_path)
     package = _workspace_package({"CLAUDE.md": b"# applied despite late release loss\n"})
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "late-loss", "agent_id": "late-loss"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="late-loss", name="late loss")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=late-loss").json()["commit_sha"]
         monkeypatch.setattr(agent_version_maintenance, "release_maintenance", lambda *_args, **_kwargs: False)
         response = client.post(
@@ -455,8 +457,8 @@ def test_workspace_import_does_not_activate_when_sdk_session_invalidation_fails(
     module = _load_app(monkeypatch, tmp_path)
     package = _workspace_package({"CLAUDE.md": b"# must not activate\n"})
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "invalidate-failure", "agent_id": "invalidate-failure"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="invalidate-failure", name="invalidate failure")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
         baseline = client.get("/api/agent-repository/current?agent_id=invalidate-failure").json()["commit_sha"]
         monkeypatch.setattr(
@@ -482,8 +484,8 @@ def test_workspace_import_rejects_file_created_during_session_invalidation(monke
     package = _workspace_package({"CLAUDE.md": b"# must not activate across a dirty race\n"})
     original_invalidation = module.session_store.clear_inactive_sdk_sessions_for_agent_in_transaction
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "dirty race", "agent_id": "dirty-race"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="dirty-race", name="dirty race")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         (workspace / ".gitignore").write_bytes(b"*.secret\n")
         baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
         baseline = client.post("/api/agent-registry/dirty-race/workspace/export").headers["x-agent-commit-sha"]
@@ -522,11 +524,11 @@ def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(monke
             "collision.secret": b"candidate bytes\n",
         }
     )
-    original_git = workspace_packages._git
+    original_git = workspace_git_operations.run_git
     injected = False
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "merge race", "agent_id": "merge-race"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="merge-race", name="merge race")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         (workspace / ".gitignore").write_bytes(b"*.secret\n")
         baseline = client.post("/api/agent-registry/merge-race/workspace/export").headers["x-agent-commit-sha"]
         baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
@@ -546,7 +548,7 @@ def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(monke
                 concurrent_file.write_bytes(b"concurrent writer wins\n")
             return original_git(repository, args, check=check)
 
-        monkeypatch.setattr(workspace_packages, "_git", inject_ignored_file_before_merge)
+        monkeypatch.setattr(workspace_git_operations, "run_git", inject_ignored_file_before_merge)
         response = client.post(
             "/api/agent-registry/merge-race/workspace/import",
             data={"expected_current_commit_sha": baseline},
@@ -577,8 +579,8 @@ def test_workspace_import_compensates_git_and_session_mapping_when_activation_co
     )
     commit_failed = False
     with TestClient(module.app, raise_server_exceptions=False) as client:
-        created = client.post("/api/agent-registry", json={"name": "commit race", "agent_id": "commit-race"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="commit-race", name="commit race")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         (workspace / ".gitignore").write_bytes(b"*.secret\n")
         baseline = client.post("/api/agent-registry/commit-race/workspace/export").headers["x-agent-commit-sha"]
         baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
@@ -622,8 +624,8 @@ def test_workspace_import_compensates_git_and_session_mapping_when_activation_co
 def test_workspace_export_cleans_artifact_and_restores_dirty_state_when_release_is_lost(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/agent-registry", json={"name": "export-loss", "agent_id": "export-loss"})
-        workspace = Path(created.json()["workspace_dir"])
+        created = _import_new_agent(client, agent_id="export-loss", name="export loss")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=export-loss").json()["commit_sha"]
         (workspace / "dirty.txt").write_bytes(b"preserve me\n")
         monkeypatch.setattr(agent_version_maintenance, "release_maintenance", lambda *_args, **_kwargs: False)

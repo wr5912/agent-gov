@@ -8,16 +8,18 @@ from contextlib import contextmanager
 
 import pytest
 from app.runtime.agent_job_errors import AGENT_AUTH_REQUIRED, AgentAuthenticationRequiredError
+from app.runtime.agent_paths import business_agent_layout
 from app.runtime.agent_profiles import build_business_agent_profile, candidate_profile
-from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.errors import BusinessRuleViolation
 from app.runtime.integrations.runtime_langfuse import RuntimeLangfuseClient
 from app.runtime.model_provider import LITELLM_SIDECAR_BASE_URL, LOCAL_PROVIDER_DUMMY_API_KEY
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 
+from business_agent_test_utils import create_test_business_agent_workspace
 from claude_runtime_test_utils import route_interactive_client_through_query
 
 
@@ -82,17 +84,17 @@ class FakeLangfuseClient:
 def _runtime(settings, **kwargs):
     """构造 ClaudeRuntime，并装上最小 business profile resolver。
 
-    生产装配总会注入 resolver（main.py）。runtime 不再持有预制的 main profile——main 是可删除的
-    普通业务 Agent，profile 一律由 resolver 从注册表解析。这些用例测的是 SDK options/env/langfuse
-    等，main profile 只是载体，因此这里直接返回它，不引入注册表依赖。
+    生产装配总会注入 resolver（main.py），profile 一律由 resolver 从注册表解析。这些用例
+    测的是 SDK options/env/langfuse 等，默认业务 Agent profile 只是载体，因此这里直接构造，
+    不引入注册表依赖。
     """
 
     kwargs.setdefault(
         "business_profile_resolver",
         lambda agent_id: build_business_agent_profile(
             settings,
-            agent_id=agent_id or "main-agent",
-            workspace_dir=settings.main_workspace_dir,
+            agent_id=agent_id or DEFAULT_BUSINESS_AGENT_ID,
+            workspace_dir=settings.default_workspace_dir,
         ),
     )
     return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), **kwargs)
@@ -106,8 +108,12 @@ def _settings(tmp_path):
         GOVERNOR_CLAUDE_ROOT=tmp_path / "docker" / "volume" / "claude-roots" / "governor",
         RUNTIME_VOLUME_MODE="local-debug",
     )
-    workspace = settings.main_workspace_dir
-    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    workspace = settings.default_workspace_dir
+    create_test_business_agent_workspace(
+        workspace,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        name="Security Operations Expert",
+    )
     (workspace / ".mcp.json").write_text(
         json.dumps(
             {
@@ -186,6 +192,32 @@ def test_run_without_native_ask_uses_finite_streaming_prompt(tmp_path, monkeypat
             "session_id": "default",
         }
     ]
+
+
+def test_run_without_sdk_result_is_failed_in_response_and_persistence(tmp_path, monkeypatch):
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        if False:
+            yield None
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    runtime = _runtime(_settings(tmp_path))
+    observed = {}
+
+    def capture_observations(root_span, generation, context, state, output, trace_attributes):
+        observed["output"] = output
+
+    monkeypatch.setattr(runtime, "_update_runtime_observations", capture_observations)
+
+    result = asyncio.run(runtime.run(ChatRequest(message="hello", session_id="missing-result")))
+
+    assert result.errors == ["SDK query ended without ResultMessage"]
+    assert observed["output"]["errors"] == result.errors
+    saved = runtime.session_store.get("missing-result")
+    assert saved is not None and saved.turns == 0 and saved.active_run_id is None
 
 
 @pytest.mark.parametrize("streaming", [False, True])
@@ -272,7 +304,7 @@ def test_runtime_resolves_non_main_agent_for_internal_callers(tmp_path, monkeypa
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     settings = _settings(tmp_path)
     workspace = settings.data_dir / "business-agents" / "soc-ops" / "workspace"
-    seed_business_agent_workspace(workspace, agent_id="soc-ops", name="SOC Ops")
+    create_test_business_agent_workspace(workspace, agent_id="soc-ops", name="SOC Ops")
     profile = build_business_agent_profile(settings, agent_id="soc-ops", workspace_dir=workspace)
     resolved = []
     runtime = ClaudeRuntime(
@@ -296,12 +328,16 @@ def test_runtime_rejects_explicit_profile_agent_mismatch(tmp_path):
         asyncio.run(
             runtime.run(
                 ChatRequest(message="wrong owner", agent_id="soc-ops"),
-                profile=build_business_agent_profile(settings, agent_id="main-agent", workspace_dir=settings.main_workspace_dir),
+                profile=build_business_agent_profile(
+                    settings,
+                    agent_id=DEFAULT_BUSINESS_AGENT_ID,
+                    workspace_dir=settings.default_workspace_dir,
+                ),
             )
         )
 
 
-def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
+def test_default_options_use_platform_default_runtime_profile(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
@@ -332,12 +368,12 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert callable(getattr(options, "can_use_tool", None))
     assert getattr(options, "permission_prompt_tool_name", None) is None
     assert getattr(options, "hooks", None) is None
-    assert options.cwd == settings.main_workspace_dir
-    assert options.env["HOME"] == str(settings.main_claude_root)
-    assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
+    assert options.cwd == settings.default_workspace_dir
+    assert options.env["HOME"] == str(settings.default_claude_root)
+    assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.default_claude_root / ".claude")
     assert options.env["DATA_DIR"] == str(settings.data_dir)
     assert options.env["CLAUDE_HOOK_AUDIT_LOG"] == str(settings.data_dir / "transcripts" / "claude-hook-audit.jsonl")
-    assert options.env["AGENT_PROFILE"] == "main-agent"
+    assert options.env["AGENT_PROFILE"] == DEFAULT_BUSINESS_AGENT_ID
     assert "CLAUDE_CODE_ENABLE_TELEMETRY" not in options.env
 
 
@@ -359,7 +395,9 @@ def test_candidate_runtime_uses_business_agent_owner_for_session_and_maintenance
         session_store,
         agent_version_maintenance_provider=lambda agent_id: seen_maintenance_agents.append(agent_id) or False,
         business_profile_resolver=lambda agent_id: build_business_agent_profile(
-            settings, agent_id=agent_id or "main-agent", workspace_dir=settings.main_workspace_dir
+            settings,
+            agent_id=agent_id or DEFAULT_BUSINESS_AGENT_ID,
+            workspace_dir=settings.default_workspace_dir,
         ),
     )
     worktree = tmp_path / "candidate-worktree"
@@ -384,7 +422,11 @@ def test_candidate_runtime_uses_business_agent_owner_for_session_and_maintenance
 def test_profile_env_marks_backend_owned_workspace_trusted(tmp_path):
     settings = _settings(tmp_path)
     runtime = _runtime(settings)
-    profile = build_business_agent_profile(settings, agent_id="main-agent", workspace_dir=settings.main_workspace_dir)
+    profile = build_business_agent_profile(
+        settings,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        workspace_dir=settings.default_workspace_dir,
+    )
     state_path = profile.claude_config_dir / ".claude.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
@@ -406,6 +448,26 @@ def test_profile_env_marks_backend_owned_workspace_trusted(tmp_path):
     assert state["projects"][profile.workspace_dir.as_posix()]["hasTrustDialogAccepted"] is True
 
 
+def test_candidate_profile_trusts_checkout_and_canonical_agent_workspace(tmp_path):
+    settings = _settings(tmp_path)
+    runtime = _runtime(settings)
+    checkout = tmp_path / "candidate-checkout"
+    checkout.mkdir()
+    profile = candidate_profile(
+        settings,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        workspace_dir=checkout,
+        candidate_id="agc-trust",
+    )
+
+    runtime._profile_env(profile)
+
+    state = json.loads((profile.claude_config_dir / ".claude.json").read_text(encoding="utf-8"))
+    canonical_workspace = business_agent_layout(settings.data_dir, DEFAULT_BUSINESS_AGENT_ID).workspace
+    assert state["projects"][checkout.as_posix()]["hasTrustDialogAccepted"] is True
+    assert state["projects"][canonical_workspace.as_posix()]["hasTrustDialogAccepted"] is True
+
+
 def test_profile_env_inherits_selected_runtime_env_instead_of_process_env(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     monkeypatch.setenv("MCP_SERVER_URL", "http://process-env.example/mcp")
@@ -417,11 +479,17 @@ def test_profile_env_inherits_selected_runtime_env_instead_of_process_env(tmp_pa
         },
     )
 
-    env = runtime._profile_env(build_business_agent_profile(settings, agent_id="main-agent", workspace_dir=settings.main_workspace_dir))
+    env = runtime._profile_env(
+        build_business_agent_profile(
+            settings,
+            agent_id=DEFAULT_BUSINESS_AGENT_ID,
+            workspace_dir=settings.default_workspace_dir,
+        )
+    )
 
     assert env["MCP_SERVER_URL"] == "http://selected-env.example/mcp"
     assert env["SELECTED_RUNTIME_MARKER"] == "selected"
-    assert env["HOME"] == str(settings.main_claude_root)
+    assert env["HOME"] == str(settings.default_claude_root)
     assert env["DATA_DIR"] == str(settings.data_dir)
 
 
@@ -446,7 +514,13 @@ def test_profile_env_never_forwards_backend_control_credentials_to_agent_process
         },
     )
 
-    env = runtime._profile_env(build_business_agent_profile(settings, agent_id="main-agent", workspace_dir=settings.main_workspace_dir))
+    env = runtime._profile_env(
+        build_business_agent_profile(
+            settings,
+            agent_id=DEFAULT_BUSINESS_AGENT_ID,
+            workspace_dir=settings.default_workspace_dir,
+        )
+    )
 
     assert "API_KEY" not in env
     assert "FRONTEND_RUNTIME_API_KEY" not in env
@@ -455,7 +529,7 @@ def test_profile_env_never_forwards_backend_control_credentials_to_agent_process
     assert env["MCP_SERVER_URL"] == "http://selected-env.example/mcp"
 
 
-def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch):
+def test_default_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
@@ -469,8 +543,8 @@ def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch)
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     settings = _settings(tmp_path)
-    settings.main_workspace_dir.mkdir(parents=True, exist_ok=True)
-    (settings.main_workspace_dir / ".mcp.json").write_text(
+    settings.default_workspace_dir.mkdir(parents=True, exist_ok=True)
+    (settings.default_workspace_dir / ".mcp.json").write_text(
         json.dumps(
             {
                 "mcpServers": {
@@ -613,7 +687,7 @@ def test_background_agent_job_requires_model_credentials_before_query(tmp_path, 
             runtime._run_profile_json(
                 profile_name="governor",
                 prompt="assess regression coverage",
-                job_type="regression_assessment",
+                job_type="regression_test_design",
                 job_input={},
             )
         )
@@ -634,6 +708,152 @@ def test_governor_job_options_use_profile_minimum_max_turns(tmp_path):
     assert options.max_turns == 16
     assert getattr(options, "allowed_tools", None) in (None, [])
     assert getattr(options, "disallowed_tools", None) in (None, [])
+
+
+def test_regression_job_options_use_claude_native_json_schema(tmp_path):
+    from app.runtime.agent_job_types import AgentJobType, agent_job_spec
+
+    settings = _settings(tmp_path)
+    runtime = _runtime(settings)
+    spec = agent_job_spec(AgentJobType.REGRESSION_TEST_DESIGN)
+
+    options = runtime.job_runner.build_options(
+        runtime.profiles["governor"],
+        structured_output_model=spec.formatter_output_model,
+    )
+
+    assert spec.use_native_structured_output is True
+    assert options.output_format["type"] == "json_schema"
+    assert options.output_format["schema"]["properties"]["tests"]["maxItems"] == 1
+
+
+def test_execution_job_options_use_claude_native_json_schema(tmp_path):
+    from app.runtime.agent_job_types import AgentJobType, agent_job_spec
+
+    settings = _settings(tmp_path)
+    runtime = _runtime(settings)
+    spec = agent_job_spec(AgentJobType.EXECUTION)
+
+    options = runtime.job_runner.build_options(
+        runtime.profiles["governor"],
+        structured_output_model=spec.formatter_output_model,
+    )
+
+    assert spec.use_native_structured_output is True
+    assert options.output_format["type"] == "json_schema"
+    assert {"status", "summary", "operations"} <= set(options.output_format["schema"]["properties"])
+
+
+def test_regression_job_uses_native_structured_output_without_dspy(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
+
+    async def fake_query(*, prompt, options, transport=None):
+        del transport
+        await _collect_prompt(prompt)
+        assert options.output_format["type"] == "json_schema"
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=1,
+            is_error=False,
+            num_turns=1,
+            session_id="governor-native-test",
+            result="",
+            structured_output={
+                "tests": [
+                    {
+                        "test_code": (
+                            "def test_conflict_is_explicit(agent):\n"
+                            "    result = agent.run('两个来源结论冲突')\n"
+                            "    assert '冲突' in result.text\n"
+                        ),
+                        "test_intent": "验证冲突被显式说明",
+                        "assertion_rationale": "修复后的回答必须包含冲突标记",
+                    }
+                ]
+            },
+        )
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    settings = AppSettings(
+        _env_file=None,
+        DATA_DIR=tmp_path / "data",
+        GOVERNOR_CLAUDE_ROOT=tmp_path / "claude-roots" / "governor",
+        RUNTIME_VOLUME_MODE="local-debug",
+        MODEL_PROVIDER_API_KEY="test-provider-key",
+    )
+    runtime = _runtime(settings)
+
+    def unexpected_formatter(**_kwargs):
+        raise AssertionError("regression native structured output must not call DSPy formatter")
+
+    monkeypatch.setattr(runtime.output_formatter, "format", unexpected_formatter)
+    result = asyncio.run(
+        runtime.job_runner.run_profile_json(
+            profile_name="governor",
+            prompt="generate one regression test",
+            job_type="regression_test_design",
+            job_input={},
+        )
+    )
+
+    assert len(result.tests) == 1
+    assert result.tests[0].test_intent == "验证冲突被显式说明"
+
+
+def test_execution_job_uses_native_structured_output_without_dspy(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
+
+    async def fake_query(*, prompt, options, transport=None):
+        del transport
+        await _collect_prompt(prompt)
+        assert options.output_format["type"] == "json_schema"
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=1,
+            is_error=False,
+            num_turns=1,
+            session_id="governor-execution-native-test",
+            result="",
+            structured_output={
+                "status": "needs_human_review",
+                "summary": "缺少可安全修改的目标。",
+                "operations": [],
+                "human_review_required": True,
+                "no_action_reason": "需要人工确认目标路径。",
+            },
+        )
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    settings = AppSettings(
+        _env_file=None,
+        DATA_DIR=tmp_path / "data",
+        GOVERNOR_CLAUDE_ROOT=tmp_path / "claude-roots" / "governor",
+        RUNTIME_VOLUME_MODE="local-debug",
+        MODEL_PROVIDER_API_KEY="test-provider-key",
+    )
+    runtime = _runtime(settings)
+
+    def unexpected_formatter(**_kwargs):
+        raise AssertionError("execution native structured output must not call DSPy formatter")
+
+    monkeypatch.setattr(runtime.output_formatter, "format", unexpected_formatter)
+    result = asyncio.run(
+        runtime.job_runner.run_profile_json(
+            profile_name="governor",
+            prompt="build execution plan",
+            job_type="execution",
+            job_input={},
+        )
+    )
+
+    assert result.status == "needs_human_review"
+    assert result.no_action_reason == "需要人工确认目标路径。"
 
 
 def test_governor_job_options_allow_global_max_turn_override(tmp_path):
@@ -696,7 +916,7 @@ def test_explicit_main_mcp_config_override_is_not_injected_into_options(tmp_path
     assert result.errors == []
     assert getattr(options, "settings", None) is None
     assert getattr(options, "mcp_servers", None) in (None, {})
-    assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
+    assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.default_claude_root / ".claude")
 
 
 def test_main_mcp_override_does_not_inject_feedback_job_profile_mcp(tmp_path):
@@ -794,6 +1014,30 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
     assert env["OTEL_LOG_TOOL_DETAILS"] == "1"
     assert env["OTEL_LOG_TOOL_CONTENT"] == "1"
     assert env["OTEL_LOG_RAW_API_BODIES"] == "1"
+
+
+def test_governor_job_disables_duplicate_native_claude_otel(tmp_path):
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
+        LANGFUSE_ENABLED=True,
+        LANGFUSE_PUBLIC_KEY="pk-test",
+        LANGFUSE_SECRET_KEY="sk-test",
+        LANGFUSE_BASE_URL="http://langfuse-web:3000",
+        LANGFUSE_OTEL_SIGNALS="traces,metrics,logs",
+    )
+    runtime = _runtime(settings)
+
+    options = runtime.job_runner.build_options(runtime.profiles["governor"])
+
+    assert options.env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "0"
+    assert "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA" not in options.env
+    assert options.env["OTEL_TRACES_EXPORTER"] == "otlp"
 
 
 def test_langfuse_dspy_instrumentation_uses_current_process_otel_env(tmp_path, monkeypatch):
@@ -931,14 +1175,14 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
 
 
 def test_settings_derives_profile_dirs_from_data_dir(tmp_path):
-    # main 已并入业务模型：其 workspace/claude-root 由 data_dir 下的 main-agent layout 派生
-    # （不再有独立 WORKSPACE_DIR/CLAUDE_ROOT 字段）；governor 顶层目录随运行卷根派生。
+    # 平台默认业务 Agent 的 workspace/claude-root 由 data_dir 下的统一业务 Agent layout 派生；
+    # governor 顶层目录随运行卷根派生。
     data_dir = tmp_path / "runtime" / "data"
     settings = AppSettings(_env_file=None, DATA_DIR=data_dir)
 
-    assert settings.main_workspace_dir == data_dir / "business-agents" / "main-agent" / "workspace"
-    assert settings.main_claude_root == data_dir / "business-agents" / "main-agent" / "claude-root"
-    assert settings.claude_home == settings.main_claude_root / ".claude"
+    assert settings.default_workspace_dir == data_dir / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "workspace"
+    assert settings.default_claude_root == data_dir / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "claude-root"
+    assert settings.claude_home == settings.default_claude_root / ".claude"
     assert settings.governor_workspace_dir == data_dir.parent / "governor-workspace"
     assert settings.governor_claude_root == data_dir.parent / "claude-roots" / "governor"
 
@@ -1174,13 +1418,13 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert result.agent_activity["tool_results"][1]["name"] == ("mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get")
     assert fake_langfuse.flushed is True
     assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
-        "runtime.business_agent.main-agent",
-        "runtime.business_agent.main-agent.claude_sdk_query",
+        f"runtime.business_agent.{DEFAULT_BUSINESS_AGENT_ID}",
+        f"runtime.business_agent.{DEFAULT_BUSINESS_AGENT_ID}.claude_sdk_query",
     ]
     assert observation_started_under_propagation == [True, True]
     root, generation = fake_langfuse.observations
     assert root._otel_span.attributes["session.id"] == result.session_id
-    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.business_agent.main-agent"
+    assert root._otel_span.attributes["langfuse.trace.name"] == f"runtime.business_agent.{DEFAULT_BUSINESS_AGENT_ID}"
     assert generation._otel_span.attributes["session.id"] == result.session_id
     assert root.kwargs["input"]["message"] == "hello"
     assert root.kwargs["input"]["metadata"]["api_key"] == "secret"
@@ -1204,13 +1448,13 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert trace_upserts == [
         {
             "trace_id": "trace-test",
-            "name": "runtime.business_agent.main-agent",
+            "name": f"runtime.business_agent.{DEFAULT_BUSINESS_AGENT_ID}",
             "session_id": result.session_id,
             "user_id": "user-a",
             "input": root.kwargs["input"],
             "output": root.updates[-1]["output"],
             "metadata": propagations[0]["metadata"],
-            "tags": ["role:business", "agent:main-agent"],
+            "tags": ["role:business", f"agent:{DEFAULT_BUSINESS_AGENT_ID}"],
         }
     ]
     assert propagations == [
@@ -1225,11 +1469,11 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
                 "mode": "non_stream",
                 "permission_mode": "default",
                 "claude_web_hitl_enabled": "false",
-                "profile": "main-agent",
+                "profile": DEFAULT_BUSINESS_AGENT_ID,
                 "tenant_id": "tenant-a",
             },
-            "trace_name": "runtime.business_agent.main-agent",
-            "tags": ["role:business", "agent:main-agent"],
+            "trace_name": f"runtime.business_agent.{DEFAULT_BUSINESS_AGENT_ID}",
+            "tags": ["role:business", f"agent:{DEFAULT_BUSINESS_AGENT_ID}"],
         }
     ]
     assert "api_key" not in propagations[0]["metadata"]
@@ -1322,14 +1566,14 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert fake_langfuse.flushed is True
     root, generation = fake_langfuse.observations
     assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
-        "runtime.business_agent.main-agent",
-        "runtime.business_agent.main-agent.claude_sdk_query",
+        f"runtime.business_agent.{DEFAULT_BUSINESS_AGENT_ID}",
+        f"runtime.business_agent.{DEFAULT_BUSINESS_AGENT_ID}.claude_sdk_query",
     ]
     assert observation_started_under_propagation == [True, True]
     assert propagations[0]["session_id"] == result_event["data"]["session_id"]
     assert propagations[0]["metadata"]["api_session_id"] == result_event["data"]["session_id"]
     assert root._otel_span.attributes["session.id"] == result_event["data"]["session_id"]
-    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.business_agent.main-agent"
+    assert root._otel_span.attributes["langfuse.trace.name"] == f"runtime.business_agent.{DEFAULT_BUSINESS_AGENT_ID}"
     assert generation._otel_span.attributes["session.id"] == result_event["data"]["session_id"]
     assert root.updates[-1]["output"]["answer"] == "stream answer"
     assert root.updates[-1]["output"]["stop_reason"] == "end_turn"
@@ -1339,12 +1583,12 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert trace_upserts == [
         {
             "trace_id": "trace-test",
-            "name": "runtime.business_agent.main-agent",
+            "name": f"runtime.business_agent.{DEFAULT_BUSINESS_AGENT_ID}",
             "session_id": result_event["data"]["session_id"],
             "user_id": None,
             "input": root.kwargs["input"],
             "output": root.updates[-1]["output"],
             "metadata": propagations[0]["metadata"],
-            "tags": ["role:business", "agent:main-agent"],
+            "tags": ["role:business", f"agent:{DEFAULT_BUSINESS_AGENT_ID}"],
         }
     ]

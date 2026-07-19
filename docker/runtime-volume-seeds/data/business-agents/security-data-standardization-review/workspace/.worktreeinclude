@@ -1,6 +1,0 @@
-# Claude Code worktree 复制规则示例
-# 用于把必要的本地非 Git 文件复制到 worktree。
-# 不要包含密钥或生产凭据。
-
-CLAUDE.local.md
-.claude/settings.local.json

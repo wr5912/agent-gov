@@ -271,7 +271,13 @@ class RuntimeLangfuseClient:
                     tags=clean_tags or None,
                 ),
             )
-            api.ingestion.batch(batch=[event], metadata={"source": "agent-gov-runtime"})
+            response = api.ingestion.batch(batch=[event], metadata={"source": "agent-gov-runtime"})
+            ingestion_errors = getattr(getattr(response, "data", None), "errors", None) or []
+            if ingestion_errors:
+                details = "; ".join(
+                    f"status={getattr(item, 'status', 'unknown')} message={getattr(item, 'message', None) or 'unknown'}" for item in ingestion_errors
+                )
+                raise RuntimeError(f"Langfuse trace ingestion rejected: {details}")
         except Exception as exc:
             print(f"[WARN] failed to upsert Langfuse trace: {exc}", flush=True)
 

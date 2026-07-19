@@ -18,13 +18,13 @@ from ..improvement_db import (
     ImprovementLinkModel,
     NormalizedFeedbackModel,
     OptimizationPlanModel,
-    RegressionAssessmentModel,
+    RegressionTestDesignModel,
 )
 from ..runtime_db import AgentChangeSetModel, utc_now
 from ..state_machines import IMPROVEMENT_STAGE_ORDER, StateTransitionError, validate_transition
 
 # 改进事项可引用的当前闭环对象类型（W2-c 轻引用）。
-LINK_KINDS = {"attribution", "optimization_plan", "eval_run", "change_set"}
+LINK_KINDS = {"attribution", "optimization_plan", "test_run", "change_set"}
 
 
 @dataclass(frozen=True)
@@ -235,7 +235,7 @@ class ImprovementStore:
             ("attribution", AttributionModel),
             ("optimization", OptimizationPlanModel),
             ("execution", ExecutionRecordModel),
-            ("regression", RegressionAssessmentModel),
+            ("regression", RegressionTestDesignModel),
         )
         for artifact_stage, model in artifact_models:
             if IMPROVEMENT_STAGE_ORDER.index(artifact_stage) > target_index:
@@ -245,7 +245,7 @@ class ImprovementStore:
             "attribution": "attribution",
             "optimization_plan": "optimization",
             "change_set": "execution",
-            "eval_run": "regression",
+            "test_run": "regression",
         }
         invalid_link_kinds = [kind for kind, artifact_stage in link_stage.items() if IMPROVEMENT_STAGE_ORDER.index(artifact_stage) > target_index]
         if invalid_link_kinds:
@@ -480,7 +480,7 @@ class ImprovementStore:
                 AttributionModel,
                 OptimizationPlanModel,
                 ExecutionRecordModel,
-                RegressionAssessmentModel,
+                RegressionTestDesignModel,
             ):
                 db.query(model).filter(model.improvement_id == improvement_id).delete(synchronize_session=False)
             db.delete(row)

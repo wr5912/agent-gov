@@ -1,22 +1,26 @@
-"""受保护业务 Agent 的单一真相源。
+"""内置、默认与受保护业务 Agent 的单一真相源。
 
-「受保护」只表达一件事：该 Agent 的注册身份与运行态 seed 不能由在线 API 删除或覆写，
-因为它的真相源在项目仓库（`docker/runtime-volume-seeds/`），必须经受保护 PR 变更。
-
-保护与 `origin` 无关。origin 是「出生时是否来自声明 seed」的派生投影，会随运行态 seed
-catalog 内容漂移；把删除权限挂在 origin 上会让保护随之漂移。因此删除保护只认本模块的
-显式名单。
+三种属性分别建模：内置表示空运行卷会从仓库初始化，默认表示标准接口未配置出口时选用，
+受保护表示不能经在线删除接口移除。当前三个集合只有同一个成员，但它们不是同义词。
 """
 
 from __future__ import annotations
 
 SECURITY_OPERATIONS_EXPERT_AGENT_ID = "security-operations-expert"
+DEFAULT_BUSINESS_AGENT_ID = SECURITY_OPERATIONS_EXPERT_AGENT_ID
+BUILTIN_BUSINESS_AGENT_IDS = frozenset({SECURITY_OPERATIONS_EXPERT_AGENT_ID})
 
-# 安全运营专家 Agent 携带真实剧本执行能力与审批治理契约，其配置与 seed 必须留在仓库并经
-# 评审变更；在线删除或在线覆写它等于让运行态绕过仓库评审。其余业务 Agent（含 main-agent）
-# 均可删除——main-agent 只是出厂默认，不是不可替代的平台组件。
+# 安全运营专家携带剧本执行能力与审批治理契约，其内置 Workspace 必须经仓库评审变更。
 PROTECTED_BUSINESS_AGENT_IDS = frozenset({SECURITY_OPERATIONS_EXPERT_AGENT_ID})
 
 
 def is_protected_business_agent(agent_id: str) -> bool:
     return agent_id in PROTECTED_BUSINESS_AGENT_IDS
+
+
+def is_builtin_business_agent(agent_id: str) -> bool:
+    return agent_id in BUILTIN_BUSINESS_AGENT_IDS
+
+
+def is_default_business_agent(agent_id: str) -> bool:
+    return agent_id == DEFAULT_BUSINESS_AGENT_ID

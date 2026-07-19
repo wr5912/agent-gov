@@ -14,25 +14,24 @@ from app.runtime.protected_business_agents import SECURITY_OPERATIONS_EXPERT_AGE
 from scripts.bootstrap_runtime_volume import bootstrap_runtime_volume
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SEEDS = REPO_ROOT / "docker" / "runtime-volume-seeds"
-SECURITY_OPERATIONS_EXPERT_AGENT_ID = "security-operations-expert"
-SEEDED_AGENT_IDS = tuple(sorted(path.name for path in (SEEDS / "data" / "business-agents").iterdir() if (path / "workspace").is_dir()))
+BOOTSTRAP = REPO_ROOT / "docker" / "runtime-bootstrap"
+BUILTIN_AGENT_IDS = (SECURITY_OPERATIONS_EXPERT_AGENT_ID,)
 
 
-def _seeded_runtime(tmp_path: Path) -> Path:
+def _bootstrapped_runtime(tmp_path: Path) -> Path:
     runtime_root = tmp_path / "runtime"
     bootstrap_runtime_volume(
         runtime_root=runtime_root,
-        template_dir=SEEDS,
+        bootstrap_dir=BOOTSTRAP,
         runtime_volume_mode="local-debug",
         env={"MCP_SERVER_URL": "http://unused.example/mcp"},
     )
     return runtime_root
 
 
-@pytest.mark.parametrize("agent_id", SEEDED_AGENT_IDS)
-def test_seeded_business_agent_workspaces_match_managed_policy(tmp_path, agent_id):
-    runtime_root = _seeded_runtime(tmp_path)
+@pytest.mark.parametrize("agent_id", BUILTIN_AGENT_IDS)
+def test_builtin_business_agent_workspaces_match_managed_policy(tmp_path, agent_id):
+    runtime_root = _bootstrapped_runtime(tmp_path)
     workspace = runtime_root / "data" / "business-agents" / agent_id / "workspace"
 
     assert (
@@ -48,7 +47,7 @@ def test_seeded_business_agent_workspaces_match_managed_policy(tmp_path, agent_i
 
 
 def test_security_operations_workspace_uses_generic_structural_managed_policy(tmp_path):
-    runtime_root = _seeded_runtime(tmp_path)
+    runtime_root = _bootstrapped_runtime(tmp_path)
     workspace = runtime_root / "data" / "business-agents" / SECURITY_OPERATIONS_EXPERT_AGENT_ID / "workspace"
     settings_path = workspace / ".claude" / "settings.json"
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -68,18 +67,18 @@ def test_security_operations_workspace_uses_generic_structural_managed_policy(tm
 
 
 def test_missing_referenced_hook_is_rejected(tmp_path):
-    template = SEEDS / "data" / "business-agents" / "main-agent" / "workspace"
+    template = BOOTSTRAP / "business-agents" / SECURITY_OPERATIONS_EXPERT_AGENT_ID / "workspace"
     workspace = tmp_path / "workspace"
     shutil.copytree(template, workspace)
     (workspace / "hooks" / "pre_tool_guard.py").unlink()
 
-    plan = plan_workspace_policy(workspace=workspace, agent_id="main-agent")
+    plan = plan_workspace_policy(workspace=workspace, agent_id=SECURITY_OPERATIONS_EXPERT_AGENT_ID)
 
     assert any(item.path.endswith("hooks/pre_tool_guard.py") and item.rule_id == "referenced_hook_missing" for item in plan.violations)
 
 
 def test_symlinked_hook_parent_is_rejected_without_reading_external_content(tmp_path):
-    template = SEEDS / "data" / "business-agents" / "main-agent" / "workspace"
+    template = BOOTSTRAP / "business-agents" / SECURITY_OPERATIONS_EXPERT_AGENT_ID / "workspace"
     workspace = tmp_path / "workspace"
     shutil.copytree(template, workspace)
     shutil.rmtree(workspace / "hooks")
@@ -89,7 +88,7 @@ def test_symlinked_hook_parent_is_rejected_without_reading_external_content(tmp_
     external_hook.write_text("outside\n", encoding="utf-8")
     (workspace / "hooks").symlink_to(outside, target_is_directory=True)
 
-    plan = plan_workspace_policy(workspace=workspace, agent_id="main-agent")
+    plan = plan_workspace_policy(workspace=workspace, agent_id=SECURITY_OPERATIONS_EXPERT_AGENT_ID)
 
     assert any(item.path.endswith("hooks/pre_tool_guard.py") and item.rule_id == "unsafe_file_type" for item in plan.violations)
     assert external_hook.read_text(encoding="utf-8") == "outside\n"

@@ -5,9 +5,9 @@ import shutil
 from pathlib import Path
 from typing import TypedDict
 
-RUNTIME_BACKUP_DIR_NAME = ".runtime-volume-seeds-backups"
-TEMPLATE_BACKUP_DIR_NAME = ".runtime-volume-seeds-backups"
-TEMPLATE_STAGING_DIR_NAME = ".runtime-volume-seeds-staging"
+RUNTIME_BACKUP_DIR_NAME = ".runtime-bootstrap-backups"
+BOOTSTRAP_BACKUP_DIR_NAME = ".runtime-bootstrap-backups"
+BOOTSTRAP_STAGING_DIR_NAME = ".runtime-bootstrap-staging"
 PROTECTED_RUNTIME_DIR_NAMES = {".git", "data", "langfuse"}
 
 
@@ -54,16 +54,16 @@ def _runtime_backup_candidates(runtime_root: Path) -> tuple[list[Path], list[str
     return candidates, skipped
 
 
-def _template_artifact_candidates(template_dir: Path) -> list[Path]:
-    parent = template_dir.parent
-    template_name = template_dir.name
+def _bootstrap_artifact_candidates(bootstrap_dir: Path) -> list[Path]:
+    parent = bootstrap_dir.parent
+    bootstrap_name = bootstrap_dir.name
     candidates = [
-        parent / TEMPLATE_BACKUP_DIR_NAME,
-        parent / TEMPLATE_STAGING_DIR_NAME,
-        parent / f".{template_name}.restore",
-        parent / f".{template_name}.before-restore",
+        parent / BOOTSTRAP_BACKUP_DIR_NAME,
+        parent / BOOTSTRAP_STAGING_DIR_NAME,
+        parent / f".{bootstrap_name}.restore",
+        parent / f".{bootstrap_name}.before-restore",
     ]
-    candidates.extend(sorted(parent.glob(f".{template_name}.old-*")))
+    candidates.extend(sorted(parent.glob(f".{bootstrap_name}.old-*")))
     return [path for path in candidates if path.exists()]
 
 
@@ -94,7 +94,7 @@ def _dedupe_existing(paths: list[Path]) -> list[Path]:
 def cleanup_runtime_artifacts(
     *,
     runtime_root: Path | None = None,
-    template_dir: Path | None = None,
+    bootstrap_dir: Path | None = None,
     extra_paths: list[Path] | None = None,
     dry_run: bool = False,
 ) -> CleanupResult:
@@ -106,8 +106,8 @@ def cleanup_runtime_artifacts(
         runtime_candidates, runtime_skipped = _runtime_backup_candidates(runtime_root)
         candidates.extend(runtime_candidates)
         skipped.extend(runtime_skipped)
-    if template_dir is not None:
-        candidates.extend(_template_artifact_candidates(template_dir))
+    if bootstrap_dir is not None:
+        candidates.extend(_bootstrap_artifact_candidates(bootstrap_dir))
     if extra_paths:
         candidates.extend(path for path in extra_paths if path.exists())
 

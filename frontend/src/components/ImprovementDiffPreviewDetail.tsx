@@ -49,8 +49,8 @@ export function DiffPreviewDetail({
     const emptyMessage = !execution
       ? "执行优化后将展示文件级 diff。"
       : !changeSetId
-        ? "当前执行记录未绑定候选变更集，不能展示文件级 diff；请执行优化生成候选变更集。"
-        : "当前执行记录已绑定变更集，但 applied_diff 未包含可展开的文件路径。";
+        ? "当前执行记录未绑定待发布变更，不能展示文件级 diff；请执行优化生成待发布变更。"
+        : "当前执行记录已绑定待发布变更，但 applied_diff 未包含可展开的文件路径。";
     return (
       <div className="iw-file-diff-list" data-testid="diff-preview-no-file-diff">
         <div className="iw-empty">{emptyMessage}</div>

@@ -32,7 +32,6 @@ class AgentRegistryRecord:
     workspace_dir: str
     created_at: str
     status: str = "active"
-    origin: str = "user"  # #26：seed（声明式基线，禁删）vs user（用户创建，可 tombstone 删除）
     requires_web_hitl: bool = False  # 从 workspace project settings permissions.ask 派生的只读观测值
 
 
@@ -65,7 +64,6 @@ class _AgentProvisionPrevious(BaseModel):
     workspace_dir: _NonEmptyText
     created_at: _NonEmptyText
     status: _NonEmptyText
-    origin: _NonEmptyText
     deleted_at: _NonEmptyText
     workspace_recovery: _IncompleteWorkspaceRecovery | None = None
 
@@ -80,14 +78,12 @@ class AgentRegistryStore:
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory
 
-    def sync_business_agents(self, profiles: dict[str, AgentRuntimeProfile], *, seed_agent_ids: frozenset[str] = frozenset()) -> None:
+    def sync_business_agents(self, profiles: dict[str, AgentRuntimeProfile]) -> None:
         with self._session_factory.begin() as db:
             for profile in profiles.values():
                 if profile.category != "business":
                     continue
-                # 业务 Agent（含预制 main-agent）以 profile.name 为身份；origin 以 seed 目录为准
-                # 区分声明式基线 vs 用户创建（#26）。
-                origin = "seed" if profile.name in seed_agent_ids else "user"
+                # 运行态 Workspace 的直接子目录名即业务 Agent 稳定身份。
                 existing = db.get(AgentRegistryModel, profile.name)
                 if existing is not None:
                     # 未完成创建是内部 saga intent；磁盘发现不得把它提前 finalize 或改写。
@@ -96,10 +92,9 @@ class AgentRegistryStore:
                     # #26：用户已删除（tombstone）的 Agent 不因磁盘 workspace 仍在而被复活。
                     if existing.deleted_at:
                         continue
-                    # ⑤：已存在记录若 workspace_dir 漂移（升级后路径迁移）同步更新；origin 以 seed 目录校正。
+                    # 已存在记录若 workspace_dir 漂移（升级后路径迁移）同步更新。
                     if existing.workspace_dir != str(profile.workspace_dir):
                         existing.workspace_dir = str(profile.workspace_dir)
-                    existing.origin = origin
                     continue
                 db.add(
                     AgentRegistryModel(
@@ -108,7 +103,6 @@ class AgentRegistryStore:
                         category=profile.category,
                         workspace_dir=str(profile.workspace_dir),
                         created_at=utc_now(),
-                        origin=origin,
                         provision_state=_PROVISION_READY,
                     )
                 )
@@ -132,8 +126,7 @@ class AgentRegistryStore:
     def create_business_agent(self, *, name: str, agent_id: str, workspace_dir: str) -> AgentRegistryRecord:
         """注册一个业务 Agent 身份（被治理对象）。活跃 agent_id 重复拒绝，空 name 拒绝。
 
-        #26：若该 agent_id 是被 tombstone 删除的旧行（deleted_at 非空），允许复用——清 tombstone
-        重置为新建的 user Agent，使删除后的 id 可重新创建（否则 id 永久不可用）。
+        若该 agent_id 是被 tombstone 删除的旧行（deleted_at 非空），允许复用并清除 tombstone。
         """
         clean_name = name.strip()
         if not clean_name:
@@ -151,7 +144,6 @@ class AgentRegistryStore:
                 existing.name = clean_name
                 existing.category = "business"
                 existing.workspace_dir = workspace_dir
-                existing.origin = "user"
                 existing.status = "active"
                 existing.created_at = created_at
                 existing.provision_state = _PROVISION_READY
@@ -166,7 +158,6 @@ class AgentRegistryStore:
                     category="business",
                     workspace_dir=workspace_dir,
                     created_at=created_at,
-                    origin="user",  # #26：API 创建 = 用户来源（可 tombstone 删除）
                     provision_state=_PROVISION_READY,
                 )
             )
@@ -176,7 +167,6 @@ class AgentRegistryStore:
             category="business",
             workspace_dir=workspace_dir,
             created_at=created_at,
-            origin="user",
             requires_web_hitl=read_requires_web_hitl(Path(workspace_dir)),
         )
 
@@ -202,7 +192,6 @@ class AgentRegistryStore:
                         workspace_dir=workspace_dir,
                         created_at=now,
                         status="active",
-                        origin="user",
                         provision_state=_PROVISIONING,
                         provision_token=token,
                         provision_started_at=now,
@@ -223,7 +212,6 @@ class AgentRegistryStore:
                 row.workspace_dir = workspace_dir
                 row.created_at = now
                 row.status = "active"
-                row.origin = "user"
                 row.provision_state = _PROVISIONING
                 row.provision_token = token
                 row.provision_started_at = now
@@ -323,17 +311,15 @@ class AgentRegistryStore:
     def delete_business_agent(self, agent_id: str) -> AgentRegistryRecord:
         """把业务 Agent 标记为已删除（tombstone），使其立即不可见且重启不复活。
 
-        保护只认受保护名单，不看 `origin`：origin 是「出生来源」的派生投影，会随运行态 seed
-        catalog 内容漂移，用它决定删除权限会让保护也跟着漂。main-agent 也不再特判——它是可
-        删除的普通业务 Agent。
+        保护只认受保护名单。main-agent 不特判，是可删除的普通业务 Agent。
 
-        本方法只动注册表。磁盘与运行态 seed 的清理由删除服务在事务提交后执行——rmtree 不可
+        本方法只动注册表。磁盘清理由删除服务在事务提交后执行——rmtree 不可
         回滚，放进事务块意味着事务回滚后磁盘已经回不来（见 AGENTS.md 的事务副作用约束）。
         删除前的影响面提示由路由层给出，避免无声删除治理对象。
         """
         if is_protected_business_agent(agent_id):
             raise BusinessRuleViolation(
-                f"Business agent '{agent_id}' is protected: its configuration and seed live in the project "
+                f"Business agent '{agent_id}' is protected: its built-in Workspace lives in the project "
                 f"repository and can only be removed through a reviewed repository change"
             )
         with self._session_factory.begin() as db:
@@ -353,7 +339,6 @@ def _record(row: AgentRegistryModel) -> AgentRegistryRecord:
         workspace_dir=row.workspace_dir,
         created_at=row.created_at,
         status=row.status or "active",
-        origin=row.origin or "user",
         requires_web_hitl=read_requires_web_hitl(Path(row.workspace_dir)),
     )
 
@@ -380,7 +365,6 @@ def _snapshot_row(row: AgentRegistryModel) -> _AgentProvisionPrevious:
         workspace_dir=row.workspace_dir,
         created_at=row.created_at,
         status=row.status,
-        origin=row.origin,
         deleted_at=row.deleted_at,
         workspace_recovery=(_parse_workspace_recovery(row.provision_previous_json) if row.provision_previous_json is not None else None),
     )
@@ -407,7 +391,6 @@ def _restore_snapshot(row: AgentRegistryModel, snapshot: _AgentProvisionPrevious
     row.workspace_dir = snapshot.workspace_dir
     row.created_at = snapshot.created_at
     row.status = snapshot.status
-    row.origin = snapshot.origin
     row.deleted_at = snapshot.deleted_at
     row.provision_state = _PROVISION_READY
     row.provision_token = None

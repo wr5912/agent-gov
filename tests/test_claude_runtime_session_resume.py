@@ -6,16 +6,17 @@ import pytest
 from app.runtime import claude_prompt_suggestions, session_turn_lease
 from app.runtime.agent_profiles import build_business_agent_profile
 from app.runtime.async_iterators import close_async_iterator
-from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.errors import SessionConflictError
 from app.runtime.openai_responses_stream import iter_responses_sse
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import SessionRecordModel
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSession, LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.feedback_store import FeedbackStore
 
+from business_agent_test_utils import create_test_business_agent_workspace
 from claude_runtime_test_utils import route_interactive_client_through_query
 
 
@@ -27,13 +28,17 @@ def _route_interactive_sdk_client(monkeypatch):
 def _runtime(settings, store, *args, **kwargs):
     """构造 ClaudeRuntime，并装上最小 business profile resolver。
 
-    runtime 不再持有预制 main profile——main 是可删除的普通业务 Agent，profile 一律由 resolver
-    从注册表解析（生产装配见 main.py）。这些用例测的是 session/lease/取消语义，profile 只是载体。
+    profile 一律由 resolver 从注册表解析（生产装配见 main.py）。这些用例测的是
+    session/lease/取消语义，默认业务 Agent profile 只是测试载体。
     """
 
     kwargs.setdefault(
         "business_profile_resolver",
-        lambda agent_id: build_business_agent_profile(settings, agent_id=agent_id or "main-agent", workspace_dir=settings.main_workspace_dir),
+        lambda agent_id: build_business_agent_profile(
+            settings,
+            agent_id=agent_id or DEFAULT_BUSINESS_AGENT_ID,
+            workspace_dir=settings.default_workspace_dir,
+        ),
     )
     return ClaudeRuntime(settings, store, *args, **kwargs)
 
@@ -46,8 +51,12 @@ def _settings(tmp_path):
         GOVERNOR_CLAUDE_ROOT=tmp_path / "docker" / "volume" / "claude-roots" / "governor",
         RUNTIME_VOLUME_MODE="local-debug",
     )
-    workspace = settings.main_workspace_dir
-    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    workspace = settings.default_workspace_dir
+    create_test_business_agent_workspace(
+        workspace,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        name="Security Operations Expert",
+    )
     (workspace / ".mcp.json").write_text(
         json.dumps(
             {
@@ -70,9 +79,9 @@ def _store_with_stale_session(settings, session_id):
     from claude_agent_sdk import project_key_for_directory
 
     store = LocalSessionStore(settings.session_dir)
-    session = store.get_or_create_owned(session_id, agent_id="main-agent")
+    session = store.get_or_create_owned(session_id, agent_id=DEFAULT_BUSINESS_AGENT_ID)
     session.sdk_session_id = "stale-sdk"
-    session.sdk_project_key = project_key_for_directory(str(settings.main_workspace_dir))
+    session.sdk_project_key = project_key_for_directory(str(settings.default_workspace_dir))
     session.sdk_store_ready_at = "2026-07-13T00:00:00+00:00"
     store.save(session)
     return store
@@ -294,7 +303,7 @@ def test_client_cancel_closes_sdk_task_and_discards_unfinished_turn(tmp_path, mo
     monkeypatch.setattr(claude_agent_sdk, "query", blocking_query)
     settings = _settings(tmp_path)
     store = LocalSessionStore(settings.session_dir)
-    feedback_store = FeedbackStore(data_dir=settings.data_dir, workspace_dir=settings.main_workspace_dir)
+    feedback_store = FeedbackStore(data_dir=settings.data_dir, workspace_dir=settings.default_workspace_dir)
     runtime = _runtime(settings, store, feedback_store)
     session_id = "sess-client-cancel"
 
@@ -304,7 +313,7 @@ def test_client_cancel_closes_sdk_task_and_discards_unfinished_turn(tmp_path, mo
             consumer = iter_responses_sse(
                 runtime_source,
                 model="test-model",
-                effective_agent_id="main-agent",
+                effective_agent_id=DEFAULT_BUSINESS_AGENT_ID,
                 control=True,
             )
             async for chunk in consumer:
@@ -371,7 +380,7 @@ def test_client_cancel_closes_sdk_task_when_hitl_cleanup_fails(tmp_path, monkeyp
     monkeypatch.setattr(claude_agent_sdk, "query", blocking_query)
     settings = _settings(tmp_path)
     store = LocalSessionStore(settings.session_dir)
-    feedback_store = FeedbackStore(data_dir=settings.data_dir, workspace_dir=settings.main_workspace_dir)
+    feedback_store = FeedbackStore(data_dir=settings.data_dir, workspace_dir=settings.default_workspace_dir)
     runtime = _runtime(
         settings,
         store,
@@ -385,7 +394,7 @@ def test_client_cancel_closes_sdk_task_when_hitl_cleanup_fails(tmp_path, monkeyp
         consumer = iter_responses_sse(
             runtime_source,
             model="test-model",
-            effective_agent_id="main-agent",
+            effective_agent_id=DEFAULT_BUSINESS_AGENT_ID,
             control=True,
         )
         async for chunk in consumer:
@@ -477,10 +486,14 @@ def test_build_options_does_not_reuse_api_session_id_after_resume_is_cleared(tmp
     store = LocalSessionStore(settings.session_dir)
     runtime = _runtime(settings, store)
     session_id = str(uuid.uuid4())
-    session = store.get_or_create_owned(session_id, agent_id="main-agent")
+    session = store.get_or_create_owned(session_id, agent_id=DEFAULT_BUSINESS_AGENT_ID)
 
-    main_profile = build_business_agent_profile(settings, agent_id="main-agent", workspace_dir=settings.main_workspace_dir)
-    first_options = runtime._build_options(ChatRequest(message="first", session_id=session_id), session, profile=main_profile)
+    default_profile = build_business_agent_profile(
+        settings,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        workspace_dir=settings.default_workspace_dir,
+    )
+    first_options = runtime._build_options(ChatRequest(message="first", session_id=session_id), session, profile=default_profile)
     assert getattr(first_options, "session_id", None) == session_id
     assert getattr(first_options, "resume", None) is None
 
@@ -494,7 +507,7 @@ def test_build_options_does_not_reuse_api_session_id_after_resume_is_cleared(tmp
     second_options = runtime._build_options(
         ChatRequest(message="second", session_id=session_id),
         resumed_after_config_change,
-        profile=main_profile,
+        profile=default_profile,
     )
 
     assert getattr(second_options, "session_id", None) is None

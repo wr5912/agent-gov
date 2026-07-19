@@ -1,10 +1,8 @@
-"""业务 Agent 删除：注册表 tombstone + 磁盘清理 + 运行态 seed 移除。
+"""业务 Agent 删除：注册表 tombstone + 运行态存储清理。
 
 删除的三条边界，各有其理由：
 
-- **受保护 Agent 拒删**：`PROTECTED_BUSINESS_AGENT_IDS` 里的 Agent 真相源在仓库，删除必须经
-  受保护 PR。保护不看 `origin`——origin 是随 catalog 内容漂移的派生投影，把权限挂在它上面
-  会让保护也跟着漂。
+- **受保护业务 Agent 拒删**：其内置 Workspace 在仓库维护，删除必须经受保护 PR。
 - **删除前必须无活跃 turn / 无未终结 change set**：与导入/恢复共用同一把维护租约，因此二者
   天然互斥；否则会删掉正在被使用的 workspace。
 - **rmtree 不在事务块内**：事务内只 tombstone 并标记清理待完成，提交后才动磁盘。磁盘删除
@@ -21,11 +19,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
-from app.runtime.business_agent_seed_catalog import (
-    declared_business_agent_workspace,
-    runtime_seed_catalog_dir,
-    seed_deletion_marker_path,
-)
 
 
 class BusinessAgentDeletionError(RuntimeError):
@@ -64,15 +57,14 @@ class BusinessAgentPurgeResult:
     """
 
     workspace_removed: bool
-    seed_removed: bool
 
     @property
     def cleanup_complete(self) -> bool:
-        return self.workspace_removed and self.seed_removed
+        return self.workspace_removed
 
 
 def purge_business_agent_storage(*, data_dir: Path, agent_id: str) -> BusinessAgentPurgeResult:
-    """删除该 Agent 的全部运行态存储与运行态 seed 条目。"""
+    """删除该 Agent 的全部运行态存储。"""
 
     try:
         safe_id = validate_agent_id(agent_id)
@@ -81,15 +73,4 @@ def purge_business_agent_storage(*, data_dir: Path, agent_id: str) -> BusinessAg
 
     layout = business_agent_layout(data_dir, safe_id)
     workspace_removed = _remove_tree(layout.root)
-
-    catalog_root = runtime_seed_catalog_dir(data_dir)
-    catalog_entry = declared_business_agent_workspace(safe_id, seed_root=catalog_root).parent
-    seed_removed = _remove_tree(catalog_entry)
-    if seed_removed:
-        # 标记必须在条目移除后写：仓库出生配置仍声明着这个 seed，没有标记时下次 bootstrap
-        # 会照仓库把它填回 catalog，删除就不粘。
-        marker = seed_deletion_marker_path(safe_id, seed_root=catalog_root)
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text("", encoding="utf-8")
-
-    return BusinessAgentPurgeResult(workspace_removed=workspace_removed, seed_removed=seed_removed)
+    return BusinessAgentPurgeResult(workspace_removed=workspace_removed)

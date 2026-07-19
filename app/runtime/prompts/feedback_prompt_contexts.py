@@ -19,7 +19,7 @@ def build_attribution_prompt_context(input_json: JsonObject) -> JsonObject:
             "evidence_package": _evidence_package_summary(_json_dict(input_json.get("evidence_package"))),
             "evidence_files": _compact_json_object(evidence_files, MAX_PROMPT_FILE_TEXT_CHARS),
             "langfuse_trace_details": _compact_json_object(input_json.get("langfuse_trace_details"), MAX_PROMPT_FILE_TEXT_CHARS),
-            "main_agent_version_id": _text(input_json.get("main_agent_version_id"), 300),
+            "business_agent_id": _text(input_json.get("business_agent_id"), 300),
             "target_agent_context": _target_agent_context_summary(_json_dict(input_json.get("target_agent_context"))),
             "task": _text(input_json.get("task"), 200),
         }
@@ -53,15 +53,14 @@ def build_improvement_optimization_prompt_context(input_json: JsonObject) -> Jso
             "attribution": _json_object(
                 {
                     "summary": _text(attribution.get("summary"), MAX_PROMPT_TEXT_CHARS),
-                    "responsibility_boundary": _limited_text_list(
-                        attribution.get("responsibility_boundary"), MAX_PROMPT_LIST_ITEMS
-                    ),
+                    "responsibility_boundary": _limited_text_list(attribution.get("responsibility_boundary"), MAX_PROMPT_LIST_ITEMS),
                     "evidence": _limited_text_list(attribution.get("evidence"), MAX_PROMPT_LIST_ITEMS),
                 }
             ),
             "target_guidance": [
                 "只输出事项级优化方案，不输出批次、任务队列、外部 webhook 或执行 job。",
-                "changes[].target 应指向 prompt、skill、subagent、mcp_config、runtime_config、test_dataset 等治理资产。",
+                "changes[].target 应指向 prompt、skill、subagent、mcp_config、runtime_config、tests 等 Workspace 资产。",
+                "已确认 normalized_feedback 的 possible_object 与 suggestion 是变更范围上限；其中明确仅修改某路径或明确排除某类资产时，不得因归因分析而扩大范围。",
                 "提方案前用 Read 读取目标业务 Agent 的 workspace 原始配置，changes 只针对真实存在的配置资产、不提与当前配置无关的改动。",
             ],
             "target_agent_context": _target_agent_context_summary(_json_dict(input_json.get("target_agent_context"))),
@@ -81,13 +80,13 @@ def build_execution_prompt_context(input_json: JsonObject) -> JsonObject:
     )
 
 
-def build_regression_assessment_prompt_context(input_json: JsonObject) -> JsonObject:
+def build_regression_test_design_prompt_context(input_json: JsonObject) -> JsonObject:
     feedback_cases = _json_list(input_json.get("feedback_cases"))
     return _json_object(
         {
             "feedback_case_count": len(feedback_cases),
             "source_refs": _limited_objects(_json_list(input_json.get("source_refs")), _source_ref_summary),
-            "feedback_cases": _limited_objects(feedback_cases, _regression_assessment_case_summary),
+            "feedback_cases": _limited_objects(feedback_cases, _regression_test_design_case_summary),
         }
     )
 
@@ -145,7 +144,7 @@ def _evidence_package_summary(source: JsonObject) -> JsonObject:
     return _json_object(
         {
             "evidence_package_id": _text(source.get("evidence_package_id"), 300),
-            "main_agent_version_id": _text(source.get("main_agent_version_id"), 300),
+            "business_agent_id": _text(source.get("business_agent_id"), 300),
             "source_refs": _compact_json_object(source_refs, MAX_PROMPT_NESTED_TEXT_CHARS),
             "included_files": _limited_objects(_json_list(source.get("included_files")), _included_file_summary, limit=20),
             "completeness": _compact_json_object(completeness, MAX_PROMPT_NESTED_TEXT_CHARS),
@@ -219,7 +218,7 @@ def _source_ref_summary(source: JsonObject) -> JsonObject:
     return _json_object({"source_kind": _text(source.get("source_kind"), 100), "source_id": _text(source.get("source_id"), 300)})
 
 
-def _regression_assessment_case_summary(source: JsonObject) -> JsonObject:
+def _regression_test_design_case_summary(source: JsonObject) -> JsonObject:
     feedback_case = _json_dict(source.get("feedback_case"))
     source_run = _json_dict(source.get("source_run"))
     return _json_object(
@@ -261,9 +260,7 @@ def _optimization_plan_summary(source: JsonObject) -> JsonObject:
 
 
 def _optimization_change_summary(source: JsonObject) -> JsonObject:
-    return _json_object(
-        {"target": _text(source.get("target"), 500), "change": _text(source.get("change"), MAX_PROMPT_TEXT_CHARS)}
-    )
+    return _json_object({"target": _text(source.get("target"), 500), "change": _text(source.get("change"), MAX_PROMPT_TEXT_CHARS)})
 
 
 def _json_dict(value: object) -> JsonObject:

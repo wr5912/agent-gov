@@ -14,11 +14,11 @@ from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
 
 def _require_agent_id(req: ChatRequest) -> None:
-    """两个原生 chat 入口（/api/chat、/api/chat/stream）都要求显式有效 agent_id；不静默跑 main。"""
+    """两个原生 chat 入口都要求显式有效 agent_id，不使用默认业务 Agent。"""
     if not (req.agent_id and req.agent_id.strip()):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="agent_id is required (main-agent or a registered business agent)",
+            detail="agent_id is required and must identify a registered business agent",
         )
 
 
@@ -35,7 +35,7 @@ def create_chat_router(
         "/chat",
         response_model=ChatResponse,
         summary="Run a Claude Agent task and return the full result",
-        description="Runs one Claude Agent SDK query. Requires a valid agent_id (main-agent or a registered business agent).",
+        description="Runs one Claude Agent SDK query. Requires a registered business agent_id.",
     )
     async def chat(req: ChatRequest) -> ChatResponse:
         _require_agent_id(req)
@@ -45,7 +45,7 @@ def create_chat_router(
     @router.post(
         "/chat/stream",
         summary="Run a Claude Agent task as server-sent events",
-        description="Streams session, message, prompt_suggestion, result, error, and done events as text/event-stream. Requires a valid agent_id (main-agent or a registered business agent).",
+        description="Streams session, message, prompt_suggestion, result, error, and done events as text/event-stream. Requires a registered business agent_id.",
     )
     async def chat_stream(req: ChatRequest) -> StreamingResponse:
         _require_agent_id(req)

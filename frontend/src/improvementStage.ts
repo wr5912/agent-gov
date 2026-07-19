@@ -27,7 +27,7 @@ const INTERNAL_STAGE_LABEL: Record<string, string> = {
   optimization: "优化方案",
   execution: "执行优化",
   regression: "回归测试",
-  release: "发布门禁",
+  release: "发布条件",
 };
 
 const VISIBLE_STAGE_BY_INTERNAL: Record<string, VisibleImprovementStageKey> = {
@@ -55,6 +55,7 @@ export interface ImprovementStageView {
   internalLabel: string;
   description: string;
   isTerminal: boolean;
+  isCompleted: boolean;
   backAction: { stage: string; label: string } | null;
 }
 
@@ -67,11 +68,12 @@ export function internalStageLabel(stage: string): string {
   return INTERNAL_STAGE_LABEL[stage] ?? stage;
 }
 
-export function describeImprovementStage(stage: string): ImprovementStageView {
+export function describeImprovementStage(stage: string, improvementStatus?: string): ImprovementStageView {
   const visibleKey = VISIBLE_STAGE_BY_INTERNAL[stage] ?? "feedback_sorting";
   const index = IMPROVEMENT_STAGE_ORDER.findIndex((item) => item.key === visibleKey);
   const stageIndex = index < 0 ? 0 : index;
   const def = IMPROVEMENT_STAGE_ORDER[stageIndex] ?? IMPROVEMENT_STAGE_ORDER[0];
+  const isCompleted = stage === "release" && improvementStatus === "done";
   return {
     stages: IMPROVEMENT_STAGE_ORDER,
     stageIndex,
@@ -79,8 +81,9 @@ export function describeImprovementStage(stage: string): ImprovementStageView {
     visibleKey,
     internalStage: stage,
     internalLabel: internalStageLabel(stage),
-    description: def.description,
+    description: isCompleted ? "已通过平台测试并发布" : def.description,
     isTerminal: stage === "release",
+    isCompleted,
     backAction: BACK_ACTION[stage] ?? null,
   };
 }

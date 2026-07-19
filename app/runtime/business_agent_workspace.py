@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import ast
-import json
 import os
 import stat
 from contextlib import suppress
@@ -9,58 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
-from app.runtime.business_agent_seed_catalog import (
-    business_agent_templates_dir,
-    declared_business_agent_workspace,
-)
-
-# 创建业务 Agent 时基于的模板 catalog（docker/runtime-volume-seeds/templates/business-agent/<template_id>/）。
-# 路径由 business_agent_seed_catalog 统一解析。
-DEFAULT_TEMPLATE_ID = "general"
-# 渲染占位符：模板文本里的 {{AGENT_ID}} / {{AGENT_NAME}} 被替换为具体值（双花括号不与 JSON 冲突）。
-_PLACEHOLDER_AGENT_ID = "{{AGENT_ID}}"
-_PLACEHOLDER_AGENT_NAME = "{{AGENT_NAME}}"
 _DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-
-# general 模板缺失时的内联兜底（保证无种子目录的纯单测环境也能初始化）。
-_STARTER_CLAUDE_MD = """# {name}
-
-本工作区是 AgentGov 注册的业务 Agent `{agent_id}`（被治理对象）。
-
-在此定义该 Agent 的角色、system prompt、技能与工具边界、行为约束；AgentGov 负责
-其运行、反馈归因、评估和版本治理。高风险动作须经外部系统或授权用户确认。
-"""
-
-# 业务 Agent 是被治理对象：起始权限保守，默认只读自身工作区；Bash 走原生 ask/HITL，
-# 写入工作区仍需确认。运行时治理根隔离由 build_business_agent_profile 在 profile 层另行拒绝。
-_STARTER_SETTINGS: dict = {
-    "$schema": "https://json.schemastore.org/claude-code-settings.json",
-    "permissions": {
-        "defaultMode": "default",
-        "disableBypassPermissionsMode": "disable",
-        "allow": ["Read(./**)", "Glob", "Grep", "Skill"],
-        "ask": ["Bash(*)", "Edit(./**)", "Write(./**)"],
-        "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)"],
-    },
-    "sandbox": {
-        "enabled": True,
-        "failIfUnavailable": True,
-        "autoAllowBashIfSandboxed": False,
-        "enableWeakerNestedSandbox": True,
-        "allowUnsandboxedCommands": False,
-    },
-}
-
-# 起始 MCP 配置为空：不预置任何 server，更不预置 header/凭据；由用户按需添加。
-_STARTER_MCP: dict = {"mcpServers": {}}
-
-
-class UnknownBusinessAgentTemplate(ValueError):
-    """请求的 template_id 不在 catalog 中（外部输入越权/拼写错误）。"""
 
 
 class WorkspaceSafetyError(RuntimeError):
-    """Template or workspace violates the no-follow provisioning boundary."""
+    """Workspace content violates the no-follow provisioning boundary."""
 
 
 class WorkspaceProvisioningError(RuntimeError):
@@ -72,16 +23,15 @@ class WorkspaceProvisioningError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class WorkspaceTemplateEntry:
+class WorkspaceProvisionEntry:
     relative_path: PurePosixPath
     content: bytes
     mode: int
 
 
 @dataclass(frozen=True)
-class WorkspaceTemplatePlan:
-    template_id: str
-    entries: tuple[WorkspaceTemplateEntry, ...]
+class WorkspaceProvisionPlan:
+    entries: tuple[WorkspaceProvisionEntry, ...]
 
 
 @dataclass(frozen=True)
@@ -97,112 +47,9 @@ class WorkspaceProvisionJournal:
     created_directories: tuple[_CreatedPath, ...]
 
 
-class InvalidDeclaredBusinessAgentSeed(RuntimeError):
-    """声明式业务 Agent seed 无法安全物化。"""
-
-
-def list_business_agent_templates() -> list[str]:
-    """列出可用 template_id（按名排序）；catalog 目录缺失时回退到内置 general。"""
-    root = business_agent_templates_dir()
-    root_stat = _lstat(root)
-    if root_stat is None:
-        return [DEFAULT_TEMPLATE_ID]
-    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
-        raise WorkspaceSafetyError("Business Agent template catalog must be a real directory")
-    ids: list[str] = []
-    with os.scandir(root) as entries:
-        for entry in entries:
-            relative_path = PurePosixPath(entry.name)
-            _validate_relative_path(relative_path)
-            if _is_cache_artifact(relative_path):
-                raise WorkspaceSafetyError(f"Business Agent template catalog contains a cache artifact: {entry.name}")
-            if entry.is_symlink():
-                raise WorkspaceSafetyError(f"Business Agent template catalog contains a symlink: {entry.name}")
-            if entry.is_dir(follow_symlinks=False):
-                ids.append(entry.name)
-    ids.sort()
-    return ids or [DEFAULT_TEMPLATE_ID]
-
-
-def prepare_declared_business_agent_workspace(
-    *,
-    source_agent_id: str,
-    seed_root: Path | None = None,
-) -> WorkspaceTemplatePlan | None:
-    """Read a declared seed byte-for-byte before reserving persistent state.
-
-    `seed_root` 应传运行态 seed catalog：已被在线删除的 seed 不应还能实例化。缺省回退到
-    仓库出生配置，仅为不带 settings 的直接调用（测试）保留。
-    """
-
-    source_id = source_agent_id.strip()
-    if not source_id:
-        return None
-    source_workspace = declared_business_agent_workspace(source_id, seed_root=seed_root)
-    source_stat = _lstat(source_workspace)
-    if source_stat is None:
-        return None
-    if stat.S_ISLNK(source_stat.st_mode) or not stat.S_ISDIR(source_stat.st_mode):
-        raise InvalidDeclaredBusinessAgentSeed(f"Declared workspace seed must be a real directory: {source_id}")
-    try:
-        entries = tuple(
-            _read_template_tree(
-                source_workspace,
-                agent_id="",
-                name="",
-                render_identity=False,
-                skip_readme=False,
-            )
-        )
-    except WorkspaceSafetyError as exc:
-        raise InvalidDeclaredBusinessAgentSeed(str(exc)) from exc
-    if not entries:
-        raise InvalidDeclaredBusinessAgentSeed(f"Declared workspace seed is empty: {source_id}")
-    return WorkspaceTemplatePlan(template_id=f"declared:{source_id}", entries=entries)
-
-
-def _render(text: str, *, agent_id: str, name: str) -> str:
-    return text.replace(_PLACEHOLDER_AGENT_ID, agent_id).replace(_PLACEHOLDER_AGENT_NAME, name)
-
-
-def prepare_business_agent_workspace(
-    *,
-    agent_id: str,
-    name: str,
-    template_id: str = DEFAULT_TEMPLATE_ID,
-) -> WorkspaceTemplatePlan:
-    """Read, render identity tokens and validate a generic creation template."""
-    normalized = (template_id or DEFAULT_TEMPLATE_ID).strip() or DEFAULT_TEMPLATE_ID
-    _validate_template_id(normalized)
-    root = business_agent_templates_dir()
-    root_stat = _lstat(root)
-    if root_stat is not None and (stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode)):
-        raise WorkspaceSafetyError("Business Agent template catalog must be a real directory")
-    template_path = root / normalized
-    template_stat = _lstat(template_path)
-    if template_stat is None:
-        if normalized == DEFAULT_TEMPLATE_ID and _lstat(root) is None:
-            return _inline_plan(agent_id=agent_id, name=name)
-        raise UnknownBusinessAgentTemplate(f"Unknown business agent template: {normalized!r}; available: {list_business_agent_templates()}")
-    if stat.S_ISLNK(template_stat.st_mode) or not stat.S_ISDIR(template_stat.st_mode):
-        raise WorkspaceSafetyError(f"Business Agent template must be a real directory: {normalized}")
-    entries = tuple(
-        _read_template_tree(
-            template_path,
-            agent_id=agent_id,
-            name=name,
-            render_identity=True,
-            skip_readme=True,
-        )
-    )
-    if not entries:
-        raise WorkspaceSafetyError(f"Business Agent template is empty: {normalized}")
-    return WorkspaceTemplatePlan(template_id=normalized, entries=entries)
-
-
 def apply_business_agent_workspace_plan(
     workspace_dir: Path,
-    plan: WorkspaceTemplatePlan,
+    plan: WorkspaceProvisionPlan,
     *,
     require_workspace_absent: bool = False,
 ) -> WorkspaceProvisionJournal:
@@ -217,6 +64,7 @@ def apply_business_agent_workspace_plan(
             require_new=require_workspace_absent,
         )
         for entry in plan.entries:
+            _validate_relative_path(entry.relative_path)
             created = _publish_entry(
                 workspace_descriptor,
                 workspace_path,
@@ -253,145 +101,10 @@ def rollback_business_agent_workspace(journal: WorkspaceProvisionJournal) -> boo
     return complete
 
 
-def seed_business_agent_workspace(
-    workspace_dir: Path,
-    *,
-    agent_id: str,
-    name: str,
-    template_id: str = DEFAULT_TEMPLATE_ID,
-) -> str:
-    """从 catalog 模板幂等播种业务 Agent workspace，渲染 {{AGENT_ID}}/{{AGENT_NAME}} 占位。
-
-    - 未知 template_id 抛 UnknownBusinessAgentTemplate（由路由投影为 422）。
-    - 已存在的文件不覆盖（保留用户编辑），FS 副作用幂等。
-    - 模板内不含任何 api_key / MCP header / 本机私有路径。
-    返回实际使用的 template_id。
-    """
-    plan = prepare_business_agent_workspace(agent_id=agent_id, name=name, template_id=template_id)
-    apply_business_agent_workspace_plan(workspace_dir, plan)
-    return plan.template_id
-
-
-def initialize_business_agent_workspace(workspace_dir: Path, *, agent_id: str, name: str) -> None:
-    """向后兼容入口：以默认 general 模板幂等初始化业务 Agent 工作区配置容器。"""
-    seed_business_agent_workspace(workspace_dir, agent_id=agent_id, name=name, template_id=DEFAULT_TEMPLATE_ID)
-
-
-def _inline_plan(
-    *,
-    agent_id: str,
-    name: str,
-) -> WorkspaceTemplatePlan:
-    values = {
-        PurePosixPath("CLAUDE.md"): _STARTER_CLAUDE_MD.format(name=name, agent_id=agent_id),
-        PurePosixPath(".claude/settings.json"): json.dumps(_STARTER_SETTINGS, ensure_ascii=False, indent=2) + "\n",
-        PurePosixPath(".mcp.json"): json.dumps(_STARTER_MCP, ensure_ascii=False, indent=2) + "\n",
-    }
-    entries = tuple(
-        _validated_entry(
-            relative_path,
-            content,
-            0o644,
-        )
-        for relative_path, content in values.items()
-    )
-    return WorkspaceTemplatePlan(template_id=DEFAULT_TEMPLATE_ID, entries=entries)
-
-
-def _read_template_tree(
-    root: Path,
-    *,
-    agent_id: str,
-    name: str,
-    render_identity: bool,
-    skip_readme: bool,
-) -> list[WorkspaceTemplateEntry]:
-    rendered: list[WorkspaceTemplateEntry] = []
-    for current, directories, files in os.walk(root, topdown=True, followlinks=False):
-        current_path = Path(current)
-        current_stat = os.lstat(current_path)
-        if stat.S_ISLNK(current_stat.st_mode) or not stat.S_ISDIR(current_stat.st_mode):
-            raise WorkspaceSafetyError("Business Agent template directory changed during validation")
-        directories.sort()
-        files.sort()
-        for name_on_disk in (*directories, *files):
-            candidate = current_path / name_on_disk
-            candidate_stat = os.lstat(candidate)
-            relative_path = PurePosixPath(candidate.relative_to(root).as_posix())
-            _validate_relative_path(relative_path)
-            if _is_cache_artifact(relative_path):
-                raise WorkspaceSafetyError(f"Business Agent template contains a cache artifact: {relative_path}")
-            if stat.S_ISLNK(candidate_stat.st_mode):
-                raise WorkspaceSafetyError(f"Business Agent template contains a symlink: {relative_path}")
-        for filename in files:
-            relative_path = PurePosixPath((current_path / filename).relative_to(root).as_posix())
-            if skip_readme and relative_path.name == "README.md":
-                continue
-            source = current_path / filename
-            source_stat, raw = _read_regular_file_no_follow(source)
-            if render_identity:
-                try:
-                    text = raw.decode("utf-8")
-                except UnicodeDecodeError as exc:
-                    raise WorkspaceSafetyError(f"Business Agent template entry is not UTF-8 text: {relative_path}") from exc
-                rendered.append(
-                    _validated_entry(
-                        relative_path,
-                        _render(text, agent_id=agent_id, name=name),
-                        stat.S_IMODE(source_stat.st_mode),
-                    )
-                )
-            else:
-                rendered.append(
-                    WorkspaceTemplateEntry(
-                        relative_path=relative_path,
-                        content=raw,
-                        mode=0o755 if stat.S_IMODE(source_stat.st_mode) & 0o111 else 0o644,
-                    )
-                )
-    rendered.sort(key=lambda entry: entry.relative_path.as_posix())
-    return rendered
-
-
-def _validated_entry(relative_path: PurePosixPath, content: str, mode: int) -> WorkspaceTemplateEntry:
-    _validate_relative_path(relative_path)
-    if relative_path.suffix == ".json":
-        try:
-            value = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise WorkspaceSafetyError(f"Rendered template JSON is invalid: {relative_path}") from exc
-        if not isinstance(value, dict):
-            raise WorkspaceSafetyError(f"Rendered template JSON must be an object: {relative_path}")
-    if relative_path.suffix == ".py":
-        try:
-            ast.parse(content, filename=relative_path.as_posix())
-        except SyntaxError as exc:
-            raise WorkspaceSafetyError(f"Rendered template Python is invalid: {relative_path}") from exc
-    return WorkspaceTemplateEntry(
-        relative_path=relative_path,
-        content=content.encode("utf-8"),
-        mode=0o755 if mode & 0o111 else 0o644,
-    )
-
-
-def _read_regular_file_no_follow(path: Path) -> tuple[os.stat_result, bytes]:
-    flags = os.O_RDONLY | os.O_NOFOLLOW
-    descriptor = os.open(path, flags)
-    try:
-        source_stat = os.fstat(descriptor)
-        if not stat.S_ISREG(source_stat.st_mode):
-            raise WorkspaceSafetyError(f"Business Agent template entry is not a regular file: {path.name}")
-        with os.fdopen(descriptor, "rb", closefd=False) as source:
-            raw = source.read()
-    finally:
-        os.close(descriptor)
-    return source_stat, raw
-
-
 def _publish_entry(
     workspace_descriptor: int,
     workspace_path: Path,
-    entry: WorkspaceTemplateEntry,
+    entry: WorkspaceProvisionEntry,
     created_directories: list[_CreatedPath],
     *,
     reject_existing: bool = False,
@@ -579,26 +292,9 @@ def _absolute_path(path: Path) -> Path:
     return Path(os.path.abspath(path))
 
 
-def _validate_template_id(template_id: str) -> None:
-    relative = PurePosixPath(template_id)
-    if relative.is_absolute() or len(relative.parts) != 1 or template_id in {".", ".."}:
-        raise UnknownBusinessAgentTemplate(f"Invalid business agent template id: {template_id!r}")
-
-
 def _validate_relative_path(relative_path: PurePosixPath) -> None:
     if relative_path.is_absolute() or not relative_path.parts or any(part in {"", ".", ".."} for part in relative_path.parts):
-        raise WorkspaceSafetyError(f"Unsafe Business Agent template path: {relative_path}")
-
-
-def _is_cache_artifact(relative_path: PurePosixPath) -> bool:
-    return "__pycache__" in relative_path.parts or relative_path.suffix.lower() in {".pyc", ".pyo"}
-
-
-def _lstat(path: Path) -> os.stat_result | None:
-    try:
-        return os.lstat(path)
-    except FileNotFoundError:
-        return None
+        raise WorkspaceSafetyError(f"Unsafe Business Agent workspace path: {relative_path}")
 
 
 def _stat_at(parent_descriptor: int, name: str) -> os.stat_result | None:

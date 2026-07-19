@@ -92,16 +92,16 @@ function mockAgentRuns(includeMessages) {
     const completedAt = new Date(Date.parse(ts) + index * 2000 + 1000).toISOString();
     const userPrompt = n === 1
       ? [
-        "**测试数据集** 是否应该以资产形式管理？",
+        "**Workspace pytest** 是否应该随业务 Agent 版本管理？",
         "",
-        "- 资产口径: `TestDataset`",
+        "- 测试资产口径: Workspace `tests/` + pytest",
         "- 链接依据: [OKF](https://example.com/okf)",
       ].join("\n")
       : `用一句话说明你的角色，序号 ${n}。`;
     const answer = n === 1
       ? [
         "### 结论",
-        "测试数据集应沉淀为 **治理资产**，并进入发布前审计。",
+        "Workspace pytest 应与业务 Agent **同版本治理**，并进入发布前审计。",
         "",
         "| 字段 | 作用 |",
         "| --- | --- |",
@@ -176,7 +176,7 @@ function mockPayload(urlOrPath) {
             metadata: { client: "agent-gov-ui" },
             agentgov: {
               sdk_session_id: "mock-session",
-              agent_id: "main-agent",
+              agent_id: "security-operations-expert",
               updated_at: Date.parse("2026-06-18T00:00:30Z") / 1000,
               turns: 14,
               active_run_id: "mock-active-run",
@@ -212,7 +212,7 @@ function mockPayload(urlOrPath) {
   }
   if (path === "/api/agents" || path === "/api/skills" || path === "/api/agent-change-sets" || path === "/api/agent-releases") return [];
   if (path === "/api/config") return { mappings: [] };
-  if (path === "/api/agent-registry") return [{ agent_id: "main-agent", name: "默认 Agent", category: "", workspace_dir: "/main-workspace", created_at: ts, status: "active" }];
+  if (path === "/api/agent-registry") return [{ agent_id: "security-operations-expert", name: "Security Operations Expert", category: "business", workspace_dir: "/data/business-agents/security-operations-expert/workspace", created_at: ts, status: "active", builtin: true, default: true, protected: true, requires_web_hitl: true }];
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
   if (path === "/api/agent-repository/current") return { agent_version_id: "v-mock", commit_sha: "mock", created_at: ts, reason: "current" };
   return {};
@@ -251,13 +251,13 @@ async function mockMarkdownChecks(page) {
   const assistantText = await assistantMarkdown.innerText();
   return {
     markdownContainerCount: await page.getByTestId("message-markdown").count(),
-    userStrong: await userMarkdown.locator("strong").filter({ hasText: "测试数据集" }).count(),
+    userStrong: await userMarkdown.locator("strong").filter({ hasText: "Workspace pytest" }).count(),
     userListItems: await userMarkdown.locator("li").count(),
-    userInlineCode: await userMarkdown.locator("code").filter({ hasText: "TestDataset" }).count(),
+    userInlineCode: await userMarkdown.locator("code").filter({ hasText: "tests/" }).count(),
     userLinkTarget: await userLink.first().getAttribute("target").catch(() => ""),
     userRawMarkersHidden: !userText.includes("**") && !userText.includes("[OKF]"),
     assistantHeading: await assistantMarkdown.locator("h3").filter({ hasText: "结论" }).count(),
-    assistantStrong: await assistantMarkdown.locator("strong").filter({ hasText: "治理资产" }).count(),
+    assistantStrong: await assistantMarkdown.locator("strong").count(),
     assistantTableRows: await assistantMarkdown.locator("table tr").count(),
     assistantCodeBlock: await assistantMarkdown.locator("pre code").filter({ hasText: "dataset_id" }).count(),
     assistantListItems: await assistantMarkdown.locator("li").count(),

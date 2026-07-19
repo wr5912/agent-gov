@@ -5,10 +5,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ChatResponse
 from app.runtime.session_store import LocalSession
 from fastapi.testclient import TestClient
 
+from test_agent_workspace_packages import _import_new_agent
 from test_api_execution_optimizer import _load_app
 
 
@@ -16,17 +18,8 @@ def _register_biz(
     client: TestClient,
     agent_id: str = "soc-ops",
     name: str = "客服助手",
-    *,
-    headers: dict[str, str] | None = None,
 ) -> None:
-    assert (
-        client.post(
-            "/api/agent-registry",
-            json={"name": name, "agent_id": agent_id},
-            headers=headers,
-        ).status_code
-        == 201
-    )
+    assert _import_new_agent(client, agent_id=agent_id, name=name).status_code == 200
 
 
 def _fake_capturing_run(captured: dict):
@@ -192,14 +185,13 @@ def test_strict_uses_operator_agent(monkeypatch, tmp_path: Path) -> None:
     assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops/workspace")
 
 
-def test_strict_unconfigured_runs_main(monkeypatch, tmp_path: Path) -> None:
+def test_strict_unconfigured_runs_platform_default(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     captured: dict = {}
     monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
     with TestClient(module.app) as client:
         assert client.post("/v1/responses", json={"input": "hi"}).status_code == 200
-    # 未配置 -> 出厂默认 main-agent，被解析成真实 profile（不再有「None 代表 main」这个特例）。
-    assert captured["profile"] is not None and captured["profile"].agent_id == "main-agent"
+    assert captured["profile"] is not None and captured["profile"].agent_id == DEFAULT_BUSINESS_AGENT_ID
 
 
 def test_strict_explicit_main_is_configured_but_runs_main(monkeypatch, tmp_path: Path) -> None:
@@ -209,7 +201,7 @@ def test_strict_explicit_main_is_configured_but_runs_main(monkeypatch, tmp_path:
     with TestClient(module.app) as client:
         assert client.put("/api/settings/openai-compat-agent", json={"agent_id": "main-agent"}).json()["configured"] is True
         assert client.post("/v1/responses", json={"input": "hi"}).status_code == 200
-    # 显式配置 main 与未配置的 configured 状态不同，但运行目标同样是 main-agent。
+    # 显式配置普通历史 Agent 与未配置的平台默认状态不同。
     assert captured["profile"] is not None and captured["profile"].agent_id == "main-agent"
 
 

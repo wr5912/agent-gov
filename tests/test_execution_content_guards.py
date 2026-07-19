@@ -235,3 +235,32 @@ def test_applier_allows_benign_settings_edit(tmp_path):
         ops, workspace_dir=ws, target_policy=WorkspaceExecutionTargetPolicy(ws), content_guard=guard_execution_write
     )
     assert "Grep" in settings.read_text(encoding="utf-8")  # 受限新增 allow 正常落盘
+
+
+def test_applier_rejects_truncated_markdown_replacement(tmp_path):
+    import hashlib
+
+    from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
+    from app.services.workspace_execution_applier import WorkspaceExecutionApplier, WorkspaceExecutionApplyError
+
+    ws = tmp_path / "ws"
+    skill = ws / ".claude" / "skills" / "triage" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    original = "\n".join(["---", "name: triage", "---", *[f"## Step {index}" for index in range(1, 12)]]) + "\n"
+    skill.write_text(original, encoding="utf-8")
+    operation = {
+        "operation": "replace_file",
+        "path": ".claude/skills/triage/SKILL.md",
+        "expected_sha256": hashlib.sha256(original.encode("utf-8")).hexdigest(),
+        "content": "---\nname: triage\n---\n",
+    }
+
+    with pytest.raises(WorkspaceExecutionApplyError, match="discard too much existing Markdown"):
+        WorkspaceExecutionApplier().apply_execution_operations(
+            [operation],
+            workspace_dir=ws,
+            target_policy=WorkspaceExecutionTargetPolicy(ws),
+            allowed_targets={".claude/skills/triage/SKILL.md"},
+        )
+
+    assert skill.read_text(encoding="utf-8") == original

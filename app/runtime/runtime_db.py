@@ -7,12 +7,13 @@ from pathlib import Path
 from threading import RLock
 from typing import Optional
 
-from sqlalchemy import JSON, Float, ForeignKey, Index, String, Text, create_engine, event, text
+from sqlalchemy import JSON, ForeignKey, Index, String, Text, create_engine, event, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from .json_types import JsonObject
+from .protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from .runtime_db_base import Base, utc_now
 from .runtime_db_migrations import (
     migrate_0005_agent_governance,
@@ -42,10 +43,10 @@ from .runtime_db_migrations import (
     migrate_0030_improvement_execution_intents,
     migrate_0031_feedback_case_assignments,
     migrate_0032_improvement_execution_source_revisions,
-    migrate_0033_repair_improvement_stages_from_artifacts,
     migrate_0034_repair_feedback_case_assignments,
     migrate_0035_session_active_run_lease,
 )
+from .runtime_db_migrations_0033 import migrate_0033_repair_improvement_stages_from_artifacts
 from .runtime_db_migrations_0036 import migrate_0036_agent_maintenance_feedback_and_session_reconciliation
 from .runtime_db_migrations_0037 import migrate_0037_eval_runs_use_typed_dataset_snapshots
 from .runtime_db_migrations_0038 import migrate_0038_remove_agent_registry_requires_web_hitl
@@ -56,10 +57,22 @@ from .runtime_db_migrations_0042 import migrate_0042_retire_persisted_agent_job_
 from .runtime_db_migrations_0043 import migrate_0043_response_disposition_claims
 from .runtime_db_migrations_0044 import migrate_0044_agent_release_source_claims
 from .runtime_db_migrations_0045 import migrate_0045_drop_response_disposition_claims
+from .runtime_db_migrations_0046 import migrate_0046_remove_agent_registry_origin
+from .runtime_db_migrations_0047 import migrate_0047_rename_business_agent_evidence_fields
+from .runtime_db_migrations_0048 import migrate_0048_workspace_pytest_source_of_truth
+from .runtime_db_migrations_0049 import migrate_0049_rename_regression_test_design
+from .runtime_db_migrations_0050 import migrate_0050_deduplicate_active_agent_test_runs
+from .runtime_db_migrations_0051 import migrate_0051_replace_regression_design_with_pytest_code
 from .schema_self_heal import sync_missing_columns
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
 _ENGINE_CACHE_LOCK = RLock()
+
+from app.agent_testing.models import (  # noqa: E402,F401
+    AgentTestRunItemModel,
+    AgentTestRunModel,
+    AgentWorkspaceImportRecordModel,
+)
 
 from .agent_maintenance_db import (  # noqa: E402,F401
     AgentAdmissionStateModel,
@@ -67,12 +80,6 @@ from .agent_maintenance_db import (  # noqa: E402,F401
     AgentWorktreeCleanupTaskModel,
 )
 from .claude_user_input_db import ClaudeUserInputRequestModel  # noqa: E402,F401
-from .test_dataset_db import (  # noqa: E402,F401
-    ArchivedTestDatasetAssetModel,
-    TestDatasetCaseModel,
-    TestDatasetModel,
-    TestDatasetRevisionModel,
-)
 
 
 class SchemaMigration(Base):
@@ -87,7 +94,7 @@ class SessionRecordModel(Base):
 
     session_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     sdk_session_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    # Backend-owned owning agent (profile.agent_id: "main-agent" or a business agent id), set by the
+    # Backend-owned owning business Agent, set by the
     # runtime at chat time. Authoritative source for resolving a session's transcript directory.
     agent_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
@@ -183,7 +190,7 @@ class FeedbackCaseModel(Base):
     __tablename__ = "feedback_cases"
 
     feedback_case_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    agent_id: Mapped[str] = mapped_column(String(128), default="main-agent", index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), default=DEFAULT_BUSINESS_AGENT_ID, index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
@@ -275,7 +282,7 @@ class AgentChangeSetModel(Base):
     __tablename__ = "agent_change_sets"
 
     change_set_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    agent_id: Mapped[str] = mapped_column(String(128), default="main-agent", index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), default=DEFAULT_BUSINESS_AGENT_ID, index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
@@ -309,7 +316,7 @@ class AgentReleaseModel(Base):
     __tablename__ = "agent_releases"
 
     release_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    agent_id: Mapped[str] = mapped_column(String(128), default="main-agent", index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), default=DEFAULT_BUSINESS_AGENT_ID, index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
@@ -350,40 +357,6 @@ class AgentReleaseSourceClaimModel(Base):
 
 Index("ux_agent_release_source_claims_change_set", AgentReleaseSourceClaimModel.change_set_id, unique=True)
 Index("ux_agent_release_source_claims_release", AgentReleaseSourceClaimModel.release_id, unique=True)
-
-
-class EvalRunModel(Base):
-    __tablename__ = "eval_runs"
-
-    eval_run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    agent_id: Mapped[str] = mapped_column(String(128), default="main-agent", index=True)
-    dataset_id: Mapped[str] = mapped_column(String(128), ForeignKey("test_datasets.dataset_id"), index=True)
-    agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
-    source: Mapped[str] = mapped_column(String(128), index=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-class EvalRunItemModel(Base):
-    __tablename__ = "eval_run_items"
-
-    eval_run_item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    eval_run_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_runs.eval_run_id", ondelete="CASCADE"), index=True)
-    dataset_case_id: Mapped[str] = mapped_column(String(128), ForeignKey("test_dataset_cases.case_id"), index=True)
-    agent_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-Index(
-    "ux_eval_run_items_run_dataset_case",
-    EvalRunItemModel.eval_run_id,
-    EvalRunItemModel.dataset_case_id,
-    unique=True,
-)
 
 
 class RuntimeSettingModel(Base):
@@ -472,11 +445,8 @@ def ensure_schema(engine: Engine) -> None:
             session.add(SchemaMigration(version="0001_sqlalchemy_runtime_store", applied_at=utc_now()))
 
 
-def _run_runtime_migrations(engine: Engine) -> None:
-    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    with factory.begin() as session:
-        applied = {str(row.version) for row in session.query(SchemaMigration).all()}
-    for version, migrate in (
+def _runtime_migrations():
+    return (
         ("0002_regression_assets", _migrate_0002_regression_assets),
         ("0003_agent_jobs", _migrate_0003_agent_jobs),
         ("0004_unify_agent_jobs", _migrate_0004_unify_agent_jobs),
@@ -541,7 +511,20 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0043_response_disposition_claims", migrate_0043_response_disposition_claims),
         ("0044_agent_release_source_claims", migrate_0044_agent_release_source_claims),
         ("0045_drop_response_disposition_claims", migrate_0045_drop_response_disposition_claims),
-    ):
+        ("0046_remove_agent_registry_origin", migrate_0046_remove_agent_registry_origin),
+        ("0047_rename_business_agent_evidence_fields", migrate_0047_rename_business_agent_evidence_fields),
+        ("0048_workspace_pytest_source_of_truth", migrate_0048_workspace_pytest_source_of_truth),
+        ("0049_rename_regression_test_design", migrate_0049_rename_regression_test_design),
+        ("0050_deduplicate_active_agent_test_runs", migrate_0050_deduplicate_active_agent_test_runs),
+        ("0051_replace_regression_design_with_pytest_code", migrate_0051_replace_regression_design_with_pytest_code),
+    )
+
+
+def _run_runtime_migrations(engine: Engine) -> None:
+    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    with factory.begin() as session:
+        applied = {str(row.version) for row in session.query(SchemaMigration).all()}
+    for version, migrate in _runtime_migrations():
         if version in applied:
             continue
         with engine.begin() as connection:

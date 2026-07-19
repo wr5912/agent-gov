@@ -11,6 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.agent_testing.schemas import AgentTestDiagnostic
 from app.runtime.agent_governance_schemas import AgentSummaryResponse
 
 
@@ -25,6 +26,10 @@ class WorkspaceImportResponse(BaseModel):
     tree_sha256: str
     rollback_target_commit_sha: str | None = None
     activation_mode: Literal["next_turn"] = "next_turn"
+    import_record_id: str
+    test_suite_status: Literal["ready", "warning", "invalid"]
+    test_file_count: int
+    test_suite_warnings: list[AgentTestDiagnostic] = Field(default_factory=list)
 
 
 class WorkspaceRestoreRequest(BaseModel):

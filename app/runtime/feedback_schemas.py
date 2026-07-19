@@ -21,6 +21,7 @@ from .normalizers.feedback_output_records import (
 
 FormatterAgentOutputNormalizer = Callable[[JsonObject], JsonObject]
 
+
 def _normalize_formatter_agent_output(value: object, normalizer: FormatterAgentOutputNormalizer) -> object:
     if not isinstance(value, dict):
         return value
@@ -44,13 +45,13 @@ ProblemType = Literal[
 ]
 
 OptimizationObjectType = Literal[
-    "main_agent_claude_md",
+    "business_agent_claude_md",
     "skill",
     "subagent",
     "mcp_config",
     "mcp_description",
     "output_style",
-    "test_dataset",
+    "tests",
     "runtime_code",
     "external_mcp_service",
     "soc_process",
@@ -233,37 +234,35 @@ def validate_execution_plan_output(payload: JsonObject) -> tuple[JsonObject | No
         return None, exc.json()
 
 
-class RegressionAssessmentCaseFormatterOutput(NormalizedOutputRecord):
-    expected_behavior: str
-    checks_json: JsonObject = Field(default_factory=dict)
-    labels: list[str] = Field(default_factory=list)
+class RegressionGeneratedTestFormatterOutput(NormalizedOutputRecord):
+    test_code: str = Field(min_length=1)
+    test_intent: str = Field(min_length=1)
+    assertion_rationale: str = Field(min_length=1)
 
 
-class RegressionAssessmentFormatterOutput(NormalizedOutputRecord):
-    eval_cases: list[RegressionAssessmentCaseFormatterOutput] = Field(default_factory=list)
+class RegressionTestDesignFormatterOutput(NormalizedOutputRecord):
+    tests: list[RegressionGeneratedTestFormatterOutput] = Field(default_factory=list, max_length=1)
     no_action_reason: Optional[str] = None
-    suggested_gate_thresholds: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _has_eval_cases_or_reason(self) -> RegressionAssessmentFormatterOutput:
-        if not self.eval_cases and not self.no_action_reason:
-            raise ValueError("regression assessment must include eval_cases or no_action_reason")
+    def _has_tests_or_reason(self) -> RegressionTestDesignFormatterOutput:
+        if not self.tests and not self.no_action_reason:
+            raise ValueError("regression test design must include tests or no_action_reason")
         return self
 
 
-class RegressionAssessmentCaseOutput(NormalizedOutputRecord):
-    expected_behavior: str
-    checks_json: JsonObject = Field(default_factory=dict)
-    labels: list[str] = Field(default_factory=list)
+class RegressionGeneratedTestOutput(NormalizedOutputRecord):
+    test_code: str = Field(min_length=1)
+    test_intent: str = Field(min_length=1)
+    assertion_rationale: str = Field(min_length=1)
 
 
-class RegressionAssessmentOutput(NormalizedOutputRecord):
-    eval_cases: list[RegressionAssessmentCaseOutput] = Field(default_factory=list)
+class RegressionTestDesignOutput(NormalizedOutputRecord):
+    tests: list[RegressionGeneratedTestOutput] = Field(default_factory=list, max_length=1)
     no_action_reason: Optional[str] = None
-    suggested_gate_thresholds: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _has_eval_cases_or_reason(self) -> RegressionAssessmentOutput:
-        if not self.eval_cases and not self.no_action_reason:
-            raise ValueError("regression assessment must include eval_cases or no_action_reason")
+    def _has_tests_or_reason(self) -> RegressionTestDesignOutput:
+        if not self.tests and not self.no_action_reason:
+            raise ValueError("regression test design must include tests or no_action_reason")
         return self

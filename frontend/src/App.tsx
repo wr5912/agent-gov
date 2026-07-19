@@ -178,7 +178,7 @@ export default function App() {
       // 全局运行 Agent 必须是具体对象；跨 Agent 聚合视图由各治理页面自己的范围筛选负责。
       setSelectedBusinessAgentId((current) => {
         if (current && businessAgentsRes.some((agent) => agent.agent_id === current)) return current;
-        return businessAgentsRes.find((agent) => agent.agent_id === "main-agent")?.agent_id || businessAgentsRes[0]?.agent_id || "";
+        return businessAgentsRes.find((agent) => agent.default)?.agent_id || businessAgentsRes[0]?.agent_id || "";
       });
       if (!activeSessionId && sessionsRes[0]?.session_id) {
         setActiveSessionId(sessionsRes[0].session_id);
@@ -623,7 +623,7 @@ export default function App() {
   }
 
   const currentAgentName = businessAgents.find((a) => a.agent_id === selectedBusinessAgentId)?.name
-    || (selectedBusinessAgentId || "默认 Agent");
+    || (selectedBusinessAgentId || "默认业务 Agent");
 
   function openFeedbackDrawer(message?: ChatMessage) {
     const feedbackAlertId = message?.alertId || alertId.trim() || undefined;
@@ -636,8 +636,7 @@ export default function App() {
       taskId: message?.runId || activeSessionId || undefined,
       alertId: feedbackAlertId,
       caseId: feedbackCaseId,
-      // selectedBusinessAgentId 已由实际 Agent 列表解析（见上方 find/[0] 回落）。不再回落到
-      // 硬编码 main-agent：它是可删除的普通业务 Agent，删除后该回落会指向不存在的 Agent。
+      // selectedBusinessAgentId 已由实际 Agent 列表解析（优先默认业务 Agent，再取首个可用项）。
       agentId: selectedBusinessAgentId,
       agentName: currentAgentName,
     });

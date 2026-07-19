@@ -8,8 +8,7 @@ from typing import Protocol
 from scripts.bootstrap_runtime_volume import BootstrapResult, bootstrap_runtime_volume
 
 from app.runtime.agent_git_store import GitAgentVersionStore
-from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
-from app.runtime.business_agent_seed_catalog import declared_business_agent_ids, runtime_seed_catalog_dir
+from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, business_agents_root, validate_agent_id
 from app.runtime.managed_agent_policy import (
     WorkspacePolicyPlan,
     plan_workspace_policy,
@@ -55,11 +54,12 @@ def _active_registry_agent_ids(db_path: Path) -> set[str]:
         raise RuntimeInitializationError(f"Cannot inspect Agent registry: {exc.__class__.__name__}") from exc
 
 
-def _runtime_agent_ids(settings: RuntimeSettingsView, template_dir: Path) -> list[str]:
-    del template_dir  # 声明集读运行态 catalog，不读仓库出生配置（已删 seed 不再是候选）。
-    root = settings.data_dir / "business-agents"
-    catalog_root = runtime_seed_catalog_dir(settings.data_dir)
-    known = set(declared_business_agent_ids(seed_root=catalog_root)) | _active_registry_agent_ids(settings.runtime_db_path)
+def _runtime_agent_ids(settings: RuntimeSettingsView) -> list[str]:
+    root = business_agents_root(settings.data_dir)
+    discovered: set[str] = set()
+    if root.is_dir() and not root.is_symlink():
+        discovered = {child.name for child in root.iterdir() if child.is_dir() and not child.is_symlink()}
+    known = discovered | _active_registry_agent_ids(settings.runtime_db_path)
     validated: list[str] = []
     for raw_agent_id in sorted(known):
         try:
@@ -74,7 +74,6 @@ def _runtime_agent_ids(settings: RuntimeSettingsView, template_dir: Path) -> lis
 def plan_runtime_policy(
     *,
     settings: RuntimeSettingsView,
-    template_dir: Path,
     env: Mapping[str, str],
 ) -> tuple[WorkspacePolicyPlan, ...]:
     del env
@@ -83,17 +82,16 @@ def plan_runtime_policy(
             workspace=business_agent_layout(settings.data_dir, agent_id).workspace,
             agent_id=agent_id,
         )
-        for agent_id in _runtime_agent_ids(settings, template_dir)
+        for agent_id in _runtime_agent_ids(settings)
     )
 
 
 def validate_runtime_policy(
     *,
     settings: RuntimeSettingsView,
-    template_dir: Path,
     env: Mapping[str, str],
 ) -> tuple[bool, str, tuple[WorkspacePolicyPlan, ...]]:
-    plans = plan_runtime_policy(settings=settings, template_dir=template_dir, env=env)
+    plans = plan_runtime_policy(settings=settings, env=env)
     return all(plan.is_compliant for plan in plans), policy_projection(plans), plans
 
 
@@ -109,32 +107,32 @@ def _store_for(settings: RuntimeSettingsView, agent_id: str) -> GitAgentVersionS
     )
 
 
-def _ensure_agent_repositories(settings: RuntimeSettingsView, template_dir: Path) -> None:
-    for agent_id in _runtime_agent_ids(settings, template_dir):
+def _ensure_agent_repositories(settings: RuntimeSettingsView) -> None:
+    for agent_id in _runtime_agent_ids(settings):
         _store_for(settings, agent_id).ensure_bootstrap()
 
 
 def prepare_runtime(
     *,
     settings: RuntimeSettingsView,
-    template_dir: Path,
+    bootstrap_dir: Path,
     env: Mapping[str, str],
     coordination_dir: Path,
 ) -> BootstrapResult:
     """Bootstrap missing files, validate live workspaces and refresh runtime evidence.
 
-    Existing business-Agent workspace bytes are never reconciled with the seed and
+    Existing business-Agent Workspace bytes are never reconciled with the initialization source and
     startup never creates a managed-policy migration commit.
     """
 
     coordination_dir.mkdir(parents=True, exist_ok=True)
     bootstrap = bootstrap_runtime_volume(
         runtime_root=runtime_root_for_data_dir(settings.data_dir),
-        template_dir=template_dir,
+        bootstrap_dir=bootstrap_dir,
         runtime_volume_mode=settings.runtime_volume_mode,
         env=dict(env),
     )
-    plans = plan_runtime_policy(settings=settings, template_dir=template_dir, env=env)
+    plans = plan_runtime_policy(settings=settings, env=env)
     raise_for_policy_violations(item for plan in plans for item in plan.violations)
-    _ensure_agent_repositories(settings, template_dir)
+    _ensure_agent_repositories(settings)
     return bootstrap

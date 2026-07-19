@@ -1,4 +1,4 @@
-"""四阶段改进治理 §17.5 第二阶段：执行记录 governor 自动 apply + 候选版本绑定（编排逻辑，git 层用 fake）。"""
+"""四阶段改进治理：执行记录 governor 自动 apply + 待发布版本绑定（编排逻辑，git 层用 fake）。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,11 @@ from app.runtime.improvement_db import ExecutionRecordModel, ImprovementItemMode
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
-from app.services.improvement_execution_service import ImprovementExecutionService
+from app.services.generated_agent_tests import build_generated_agent_test
+from app.services.improvement_execution_service import (
+    ImprovementExecutionService,
+    _create_generated_test_assets,
+)
 from app.services.workspace_execution_applier import WorkspaceExecutionApplier
 
 from feedback_store_test_utils import _seed_execution_record
@@ -76,6 +80,10 @@ class _FakeStore:
     def commit_worktree(self, worktree, *, message):
         self.head = "cand-sha"
         return "cand-sha"
+
+    def commit_squashed_worktree(self, worktree, *, base_ref, message):
+        self.head = "cand-tests-sha"
+        return "cand-tests-sha"
 
     def diff_versions(self, a, b):
         return {"changed_files": ["CLAUDE.md"] if a != b else [], "from": a, "to": b}
@@ -161,6 +169,7 @@ class _FakeExecApp:
     def __init__(self, *, raises: bool = False) -> None:
         self.raises = raises
         self.applied: list[list] = []
+        self.allowed_targets: list[set[str] | None] = []
 
     def apply_execution_operations(
         self,
@@ -175,6 +184,7 @@ class _FakeExecApp:
         if self.raises:
             raise RuntimeError("apply blew up")
         self.applied.append(operations)
+        self.allowed_targets.append(allowed_targets)
 
 
 def _service(tmp_path, *, gov, run_profile_json, exec_app=None):
@@ -293,8 +303,10 @@ def test_governor_decline_abandons_and_falls_back(tmp_path):
 def test_governor_success_applies_and_binds_version(tmp_path):
     gov = _FakeGovernance(tmp_path)
     exec_app = _FakeExecApp()
+    seen: dict[str, object] = {}
 
     async def ready(**kwargs):
+        seen.update(kwargs["job_input"])
         kwargs["trace_callback"]({"trace_id": "tr-exec", "trace_url": "http://lf/tr-exec"})
         return {
             "status": "ready",
@@ -314,6 +326,8 @@ def test_governor_success_applies_and_binds_version(tmp_path):
     assert rec.generation_trace_id == "tr-exec"
     assert rec.generation_trace_url == "http://lf/tr-exec"
     assert exec_app.applied and gov.committed == gov.created and not gov.abandoned
+    assert seen["target_paths"] == ["CLAUDE.md"]
+    assert exec_app.allowed_targets == [{"CLAUDE.md"}]
     change_set = gov.change_sets[rec.change_set_id]
     assert change_set["source_improvement_id"] == "imp-1"
     assert change_set["source_attribution_id"] == attribution.attribution_id
@@ -837,7 +851,7 @@ def test_deterministic_candidate_reconciliation_failure_releases_applying_claim(
     released = content.get_execution("imp-1")
     assert released is not None
     assert released.status == "draft" and not released.claim_token and released.change_set_id
-    assert "候选版本对账失败" in released.summary
+    assert "待发布版本对账失败" in released.summary
     assert _stage(tmp_path) == "optimization"
 
 
@@ -910,3 +924,119 @@ def test_missing_link_is_reconciled_in_same_request_after_finalize(tmp_path):
     repeated = asyncio.run(svc.generate_and_apply_execution("imp-1"))
     assert repeated.execution_id == recovered.execution_id
     assert calls["n"] == 1 and len(gov.created) == 1 and len(improvements.links) == 1
+
+
+def test_generated_feedback_tests_are_flat_immutable_and_idempotent(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    candidate = build_generated_agent_test(
+        improvement_id="imp-1",
+        index=1,
+        test_code=(
+            "def test_evidence_boundary(agent):\n"
+            "    result = agent.run('分析告警')\n"
+            "    assert not result.errors\n"
+            "    normalized_text = ''.join(result.text.split())\n"
+            "    assert '证据' in normalized_text\n"
+            "    assert '核验' in normalized_text\n"
+        ),
+        test_intent="解释证据边界",
+        assertion_rationale="回答必须指出证据与核验动作",
+    )
+
+    files = [(candidate.target_path, candidate.test_code)]
+    first = _create_generated_test_assets(worktree, files=files)
+    second = _create_generated_test_assets(worktree, files=files)
+
+    assert first == ["tests/README.md", candidate.target_path]
+    assert second == [candidate.target_path]
+    assert Path(worktree, candidate.target_path).read_text(encoding="utf-8") == candidate.test_code
+    assert Path(candidate.target_path).parent.as_posix() == "tests"
+
+    Path(worktree, candidate.target_path).write_text("# developer-owned replacement\n", encoding="utf-8")
+    with pytest.raises(ConflictError, match="cannot be overwritten"):
+        _create_generated_test_assets(worktree, files=files)
+    assert Path(worktree, candidate.target_path).read_text(encoding="utf-8") == "# developer-owned replacement\n"
+
+
+def test_materialized_feedback_test_rebinds_same_unpublished_change_set(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    gov = _FakeGovernance(worktree)
+    gov.change_sets["agc-tests"] = {
+        "change_set_id": "agc-tests",
+        "agent_id": "soc-ops",
+        "base_commit_sha": "base-sha",
+        "candidate_commit_sha": "cand-sha",
+        "execution_job_id": "exec-tests",
+        "status": "candidate_committed",
+        "worktree_path": str(worktree),
+    }
+    content = _content(tmp_path)
+    execution = _seed_execution_record(
+        content,
+        "imp-1",
+        summary="已生成待发布版本",
+        changes_applied=["CLAUDE.md"],
+        agent_version="cand-sha",
+        change_set_id="agc-tests",
+        applied_agent_version_id="cand-sha",
+        applied_diff={"changed_files": ["CLAUDE.md"]},
+    )
+    with content._session_factory.begin() as db:
+        row = db.get(ExecutionRecordModel, execution.execution_id)
+        assert row is not None
+        row.status = "confirmed"
+        row.base_commit_sha = "base-sha"
+    candidate = build_generated_agent_test(
+        improvement_id="imp-1",
+        index=1,
+        test_code=(
+            "def test_evidence_boundary(agent):\n"
+            "    result = agent.run('分析告警')\n"
+            "    assert not result.errors\n"
+            "    normalized_text = ''.join(result.text.split())\n"
+            "    assert '证据' in normalized_text\n"
+            "    assert '核验' in normalized_text\n"
+        ),
+        test_intent="解释证据边界",
+        assertion_rationale="回答必须指出证据与核验动作",
+    )
+    content.upsert_regression_test_design(
+        "imp-1",
+        summary="覆盖误报反馈",
+        tests=[candidate.to_payload()],
+    )
+    squashed: dict[str, str] = {}
+
+    def commit_squashed(_worktree, *, base_ref, message):
+        squashed.update(base_ref=base_ref, message=message)
+        return "cand-tests-sha"
+
+    gov.store.commit_squashed_worktree = commit_squashed  # type: ignore[method-assign]
+    gov.store.diff_versions = lambda start, end: {  # type: ignore[method-assign]
+        "from": start,
+        "to": end,
+        "added": [{"path": "tests/test_feedback.py"}],
+    }
+    service = ImprovementExecutionService(
+        improvement_store=_FakeImprovements(),
+        content_store=content,
+        agent_governance=gov,
+        execution_app=_FakeExecApp(),
+        run_profile_json=None,
+    )
+
+    result = service.materialize_regression_tests("imp-1")
+
+    assert result["change_set_id"] == "agc-tests"
+    assert result["candidate_commit_sha"] == "cand-tests-sha"
+    assert result["generated_test_files"][0] == "tests/README.md"
+    generated = next(path for path in result["generated_test_files"] if path.endswith(".py"))
+    assert Path(worktree, generated).is_file()
+    rebound = content.get_execution("imp-1")
+    assert rebound is not None
+    assert rebound.change_set_id == "agc-tests"
+    assert rebound.applied_agent_version_id == "cand-tests-sha"
+    assert gov.change_sets["agc-tests"]["candidate_commit_sha"] == "cand-tests-sha"
+    assert squashed["base_ref"] == "base-sha"

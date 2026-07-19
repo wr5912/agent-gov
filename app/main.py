@@ -16,8 +16,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from scripts.bootstrap_runtime_volume import load_runtime_env
 
+from app.agent_testing.router import create_agent_testing_router
+from app.agent_testing.service import AgentTestingService
+from app.agent_testing.store import AgentTestingStore
 from app.openapi_contract import install_openapi_contract
-from app.routers.agent_change_set_regression import create_agent_change_set_regression_router
 from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
@@ -31,7 +33,6 @@ from app.routers.config import create_config_router
 from app.routers.conversations import create_conversations_router
 from app.routers.core import create_core_router, refresh_runtime_dependency_versions
 from app.routers.error_handlers import register_error_handlers
-from app.routers.eval import create_eval_router
 from app.routers.feedback_cases import create_feedback_cases_router
 from app.routers.feedback_workbench import create_feedback_workbench_router
 from app.routers.improvement_content import create_improvement_content_router
@@ -46,10 +47,11 @@ from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_job_types import AgentJobType
 from app.runtime.agent_profile_resolver import resolve_business_profile
-from app.runtime.agent_profiles import agents_requiring_web_hitl, build_profiles, discover_seeded_business_agents, seed_business_agent_ids
+from app.runtime.agent_profiles import agents_requiring_web_hitl, build_profiles, discover_business_agents
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.runtime.logging_config import configure_runtime_logging
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.runtime_recovery import RUNTIME_RECOVERY_INTERVAL_SECONDS
 from app.runtime.sdk_session_migration import ensure_sdk_store_ready
@@ -87,7 +89,7 @@ agent_version_store = GitAgentVersionStore(
 )
 feedback_store = FeedbackStore(
     data_dir=settings.data_dir,
-    workspace_dir=settings.main_workspace_dir,
+    workspace_dir=settings.default_workspace_dir,
     agent_version_provider=None,  # #24-C/D：下方装配 per-agent 解析器（依赖 agent_governance._store_for）。
     runtime_version=APP_VERSION,
     enable_debug_evidence=settings.enable_feedback_debug_evidence,
@@ -115,7 +117,7 @@ agent_governance = AgentGovernanceService(
 )
 agent_registry_store = AgentRegistryStore(runtime_db_session_factory)
 runtime.business_profile_resolver = lambda agent_id: resolve_business_profile(settings, agent_registry_store, agent_id)
-# 缺陷④：版本治理懒建版本库前校验业务 Agent 已注册，杜绝幽灵 Agent（main-agent 恒有效）。
+# 版本治理懒建版本库前校验业务 Agent 已注册，杜绝幽灵 Agent。
 agent_governance.agent_exists = lambda aid: agent_registry_store.get_agent(aid) is not None
 feedback_store.agent_exists = agent_governance.agent_exists
 runtime.agent_version_maintenance_provider = lambda agent_id: is_agent_version_maintenance_active(
@@ -127,9 +129,9 @@ runtime.agent_version_maintenance_provider = lambda agent_id: is_agent_version_m
 
 # #24-C/D：单一 per-agent 版本解析器——复用 agent_governance._store_for 缓存按 agent_id 路由到各业务 Agent
 # 自己的 GitAgentVersionStore（repository_dir=该 Agent workspace）。FeedbackStore 版本 stamping 与
-# ClaudeRuntime 运行版本归属共用它，杜绝非 main Agent 的版本/基线/执行门落到 main 库（issue #24 C/D）。
+# ClaudeRuntime 运行版本归属共用它，杜绝任一业务 Agent 的版本、基线或执行门落到其他 Agent 的版本库。
 def _resolve_agent_version_id(agent_id: Optional[str]) -> Optional[str]:
-    return agent_governance._store_for(agent_id or "main-agent").current_version_id()
+    return agent_governance._store_for(agent_id or DEFAULT_BUSINESS_AGENT_ID).current_version_id()
 
 
 feedback_store.agent_version_provider = _resolve_agent_version_id
@@ -147,6 +149,7 @@ improvement_governor_service = ImprovementGovernorService(
 )
 asset_store = AssetStore(runtime_db_session_factory)
 runtime_settings_store = RuntimeSettingsStore(runtime_db_session_factory)
+agent_testing_store = AgentTestingStore(runtime_db_session_factory)
 execution_application = WorkspaceExecutionApplier()
 improvement_execution_service = ImprovementExecutionService(
     improvement_store=improvement_store,
@@ -154,6 +157,21 @@ improvement_execution_service = ImprovementExecutionService(
     agent_governance=agent_governance,
     execution_app=execution_application,
     run_profile_json=lambda **kwargs: runtime._run_profile_json(**kwargs),
+)
+agent_testing_service = AgentTestingService(
+    store=agent_testing_store,
+    store_for=agent_governance._store_for,
+    agent_exists=lambda agent_id: agent_registry_store.get_agent(agent_id) is not None,
+    get_change_set=agent_governance.get_change_set,
+    run_candidate=runtime.run_candidate,
+    artifacts_dir=settings.data_dir / ".agent-testing",
+    api_base_url=f"http://127.0.0.1:{settings.api_port}",
+    api_key=settings.api_key,
+    run_timeout_seconds=settings.agent_test_run_timeout_seconds,
+)
+agent_governance.latest_passed_test_run = lambda agent_id, commit_sha: agent_testing_service.latest_passed_for_commit(
+    agent_id=agent_id,
+    commit_sha=commit_sha,
 )
 bearer_auth = HTTPBearer(auto_error=False)
 api_key_credentials = Security(bearer_auth)
@@ -168,12 +186,6 @@ def _reconcile_runtime_orphans() -> None:
     recovered_provisions = agent_registry_store.recover_incomplete_provisions()
     if recovered_provisions:
         logger.warning("recovered expired business Agent provisions: %s", recovered_provisions)
-    orphan_eval_runs = feedback_store.reconcile_orphan_eval_runs()
-    if orphan_eval_runs:
-        logger.warning("reconciled expired EvalRuns: %s", orphan_eval_runs)
-    regression_reconciliation = agent_governance.reconcile_regression_runs()
-    if any(regression_reconciliation.values()):
-        logger.warning("reconciled interrupted Agent change set regressions: %s", regression_reconciliation)
     release_reconciliation = agent_governance.reconcile_release_operations()
     if any(release_reconciliation.values()):
         logger.warning("reconciled interrupted Agent release rollback/restore operations: %s", release_reconciliation)
@@ -223,23 +235,24 @@ async def lifespan(_: FastAPI):
     cancelled = claude_user_input_service.cancel_orphan_waiting_requests(reason="service_restarted")
     if cancelled:
         logger.info("cancelled orphan Claude user-input requests: %s", len(cancelled))
-    # 这里曾无条件 agent_version_store.ensure_bootstrap()：该 store 指向 main-agent 的 workspace，
-    # 会在 main 被删除后于原地重新 git init，使删除不粘。各业务 Agent 的版本库由
-    # prepare_runtime 的 _ensure_agent_repositories 按注册表与 catalog 实际存在的 Agent 建立。
+    # 不在这里无条件初始化默认业务 Agent 的版本库；各业务 Agent 的版本库由
+    # prepare_runtime 的 _ensure_agent_repositories 按注册表与运行态 Workspace 实际存在的 Agent 建立。
     #
-    # 静态 profile 只有 governor；业务 Agent（含 main）全部由磁盘发现提供：workspace 在则在，
+    # 静态 profile 只有 governor；所有业务 Agent 全部由磁盘发现提供：workspace 在则在，
     # 删了就没有。这样注册表 sync 不会复活已删除的 Agent。
     profiles = build_profiles(settings)
-    for profile in discover_seeded_business_agents(settings):
+    for profile in discover_business_agents(settings):
         profiles.setdefault(profile.name, profile)
-    # 以运行态 seed catalog 为准标 origin（出生来源展示）；删除保护由受保护名单裁决，不看 origin。
     # sync 跳过 tombstone 不复活。
-    agent_registry_store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids(settings))
+    agent_registry_store.sync_business_agents(profiles)
     logger.info(
         "business agent registry synced: %s",
         sorted(agent_id for agent_id, profile in profiles.items() if profile.category == "business"),
     )
     _reconcile_runtime_orphans()
+    test_recovery = agent_testing_service.recover()
+    if any(test_recovery.values()):
+        logger.warning("recovered Agent test runs: %s", test_recovery)
     cleanup_summary = agent_governance.reconcile_worktree_cleanups()
     if cleanup_summary["completed"] or cleanup_summary["failed"]:
         logger.info("worktree cleanup reconciliation: %s", cleanup_summary)
@@ -287,6 +300,7 @@ async def lifespan(_: FastAPI):
         for task in (provider_probe_task, dependency_probe_task, recovery_task):
             with suppress(asyncio.CancelledError):
                 await task
+        agent_testing_service.close()
 
 
 app = FastAPI(
@@ -470,19 +484,13 @@ app.include_router(
     )
 )
 app.include_router(
-    create_agent_change_set_regression_router(
-        agent_governance=agent_governance,
-        runtime=runtime,
-        require_api_key=require_api_key,
-    )
-)
-app.include_router(
     create_agents_router(
         settings=settings,
         agent_registry_store=agent_registry_store,
         feedback_store=feedback_store,
         improvement_store=improvement_store,
         agent_governance=agent_governance,
+        agent_testing_store=agent_testing_store,
         require_api_key=require_api_key,
     )
 )
@@ -492,9 +500,11 @@ app.include_router(
         agent_registry_store=agent_registry_store,
         agent_governance=agent_governance,
         session_store=session_store,
+        agent_testing=agent_testing_service,
         require_api_key=require_api_key,
     )
 )
+app.include_router(create_agent_testing_router(service=agent_testing_service, require_api_key=require_api_key))
 app.include_router(
     create_improvements_router(
         improvement_store=improvement_store,
@@ -521,6 +531,7 @@ app.include_router(
         content_store=improvement_content_store,
         governor_service=improvement_governor_service,
         execution_service=improvement_execution_service,
+        agent_testing=agent_testing_service,
         require_api_key=require_api_key,
     )
 )
@@ -535,7 +546,6 @@ app.include_router(
 app.include_router(create_langfuse_traces_router(runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_assets_router(asset_store=asset_store, require_api_key=require_api_key))
 app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))
-app.include_router(create_eval_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_feedback_cases_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(
     create_feedback_workbench_router(

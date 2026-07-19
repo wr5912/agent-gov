@@ -51,8 +51,8 @@ class GitWorktreeRef:
 class GitAgentVersionStore:
     """Git-backed Agent version provider.
 
-    The repository is rooted at the main Agent workspace. Candidate changes are
-    applied in separate Git worktrees and only merged into the main workspace at
+    The repository is rooted at one business Agent Workspace. Candidate changes
+    are applied in separate Git worktrees and only merged into that Workspace at
     publish time.
     """
 
@@ -65,7 +65,7 @@ class GitAgentVersionStore:
         service_provider: str = "local",
         service_url: str | None = None,
         service_public_url: str | None = None,
-        repository_name: str = "main-agent-config",
+        repository_name: str = "business-agent-config",
         git_user_name: str = "AgentGov",
         git_user_email: str = "agent-runtime@example.local",
     ) -> None:
@@ -112,6 +112,12 @@ class GitAgentVersionStore:
     def current_commit_sha(self) -> Optional[str]:
         self._ensure_repo_ready()
         return self._current_commit_sha_no_bootstrap()
+
+    def resolve_commit_sha(self, ref: str) -> str:
+        """Resolve one ref to a commit owned by this Agent repository."""
+
+        self._ensure_repo_ready()
+        return self._resolve_commit(ref)
 
     def _current_commit_sha_no_bootstrap(self) -> Optional[str]:
         commit = self._git(["rev-parse", "HEAD"], cwd=self.repository_dir).strip()
@@ -326,6 +332,11 @@ class GitAgentVersionStore:
                 raise AgentGitError("Candidate worktree has no commit")
             return commit
 
+    def commit_squashed_worktree(self, worktree_path: Path, *, base_ref: str, message: str) -> str:
+        from app.runtime.agent_git_worktree_operations import commit_squashed_worktree
+
+        return commit_squashed_worktree(self, worktree_path, base_ref=base_ref, message=message)
+
     def diff_versions(self, from_version_id: str, to_version_id: str) -> Optional[JsonObject]:
         try:
             left = self._resolve_ref(from_version_id)
@@ -433,7 +444,7 @@ class GitAgentVersionStore:
                 if tagged_commit and tagged_commit != candidate:
                     raise AgentGitError(f"Release tag {tag_name!r} already points to a different commit")
                 if self._git(["status", "--porcelain"], cwd=self.repository_dir).strip():
-                    raise AgentGitError("Main Agent workspace has uncommitted changes")
+                    raise AgentGitError("Business Agent Workspace has uncommitted changes")
                 if validate_ref is not None:
                     validate_ref(candidate)
                 candidate_was_published = (
@@ -526,7 +537,7 @@ class GitAgentVersionStore:
                 self._ensure_repo_ready()
                 target = self._resolve_ref(ref)
                 if self._git(["status", "--porcelain"], cwd=self.repository_dir).strip():
-                    raise AgentGitError("Main Agent workspace has uncommitted changes")
+                    raise AgentGitError("Business Agent Workspace has uncommitted changes")
                 if validate_ref is not None:
                     validate_ref(target)
                 previous = self.current_commit_sha()

@@ -37,14 +37,19 @@ export function ImprovementDecisionPanel({
   const versionCount = new Set(feedbacks.map((f) => f.agent_version_id).filter(Boolean)).size;
   const sourceCount = feedbacks.length || refs.length;
   const agentLabel = agentName && agentName !== item.agent_id ? `${agentName}（${item.agent_id}）` : item.agent_id;
-  const signal = primaryDecision ?? decisionSignal(stageView.visibleKey);
+  const completed = stageView.isCompleted;
+  const signal = completed ? completedSignal() : primaryDecision ?? decisionSignal(stageView.visibleKey);
   const primaryDisabled = busy || !!primaryDecision?.disabledReason;
   const question = pendingOperation
     ? `正在${pendingOperation.label}...`
-    : primaryDecision?.question ?? decisionQuestion(stageView.visibleKey, sourceCount);
+    : completed
+      ? "待发布版本已完成测试并发布"
+      : primaryDecision?.question ?? decisionQuestion(stageView.visibleKey, sourceCount);
   const summary = pendingOperation
     ? operationStatusText(pendingOperation)
-    : primaryDecision?.summary ?? decisionSummary(stageView.visibleKey);
+    : completed
+      ? "平台测试记录、待发布版本和发布记录已完成一致性绑定。"
+      : primaryDecision?.summary ?? decisionSummary(stageView.visibleKey);
   const evidence = pendingOperation ? "治理 Agent 正在处理" : signal.evidence;
   const showRegenerateOptimizationPlan = item.improvement_status !== "archived"
     && stageView.visibleKey === "optimization_execution"
@@ -80,7 +85,7 @@ export function ImprovementDecisionPanel({
         <div className="iw-decision-icon" aria-hidden="true">{signal.icon}</div>
         <div className="iw-decision-main">
           <div className="iw-decision-title-row">
-            <div className="iw-section-kicker">{pendingOperation ? "生成中" : "请确认"}</div>
+            <div className="iw-section-kicker">{pendingOperation ? "生成中" : completed ? "已完成" : "请确认"}</div>
             <h3 data-testid="current-decision-question">{question}</h3>
           </div>
           <p className="iw-detail-summary">{summary}</p>
@@ -104,7 +109,7 @@ export function ImprovementDecisionPanel({
                 {pendingOperation ? `正在${pendingOperation.label}...` : primaryDecision.label}
               </button>
             ) : (
-              <span className="iw-done-note" data-testid="improvement-terminal">事项已完成治理流程；发布结果以版本治理记录为准。</span>
+              <span className="iw-done-note" data-testid="improvement-terminal">事项已完成平台测试并发布；发布结果以版本治理记录为准。</span>
             )}
             {showRegenerateOptimizationPlan ? (
               <button className="iw-secondary-button" type="button" data-testid="decision-regenerate-optimization-plan" disabled={busy} onClick={onRegenerateOptimizationPlan}>
@@ -142,7 +147,7 @@ function decisionQuestion(stage: ImprovementStageView["visibleKey"], sourceCount
     case "optimization_execution":
       return "优化方案已生成，是否确认执行该优化方案？";
     case "test_release":
-      return "回归方案已生成";
+      return "回归测试代码候选已生成";
   }
 }
 
@@ -155,7 +160,7 @@ function decisionSummary(stage: ImprovementStageView["visibleKey"]) {
     case "optimization_execution":
       return "优化方案基于归因结论生成，执行前需要确认变更范围与回滚策略。";
     case "test_release":
-      return "回归评估与候选用例已就绪，等待独立的测试执行流程验证改进效果与风险。";
+      return "回归测试代码候选已就绪；确认后写入待发布版本，运行测试仍是独立显式动作。";
   }
 }
 
@@ -168,6 +173,10 @@ function decisionSignal(stage: ImprovementStageView["visibleKey"]) {
     case "optimization_execution":
       return { icon: "↗", score: 92, scoreLabel: "当前风险 / 置信度", level: "高置信 / 低风险", evidence: "方案、Diff 与回滚策略已准备" };
     case "test_release":
-      return { icon: "✓", score: 96, scoreLabel: "预计通过率", level: "高度可信", evidence: "测试数据集与门禁预览已就绪" };
+      return { icon: "✓", score: 96, scoreLabel: "代码完整度", level: "待确认变更", evidence: "回归测试代码候选已就绪" };
   }
+}
+
+function completedSignal() {
+  return { icon: "✓", score: 100, scoreLabel: "治理状态", level: "已发布", evidence: "平台测试与发布记录已就绪" };
 }

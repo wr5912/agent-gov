@@ -4,16 +4,18 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, Depends
 
-from app.runtime.errors import BusinessRuleViolation, NotFoundError
+from app.agent_testing.schemas import AgentTestRunResponse
+from app.agent_testing.service import AgentTestingService
+from app.runtime.errors import BusinessRuleViolation, DataIntegrityError, NotFoundError
 from app.runtime.improvement_content_schemas import (
     ExecutionResponse,
-    RegressionAssessmentResponse,
-    RegressionCase,
+    RegressionGeneratedTest,
+    RegressionTestDesignResponse,
 )
 from app.runtime.stores.improvement_content_store import (
     ExecutionRecord,
     ImprovementContentStore,
-    RegressionAssessmentRecord,
+    RegressionTestDesignRecord,
 )
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.improvement_execution_service import ImprovementExecutionService
@@ -42,29 +44,66 @@ def _execution_response(record: ExecutionRecord) -> ExecutionResponse:
     )
 
 
-def _regression_response(record: RegressionAssessmentRecord) -> RegressionAssessmentResponse:
-    return RegressionAssessmentResponse(
-        regression_assessment_id=record.regression_assessment_id,
+def _test_design_response(
+    record: RegressionTestDesignRecord,
+    *,
+    generated_test_files: list[str] | None = None,
+    candidate_commit_sha: str = "",
+    test_run: AgentTestRunResponse | None = None,
+) -> RegressionTestDesignResponse:
+    return RegressionTestDesignResponse(
+        regression_test_design_id=record.regression_test_design_id,
         improvement_id=record.improvement_id,
         summary=record.summary,
-        cases=[
-            RegressionCase(
-                prompt=str(case.get("prompt", "")),
-                expected_behavior=str(case.get("expected_behavior", "")),
-                checkpoints=[str(value) for value in (case.get("checkpoints") or [])],
+        tests=[
+            RegressionGeneratedTest(
+                target_path=str(test.get("target_path", "")),
+                test_code=str(test.get("test_code", "")),
+                test_intent=str(test.get("test_intent", "")),
+                assertion_rationale=str(test.get("assertion_rationale", "")),
             )
-            for case in record.cases
+            for test in record.tests
         ],
-        suggested_gate_thresholds={
-            str(key): str(value) for key, value in (record.suggested_gate_thresholds or {}).items()
-        },
+        no_action_reason=record.no_action_reason,
         status=record.status,
         generated_by=record.generated_by,
         generation_trace_id=record.generation_trace_id,
         generation_trace_url=record.generation_trace_url,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        generated_test_files=generated_test_files or [],
+        candidate_commit_sha=candidate_commit_sha,
+        test_run=test_run,
     )
+
+
+def _test_design_runtime_projection(
+    improvement_id: str,
+    *,
+    content_store: ImprovementContentStore,
+    agent_testing: AgentTestingService,
+) -> tuple[list[str], str, AgentTestRunResponse | None]:
+    execution = content_store.get_execution(improvement_id)
+    if execution is None:
+        return [], "", None
+
+    generated_test_files = [str(path) for path in execution.changes_applied if str(path).startswith("tests/")]
+    candidate_commit_sha = execution.applied_agent_version_id or execution.agent_version
+    if not execution.change_set_id or not candidate_commit_sha:
+        return generated_test_files, candidate_commit_sha, None
+
+    latest_run = next(
+        (
+            run
+            for run in agent_testing.store.list_runs(change_set_id=execution.change_set_id, limit=20)
+            if str(run.get("commit_sha") or "") == candidate_commit_sha
+        ),
+        None,
+    )
+    if latest_run is None:
+        return generated_test_files, candidate_commit_sha, None
+    full_run = agent_testing.store.get_run(str(latest_run["test_run_id"])) or latest_run
+    return generated_test_files, candidate_commit_sha, AgentTestRunResponse.model_validate(full_run)
 
 
 def _has_applied_execution(record: ExecutionRecord | None) -> bool:
@@ -110,9 +149,7 @@ def _register_execution_routes(
     async def confirm_execution(improvement_id: str) -> ExecutionResponse:
         if not _has_applied_execution(content_store.get_execution(improvement_id)):
             raise BusinessRuleViolation(f"Applied execution evidence is required before confirmation: {improvement_id}")
-        return _execution_response(
-            content_store.set_execution_status(improvement_id, status="confirmed", advance_to_stage="execution")
-        )
+        return _execution_response(content_store.set_execution_status(improvement_id, status="confirmed", advance_to_stage="execution"))
 
 
 def _register_regression_routes(
@@ -120,48 +157,66 @@ def _register_regression_routes(
     *,
     content_store: ImprovementContentStore,
     governor_service: ImprovementGovernorService,
+    execution_service: ImprovementExecutionService,
+    agent_testing: AgentTestingService,
     require_improvement: Callable[[str], None],
 ) -> None:
     @router.post(
-        "/improvements/{improvement_id}/regression-assessment/generate",
-        response_model=RegressionAssessmentResponse,
-        summary="Generate regression assessment candidates through the governor",
+        "/improvements/{improvement_id}/regression-test-design/generate",
+        response_model=RegressionTestDesignResponse,
+        summary="Generate regression test design candidates through the governor",
     )
-    async def generate_regression(improvement_id: str) -> RegressionAssessmentResponse:
+    async def generate_regression(improvement_id: str) -> RegressionTestDesignResponse:
         require_improvement(improvement_id)
         execution = content_store.get_execution(improvement_id)
         if execution is None or execution.status != "confirmed" or not _has_applied_execution(execution):
-            raise BusinessRuleViolation(f"Confirmed execution is required before regression assessment: {improvement_id}")
-        return _regression_response(
-            await governor_service.generate_regression_assessment(improvement_id, advance_to_stage="regression")
-        )
+            raise BusinessRuleViolation(f"Confirmed execution is required before regression test design: {improvement_id}")
+        return _test_design_response(await governor_service.generate_regression_test_design(improvement_id, advance_to_stage="regression"))
 
     @router.get(
-        "/improvements/{improvement_id}/regression-assessment",
-        response_model=RegressionAssessmentResponse,
-        summary="Get regression assessment (404 if none)",
+        "/improvements/{improvement_id}/regression-test-design",
+        response_model=RegressionTestDesignResponse,
+        summary="Get regression test design (404 if none)",
     )
-    async def get_regression(improvement_id: str) -> RegressionAssessmentResponse:
-        record = content_store.get_regression_assessment(improvement_id)
+    async def get_regression(improvement_id: str) -> RegressionTestDesignResponse:
+        record = content_store.get_regression_test_design(improvement_id)
         if record is None:
-            raise NotFoundError(f"No regression assessment for improvement: {improvement_id}")
-        return _regression_response(record)
+            raise NotFoundError(f"No regression test design for improvement: {improvement_id}")
+        generated_test_files, candidate_commit_sha, test_run = _test_design_runtime_projection(
+            improvement_id,
+            content_store=content_store,
+            agent_testing=agent_testing,
+        )
+        return _test_design_response(
+            record,
+            generated_test_files=generated_test_files,
+            candidate_commit_sha=candidate_commit_sha,
+            test_run=test_run,
+        )
 
     @router.post(
-        "/improvements/{improvement_id}/regression-assessment/confirm",
-        response_model=RegressionAssessmentResponse,
-        summary="Confirm regression assessment for typed TestDataset adoption",
+        "/improvements/{improvement_id}/regression-test-design/confirm",
+        response_model=RegressionTestDesignResponse,
+        summary="Confirm the regression test design before generating Workspace pytest files",
     )
-    async def confirm_regression(improvement_id: str) -> RegressionAssessmentResponse:
+    async def confirm_regression(improvement_id: str) -> RegressionTestDesignResponse:
         execution = content_store.get_execution(improvement_id)
         if execution is None or execution.status != "confirmed" or not _has_applied_execution(execution):
-            raise BusinessRuleViolation(f"Confirmed execution is required before regression assessment: {improvement_id}")
-        return _regression_response(
-            content_store.set_regression_assessment_status(
-                improvement_id,
-                status="confirmed",
-                advance_to_stage="regression",
-            )
+            raise BusinessRuleViolation(f"Confirmed execution is required before regression test design: {improvement_id}")
+        materialized = execution_service.materialize_regression_tests(improvement_id)
+        generated_test_files = materialized.get("generated_test_files")
+        candidate_commit_sha = materialized.get("candidate_commit_sha")
+        if not isinstance(generated_test_files, list) or not isinstance(candidate_commit_sha, str) or not candidate_commit_sha:
+            raise DataIntegrityError("Regression test materialization returned an invalid candidate projection")
+        record = content_store.set_regression_test_design_status(
+            improvement_id,
+            status="confirmed",
+            advance_to_stage="regression",
+        )
+        return _test_design_response(
+            record,
+            generated_test_files=[str(value) for value in generated_test_files],
+            candidate_commit_sha=candidate_commit_sha,
         )
 
 
@@ -171,6 +226,7 @@ def create_improvement_execution_router(
     content_store: ImprovementContentStore,
     governor_service: ImprovementGovernorService,
     execution_service: ImprovementExecutionService,
+    agent_testing: AgentTestingService,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["improvements"], dependencies=[Depends(require_api_key)])
@@ -189,6 +245,8 @@ def create_improvement_execution_router(
         router,
         content_store=content_store,
         governor_service=governor_service,
+        execution_service=execution_service,
+        agent_testing=agent_testing,
         require_improvement=require_improvement,
     )
     return router

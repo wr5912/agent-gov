@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createAsset, inheritAsset, listAssets, listTestDatasets, type Asset, type TestDataset } from "../api/assets";
+import { createAsset, inheritAsset, listAssets, type Asset } from "../api/assets";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import { DrawerShell } from "./DrawerShell";
 import "../improvement-workbench.css";
 
 // 治理资产 Registry 复利中心（四阶段改进治理 W3）：沉淀方法论/执行/审计资产，并跨业务 Agent 继承复用。
 const ASSET_TYPE_LABEL: Record<string, string> = {
-  test_dataset: "测试数据集",
   methodology: "方法论",
   execution: "执行",
   audit: "审计",
@@ -22,7 +21,6 @@ export function AssetRegistry({
   businessAgents: AgentSummary[];
 }) {
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [testDatasets, setTestDatasets] = useState<TestDataset[]>([]);
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [newType, setNewType] = useState("methodology");
@@ -57,15 +55,8 @@ export function AssetRegistry({
   const refresh = useCallback(async () => {
     setError(undefined);
     try {
-      const agentIds = assetScopeAgentId
-        ? [assetScopeAgentId]
-        : businessAgents.map((agent) => agent.agent_id);
-      const [nextAssets, datasetGroups] = await Promise.all([
-        listAssets(clientConfig, { agentId: assetScopeAgentId || undefined }),
-        Promise.all(agentIds.map((agentId) => listTestDatasets(clientConfig, { agentId }))),
-      ]);
+      const nextAssets = await listAssets(clientConfig, { agentId: assetScopeAgentId || undefined });
       setAssets(nextAssets);
-      setTestDatasets(datasetGroups.flat());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -110,21 +101,13 @@ export function AssetRegistry({
 
   const agentName = (agentId: string) => businessAgents.find((a) => a.agent_id === agentId)?.name || agentId;
   const filteredAssets = assets.filter((asset) => {
-    const typeMatch = typeFilter === "all" || (typeFilter !== "test_dataset" && asset.asset_type === typeFilter);
+    const typeMatch = typeFilter === "all" || asset.asset_type === typeFilter;
     const source = sourceFilter.trim().toLowerCase();
     const sourceMatch = !source || (asset.source_improvement_id || "").toLowerCase().includes(source) || asset.title.toLowerCase().includes(source);
     return typeMatch && sourceMatch;
   });
-  const filteredTestDatasets = testDatasets.filter((dataset) => {
-    if (typeFilter !== "all" && typeFilter !== "test_dataset") return false;
-    const source = sourceFilter.trim().toLowerCase();
-    return !source
-      || dataset.source_improvement_id.toLowerCase().includes(source)
-      || dataset.name.toLowerCase().includes(source)
-      || dataset.dataset_id.toLowerCase().includes(source);
-  });
-  const visibleCount = filteredAssets.length + filteredTestDatasets.length;
-  const totalCount = assets.length + testDatasets.length;
+  const visibleCount = filteredAssets.length;
+  const totalCount = assets.length;
 
   return (
     <div className="improvement-workbench" data-testid="asset-registry" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
@@ -150,7 +133,6 @@ export function AssetRegistry({
               </select>
               <select className="iw-select select-inline" data-testid="asset-type-filter" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
                 <option value="all">全部类型</option>
-                <option value="test_dataset">测试数据集</option>
                 <option value="methodology">方法论</option>
                 <option value="execution">执行</option>
                 <option value="audit">审计</option>
@@ -165,27 +147,6 @@ export function AssetRegistry({
               <div className="iw-empty">当前范围还没有沉淀资产。</div>
             ) : (
               <>
-              {filteredTestDatasets.map((dataset) => (
-                <div
-                  className="iw-list-item"
-                  data-testid="test-dataset-item"
-                  data-lifecycle={dataset.lifecycle_state}
-                  key={dataset.dataset_id}
-                >
-                  <span className="iw-list-item-title">{dataset.name}</span>
-                  <span className="iw-list-item-meta">
-                    测试数据集 · {agentName(dataset.agent_id)} · {dataset.lifecycle_state} · r{dataset.revision}
-                  </span>
-                  <dl className="iw-compact-dl" data-testid="test-dataset-structured-fields">
-                    <div><dt>dataset_id</dt><dd>{dataset.dataset_id}</dd></div>
-                    <div><dt>归属</dt><dd>{dataset.owner_kind}:{dataset.owner_id}</dd></div>
-                    <div><dt>来源改进</dt><dd>{dataset.source_improvement_id}</dd></div>
-                    <div><dt>用例</dt><dd>{dataset.cases.length}</dd></div>
-                    <div><dt>回归评估</dt><dd>{dataset.provenance.regression_assessment_id}</dd></div>
-                    <div><dt>候选版本</dt><dd>{dataset.provenance.candidate_agent_version_id || "未记录"}</dd></div>
-                  </dl>
-                </div>
-              ))}
               {filteredAssets.map((asset) => {
                 const targets = businessAgents.filter((a) => a.agent_id !== asset.agent_id);
                 return (

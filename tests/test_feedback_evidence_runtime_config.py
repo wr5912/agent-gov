@@ -8,17 +8,17 @@ from feedback_store_test_utils import FeedbackSignalCreateRequest, FeedbackStore
 def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch) -> None:
     settings = _settings(tmp_path)
     monkeypatch.delenv("MCP_SERVER_URL", raising=False)
-    (settings.main_workspace_dir / ".mcp.json").write_text(
+    (settings.default_workspace_dir / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "${MCP_SERVER_URL}"}}}),
         encoding="utf-8",
     )
-    settings_dir = settings.main_workspace_dir / ".claude"
+    settings_dir = settings.default_workspace_dir / ".claude"
     settings_dir.mkdir(parents=True, exist_ok=True)
     (settings_dir / "settings.json").write_text(
         json.dumps({"sandbox": {"network": {"allowedDomains": ["${SERVICE_HOST}"]}}}),
         encoding="utf-8",
     )
-    sample_dir = settings.main_workspace_dir / "mcp_servers" / "soc_data_mcp"
+    sample_dir = settings.default_workspace_dir / "mcp_servers" / "soc_data_mcp"
     sample_dir.mkdir(parents=True)
     (sample_dir / "sample_alerts.json").write_text(
         json.dumps([{"host": {"hostname": "${SERVICE_HOST}"}, "network": {"dst_port": "${SERVICE_PORT}"}}]),
@@ -26,7 +26,7 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
     )
     store = FeedbackStore(
         data_dir=settings.data_dir,
-        workspace_dir=settings.main_workspace_dir,
+        workspace_dir=settings.default_workspace_dir,
         agent_version_provider=lambda _aid=None: "main-v-test",
     )
     run_id = "run-mcp-config-failed"

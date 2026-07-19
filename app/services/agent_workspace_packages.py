@@ -1,21 +1,21 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO
-from uuid import uuid4
+from typing import BinaryIO, Literal
 
 from sqlalchemy.orm import Session
 
+from app.agent_testing.service import AgentTestingService
 from app.runtime.agent_admission import AgentAdmissionError, AgentRunsActiveError
-from app.runtime.agent_git_raw_storage import RawGitStorageError, configure_raw_git_storage
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
+from app.runtime.agent_governance_schemas import AgentSummaryResponse
 from app.runtime.agent_governance_schemas import agent_summary_response as _summary
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
 from app.runtime.agent_workspace_package_schemas import (
@@ -23,21 +23,51 @@ from app.runtime.agent_workspace_package_schemas import (
     WorkspaceRestoreRequest,
     WorkspaceRestoreResponse,
 )
-from app.runtime.business_agent_workspace import WorkspaceTemplateEntry, WorkspaceTemplatePlan
+from app.runtime.business_agent_workspace import WorkspaceProvisionPlan
 from app.runtime.errors import SessionConflictError
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
 from app.services import agent_workspace_package_codec as package_codec
 from app.services.agent_version_maintenance import AgentVersionMaintenanceCoordinator
+from app.services.agent_workspace_git_operations import (
+    GitCommandError as _GitCommandError,
+)
+from app.services.agent_workspace_git_operations import (
+    SnapshotState as _SnapshotState,
+)
+from app.services.agent_workspace_git_operations import (
+    cleanup_imported_versioning as _cleanup_imported_versioning,
+)
+from app.services.agent_workspace_git_operations import (
+    configure_workspace_git_storage as _configure_raw_git_storage,
+)
+from app.services.agent_workspace_git_operations import (
+    git_text as _git_text,
+)
+from app.services.agent_workspace_git_operations import (
+    has_staged_changes as _has_staged_changes,
+)
+from app.services.agent_workspace_git_operations import (
+    replace_tree_from_entries as _replace_tree_from_entries,
+)
+from app.services.agent_workspace_git_operations import (
+    restore_dirty_state_after_failure as _restore_dirty_state_after_failure,
+)
+from app.services.agent_workspace_git_operations import (
+    restore_tree_as_commit as _restore_tree_as_commit,
+)
+from app.services.agent_workspace_git_operations import (
+    run_git as _git,
+)
+from app.services.agent_workspace_git_operations import (
+    snapshot_live_workspace as _snapshot_live_workspace,
+)
 from app.services.business_agent_provisioning import provision_business_agent
 
 _FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 WorkspacePackageError = package_codec.WorkspacePackageError
-
-
-class _GitCommandError(RuntimeError):
-    pass
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -47,20 +77,6 @@ class WorkspaceExportArtifact:
     commit_sha: str
     package_sha256: str
     tree_sha256: str
-
-
-@dataclass(frozen=True)
-class _SnapshotState:
-    original_head: str
-    current_head: str
-    snapshot_created: bool
-
-
-@dataclass(frozen=True)
-class _TreeReplacement:
-    action: str
-    previous_commit_sha: str
-    current_commit_sha: str
 
 
 class AgentWorkspacePackageService:
@@ -73,6 +89,7 @@ class AgentWorkspacePackageService:
         version_maintenance: AgentVersionMaintenanceCoordinator,
         has_open_change_sets: Callable[[str], bool],
         session_store: LocalSessionStore,
+        agent_testing: AgentTestingService,
     ) -> None:
         self._settings = settings
         self._registry = registry_store
@@ -80,6 +97,7 @@ class AgentWorkspacePackageService:
         self._version_maintenance = version_maintenance
         self._has_open_change_sets = has_open_change_sets
         self._session_store = session_store
+        self._agent_testing = agent_testing
 
     def export_workspace(self, agent_id: str) -> WorkspaceExportArtifact:
         try:
@@ -128,10 +146,12 @@ class AgentWorkspacePackageService:
         expected_current_commit_sha: str | None,
         reason: str | None,
     ) -> WorkspaceImportResponse:
+        safe_agent_id = _safe_agent_id(agent_id)
+        existing = self._registry.get_agent(safe_agent_id)
+        import_action = "overwrite" if existing is not None else "create"
+        package: package_codec.ValidatedWorkspacePackage | None = None
         try:
-            safe_agent_id = _safe_agent_id(agent_id)
             package = self._read_package(package_file, filename=filename)
-            existing = self._registry.get_agent(safe_agent_id)
             if existing is None:
                 return self._create_from_package(
                     agent_id=safe_agent_id,
@@ -146,9 +166,31 @@ class AgentWorkspacePackageService:
                 reason=reason,
             )
         except AgentAdmissionError as exc:
-            raise _workspace_admission_error(exc) from exc
+            error = _workspace_admission_error(exc)
+            self._record_import_failure(
+                agent_id=safe_agent_id,
+                action=import_action,
+                package=package,
+                error=error,
+            )
+            raise error from exc
+        except WorkspacePackageError as exc:
+            self._record_import_failure(
+                agent_id=safe_agent_id,
+                action=import_action,
+                package=package,
+                error=exc,
+            )
+            raise
         except (AgentGitError, package_codec.WorkspaceGitReadError, _GitCommandError) as exc:
-            raise WorkspacePackageError(409, "WORKSPACE_GIT_OPERATION_FAILED", "Git workspace operation failed") from exc
+            error = WorkspacePackageError(409, "WORKSPACE_GIT_OPERATION_FAILED", "Git workspace operation failed")
+            self._record_import_failure(
+                agent_id=safe_agent_id,
+                action=import_action,
+                package=package,
+                error=error,
+            )
+            raise error from exc
 
     def restore_workspace(
         self,
@@ -235,7 +277,7 @@ class AgentWorkspacePackageService:
                 "WORKSPACE_IMPORT_RESIDUE",
                 f"Workspace path already exists for unregistered Agent {agent_id}; clean or restore it before import",
             )
-        plan = WorkspaceTemplatePlan(template_id="workspace-package", entries=package.entries)
+        plan = WorkspaceProvisionPlan(entries=package.entries)
         current_commits: list[str] = []
 
         def finalize_workspace(_: Path) -> None:
@@ -259,7 +301,6 @@ class AgentWorkspacePackageService:
             agent_id=agent_id,
             name=clean_name,
             workspace_dir=layout.workspace,
-            template_id="workspace-package",
             plan=plan,
             finalize_workspace=finalize_workspace,
             rollback_workspace_finalization=lambda _: _cleanup_imported_versioning(layout.workspace, layout.version_base),
@@ -267,12 +308,14 @@ class AgentWorkspacePackageService:
         current = current_commits[0] if current_commits else None
         if current is None:
             raise WorkspacePackageError(409, "WORKSPACE_IMPORT_VERSION_INIT_FAILED", "Imported workspace has no Git commit")
-        return WorkspaceImportResponse(
+        return self._record_import(
             action="created",
             agent=_summary(record),
+            previous_commit_sha=None,
             current_commit_sha=current,
             package_sha256=package.package_sha256,
             tree_sha256=package.tree_sha256,
+            rollback_target_commit_sha=None,
         )
 
     def _overwrite_from_package(
@@ -331,7 +374,7 @@ class AgentWorkspacePackageService:
                 raise
         finally:
             lease.close(validate_claim=False)
-        return WorkspaceImportResponse(
+        return self._record_import(
             action="unchanged" if replacement.action == "unchanged" else "overwritten",
             agent=_summary(record),
             previous_commit_sha=replacement.previous_commit_sha,
@@ -340,6 +383,65 @@ class AgentWorkspacePackageService:
             tree_sha256=package.tree_sha256,
             rollback_target_commit_sha=(replacement.previous_commit_sha if replacement.action != "unchanged" else None),
         )
+
+    def _record_import(
+        self,
+        *,
+        action: Literal["created", "overwritten", "unchanged"],
+        agent: AgentSummaryResponse,
+        previous_commit_sha: str | None,
+        current_commit_sha: str,
+        package_sha256: str,
+        tree_sha256: str,
+        rollback_target_commit_sha: str | None,
+    ) -> WorkspaceImportResponse:
+        import_id, suite = self._agent_testing.record_import(
+            agent_id=agent.agent_id,
+            action=action,
+            package_sha256=package_sha256,
+            tree_sha256=tree_sha256,
+            commit_sha=current_commit_sha,
+        )
+        warnings = [item for item in suite.diagnostics if item.level == "warning"]
+        status = "invalid" if any(item.level == "error" for item in suite.diagnostics) else "warning" if warnings else "ready"
+        return WorkspaceImportResponse(
+            action=action,
+            agent=agent,
+            previous_commit_sha=previous_commit_sha,
+            current_commit_sha=current_commit_sha,
+            package_sha256=package_sha256,
+            tree_sha256=tree_sha256,
+            rollback_target_commit_sha=rollback_target_commit_sha,
+            import_record_id=import_id,
+            test_suite_status=status,
+            test_file_count=suite.test_file_count,
+            test_suite_warnings=warnings,
+        )
+
+    def _record_import_failure(
+        self,
+        *,
+        agent_id: str,
+        action: str,
+        package: package_codec.ValidatedWorkspacePackage | None,
+        error: WorkspacePackageError,
+    ) -> None:
+        try:
+            self._agent_testing.record_import_failure(
+                agent_id=agent_id,
+                action=action,
+                package_sha256=package.package_sha256 if package else None,
+                tree_sha256=package.tree_sha256 if package else None,
+                error_code=error.error_code,
+                detail=str(error),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist Workspace import failure audit: agent_id=%s action=%s",
+                agent_id,
+                action,
+                exc_info=True,
+            )
 
     def _read_package(self, package_file: BinaryIO, *, filename: str | None) -> package_codec.ValidatedWorkspacePackage:
         temporary = self._temporary_path(suffix=".upload.tar.gz")
@@ -439,29 +541,6 @@ class AgentWorkspacePackageService:
             ) from exc
 
 
-def _cleanup_imported_versioning(workspace: Path, version_base: Path) -> bool:
-    complete = True
-    for path in (workspace / ".git", version_base):
-        try:
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path)
-            else:
-                path.unlink(missing_ok=True)
-        except OSError:
-            complete = False
-    return complete
-
-
-def _configure_raw_git_storage(repository: Path) -> None:
-    try:
-        configure_raw_git_storage(
-            repository,
-            run_git=lambda args, cwd: _git(cwd, args),
-        )
-    except RawGitStorageError as exc:
-        raise _GitCommandError(str(exc)) from exc
-
-
 def _safe_agent_id(agent_id: str) -> str:
     try:
         return validate_agent_id(agent_id)
@@ -483,247 +562,6 @@ def _commit_message(value: str | None, *, default: str) -> str:
     return normalized
 
 
-def _snapshot_live_workspace(
-    store: GitAgentVersionStore,
-    *,
-    expected_head: str | None = None,
-) -> _SnapshotState:
-    repository = store.repository_dir
-    original_head = _git_text(repository, ["rev-parse", "HEAD"]).strip()
-    if expected_head is not None and original_head != expected_head:
-        raise WorkspacePackageError(
-            409,
-            "WORKSPACE_HEAD_CONFLICT",
-            f"Agent workspace HEAD changed (expected {expected_head}, found {original_head})",
-        )
-    try:
-        _git(repository, ["add", "-A", "-f", "--", "."])
-        _git(repository, ["add", "--renormalize", "--ignore-errors", "--", "."])
-        if not _has_staged_changes(repository):
-            return _SnapshotState(original_head=original_head, current_head=original_head, snapshot_created=False)
-        _git(repository, ["commit", "-m", "Snapshot live workspace before package operation"])
-        current_head = _git_text(repository, ["rev-parse", "HEAD"]).strip()
-        return _SnapshotState(original_head=original_head, current_head=current_head, snapshot_created=True)
-    except Exception:
-        _git(repository, ["reset", "--mixed", original_head], check=False)
-        raise
-
-
-def _restore_dirty_state_after_failure(store: GitAgentVersionStore, snapshot: _SnapshotState) -> None:
-    if not snapshot.snapshot_created:
-        return
-    current = _git_text(store.repository_dir, ["rev-parse", "HEAD"], check=False).strip()
-    if current == snapshot.current_head:
-        _git(store.repository_dir, ["reset", "--mixed", snapshot.original_head], check=False)
-
-
-def _replace_tree_from_entries(
-    store: GitAgentVersionStore,
-    *,
-    base_commit: str,
-    entries: tuple[WorkspaceTemplateEntry, ...],
-    message: str,
-    before_activate: Callable[[], None],
-    invalidate_sessions: Callable[[Session], None],
-    activation_guard: Callable[[Callable[[Session], None], Callable[[], None]], None],
-) -> _TreeReplacement:
-    worktree = _add_detached_worktree(store, base_commit)
-    try:
-        _clear_worktree(worktree)
-        _write_entries(worktree, entries)
-        _git(worktree, ["add", "-A", "-f", "--", "."])
-        if not _has_staged_changes(worktree):
-            return _TreeReplacement(action="unchanged", previous_commit_sha=base_commit, current_commit_sha=base_commit)
-        _git(worktree, ["commit", "-m", message])
-        candidate = _git_text(worktree, ["rev-parse", "HEAD"]).strip()
-        _activate_candidate(
-            store,
-            base_commit=base_commit,
-            candidate_commit=candidate,
-            before_activate=before_activate,
-            invalidate_sessions=invalidate_sessions,
-            activation_guard=activation_guard,
-        )
-        return _TreeReplacement(action="overwritten", previous_commit_sha=base_commit, current_commit_sha=candidate)
-    finally:
-        _remove_worktree(store, worktree)
-
-
-def _restore_tree_as_commit(
-    store: GitAgentVersionStore,
-    *,
-    base_commit: str,
-    target_commit: str,
-    message: str,
-    before_activate: Callable[[], None],
-    invalidate_sessions: Callable[[Session], None],
-    activation_guard: Callable[[Callable[[Session], None], Callable[[], None]], None],
-) -> _TreeReplacement:
-    if _git_process(store.repository_dir, ["cat-file", "-e", f"{target_commit}^{{commit}}"]).returncode != 0:
-        raise WorkspacePackageError(
-            422,
-            "WORKSPACE_RESTORE_TARGET_NOT_FOUND",
-            f"Restore target is not a commit in this Agent workspace: {target_commit}",
-        )
-    try:
-        package_codec.read_commit_entries(store.repository_dir, target_commit, run_git=_git)
-    except WorkspacePackageError as exc:
-        raise WorkspacePackageError(
-            exc.status_code,
-            "WORKSPACE_RESTORE_TARGET_INVALID",
-            f"Restore target is not a valid workspace tree: {exc}",
-        ) from exc
-    worktree = _add_detached_worktree(store, base_commit)
-    try:
-        _git(worktree, ["read-tree", "--reset", "-u", target_commit])
-        _git(worktree, ["commit", "--allow-empty", "-m", message])
-        candidate = _git_text(worktree, ["rev-parse", "HEAD"]).strip()
-        _activate_candidate(
-            store,
-            base_commit=base_commit,
-            candidate_commit=candidate,
-            before_activate=before_activate,
-            invalidate_sessions=invalidate_sessions,
-            activation_guard=activation_guard,
-        )
-        return _TreeReplacement(action="restored", previous_commit_sha=base_commit, current_commit_sha=candidate)
-    finally:
-        _remove_worktree(store, worktree)
-
-
-def _add_detached_worktree(store: GitAgentVersionStore, base_commit: str) -> Path:
-    root = store.worktrees_dir.parent / "workspace-package-worktrees"
-    root.mkdir(parents=True, exist_ok=True)
-    worktree = root / uuid4().hex
-    _git(store.repository_dir, ["worktree", "add", "--detach", str(worktree), base_commit])
-    _git(worktree, ["config", "user.name", store.git_user_name])
-    _git(worktree, ["config", "user.email", store.git_user_email])
-    return worktree
-
-
-def _remove_worktree(store: GitAgentVersionStore, worktree: Path) -> None:
-    _git(store.repository_dir, ["worktree", "remove", "--force", str(worktree)], check=False)
-    if worktree.exists():
-        shutil.rmtree(worktree, ignore_errors=True)
-    _git(store.repository_dir, ["worktree", "prune"], check=False)
-
-
-def _clear_worktree(worktree: Path) -> None:
-    for child in worktree.iterdir():
-        if child.name == ".git":
-            continue
-        if child.is_dir() and not child.is_symlink():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-
-
-def _write_entries(worktree: Path, entries: tuple[WorkspaceTemplateEntry, ...]) -> None:
-    for entry in entries:
-        destination = worktree.joinpath(*entry.relative_path.parts)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(entry.content)
-        destination.chmod(entry.mode)
-
-
-def _activate_candidate(
-    store: GitAgentVersionStore,
-    *,
-    base_commit: str,
-    candidate_commit: str,
-    before_activate: Callable[[], None],
-    invalidate_sessions: Callable[[Session], None],
-    activation_guard: Callable[[Callable[[Session], None], Callable[[], None]], None],
-) -> None:
-    repository = store.repository_dir
-    current = _git_text(repository, ["rev-parse", "HEAD"]).strip()
-    if current != base_commit:
-        raise WorkspacePackageError(
-            409,
-            "WORKSPACE_HEAD_CONFLICT",
-            f"Agent workspace HEAD changed during package operation (expected {base_commit}, found {current})",
-        )
-    _require_clean_activation_workspace(repository)
-    before_activate()
-
-    def activate(db: Session) -> None:
-        final_head = _git_text(repository, ["rev-parse", "HEAD"]).strip()
-        if final_head != base_commit:
-            raise WorkspacePackageError(
-                409,
-                "WORKSPACE_HEAD_CONFLICT",
-                f"Agent workspace HEAD changed during package operation (expected {base_commit}, found {final_head})",
-            )
-        _require_clean_activation_workspace(repository)
-        invalidate_sessions(db)
-        _require_clean_activation_workspace(repository)
-        _git(repository, ["merge", "--ff-only", "--no-overwrite-ignore", candidate_commit])
-
-    activation_guard(
-        activate,
-        lambda: _compensate_candidate_activation(
-            repository,
-            base_commit=base_commit,
-            candidate_commit=candidate_commit,
-        ),
-    )
-
-
-def _compensate_candidate_activation(
-    repository: Path,
-    *,
-    base_commit: str,
-    candidate_commit: str,
-) -> None:
-    current = _git_text(repository, ["rev-parse", "HEAD"]).strip()
-    if current != candidate_commit:
-        raise _GitCommandError(f"Cannot compensate workspace activation from unexpected HEAD {current}; expected {candidate_commit}")
-    _git(repository, ["reset", "--merge", base_commit])
-    restored = _git_text(repository, ["rev-parse", "HEAD"]).strip()
-    if restored != base_commit:
-        raise _GitCommandError(f"Workspace activation compensation did not restore expected HEAD {base_commit}")
-
-
-def _require_clean_activation_workspace(repository: Path) -> None:
-    if _git_text(repository, ["status", "--porcelain", "--untracked-files=all", "--ignored"]).strip():
-        raise WorkspacePackageError(409, "WORKSPACE_DIRTY_CONFLICT", "Agent workspace changed during package operation")
-
-
 def _workspace_admission_error(exc: AgentAdmissionError) -> WorkspacePackageError:
     code = "WORKSPACE_SESSION_INVALIDATION_CONFLICT" if isinstance(exc, AgentRunsActiveError) else "WORKSPACE_MAINTENANCE_CONFLICT"
     return WorkspacePackageError(409, code, str(exc))
-
-
-def _has_staged_changes(repository: Path) -> bool:
-    process = _git_process(repository, ["diff", "--cached", "--quiet"])
-    if process.returncode == 0:
-        return False
-    if process.returncode == 1:
-        return True
-    raise _GitCommandError(_git_error(process, "git diff --cached --quiet failed"))
-
-
-def _git(repository: Path, args: list[str], *, check: bool = True) -> bytes:
-    process = _git_process(repository, args)
-    if check and process.returncode != 0:
-        raise _GitCommandError(_git_error(process, f"git {' '.join(args)} failed"))
-    return process.stdout
-
-
-def _git_text(repository: Path, args: list[str], *, check: bool = True) -> str:
-    return _git(repository, args, check=check).decode("utf-8", errors="replace")
-
-
-def _git_process(repository: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=str(repository),
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-        capture_output=True,
-        check=False,
-    )
-
-
-def _git_error(process: subprocess.CompletedProcess[bytes], fallback: str) -> str:
-    detail = (process.stderr or process.stdout).decode("utf-8", errors="replace").strip()
-    return detail or fallback

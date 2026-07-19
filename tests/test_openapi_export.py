@@ -95,7 +95,14 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/improvements/{improvement_id}/attribution/generate",
         "/api/improvements/{improvement_id}/optimization-plan/generate",
         "/api/improvements/{improvement_id}/execution/apply",
-        "/api/improvements/{improvement_id}/regression-assessment/generate",
+        "/api/improvements/{improvement_id}/regression-test-design/generate",
+        "/api/agent-registry/{agent_id}/test-suite",
+        "/api/agent-test-runs",
+        "/api/agent-change-sets/{change_set_id}/test-runs",
+        "/api/agent-test-runs/{test_run_id}",
+        "/api/agent-test-runs/{test_run_id}/cancel",
+        "/api/agent-test-sessions",
+        "/api/agent-test-sessions/{test_session_id}/messages",
         "/api/langfuse/traces/{trace_id}",
         "/api/agent-config-file",
         "/api/agent-change-sets/{change_set_id}/publish",
@@ -124,7 +131,10 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/optimization-tasks/{task_id}/execution-jobs",
     }
     assert set(schema["paths"]).isdisjoint(legacy_paths)
-    assert not any(path.startswith(("/api/regression-assets", "/api/scenario-packs")) for path in schema["paths"])
+    assert not any(
+        path.startswith(("/api/regression-assets", "/api/scenario-packs", "/api/test-datasets"))
+        for path in schema["paths"]
+    )
 
     for schema_name in (
         "AutomationPolicyResponse",
@@ -140,13 +150,15 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "FeedbackEvalCaseUpdateRequest",
         "RegressionAssetGovernanceActionRequest",
         "ScenarioPackResponse",
+        "TestDatasetResponse",
+        "EvalRunResponse",
     ):
         assert schema_name not in schema["components"]["schemas"]
 
     attribution = schema["components"]["schemas"]["AttributionResponse"]
     optimization = schema["components"]["schemas"]["OptimizationPlanResponse"]
     execution = schema["components"]["schemas"]["ExecutionResponse"]
-    regression = schema["components"]["schemas"]["RegressionAssessmentResponse"]
+    regression = schema["components"]["schemas"]["RegressionTestDesignResponse"]
     for component in (attribution, optimization, execution, regression):
         assert "generation_trace_id" in component["properties"]
         assert "generation_trace_url" in component["properties"]
@@ -211,18 +223,17 @@ def test_openapi_documents_expected_domain_error_statuses():
             assert str(status_code) in responses, f"{method.upper()} {path} missing {status_code}"
 
 
-def test_openapi_documents_test_dataset_domain_errors_independently() -> None:
+def test_openapi_documents_agent_test_domain_errors() -> None:
     schema = build_openapi_schema()
 
-    list_responses = schema["paths"]["/api/test-datasets"]["get"]["responses"]
-    dataset_responses = schema["paths"]["/api/test-datasets/{dataset_id}"]["get"]["responses"]
-    revision_responses = schema["paths"]["/api/test-datasets/{dataset_id}/revisions"]["get"]["responses"]
-    assert {"400", "409"} <= set(list_responses)
-    assert {"400", "404", "409"} <= set(dataset_responses)
-    assert {"400", "404"} <= set(revision_responses)
-
-    lifecycle_responses = schema["paths"]["/api/test-datasets/{dataset_id}/lifecycle"]["post"]["responses"]
-    assert {"400", "404", "409"} <= set(lifecycle_responses)
+    create_responses = schema["paths"]["/api/agent-test-runs"]["post"]["responses"]
+    change_set_responses = schema["paths"]["/api/agent-change-sets/{change_set_id}/test-runs"]["post"]["responses"]
+    cancel_responses = schema["paths"]["/api/agent-test-runs/{test_run_id}/cancel"]["post"]["responses"]
+    session_responses = schema["paths"]["/api/agent-test-sessions"]["post"]["responses"]
+    assert {"400", "401", "404", "409", "422"} <= set(create_responses)
+    assert {"400", "401", "404", "409", "422"} <= set(change_set_responses)
+    assert {"400", "401", "404", "409"} <= set(cancel_responses)
+    assert {"400", "401", "409", "422"} <= set(session_responses)
 
 
 def test_openapi_documents_feedback_case_unknown_typed_source() -> None:

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, raise_conflict
 from app.runtime.json_types import JsonObject
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.response_schemas.agent_governance_response_schemas import (
     AgentChangeSetActionRequest,
     AgentChangeSetCreateRequest,
@@ -45,13 +46,15 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
         response_model=AgentRepositoryStatusResponse,
         summary="Get Git-backed Agent repository status",
     )
-    def get_agent_repository_status(agent_id: str | None = Query(default=None)) -> AgentRepositoryStatusResponse:
+    def get_agent_repository_status(
+        agent_id: str | None = Query(default=None, description=f"Defaults to {DEFAULT_BUSINESS_AGENT_ID}."),
+    ) -> AgentRepositoryStatusResponse:
         return agent_governance.repository_status(agent_id)
 
     @router.post(
         "/agent-repository/discard-changes",
         response_model=AgentRepositoryStatusResponse,
-        summary="Discard confirmed uncommitted changes from a business Agent workspace (default main-agent)",
+        summary="Discard confirmed uncommitted changes from the selected business Agent workspace",
     )
     def discard_agent_repository_changes(
         req: AgentRepositoryDiscardChangesRequest, agent_id: str | None = Query(default=None)
@@ -61,7 +64,7 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
     @router.post(
         "/agent-repository/snapshot",
         response_model=AgentGitRefResponse,
-        summary="Save a business Agent workspace as an Agent version (default main-agent)",
+        summary="Save the selected business Agent workspace as an Agent version",
     )
     def snapshot_agent_repository(req: AgentRepositorySnapshotRequest, agent_id: str | None = Query(default=None)) -> AgentGitRefResponse:
         return agent_governance.snapshot_repository(operator=req.operator, note=req.note, agent_id=agent_id)
@@ -69,7 +72,7 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
     @router.get(
         "/agent-repository/current",
         response_model=AgentGitRefResponse,
-        summary="Get current published Agent Git ref (default main-agent)",
+        summary="Get the selected business Agent's current published Git ref",
     )
     def get_current_agent_ref(agent_id: str | None = Query(default=None)) -> AgentGitRefResponse:
         return agent_governance.current_ref(agent_id)
@@ -79,7 +82,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
     @router.get(
         "/agent-change-sets",
         response_model=list[AgentChangeSetResponse],
-        summary="List Agent change sets",
+        summary="列出 Agent 待发布变更",
     )
     def list_agent_change_sets(
         status: str | None = None,
@@ -90,7 +93,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
     @router.post(
         "/agent-change-sets",
         response_model=AgentChangeSetResponse,
-        summary="Create an Agent change set worktree",
+        summary="创建 Agent 待发布变更的隔离 worktree",
     )
     def create_agent_change_set(req: AgentChangeSetCreateRequest) -> AgentChangeSetResponse:
         return agent_governance.create_change_set(
@@ -102,7 +105,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
     @router.get(
         "/agent-change-sets/{change_set_id}",
         response_model=AgentChangeSetResponse,
-        summary="Get one Agent change set",
+        summary="获取一个 Agent 待发布变更",
     )
     def get_agent_change_set(change_set_id: str) -> AgentChangeSetResponse:
         return ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
@@ -110,7 +113,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
     @router.get(
         "/agent-change-sets/{change_set_id}/events",
         response_model=list[AgentChangeSetEventResponse],
-        summary="List lifecycle events for one Agent change set",
+        summary="列出一个 Agent 待发布变更的生命周期事件",
     )
     def list_agent_change_set_events(change_set_id: str) -> list[AgentChangeSetEventResponse]:
         ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
@@ -119,7 +122,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
     @router.get(
         "/agent-change-sets/{change_set_id}/diff",
         response_model=AgentGitDiffResponse,
-        summary="Diff an Agent change set against its base commit",
+        summary="比较 Agent 待发布变更与修复前提交",
     )
     def diff_agent_change_set(change_set_id: str) -> AgentGitDiffResponse:
         change_set = ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
@@ -130,7 +133,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
     @router.get(
         "/agent-change-sets/{change_set_id}/file-diff",
         response_model=AgentGitFileDiffResponse,
-        summary="Diff one file in an Agent change set",
+        summary="比较 Agent 待发布变更中的单个文件",
     )
     def diff_agent_change_set_file(change_set_id: str, path: str) -> AgentGitFileDiffResponse:
         change_set = ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
@@ -146,7 +149,7 @@ def _register_change_set_action_routes(
     @router.post(
         "/agent-change-sets/{change_set_id}/approve",
         response_model=AgentChangeSetResponse,
-        summary="Approve an Agent change set for release",
+        summary="批准 Agent 待发布变更进入发布",
     )
     def approve_agent_change_set(change_set_id: str, req: AgentChangeSetActionRequest) -> AgentChangeSetResponse:
         return agent_governance.approve_change_set(change_set_id, operator=req.operator, note=req.note)
@@ -154,7 +157,7 @@ def _register_change_set_action_routes(
     @router.post(
         "/agent-change-sets/{change_set_id}/reject",
         response_model=AgentChangeSetResponse,
-        summary="Reject an Agent change set",
+        summary="拒绝 Agent 待发布变更",
     )
     def reject_agent_change_set(change_set_id: str, req: AgentChangeSetActionRequest) -> AgentChangeSetResponse:
         return agent_governance.reject_change_set(change_set_id, operator=req.operator, note=req.note)
@@ -162,7 +165,7 @@ def _register_change_set_action_routes(
     @router.post(
         "/agent-change-sets/{change_set_id}/abandon",
         response_model=AgentChangeSetResponse,
-        summary="Abandon an Agent change set",
+        summary="放弃 Agent 待发布变更",
     )
     def abandon_agent_change_set(change_set_id: str, req: AgentChangeSetActionRequest) -> AgentChangeSetResponse:
         return agent_governance.abandon_change_set(change_set_id, operator=req.operator, note=req.note)
@@ -170,21 +173,21 @@ def _register_change_set_action_routes(
     @router.post(
         "/agent-change-sets/{change_set_id}/publish",
         response_model=AgentReleaseResponse,
-        summary="Publish an approved Agent change set",
+        summary="发布已批准的 Agent 待发布变更",
     )
     def publish_agent_change_set(change_set_id: str, req: AgentChangeSetPublishRequest) -> AgentReleaseResponse:
         return agent_governance.publish_change_set(
             change_set_id,
             operator=req.operator,
             tag_name=req.tag_name,
-            note=req.note,
+            note=req.force_reason if req.force else req.note,
             force=req.force,
         )
 
     @router.post(
         "/agent-change-sets/{change_set_id}/worktree-cleanup/retry",
         response_model=AgentChangeSetResponse,
-        summary="Retry durable worktree cleanup for a terminal Agent change set",
+        summary="重试终态 Agent 待发布变更的持久化 worktree 清理",
     )
     def retry_agent_change_set_worktree_cleanup(
         change_set_id: str,
@@ -217,7 +220,7 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
     @router.post(
         "/agent-releases/{release_id}/restore",
         response_model=AgentReleaseRestoreResponse,
-        summary="Restore the main Agent workspace to one release",
+        summary="Restore one business Agent Workspace to a release",
     )
     def restore_agent_release(release_id: str, req: AgentReleaseRestoreRequest) -> AgentReleaseRestoreResponse:
         return agent_governance.restore_release(release_id, operator=req.operator, note=req.note)
@@ -225,7 +228,7 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
     @router.post(
         "/agent-releases/{release_id}/rollback",
         response_model=AgentReleaseResponse,
-        summary="Rollback the main Agent workspace to one release",
+        summary="Rollback one business Agent Workspace to a release",
     )
     def rollback_agent_release(release_id: str, req: AgentReleaseRollbackRequest) -> AgentReleaseResponse:
         return agent_governance.rollback_release(release_id, operator=req.operator, note=req.note)

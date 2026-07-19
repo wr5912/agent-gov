@@ -25,10 +25,10 @@ def normalize_attribution_output(payload: JsonObject) -> JsonObject:
         "faulty_inference": "reasoning_error",
     }
     optimization_object_aliases = {
-        "agent_behavior": "main_agent_claude_md",
-        "agent": "main_agent_claude_md",
-        "prompt": "main_agent_claude_md",
-        "tool_usage_policy": "main_agent_claude_md",
+        "agent_behavior": "business_agent_claude_md",
+        "agent": "business_agent_claude_md",
+        "prompt": "business_agent_claude_md",
+        "tool_usage_policy": "business_agent_claude_md",
     }
     actionability_aliases = {
         "low": "needs_human_analysis",

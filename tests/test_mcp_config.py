@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 
 import pytest
-from app.runtime.agent_profiles import GOVERNOR_PROFILE, MAIN_AGENT_PROFILE, build_business_agent_profile, build_profiles
-from app.runtime.mcp_config import McpConfigError, filtered_mcp_servers, resolve_main_mcp_config_path
+from app.runtime.agent_profiles import GOVERNOR_PROFILE, build_business_agent_profile, build_profiles
+from app.runtime.mcp_config import McpConfigError, filtered_mcp_servers, resolve_workspace_mcp_config_path
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.settings import AppSettings
 
 
@@ -16,13 +17,13 @@ def _write_mcp(path: Path, url: str) -> None:
     )
 
 
-def test_main_mcp_resolution_uses_workspace_project_config(tmp_path: Path) -> None:
+def test_workspace_mcp_resolution_uses_project_config(tmp_path: Path) -> None:
     workspace = tmp_path / "main-workspace"
     workspace.mkdir()
     _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
     _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
 
-    resolution = resolve_main_mcp_config_path(workspace, None)
+    resolution = resolve_workspace_mcp_config_path(workspace)
     servers = filtered_mcp_servers(resolution.path, ("sec-ops-data",), {})
 
     assert resolution.path == workspace / ".mcp.json"
@@ -70,46 +71,15 @@ def test_unresolved_mcp_config_path_fails_before_sdk_options(tmp_path: Path) -> 
         filtered_mcp_servers(Path("${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.json"), ("sec-ops-data",), {})
 
 
-def test_explicit_mcp_config_path_is_ignored_by_project_resolution(tmp_path: Path) -> None:
-    workspace = tmp_path / "main-workspace"
-    workspace.mkdir()
-    _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
-    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
-
-    resolution = resolve_main_mcp_config_path(
-        workspace,
-        Path("/host/runtime-root/main-workspace/.mcp.local.json"),
-    )
-
-    assert resolution.path == workspace / ".mcp.json"
-    assert resolution.source == "workspace_project"
-
-
-def test_main_profile_uses_project_mcp_without_polluting_feedback_profiles(tmp_path: Path) -> None:
-    # main 已并入业务模型：workspace 由 data_dir 下 main-agent layout 派生（不再有 MAIN_WORKSPACE_DIR）。
+def test_default_business_profile_uses_project_mcp_without_polluting_governor(tmp_path: Path) -> None:
     settings = AppSettings(_env_file=None, DATA_DIR=tmp_path / "data")
-    workspace = settings.main_workspace_dir
+    workspace = settings.default_workspace_dir
     workspace.mkdir(parents=True, exist_ok=True)
     _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
     _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
 
     profiles = build_profiles(settings)
 
-    # main 不再是预制 profile（它是可删除的普通业务 Agent）；这里直接构造业务 profile——
-    # 本用例测的是「业务 Agent 的 mcp_config_path 指向自己 workspace 的 .mcp.json」。
-    business = build_business_agent_profile(settings, agent_id=MAIN_AGENT_PROFILE, workspace_dir=workspace)
+    business = build_business_agent_profile(settings, agent_id=DEFAULT_BUSINESS_AGENT_ID, workspace_dir=workspace)
     assert business.mcp_config_path == workspace / ".mcp.json"
     assert profiles[GOVERNOR_PROFILE].mcp_config_path.name == ".mcp.json"
-
-
-def test_legacy_mcp_config_path_env_is_ignored(tmp_path: Path) -> None:
-    settings = AppSettings(_env_file=None, DATA_DIR=tmp_path / "data", CLAUDE_MCP_CONFIG_PATH="")
-    workspace = settings.main_workspace_dir
-    workspace.mkdir(parents=True, exist_ok=True)
-    _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
-    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
-
-    # main 不再是预制 profile（它是可删除的普通业务 Agent）；这里直接构造业务 profile——
-    # 本用例测的是「业务 Agent 的 mcp_config_path 指向自己 workspace 的 .mcp.json」。
-    business = build_business_agent_profile(settings, agent_id=MAIN_AGENT_PROFILE, workspace_dir=workspace)
-    assert business.mcp_config_path == workspace / ".mcp.json"

@@ -7,20 +7,21 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_settings_workspace_flow_exposes_source_receipt_restore_and_failure_details() -> None:
+def test_settings_workspace_flow_uses_package_only_creation_and_exposes_receipts() -> None:
     settings = _read("frontend/src/components/SettingsModal.tsx")
-    create_form = _read("frontend/src/components/AgentCreateForm.tsx")
-    source = _read("frontend/src/components/AgentCreateSourceSelect.tsx")
     workspace = _read("frontend/src/components/AgentWorkspacePackagePanel.tsx")
+    inventory = _read("frontend/src/components/AgentWorkspaceInventory.tsx")
     request = _read("frontend/src/api/request.ts")
 
-    assert "<AgentCreateForm" in settings
-    assert "<AgentCreateSourceSelect" in create_form
     assert "<AgentWorkspacePackagePanel" in settings
-    assert 'data-testid="settings-agent-create-source"' in source
-    assert "seed workspace 内容原样复制，内部身份表述不会自动修改" in source
+    assert "AgentCreateForm" not in settings
+    assert not (ROOT / "frontend/src/components/AgentCreateForm.tsx").exists()
+    assert not (ROOT / "frontend/src/components/AgentCreateSourceSelect.tsx").exists()
+    assert "已有 ID 将覆盖；新 ID 将创建" in workspace
+    assert "仅创建新 Agent 时必填" in workspace
     assert 'data-testid="settings-workspace-import-submit"' in workspace
-    assert 'data-testid="settings-agent-export"' in workspace
+    assert "<AgentWorkspaceInventory" in workspace
+    assert 'data-testid="settings-agent-export"' in inventory
     assert 'data-testid="settings-workspace-import-receipt"' in workspace
     assert "receipt.previous_commit_sha" in workspace
     assert "receipt.current_commit_sha" in workspace

@@ -1,7 +1,7 @@
 """自愈 ``create_all`` 的加列盲区。
 
 ``Base.metadata.create_all`` 只建新表、不改已存在表。共享 ``Base`` 的模型（含 improvement_db
-走 create_all 的 attributions / optimization_plans / execution_records / regression_assessments 等）
+走 create_all 的 attributions / optimization_plans / execution_records / regression_test_designs 等）
 新增列后，已存在运行卷会缺列、运行期抛 ``no such column`` 500。本模块在启动时对所有 Base 表幂等补齐
 「模型声明但 db 缺」的列（只 ADD，不改类型、不删列），覆盖 create_all 不改旧表的盲区。
 """

@@ -14,6 +14,7 @@ from .agent_job_errors import provider_api_key_configured
 from .agent_paths import business_agent_layout
 from .json_types import JsonObject
 from .model_provider import ModelProviderBackend
+from .protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 
 RuntimeVolumeMode = Literal["container", "local-debug"]
 
@@ -37,9 +38,6 @@ def _string_dict(value: JsonObject) -> dict[str, str]:
     return {str(key): str(val) for key, val in value.items()}
 
 
-# main 已并入业务模型：其 workspace/claude-root 由 business_agent_layout(data_dir, "main-agent")
-# 派生（在 /data 下），不再有专属顶层挂载与 env 字段。governor 仍是顶层挂载的特殊治理 Agent。
-MAIN_AGENT_ID = "main-agent"
 _DEFAULT_GOVERNOR_WORKSPACE_DIR = Path("/governor-workspace")
 _DEFAULT_GOVERNOR_CLAUDE_ROOT = Path("/claude-roots/governor")
 LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-gov")
@@ -71,6 +69,7 @@ class RuntimeSettingsLogFields(TypedDict):
     provider_api_url_configured: bool
     governance_agent_timeout_seconds: int
     dspy_output_formatter_timeout_seconds: int
+    agent_test_run_timeout_seconds: int
     claude_web_hitl_enabled: bool
     hitl_timeout_seconds: int
     api_host: str
@@ -83,7 +82,7 @@ class RuntimeSettingsLogFields(TypedDict):
 
 def _derive_profile_dirs(settings: Any, explicit_env: Mapping[str, str] = os.environ) -> None:
     """governor 顶层目录随运行卷根（data_dir 的父目录）派生，使本机调试/容器两模式一致；
-    main 的 workspace/claude-root 已由 business_agent_layout 在 /data 下派生，无需在此处理。"""
+    默认业务 Agent 的 workspace/claude-root 由 business_agent_layout 在 /data 下派生。"""
     volume_root = settings.data_dir.parent
     if "GOVERNOR_WORKSPACE_DIR" not in explicit_env and settings.governor_workspace_dir == _DEFAULT_GOVERNOR_WORKSPACE_DIR:
         settings.governor_workspace_dir = volume_root / "governor-workspace"
@@ -191,6 +190,7 @@ class AppSettings(BaseSettings):
     enable_sdk_session_resume: bool = Field(default=True, alias="ENABLE_SDK_SESSION_RESUME")
     enable_claude_web_hitl: bool = Field(default=False, alias="ENABLE_CLAUDE_WEB_HITL")
     governance_agent_timeout_seconds: int = Field(default=300, alias="GOVERNANCE_AGENT_TIMEOUT_SECONDS")
+    agent_test_run_timeout_seconds: int = Field(default=1800, ge=1, le=86400, alias="AGENT_TEST_RUN_TIMEOUT_SECONDS")
     hitl_timeout_seconds: int = Field(default=300, alias="HITL_TIMEOUT_SECONDS")
     enable_feedback_debug_evidence: bool = Field(default=True, alias="ENABLE_FEEDBACK_DEBUG_EVIDENCE")
     enable_dspy_output_formatter: bool = Field(default=True, alias="ENABLE_DSPY_OUTPUT_FORMATTER")
@@ -230,7 +230,7 @@ class AppSettings(BaseSettings):
     agent_git_service_provider: Literal["local", "gitea"] = Field(default="local", alias="AGENT_GIT_SERVICE_PROVIDER")
     agent_git_service_url: Optional[str] = Field(default=None, alias="AGENT_GIT_SERVICE_URL")
     agent_git_service_public_url: Optional[str] = Field(default=None, alias="AGENT_GIT_SERVICE_PUBLIC_URL")
-    agent_git_repository_name: str = Field(default="main-agent-config", alias="AGENT_GIT_REPOSITORY_NAME")
+    agent_git_repository_name: str = Field(default=f"{DEFAULT_BUSINESS_AGENT_ID}-config", alias="AGENT_GIT_REPOSITORY_NAME")
     agent_git_repository_dir_override: Optional[Path] = Field(default=None, alias="AGENT_GIT_REPOSITORY_DIR")
     agent_git_worktrees_dir_override: Optional[Path] = Field(default=None, alias="AGENT_GIT_WORKTREES_DIR")
     agent_release_archives_dir_override: Optional[Path] = Field(default=None, alias="AGENT_RELEASE_ARCHIVES_DIR")
@@ -277,27 +277,25 @@ class AppSettings(BaseSettings):
     def settings_env_file(self) -> Path | None:
         return self._settings_env_file
 
-    # main 已并入业务模型：其 workspace/claude-root 由 main-agent 的 layout 在 /data 下派生
-    # （随 data_dir 自动适配 container/local-debug），不再是独立可配置字段或顶层挂载。
     @property
-    def main_workspace_dir(self) -> Path:
-        return business_agent_layout(self.data_dir, MAIN_AGENT_ID).workspace
+    def default_workspace_dir(self) -> Path:
+        return business_agent_layout(self.data_dir, DEFAULT_BUSINESS_AGENT_ID).workspace
 
     @property
-    def main_claude_root(self) -> Path:
-        return business_agent_layout(self.data_dir, MAIN_AGENT_ID).claude_root
+    def default_claude_root(self) -> Path:
+        return business_agent_layout(self.data_dir, DEFAULT_BUSINESS_AGENT_ID).claude_root
 
     @property
     def workspace_dir(self) -> Path:
-        return self.main_workspace_dir
+        return self.default_workspace_dir
 
     @property
     def claude_root(self) -> Path:
-        return self.main_claude_root
+        return self.default_claude_root
 
     @property
     def claude_home(self) -> Path:
-        return self.main_claude_root / ".claude"
+        return self.default_claude_root / ".claude"
 
     @property
     def provider_api_key(self) -> Optional[str]:
@@ -370,15 +368,15 @@ class AppSettings(BaseSettings):
 
     @property
     def agent_git_repository_dir(self) -> Path:
-        return self.agent_git_repository_dir_override or self.main_workspace_dir
+        return self.agent_git_repository_dir_override or self.default_workspace_dir
 
     @property
     def agent_git_worktrees_dir(self) -> Path:
-        return self.agent_git_worktrees_dir_override or business_agent_layout(self.data_dir, MAIN_AGENT_ID).version_base / "worktrees"
+        return self.agent_git_worktrees_dir_override or business_agent_layout(self.data_dir, DEFAULT_BUSINESS_AGENT_ID).version_base / "worktrees"
 
     @property
     def agent_release_archives_dir(self) -> Path:
-        return self.agent_release_archives_dir_override or business_agent_layout(self.data_dir, MAIN_AGENT_ID).version_base / "releases"
+        return self.agent_release_archives_dir_override or business_agent_layout(self.data_dir, DEFAULT_BUSINESS_AGENT_ID).version_base / "releases"
 
     @property
     def runtime_db_path(self) -> Path:
@@ -406,6 +404,7 @@ def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFiel
         "provider_api_url_configured": bool(settings.provider_api_url),
         "governance_agent_timeout_seconds": settings.governance_agent_timeout_seconds,
         "dspy_output_formatter_timeout_seconds": settings.dspy_output_formatter_timeout_seconds,
+        "agent_test_run_timeout_seconds": settings.agent_test_run_timeout_seconds,
         "claude_web_hitl_enabled": settings.enable_claude_web_hitl,
         "hitl_timeout_seconds": settings.hitl_timeout_seconds,
         "api_host": settings.api_host,

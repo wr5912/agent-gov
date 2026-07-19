@@ -22,11 +22,10 @@ def _resolve_owning_profile(settings: AppSettings, agent_registry_store: AgentRe
     time (never client-supplied metadata). It is a hard invariant — there is no silent fallback:
 
     - missing / empty while a transcript exists -> 409 (the server cannot prove which Agent owns it);
-    - any agent (含预制 main-agent) -> validated against the agent registry; cwd taken from its
+    - any business Agent (含 main-agent) -> validated against the agent registry; cwd taken from its
       registered ``workspace_dir`` (consistent with /api/chat); an unknown / stale id -> 404.
 
-    main-agent 在 lifespan 经 sync_business_agents 登记，故与其它业务 Agent 走完全相同的解析路径
-    （不再有 main 特判）。
+    main-agent 与其他业务 Agent 走完全相同的解析路径，没有 ID 特判。
     """
     agent_id = (session.agent_id or "").strip()
     if not agent_id:

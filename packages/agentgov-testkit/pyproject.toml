@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentgov-testkit"
+dynamic = ["version"]
+description = "AgentGov business Agent pytest integration"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.28,<1"]
+
+[tool.hatch.version]
+path = "../../VERSION"
+pattern = "(?P<version>\\d+\\.\\d+\\.\\d+)"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentgov_testkit"]

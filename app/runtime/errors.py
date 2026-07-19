@@ -34,14 +34,14 @@ class SessionConflictError(ConflictError):
     error_code = "SESSION_CONFLICT"
 
 
-class MainWorkspaceDirtyError(ConflictError):
-    """Raised when main Agent workspace has uncommitted changes."""
+class AgentWorkspaceDirtyError(ConflictError):
+    """Raised when a business Agent Workspace has uncommitted changes."""
 
-    error_code = "MAIN_WORKSPACE_DIRTY"
+    error_code = "AGENT_WORKSPACE_DIRTY"
 
     def __init__(self, repository_status: JsonObject) -> None:
         super().__init__(
-            "Main Agent workspace has uncommitted changes",
+            "Business Agent Workspace has uncommitted changes",
             error_details={
                 "repository_status": repository_status,
                 "changed_files": repository_status.get("changed_files") if isinstance(repository_status.get("changed_files"), list) else [],

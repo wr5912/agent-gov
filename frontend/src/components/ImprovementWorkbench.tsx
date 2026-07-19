@@ -15,10 +15,10 @@ import {
   getExecution,
   confirmExecution,
   applyExecution,
-  getRegressionAssessment,
-  generateRegressionAssessment,
-  confirmRegressionAssessment,
-  type RegressionAssessment,
+  getRegressionTestDesign,
+  generateRegressionTestDesign,
+  confirmRegressionTestDesign,
+  type RegressionTestDesign,
   type NormalizedFeedback,
   type Attribution,
   type ImprovementFeedback,
@@ -44,12 +44,8 @@ import { deriveImprovementListDecisionLabel, deriveImprovementPrimaryDecision, t
 import { hasAppliedExecution } from "../improvementExecutionState";
 import { buildContext, type ContextType } from "../contextPackage";
 import {
-  adoptTestDataset,
   listAssets,
-  listTestDatasets,
-  transitionTestDataset,
   type Asset,
-  type TestDataset,
 } from "../api/assets";
 import { STATUS_CATEGORIES, deriveCategory, LINK_KIND_LABEL } from "./improvementWorkbench.helpers";
 import { operationLabel, type ImprovementOperationError, type ImprovementPendingOperation } from "../improvementOperationState";
@@ -60,7 +56,6 @@ import { ImprovementStagePanels } from "./ImprovementStagePanels";
 import { StageDetailDrawer, type StageDetail } from "./StageDetailDrawer";
 import { ImprovementSourceManagementDrawer } from "./ImprovementSourceManagementDrawer";
 import { ReleaseWorkbench } from "./ReleaseWorkbench";
-import { isCurrentTestDataset, useTestDatasetRevisions } from "./useImprovementTestDataset";
 import type { components } from "../types/api";
 import type { AgentChangeSet, AgentRelease, RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
@@ -95,7 +90,7 @@ export function ImprovementWorkbench({
   const [detail, setDetail] = useState<StageDetail | null>(null);
   const [contextType, setContextType] = useState<ContextType>("problem");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [workbenchScopeAgentId, setWorkbenchScopeAgentId] = useState(scopeAgentId);
+  const [workbenchScopeAgentId, setWorkbenchScopeAgentId] = useState("");
   const [similar, setSimilar] = useState<ImprovementSimilarItem[]>([]);
   const [dismissedSimilar, setDismissedSimilar] = useState<Set<string>>(new Set());
   const [links, setLinks] = useState<ImprovementLink[]>([]);
@@ -105,10 +100,7 @@ export function ImprovementWorkbench({
   const [optPlan, setOptPlan] = useState<OptimizationPlan | null>(null);
   const [execution, setExecution] = useState<ExecutionRecord | null>(null);
   const [sedimentAssets, setSedimentAssets] = useState<Asset[]>([]);
-  const [testDatasets, setTestDatasets] = useState<TestDataset[]>([]);
-  const [testDatasetError, setTestDatasetError] = useState<string | undefined>();
-  const [testDatasetReloadToken, setTestDatasetReloadToken] = useState(0);
-  const [regressionAssessment, setRegressionAssessment] = useState<RegressionAssessment | null>(null);
+  const [regressionTestDesign, setRegressionTestDesign] = useState<RegressionTestDesign | null>(null);
   const [editingAttribution, setEditingAttribution] = useState(false);
   const [attrDraft, setAttrDraft] = useState({ summary: "", boundary: "", evidence: "" });
   const [addFeedbackOpen, setAddFeedbackOpen] = useState(false);
@@ -134,7 +126,6 @@ export function ImprovementWorkbench({
   }, [refresh]);
 
   useEffect(() => {
-    setWorkbenchScopeAgentId(scopeAgentId);
     if (scopeAgentId) setNewAgentId(scopeAgentId);
   }, [scopeAgentId]);
 
@@ -147,26 +138,6 @@ export function ImprovementWorkbench({
     () => items.find((item) => item.improvement_id === selectedId) || null,
     [items, selectedId],
   );
-  const testDataset = useMemo(
-    () => {
-      if (!selected) return null;
-      return testDatasets.find((dataset) => isCurrentTestDataset(dataset, {
-        improvementId: selected.improvement_id,
-        agentId: selected.agent_id,
-        normalizedFeedback,
-        attribution,
-        optimizationPlan: optPlan,
-        execution,
-        regressionAssessment,
-      })) ?? null;
-    },
-    [attribution, execution, normalizedFeedback, optPlan, regressionAssessment, selected, testDatasets],
-  );
-  const {
-    revisions: testDatasetRevisions,
-    error: testDatasetRevisionError,
-  } = useTestDatasetRevisions(clientConfig, testDataset, testDatasetReloadToken);
-
   useEffect(() => {
     if (!visibleItems.length) {
       if (selectedId && !items.some((item) => item.improvement_id === selectedId)) setSelectedId(undefined);
@@ -186,12 +157,10 @@ export function ImprovementWorkbench({
       setNormalizedFeedback(null);
       setAttribution(null);
       setSedimentAssets([]);
-      setTestDatasets([]);
-      setTestDatasetError(undefined);
       setFeedbacks([]);
       setOptPlan(null);
       setExecution(null);
-      setRegressionAssessment(null);
+      setRegressionTestDesign(null);
       setSourceDrawerOpen(false);
       setReviewStageKey(null);
       return;
@@ -202,8 +171,6 @@ export function ImprovementWorkbench({
     setSourceDrawerOpen(false);
     setReviewStageKey(null);
     setDismissedSimilar(new Set());
-    setTestDatasets([]);
-    setTestDatasetError(undefined);
     void getNormalizedFeedback(clientConfig, itemId)
       .then((nf) => { if (!cancelled) setNormalizedFeedback(nf); })
       .catch(() => { if (!cancelled) setNormalizedFeedback(null); });
@@ -213,16 +180,6 @@ export function ImprovementWorkbench({
     void listAssets(clientConfig, { sourceImprovementId: itemId })
       .then((a) => { if (!cancelled) setSedimentAssets(a); })
       .catch(() => { if (!cancelled) setSedimentAssets([]); });
-    void listTestDatasets(clientConfig, { agentId, sourceImprovementId: itemId })
-      .then((datasets) => {
-        if (cancelled) return;
-        setTestDatasets(datasets);
-      })
-      .catch((loadError) => {
-        if (cancelled) return;
-        setTestDatasets([]);
-        setTestDatasetError(`测试数据集加载失败：${loadError instanceof Error ? loadError.message : String(loadError)}`);
-      });
     void listImprovementFeedbacks(clientConfig, itemId)
       .then((f) => { if (!cancelled) setFeedbacks(f); })
       .catch(() => { if (!cancelled) setFeedbacks([]); });
@@ -232,9 +189,9 @@ export function ImprovementWorkbench({
     void getExecution(clientConfig, itemId)
       .then((e) => { if (!cancelled) setExecution(e); })
       .catch(() => { if (!cancelled) setExecution(null); });
-    void getRegressionAssessment(clientConfig, itemId)
-      .then((r) => { if (!cancelled) setRegressionAssessment(r); })
-      .catch(() => { if (!cancelled) setRegressionAssessment(null); });
+    void getRegressionTestDesign(clientConfig, itemId)
+      .then((r) => { if (!cancelled) setRegressionTestDesign(r); })
+      .catch(() => { if (!cancelled) setRegressionTestDesign(null); });
     void findSimilarImprovements(clientConfig, itemId)
       .then((s) => { if (!cancelled) setSimilar(s); })
       .catch(() => { if (!cancelled) setSimilar([]); });
@@ -242,7 +199,7 @@ export function ImprovementWorkbench({
       .then((l) => { if (!cancelled) setLinks(l); })
       .catch(() => { if (!cancelled) setLinks([]); });
     return () => { cancelled = true; };
-  }, [clientConfig, selectedId, selected?.agent_id, selected?.improvement_id, testDatasetReloadToken]);
+  }, [clientConfig, selectedId, selected?.agent_id, selected?.improvement_id]);
 
   const run = async (action: () => Promise<void>, operation?: ImprovementPendingOperation) => {
     setBusy(true);
@@ -367,45 +324,19 @@ export function ImprovementWorkbench({
 
   const handleGenerateRegression = (item: ImprovementItem) => {
     void run(async () => {
-      setRegressionAssessment(await generateRegressionAssessment(clientConfig, item.improvement_id));
+      setRegressionTestDesign(await generateRegressionTestDesign(clientConfig, item.improvement_id));
       await refresh();
       await onGovernanceRefresh();
     }, { kind: "generate_regression", label: operationLabel("generate_regression") });
   };
 
-  const handleAdoptRegression = (item: ImprovementItem) => {
+  const handleConfirmRegressionTests = (item: ImprovementItem) => {
     void run(async () => {
-      if (!regressionAssessment) throw new Error("请先生成回归评估，再纳入测试数据集。");
-      let confirmedAssessment = regressionAssessment;
-      if (confirmedAssessment.status !== "confirmed") {
-        confirmedAssessment = await confirmRegressionAssessment(clientConfig, item.improvement_id);
-        setRegressionAssessment(confirmedAssessment);
-      }
-      const dataset = await adoptTestDataset(clientConfig, item.improvement_id);
-      setTestDatasets((datasets) => [dataset, ...datasets.filter((existing) => existing.dataset_id !== dataset.dataset_id)]);
-      setTestDatasetError(undefined);
+      if (!regressionTestDesign) throw new Error("请先生成回归测试代码候选。");
+      const confirmedAssessment = await confirmRegressionTestDesign(clientConfig, item.improvement_id);
+      setRegressionTestDesign(confirmedAssessment);
+      setExecution(await getExecution(clientConfig, item.improvement_id));
       await onGovernanceRefresh();
-      setTestDatasetReloadToken((value) => value + 1);
-    });
-  };
-
-  const handleTestDatasetLifecycle = (targetState: TestDataset["lifecycle_state"], reason: string) => {
-    if (!testDataset) return;
-    void run(async () => {
-      try {
-        const updated = await transitionTestDataset(clientConfig, testDataset.dataset_id, testDataset.agent_id, {
-          target_state: targetState,
-          expected_revision: testDataset.revision,
-          operator: "ui",
-          reason,
-        });
-        setTestDatasets((datasets) => datasets.map((dataset) => (
-          dataset.dataset_id === updated.dataset_id ? updated : dataset
-        )));
-        await onGovernanceRefresh();
-      } finally {
-        setTestDatasetReloadToken((value) => value + 1);
-      }
     });
   };
 
@@ -455,7 +386,7 @@ export function ImprovementWorkbench({
           currentExecution = await confirmExecution(clientConfig, item.improvement_id);
           setExecution(currentExecution);
         }
-        setRegressionAssessment(await generateRegressionAssessment(clientConfig, item.improvement_id));
+        setRegressionTestDesign(await generateRegressionTestDesign(clientConfig, item.improvement_id));
         await refresh();
         await onGovernanceRefresh();
         return;
@@ -496,15 +427,14 @@ export function ImprovementWorkbench({
         .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)))[0]
       || null
     : null;
-  const latestEvalRun = selectedChangeSet?.latest_eval_run ?? null;
-  const stageView = selected ? describeImprovementStage(selected.improvement_stage) : null;
+  const stageView = selected ? describeImprovementStage(selected.improvement_stage, selected.improvement_status) : null;
   const primaryDecision = selected ? deriveImprovementPrimaryDecision({
     item: selected,
     normalizedFeedback,
     attribution,
     optimizationPlan: optPlan,
     execution,
-    regressionAssessment,
+    regressionTestDesign,
     feedbacks,
   }) : null;
   const reviewStageDef = reviewStageKey ? IMPROVEMENT_STAGE_ORDER.find((stage) => stage.key === reviewStageKey) : undefined;
@@ -646,12 +576,7 @@ export function ImprovementWorkbench({
               feedbacks={feedbacks}
               optimizationPlan={optPlan}
               execution={execution}
-              regressionAssessment={regressionAssessment}
-              testDataset={testDataset}
-              testDatasetError={testDatasetError}
-              testDatasetRevisions={testDatasetRevisions}
-              testDatasetRevisionError={testDatasetRevisionError}
-              latestEvalRun={latestEvalRun}
+              regressionTestDesign={regressionTestDesign}
               assets={sedimentAssets}
               editingAttribution={editingAttribution}
               attrDraft={attrDraft}
@@ -669,22 +594,18 @@ export function ImprovementWorkbench({
               onCancelAttribution={() => setEditingAttribution(false)}
               onAttrDraftChange={setAttrDraft}
               onGenerateOpt={() => handleGenerateOptPlan(selected)}
-              onAdoptTestDataset={() => handleAdoptRegression(selected)}
-              onRetryTestDatasetLoad={() => setTestDatasetReloadToken((value) => value + 1)}
-              onTransitionTestDataset={handleTestDatasetLifecycle}
+              onConfirmRegressionTests={() => handleConfirmRegressionTests(selected)}
               testReleaseWorkbench={(
                 <ReleaseWorkbench
                   clientConfig={clientConfig}
                   scopeAgentId={selected.agent_id}
                   sourceImprovementId={selected.improvement_id}
                   preferredChangeSetId={execution?.change_set_id || undefined}
-                  sourceTestDataset={testDataset}
                   releases={releases}
                   changeSets={changeSets}
                   readOnly={reviewingPastStage}
                   onRefresh={async () => {
                     await onGovernanceRefresh();
-                    setTestDatasetReloadToken((value) => value + 1);
                   }}
                 />
               )}
@@ -759,7 +680,7 @@ export function ImprovementWorkbench({
                   ))}
                 </div>
               ) : (
-                <div className="iw-next-step">尚未关联归因 / 方案 / 评估 / 变更集。</div>
+                <div className="iw-next-step">尚未关联归因 / 方案 / 评估 / 待发布变更。</div>
               )}
               </div>
             </details>
@@ -775,7 +696,7 @@ export function ImprovementWorkbench({
                 feedbacks,
                 optimizationPlan: optPlan,
                 execution,
-                testDataset,
+                regressionTestDesign,
                 assets: sedimentAssets,
                 langfuseUrl,
               };

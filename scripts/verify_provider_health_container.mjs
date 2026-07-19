@@ -151,7 +151,7 @@ async function main() {
           await drawer.getByRole("button", { name: "关闭" }).click();
           const agentSelect = page.getByTestId("topbar-agent-switcher");
           await agentSelect.waitFor({ timeout: 10000 });
-          await agentSelect.selectOption("main-agent");
+          await agentSelect.selectOption("security-operations-expert");
           await page.getByTestId("chat-composer-input").fill("provider health failure acceptance");
           const modelRequest = page.waitForRequest(
             (request) => new URL(request.url()).pathname === "/v1/responses" && request.method() === "POST",

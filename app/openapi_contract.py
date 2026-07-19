@@ -57,6 +57,8 @@ _ERROR_DESCRIPTIONS = {
 _MUTATING_METHODS = frozenset({"post", "put", "patch", "delete"})
 _DOMAIN_PREFIXES = (
     "/api/agent-registry",
+    "/api/agent-test-runs",
+    "/api/agent-test-sessions",
     "/api/improvements",
     "/api/assets",
     "/api/langfuse/traces",
@@ -72,7 +74,6 @@ _DOMAIN_PREFIXES = (
     "/api/agent-repository",
     "/api/agent-change-sets",
     "/api/agent-releases",
-    "/api/test-datasets",
 )
 _RUNTIME_OR_RELEASE_PREFIXES = (
     "/api/chat",
@@ -82,7 +83,7 @@ _RUNTIME_OR_RELEASE_PREFIXES = (
     "/api/agent-change-sets",
     "/api/agent-releases",
 )
-_RUNTIME_OR_RELEASE_PATH_PARTS = ("/generate", "/execution/apply", "/regression-runs", "/publish", "/restore", "/rollback")
+_RUNTIME_OR_RELEASE_PATH_PARTS = ("/generate", "/execution/apply", "/test-runs", "/publish", "/restore", "/rollback")
 
 
 def install_openapi_contract(app: FastAPI) -> None:
@@ -135,10 +136,8 @@ def expected_error_statuses(path: str, method: str, operation: OpenApiMapping) -
 
 
 def _special_error_statuses(path: str, method: str) -> set[int]:
-    if method == "get" and path in {"/api/test-datasets", "/api/test-datasets/{dataset_id}"}:
-        return {400, 409}
-    if method == "get" and path == "/api/test-datasets/{dataset_id}/revisions":
-        return {400}
+    if method == "post" and path == "/api/agent-test-runs":
+        return {404}
     if method == "post" and path == "/api/feedback-cases":
         return {404}
     if path == CHAT_STREAM_PATH or path == "/api/chat":

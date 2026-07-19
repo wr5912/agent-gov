@@ -53,16 +53,16 @@ def test_agv_046_security_ops_is_replaceable_example_scenario() -> None:
     assert "不定义 AgentGov 的全部产品边界" in scene
 
 
-def test_agv_018_main_agent_is_sample_not_long_term_boundary() -> None:
-    """AGV-018 main agent 作为样板而非长期边界：文档保留多业务 Agent 扩展目标。"""
+def test_agv_018_business_agents_do_not_special_case_historical_main_id() -> None:
+    """AGV-018：历史 main ID 不再拥有默认、内置、受保护或模板语义。"""
     vision = _read("docs/项目目标愿景使命.md")
     cases = _read("docs/AgentGov核心功能测试用例.md")
+    terms = _read("docs/AgentGov术语与版本边界.md")
 
-    assert "main agent 是第一阶段样板，不是 AgentGov 的长期产品边界" in vision
-    assert "面向更多业务 Agent 扩展" in vision
-    # 用例文档持续保留多业务 Agent 治理对象要求。
-    assert "多 Agent 治理对象" in cases
-    assert "AGV-017" in cases
+    assert "所有注册业务 Agent（含 `main-agent`）" in vision
+    assert "`security-operations-expert` 是唯一内置、默认且受保护" in vision
+    assert "`main-agent` 只是普通历史示例" in cases
+    assert "不再是默认、内置、受保护、模板或隐式兜底" in terms
 
 
 def test_agv_037_047_governance_scope_not_business_ownership(monkeypatch, tmp_path: Path) -> None:
@@ -90,11 +90,7 @@ def test_agv_037_047_governance_scope_not_business_ownership(monkeypatch, tmp_pa
         "deployments",
         "production",
     }
-    offending = sorted(
-        p
-        for p in paths
-        if len(p.split("/")) > 2 and p.split("/")[2].lower().strip("{}") in forbidden
-    )
+    offending = sorted(p for p in paths if len(p.split("/")) > 2 and p.split("/")[2].lower().strip("{}") in forbidden)
     assert offending == [], f"AgentGov 不应暴露业务系统所有权端点: {offending}"
 
     # AgentGov 确实拥有治理面：被治理对象、审批门、审计事件、运行记录可追踪。

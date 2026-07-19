@@ -4,7 +4,6 @@ type OpenApiAgentJobResponse = components["schemas"]["AgentJobResponse"];
 type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
 type OpenApiEvidencePackageFileResponse = components["schemas"]["EvidencePackageFileResponse"];
 type OpenApiEvidencePackageResponse = components["schemas"]["EvidencePackageResponse"];
-type OpenApiEvalRunResponse = components["schemas"]["EvalRunResponse"];
 type OpenApiFeedbackCaseCreateRequest = components["schemas"]["FeedbackCaseCreateRequest"];
 type OpenApiFeedbackCaseResponse = components["schemas"]["FeedbackCaseResponse"];
 type OpenApiFeedbackSignalCreateRequest = components["schemas"]["FeedbackSignalCreateRequest"];
@@ -22,7 +21,7 @@ type OptionalClientDefaults<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T,
 export type FeedbackConfidence = "low" | "medium" | "high";
 export type FeedbackSourceType = "explicit_feedback" | "implicit_feedback" | "analyst_annotation";
 export type FeedbackSourceKind = "signal" | "soc_event" | "pending_correlation";
-export type JobType = "attribution" | "optimization_plan" | "execution" | "regression_assessment";
+export type JobType = "attribution" | "optimization_plan" | "execution" | "regression_test_design";
 export type JobStatus =
   | "created"
   | "evidence_packaging"
@@ -64,7 +63,6 @@ export type AgentJobRecord = OpenApiAgentJobResponse & {
   evidence_package_id?: string;
   attribution_job_id?: string;
   improvement_id?: string;
-  eval_run_id?: string;
 };
 
 export type FeedbackSignalCreateRequest = OptionalClientDefaults<
@@ -109,7 +107,6 @@ export type FeedbackCaseRecord = OpenApiFeedbackCaseResponse & {
 
 export type EvidencePackageRecord = OpenApiEvidencePackageResponse;
 export type EvidencePackageFileRecord = OpenApiEvidencePackageFileResponse;
-export type EvalRunRecord = OpenApiEvalRunResponse;
 
 export interface FeedbackWorkbenchData {
   sources: FeedbackSourceRecord[];
@@ -118,5 +115,4 @@ export interface FeedbackWorkbenchData {
   events: SocEventRecord[];
   pending_correlations: PendingCorrelationRecord[];
   cases: FeedbackCaseRecord[];
-  eval_runs: EvalRunRecord[];
 }

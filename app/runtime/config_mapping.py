@@ -4,10 +4,11 @@ from pathlib import Path
 from typing import Literal, TypeAlias
 
 from .agent_paths import business_agent_layout, validate_agent_id
+from .protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from .schemas import ConfigMappingItem, ConfigMappingResponse
 from .settings import AppSettings
 
-DEFAULT_AGENT_ID = "main-agent"
+DEFAULT_AGENT_ID = DEFAULT_BUSINESS_AGENT_ID
 
 _UserItemSpec: TypeAlias = tuple[str, tuple[str, ...]]
 _ProjectItemProfile = Literal["project", "local", "worktree"]
@@ -43,7 +44,7 @@ def _host_path(path: Path, settings: AppSettings, *, expose_host_mount: bool) ->
     if not expose_host_mount:
         return None
     pairs = [
-        # main 已并入 /data 下（workspace/claude-root 经 data 挂载映射）；governor 仍是顶层挂载。
+        # 业务 Agent 的 workspace/claude-root 经 data 挂载映射；governor 仍是顶层挂载。
         (settings.data_dir, settings.host_data_mount),
         (settings.governor_workspace_dir, settings.host_governor_workspace_mount),
         (settings.governor_claude_root, settings.host_governor_claude_root_mount),

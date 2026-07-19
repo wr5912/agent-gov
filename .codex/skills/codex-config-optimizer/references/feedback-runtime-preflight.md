@@ -1,6 +1,6 @@
 # 反馈闭环与 Runtime 短预检
 
-用于 `agent-gov` 中反馈优化批次、runtime-volume-seeds/env、Agent job、DSPy formatter、回归资产和用户可见闭环问题。目标是在改代码前用 5 行固定住证据链和验证点，避免把常驻规则继续写长。
+用于 `agent-gov` 中反馈优化批次、runtime-bootstrap/env、Agent job、DSPy formatter、回归资产和用户可见闭环问题。目标是在改代码前用 5 行固定住证据链和验证点，避免把常驻规则继续写长。
 
 ## 五行预检
 

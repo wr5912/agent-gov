@@ -165,13 +165,7 @@ class DSPyOutputFormatter:
         start = getattr(self.langfuse, "start_observation", None)
         if propagate is None or start is None:
             return _NullContext()
-        session_id = (
-            metadata.get("scope_id")
-            or metadata.get("improvement_id")
-            or metadata.get("feedback_case_id")
-            or metadata.get("eval_run_id")
-            or metadata.get("job_id")
-        )
+        session_id = metadata.get("scope_id") or metadata.get("improvement_id") or metadata.get("feedback_case_id") or metadata.get("job_id")
         return _NestedContext(
             propagate(
                 session_id=session_id,
@@ -241,7 +235,6 @@ def _formatter_metadata_payload(
         "feedback_case_id",
         "improvement_id",
         "scope_id",
-        "eval_run_id",
     ):
         value = job_input.get(key)
         if isinstance(value, (str, int, float, bool)) and str(value).strip():

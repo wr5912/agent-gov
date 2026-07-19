@@ -4,12 +4,12 @@ from typing import Literal, Optional
 
 from pydantic import Field, field_validator, model_validator
 
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import FeedbackCaseModel
 from app.runtime.state_machines import CASE_STATES, validate_transition
 
 from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
-
 
 FeedbackCaseStatus = Literal[
     "pending_evidence",
@@ -24,7 +24,7 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
     """Internal source of truth for one feedback case row."""
 
     feedback_case_id: str
-    agent_id: str = "main-agent"
+    agent_id: str = DEFAULT_BUSINESS_AGENT_ID
     created_at: str
     updated_at: str
     status: FeedbackCaseStatus
@@ -65,7 +65,7 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
         return [str(item) for item in value if item]
 
     @model_validator(mode="after")
-    def validate_case_shape(self) -> "FeedbackCaseRecord":
+    def validate_case_shape(self) -> FeedbackCaseRecord:
         if not self.source_ids:
             raise ValueError("feedback case must include source_ids")
         if not self.title.strip():
@@ -79,7 +79,7 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
         status: str | None = None,
         evidence_package_id: Optional[str] = None,
         attribution_job_id: Optional[str] = None,
-    ) -> "FeedbackCaseRecord":
+    ) -> FeedbackCaseRecord:
         payload = self.to_payload()
         payload["updated_at"] = updated_at
         if status:
@@ -95,7 +95,7 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_row(cls, row: FeedbackCaseModel) -> "FeedbackCaseRecord":
+    def from_row(cls, row: FeedbackCaseModel) -> FeedbackCaseRecord:
         return cls.model_validate(
             {
                 "feedback_case_id": row.feedback_case_id,

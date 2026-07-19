@@ -79,7 +79,7 @@ function routeData(path) {
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-registry") {
     return [
-      { agent_id: "main-agent", name: "Main Agent", category: "baseline", workspace_dir: "/runtime/main", created_at: "2026-06-29T00:00:00Z", status: "active" },
+      { agent_id: "security-operations-expert", name: "Security Operations Expert", category: "baseline", workspace_dir: "/runtime/main", created_at: "2026-06-29T00:00:00Z", status: "active" },
       { agent_id: "response-disposal", name: "Response Disposal", category: "soc", workspace_dir: "/runtime/response-disposal", created_at: "2026-06-29T00:00:00Z", status: "active" },
     ];
   }

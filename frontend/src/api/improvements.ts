@@ -92,15 +92,15 @@ export function applyExecution(config: RuntimeClientConfig, id: string) {
   return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution/apply`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
 }
 
-export type RegressionAssessment = components["schemas"]["RegressionAssessmentResponse"];
-export function getRegressionAssessment(config: RuntimeClientConfig, id: string) {
-  return requestJson<RegressionAssessment>(config, `/api/improvements/${encodeURIComponent(id)}/regression-assessment`);
+export type RegressionTestDesign = components["schemas"]["RegressionTestDesignResponse"];
+export function getRegressionTestDesign(config: RuntimeClientConfig, id: string) {
+  return requestJson<RegressionTestDesign>(config, `/api/improvements/${encodeURIComponent(id)}/regression-test-design`);
 }
-export function generateRegressionAssessment(config: RuntimeClientConfig, id: string) {
-  return requestJson<RegressionAssessment>(config, `/api/improvements/${encodeURIComponent(id)}/regression-assessment/generate`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
+export function generateRegressionTestDesign(config: RuntimeClientConfig, id: string) {
+  return requestJson<RegressionTestDesign>(config, `/api/improvements/${encodeURIComponent(id)}/regression-test-design/generate`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
 }
-export function confirmRegressionAssessment(config: RuntimeClientConfig, id: string) {
-  return requestJson<RegressionAssessment>(config, `/api/improvements/${encodeURIComponent(id)}/regression-assessment/confirm`, { method: "POST", headers: jsonHeaders });
+export function confirmRegressionTestDesign(config: RuntimeClientConfig, id: string) {
+  return requestJson<RegressionTestDesign>(config, `/api/improvements/${encodeURIComponent(id)}/regression-test-design/confirm`, { method: "POST", headers: jsonHeaders });
 }
 
 export function listImprovementLinks(config: RuntimeClientConfig, improvementId: string) {

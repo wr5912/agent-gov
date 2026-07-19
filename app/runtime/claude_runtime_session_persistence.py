@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from claude_agent_sdk import project_key_for_directory
 
 from .agent_admission import AgentMaintenanceActiveError
-from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
+from .agent_profiles import AgentRuntimeProfile
 from .errors import RuntimeFinalizationError, RuntimeUnavailableError
 from .json_types import JsonObject
 from .records.source_records import AgentRunRecord
@@ -33,7 +33,7 @@ class RuntimeSessionPersistenceMixin:
         *,
         profile: AgentRuntimeProfile,
         agent_version_id_override: Optional[str] = None,
-        agent_id: str = MAIN_AGENT_PROFILE,
+        agent_id: str,
     ) -> RuntimeRequestContext:
         from .claude_runtime import RuntimeRequestContext
 

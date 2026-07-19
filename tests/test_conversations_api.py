@@ -6,15 +6,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import app.routers.conversations as conv_module
+from app.runtime.agent_paths import business_agent_layout
 from app.runtime.runtime_db import SessionRecordModel
 from app.runtime.session_store import LocalSession
 from fastapi.testclient import TestClient
 
+from test_agent_workspace_packages import _import_new_agent
 from test_api_execution_optimizer import _load_app
 
 
 def _register_biz(client: TestClient, agent_id: str = "soc-ops") -> None:
-    assert client.post("/api/agent-registry", json={"name": "客服", "agent_id": agent_id}).status_code == 201
+    assert _import_new_agent(client, agent_id=agent_id, name="客服").status_code == 200
 
 
 def _fake_history(captured: dict):
@@ -185,7 +187,7 @@ def test_items_use_persisted_candidate_project_binding_after_worktree_cleanup(mo
     assert captured == {
         "project_key": "candidate-worktree-project-key",
         "sdk_session_id": "00000000-0000-4000-8000-000000000001",
-        "workspace_dir": str(module.settings.main_workspace_dir),
+        "workspace_dir": str(business_agent_layout(module.settings.data_dir, "main-agent").workspace),
     }
 
 

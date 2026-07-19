@@ -98,10 +98,7 @@ def test_layer1_adapter_parses_injected_suggestion(monkeypatch) -> None:
     monkeypatch.setattr(ps, "_prompt_suggestions_supported", _supported)
 
     async def collect():
-        return [
-            m
-            async for m in query_with_prompt_suggestions(prompt="hi", options=ClaudeAgentOptions())
-        ]
+        return [m async for m in query_with_prompt_suggestions(prompt="hi", options=ClaudeAgentOptions())]
 
     messages = asyncio.run(collect())
 
@@ -116,10 +113,7 @@ def test_layer1_adapter_skips_malformed_suggestion(monkeypatch) -> None:
     class _Malformed(_FakeClient):
         def __init__(self, options):
             super().__init__(options)
-            self._query = _FakeRawQuery(
-                [{"type": "prompt_suggestion", "suggestion": "   "},
-                 {"type": "prompt_suggestion", "suggestion": {"hostile": True}}]
-            )
+            self._query = _FakeRawQuery([{"type": "prompt_suggestion", "suggestion": "   "}, {"type": "prompt_suggestion", "suggestion": {"hostile": True}}])
 
     monkeypatch.setattr(ps, "ClaudeSDKClient", _Malformed)
     monkeypatch.setattr(ps, "_prompt_suggestions_supported", _supported)
@@ -142,9 +136,7 @@ def _sse_events(frames: list[dict]) -> list[tuple[str, dict]]:
 
     async def go() -> str:
         chunks = []
-        async for chunk in iter_responses_sse(
-            _aiter(), model="m", effective_agent_id="soc-ops", control=True
-        ):
+        async for chunk in iter_responses_sse(_aiter(), model="m", effective_agent_id="soc-ops", control=True):
             chunks.append(chunk)
         return "".join(chunks)
 
@@ -160,9 +152,9 @@ def _sse_events(frames: list[dict]) -> list[tuple[str, dict]]:
         data = {}
         for line in block.split("\n"):
             if line.startswith("event:"):
-                name = line[len("event:"):].strip()
+                name = line[len("event:") :].strip()
             elif line.startswith("data:"):
-                raw = line[len("data:"):].strip()
+                raw = line[len("data:") :].strip()
                 try:
                     data = json.loads(raw)
                 except ValueError:
@@ -172,8 +164,14 @@ def _sse_events(frames: list[dict]) -> list[tuple[str, dict]]:
     return out
 
 
-_SESSION = {"event": "session", "data": {"run_id": "run-9", "session_id": "sess-9", "sdk_session_id": "sdk-9", "agent_version_id": "ver-9", "agent_id": "soc-ops"}}
-_RESULT = {"event": "result", "data": {"run_id": "run-9", "session_id": "sess-9", "sdk_session_id": "sdk-9", "usage": {}, "stop_reason": "end_turn", "errors": [], "agent_activity": {}}}
+_SESSION = {
+    "event": "session",
+    "data": {"run_id": "run-9", "session_id": "sess-9", "sdk_session_id": "sdk-9", "agent_version_id": "ver-9", "agent_id": "soc-ops"},
+}
+_RESULT = {
+    "event": "result",
+    "data": {"run_id": "run-9", "session_id": "sess-9", "sdk_session_id": "sdk-9", "usage": {}, "stop_reason": "end_turn", "errors": [], "agent_activity": {}},
+}
 _DONE = {"event": "done", "data": "[DONE]"}
 
 
@@ -236,14 +234,14 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
     """
     import json
 
-    from app.runtime.business_agent_workspace import seed_business_agent_workspace
     from app.runtime.claude_runtime import ClaudeRuntime
     from app.runtime.schemas import ChatRequest
     from app.runtime.session_store import LocalSessionStore
     from app.runtime.settings import AppSettings
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
-    from claude_runtime_test_utils import main_profile_resolver
+    from business_agent_test_utils import create_test_business_agent_workspace
+    from claude_runtime_test_utils import default_profile_resolver
 
     async def fake_query(*, prompt, options):
         async for _ in prompt:
@@ -254,8 +252,7 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
             [{"type": "user", "uuid": "e2e-entry"}],
         )
         yield AssistantMessage(content=[TextBlock(text="答案")], model="m", session_id=sid)
-        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False,
-                            num_turns=1, session_id=sid, result="答案")
+        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False, num_turns=1, session_id=sid, result="答案")
         # 建议在答案之后才生成 —— 真实时序,到达时 done 已发出
         yield PromptSuggestionMessage("接下来检查失败路径", "u1", sid)
 
@@ -268,13 +265,13 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
         GOVERNOR_CLAUDE_ROOT=tmp_path / "docker" / "volume" / "claude-roots" / "governor",
         RUNTIME_VOLUME_MODE="local-debug",
     )
-    workspace = settings.main_workspace_dir
-    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    workspace = settings.default_workspace_dir
+    create_test_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
     (workspace / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}) + "\n",
         encoding="utf-8",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=main_profile_resolver(settings))
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=default_profile_resolver(settings))
 
     async def run() -> tuple[list[str], list[str]]:
         raw_frames: list[str] = []
@@ -288,19 +285,15 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
         async for chunk in iter_responses_sse(source(), model="m", effective_agent_id="main-agent", control=True):
             for line in chunk.split("\n"):
                 if line.startswith("event:"):
-                    sse_events.append(line[len("event:"):].strip())
+                    sse_events.append(line[len("event:") :].strip())
         return raw_frames, sse_events
 
     raw_frames, sse_events = asyncio.run(asyncio.wait_for(run(), timeout=30))
 
     # 前提:runtime 里建议确实排在 done 之后(否则这条测不到真问题)
-    assert raw_frames.index("prompt_suggestion") > raw_frames.index("done"), (
-        f"runtime 帧序应为建议晚于 done,实得 {raw_frames}"
-    )
+    assert raw_frames.index("prompt_suggestion") > raw_frames.index("done"), f"runtime 帧序应为建议晚于 done,实得 {raw_frames}"
     # 核心:投影后前端能收到建议
-    assert "agentgov.prompt_suggestion" in sse_events, (
-        f"迟到建议被投影丢弃,前端收不到。SSE={sse_events}"
-    )
+    assert "agentgov.prompt_suggestion" in sse_events, f"迟到建议被投影丢弃,前端收不到。SSE={sse_events}"
 
 
 def test_layer2_projects_full_candidate_list_with_compat_first_item() -> None:

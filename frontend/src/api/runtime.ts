@@ -5,8 +5,6 @@ export * from "./feedback";
 import type {
   AgentInfo,
   AgentSummary,
-  AgentCreateRequest,
-  BusinessAgentTemplatesResponse,
   AgentDeleteResponse,
   AgentChangeSet,
   AgentChangeSetActionRequest,
@@ -26,13 +24,15 @@ import type {
   AgentRepositoryDiscardChangesRequest,
   AgentRepositorySnapshotRequest,
   AgentRepositoryStatus,
+  AgentTestRun,
+  AgentTestRunCreateRequest,
+  AgentTestSuite,
   ChatRequest,
   ClaudeUserInputDecisionPayload,
   ClaudeUserInputDecisionResponse,
   ConfigMappingResponse,
   ConversationItem,
   ConversationItemList,
-  EvalRunResponse,
   OpenAICompatAgentConfig,
   RuntimeClientConfig,
   RuntimeHealth,
@@ -130,19 +130,6 @@ export function getAgents(config: RuntimeClientConfig, agentId?: string) {
 // 业务 Agent（治理对象，/api/agent-registry），用于顶栏全局 Agent 切换器与 scoping。
 export function listBusinessAgents(config: RuntimeClientConfig) {
   return requestJson<AgentSummary[]>(config, "/api/agent-registry");
-}
-
-// 创建业务 Agent 时可选的模板 catalog（E 特性，GET /api/agent-registry/templates）。
-export function listBusinessAgentTemplates(config: RuntimeClientConfig) {
-  return requestJson<BusinessAgentTemplatesResponse>(config, "/api/agent-registry/templates");
-}
-
-export function createBusinessAgent(config: RuntimeClientConfig, payload: AgentCreateRequest) {
-  return requestJson<AgentSummary>(config, "/api/agent-registry", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
 }
 
 export interface WorkspaceImportPayload {
@@ -371,56 +358,63 @@ export function rejectAgentChangeSet(config: RuntimeClientConfig, changeSetId: s
   );
 }
 
-export function runAgentChangeSetRegression(
-  config: RuntimeClientConfig,
-  changeSetId: string,
-  datasetId: string,
-  caseCount: number,
-) {
-  const normalizedCaseCount = Number.isFinite(caseCount) && caseCount > 0 ? Math.floor(caseCount) : 1;
-  const timeoutMs = Math.min(
-    2_147_000_000,
-    normalizedCaseCount * GOVERNANCE_AGENT_TIMEOUT_MS + 30_000,
-  );
-  return requestJson<EvalRunResponse>(
+export function inspectAgentTestSuite(config: RuntimeClientConfig, agentId: string, commitSha?: string) {
+  const params = new URLSearchParams();
+  if (commitSha) params.set("commit_sha", commitSha);
+  const query = params.size ? `?${params.toString()}` : "";
+  return requestJson<AgentTestSuite>(
     config,
-    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/regression-runs`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dataset_id: datasetId }),
-      timeoutMs,
-    },
+    `/api/agent-registry/${encodeURIComponent(agentId)}/test-suite${query}`,
   );
 }
 
-export type RegressionReviewDecision = {
-  dataset_case_id: string;
-  decision: "approve" | "reject";
-};
-
-export type AgentChangeSetRegressionReviewRequest = {
-  review_id: string;
-  operator: string;
-  reason: string;
-  scope: "current_eval_run";
-  decisions: RegressionReviewDecision[];
-};
-
-export function reviewAgentChangeSetRegression(
+export function createAgentTestRun(
   config: RuntimeClientConfig,
-  changeSetId: string,
-  evalRunId: string,
-  payload: AgentChangeSetRegressionReviewRequest,
+  payload: AgentTestRunCreateRequest,
 ) {
-  return requestJson<EvalRunResponse>(
+  return requestJson<AgentTestRun>(
     config,
-    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/regression-runs/${encodeURIComponent(evalRunId)}/review`,
+    "/api/agent-test-runs",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export function createAgentChangeSetTestRun(
+  config: RuntimeClientConfig,
+  changeSetId: string,
+) {
+  return requestJson<AgentTestRun>(
+    config,
+    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/test-runs`,
+    { method: "POST" },
+  );
+}
+
+export function listAgentTestRuns(
+  config: RuntimeClientConfig,
+  filters: { agentId?: string; changeSetId?: string; limit?: number } = {},
+) {
+  const params = new URLSearchParams();
+  if (filters.agentId) params.set("agent_id", filters.agentId);
+  if (filters.changeSetId) params.set("change_set_id", filters.changeSetId);
+  if (filters.limit) params.set("limit", String(filters.limit));
+  const query = params.size ? `?${params.toString()}` : "";
+  return requestJson<AgentTestRun[]>(config, `/api/agent-test-runs${query}`);
+}
+
+export function getAgentTestRun(config: RuntimeClientConfig, testRunId: string) {
+  return requestJson<AgentTestRun>(config, `/api/agent-test-runs/${encodeURIComponent(testRunId)}`);
+}
+
+export function cancelAgentTestRun(config: RuntimeClientConfig, testRunId: string) {
+  return requestJson<AgentTestRun>(
+    config,
+    `/api/agent-test-runs/${encodeURIComponent(testRunId)}/cancel`,
+    { method: "POST", headers: { "Content-Type": "application/json" } },
   );
 }
 

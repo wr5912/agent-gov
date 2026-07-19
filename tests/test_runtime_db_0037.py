@@ -91,16 +91,14 @@ def test_0037_ddl_and_archival_roll_back_as_one_sqlite_transaction(tmp_path) -> 
         assert connection.exec_driver_sql("SELECT COUNT(*) FROM eval_run_items").scalar_one() == 1
 
 
-def test_fresh_schema_uses_typed_eval_foreign_keys(tmp_path) -> None:
+def test_fresh_schema_excludes_superseded_eval_tables(tmp_path) -> None:
     path = tmp_path / "fresh.sqlite3"
     make_session_factory(path)
     engine = make_engine(path)
 
     with engine.connect() as connection:
-        assert "dataset_case_id" in _columns(connection, "eval_run_items")
-        assert "eval_case_id" not in _columns(connection, "eval_run_items")
-        not_null = {str(row[1]): bool(row[3]) for row in connection.exec_driver_sql("PRAGMA table_info(eval_runs)")}
-        assert not_null["dataset_id"] is True
+        assert not _columns(connection, "eval_runs")
+        assert not _columns(connection, "eval_run_items")
         assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []
 
 

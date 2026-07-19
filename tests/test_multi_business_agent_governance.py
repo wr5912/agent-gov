@@ -1,33 +1,34 @@
-"""#24：治理闭环 per-agent 化的单元验证——版本/执行目标/候选回归归属对非 main 业务 Agent 正确隔离。
+"""#24：治理闭环 per-Agent 化的单元验证。
 
 覆盖：
-- C/D：FeedbackStore._current_agent_version_id(agent_id) 按业务 Agent 路由其自身版本（不落 main）。
-- B：执行目标 sha/workspace 按业务 Agent 解析——AAA 的 CLAUDE.md 与 main 不同则 sha 不同（旧实现拿 main sha 比 AAA → 409）。
+- C/D：FeedbackStore._current_agent_version_id(agent_id) 按业务 Agent 路由其自身版本。
+- B：执行目标 sha/workspace 按业务 Agent 解析，普通 Agent 与平台默认 Agent 相互隔离。
 - B：_agent_git_paths_context(agent_id) 仓库/worktrees/releases 路径落到该 Agent 自己的版本库。
-- A：候选回归把 EvalRun 快照请求的 agent_id 透传给 run_candidate。
+- 版本与执行路径均按业务 Agent 隔离。
 """
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 from app.runtime.agent_paths import business_agent_layout
-from app.runtime.schemas import ChatRequest
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.stores.feedback_store import FeedbackStore
-from app.services.feedback_eval_runner import FeedbackEvalRunner
 
 
 def _make_store(tmp_path: Path) -> FeedbackStore:
     data_dir = tmp_path / "data"
-    main_ws = business_agent_layout(data_dir, "main-agent").workspace
+    default_ws = business_agent_layout(data_dir, DEFAULT_BUSINESS_AGENT_ID).workspace
     aaa_ws = business_agent_layout(data_dir, "AAA").workspace
-    main_ws.mkdir(parents=True, exist_ok=True)
+    default_ws.mkdir(parents=True, exist_ok=True)
     aaa_ws.mkdir(parents=True, exist_ok=True)
-    (main_ws / "CLAUDE.md").write_text("main agent baseline config\n", encoding="utf-8")
-    (aaa_ws / "CLAUDE.md").write_text("AAA agent OPTIMIZED config — different from main\n", encoding="utf-8")
+    (default_ws / "CLAUDE.md").write_text("default agent baseline config\n", encoding="utf-8")
+    (aaa_ws / "CLAUDE.md").write_text("AAA agent OPTIMIZED config - different from default\n", encoding="utf-8")
     # provider 按 agent_id 路由（用 fake 版本号代表「各自的库 HEAD」）。
-    return FeedbackStore(data_dir=data_dir, agent_version_provider=lambda aid: f"ver-{aid or 'main-agent'}")
+    return FeedbackStore(
+        data_dir=data_dir,
+        agent_version_provider=lambda aid: f"ver-{aid or DEFAULT_BUSINESS_AGENT_ID}",
+    )
 
 
 def test_current_agent_version_id_routes_per_agent(tmp_path: Path) -> None:
@@ -35,62 +36,31 @@ def test_current_agent_version_id_routes_per_agent(tmp_path: Path) -> None:
     assert store._current_agent_version_id("AAA") == "ver-AAA"
     assert store._current_agent_version_id("BBB") == "ver-BBB"
     assert store._current_agent_version_id("main-agent") == "ver-main-agent"
-    assert store._current_agent_version_id() == "ver-main-agent"  # 缺省回退 main，行为不变
+    assert store._current_agent_version_id() == f"ver-{DEFAULT_BUSINESS_AGENT_ID}"
 
 
 def test_execution_targets_and_sha_are_per_agent(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     data_dir = tmp_path / "data"
-    # workspace 解析按 agent_id：AAA 落 business-agents/AAA/workspace，main 复用主 policy。
+    # workspace 解析按 agent_id；只有未指定 ID 时使用平台默认 policy。
     assert store._execution_targets_for("AAA").workspace_dir == business_agent_layout(data_dir, "AAA").workspace
-    assert store._execution_targets_for("main-agent") is store.execution_targets
+    assert store._execution_targets_for("main-agent") is not store.execution_targets
     assert store._execution_targets_for(None) is store.execution_targets
-    # B 的核心：AAA 的 CLAUDE.md 内容与 main 不同 → sha 不同。旧实现恒用 main sha 比对 AAA worktree → 409。
-    ctx_main = store._execution_target_file_context("CLAUDE.md", "main-agent")
+    # B 的核心：AAA 与默认 Agent 的配置内容不同，sha 也必须不同。
+    ctx_default = store._execution_target_file_context("CLAUDE.md", DEFAULT_BUSINESS_AGENT_ID)
     ctx_aaa = store._execution_target_file_context("CLAUDE.md", "AAA")
-    assert ctx_main.get("sha256") and ctx_aaa.get("sha256")
-    assert ctx_main["sha256"] != ctx_aaa["sha256"]
+    assert ctx_default.get("sha256") and ctx_aaa.get("sha256")
+    assert ctx_default["sha256"] != ctx_aaa["sha256"]
 
 
 def test_agent_git_paths_context_is_per_agent(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     data_dir = tmp_path / "data"
     aaa = store._agent_git_paths_context("AAA")
-    assert aaa["main_agent_repository_path"] == str(business_agent_layout(data_dir, "AAA").workspace)
+    assert aaa["agent_repository_path"] == str(business_agent_layout(data_dir, "AAA").workspace)
     assert aaa["agent_change_set_worktrees_path"] == str(business_agent_layout(data_dir, "AAA").version_base / "worktrees")
-    main = store._agent_git_paths_context("main-agent")
-    assert main["main_agent_repository_path"] == str(store.main_workspace_dir)
-    assert main["agent_change_set_worktrees_path"] == str(business_agent_layout(data_dir, "main-agent").version_base / "worktrees")
-    assert main["agent_release_archives_path"] == str(business_agent_layout(data_dir, "main-agent").version_base / "releases")
-    # main 与 AAA 的仓库路径必须不同（否则 AAA 执行会落到 main 库）。
-    assert aaa["main_agent_repository_path"] != main["main_agent_repository_path"]
-
-
-def test_eval_runner_threads_snapshot_agent_id_to_candidate_and_fails_closed_when_missing() -> None:
-    captured: dict[str, object] = {}
-
-    async def fake_run_candidate_chat(req, worktree, commit, change_set, agent_id):
-        captured.update({"agent_id": agent_id, "change_set": change_set, "worktree": str(worktree)})
-        return object()
-
-    async def fake_run_chat(req):
-        captured["fell_back_to_main"] = True
-        return object()
-
-    runner = FeedbackEvalRunner(
-        feedback_store=object(),  # type: ignore[arg-type]
-        run_chat=fake_run_chat,
-        run_candidate_chat=fake_run_candidate_chat,
-    )
-    request = ChatRequest(message="regression", agent_id="AAA")
-    asyncio.run(runner._run_eval_chat(request, "cs-AAA-1", "candidate-sha", "/data/business-agents/AAA/version/worktrees/cs-AAA-1"))
-    assert captured.get("agent_id") == "AAA"
-    assert "fell_back_to_main" not in captured
-
-    missing_agent = ChatRequest(message="regression")
-    try:
-        asyncio.run(runner._run_eval_chat(missing_agent, "cs-AAA-1", "candidate-sha", "/tmp/candidate"))
-    except RuntimeError as exc:
-        assert "missing snapshot agent_id" in str(exc)
-    else:  # pragma: no cover - fail-closed contract
-        raise AssertionError("candidate EvalRun accepted a request without snapshot agent_id")
+    default = store._agent_git_paths_context(DEFAULT_BUSINESS_AGENT_ID)
+    assert default["agent_repository_path"] == str(store.default_workspace_dir)
+    assert default["agent_change_set_worktrees_path"] == str(business_agent_layout(data_dir, DEFAULT_BUSINESS_AGENT_ID).version_base / "worktrees")
+    assert default["agent_release_archives_path"] == str(business_agent_layout(data_dir, DEFAULT_BUSINESS_AGENT_ID).version_base / "releases")
+    assert aaa["agent_repository_path"] != default["agent_repository_path"]

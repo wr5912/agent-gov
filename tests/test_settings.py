@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.settings import (
     AppSettings,
     runtime_settings_log_fields,
@@ -17,21 +18,15 @@ _PROFILE_ENV_KEYS = (
     "RUNTIME_VOLUME_MODE",
     "RUNTIME_CONTAINER",
     "HOST_RUNTIME_VOLUME_ROOT",
-    "HOST_WORKSPACE_MOUNT",
     "HOST_GOVERNOR_WORKSPACE_MOUNT",
     "HOST_DATA_MOUNT",
-    "HOST_CLAUDE_ROOT_MOUNT",
     "HOST_GOVERNOR_CLAUDE_ROOT_MOUNT",
-    "WORKSPACE_DIR",
-    "MAIN_WORKSPACE_DIR",
     "GOVERNOR_WORKSPACE_DIR",
     "DATA_DIR",
-    "CLAUDE_ROOT",
-    "MAIN_CLAUDE_ROOT",
     "GOVERNOR_CLAUDE_ROOT",
-    "CLAUDE_HOME",
     "LANGFUSE_BASE_URL",
     "GOVERNANCE_AGENT_TIMEOUT_SECONDS",
+    "AGENT_TEST_RUN_TIMEOUT_SECONDS",
     "DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS",
     "HITL_TIMEOUT_SECONDS",
 )
@@ -58,13 +53,8 @@ def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_pa
         "\n".join(
             [
                 "API_PORT=58080",
-                "WORKSPACE_DIR=/main-workspace",
-                "MAIN_WORKSPACE_DIR=/main-workspace",
                 "GOVERNOR_WORKSPACE_DIR=/governor-workspace",
                 "DATA_DIR=/data",
-                "CLAUDE_ROOT=/claude-roots/main",
-                "MAIN_CLAUDE_ROOT=/claude-roots/main",
-                "CLAUDE_HOME=/claude-roots/main/.claude",
                 "LANGFUSE_BASE_URL=http://langfuse-web:3000",
                 "",
             ]
@@ -76,9 +66,7 @@ def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_pa
             [
                 "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-debug-volume-agent-gov",
                 "API_PORT=9090",
-                "WORKSPACE_DIR=${HOST_RUNTIME_VOLUME_ROOT}/main-workspace",
                 "DATA_DIR=${HOST_RUNTIME_VOLUME_ROOT}/data",
-                "CLAUDE_ROOT=${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/main",
                 "LANGFUSE_BASE_URL=http://localhost:53000",
                 "",
             ]
@@ -92,13 +80,12 @@ def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_pa
     assert AppSettings.model_config["env_file"] is None
     assert settings.runtime_volume_mode == "container"
     assert settings.api_port == 58080
-    # main 已并入业务模型：workspace/claude-root 由 data_dir 下的 main-agent layout 派生。
-    assert settings.workspace_dir == settings.data_dir / "business-agents" / "main-agent" / "workspace"
-    assert settings.main_workspace_dir == settings.workspace_dir
+    assert settings.workspace_dir == settings.data_dir / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "workspace"
+    assert settings.default_workspace_dir == settings.workspace_dir
     assert settings.governor_workspace_dir == Path("/governor-workspace")
     assert settings.data_dir == Path("/data")
-    assert settings.claude_root == settings.data_dir / "business-agents" / "main-agent" / "claude-root"
-    assert settings.main_claude_root == settings.claude_root
+    assert settings.claude_root == settings.data_dir / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "claude-root"
+    assert settings.default_claude_root == settings.claude_root
     assert settings.governor_claude_root == Path("/claude-roots/governor")
     assert settings.claude_home == settings.claude_root / ".claude"
     assert settings.langfuse_base_url == "http://langfuse-web:3000"
@@ -117,9 +104,7 @@ def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, monkey
         "\n".join(
             [
                 "API_PORT=58080",
-                "WORKSPACE_DIR=/main-workspace",
                 "DATA_DIR=/data",
-                "CLAUDE_ROOT=/claude-roots/main",
                 "LANGFUSE_BASE_URL=http://langfuse-web:3000",
                 "",
             ]
@@ -131,9 +116,7 @@ def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, monkey
             [
                 "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-debug-volume-agent-gov",
                 "API_PORT=8080",
-                "WORKSPACE_DIR=${HOST_RUNTIME_VOLUME_ROOT}/main-workspace",
                 "DATA_DIR=${HOST_RUNTIME_VOLUME_ROOT}/data",
-                "CLAUDE_ROOT=${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/main",
                 "LANGFUSE_BASE_URL=http://localhost:53000",
                 "",
             ]
@@ -146,9 +129,9 @@ def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, monkey
     assert settings_env_file_for_mode() == Path("docker/.env.local-debug")
     assert settings.runtime_volume_mode == "local-debug"
     assert settings.api_port == 8080
-    assert settings.workspace_dir == settings.data_dir / "business-agents" / "main-agent" / "workspace"
+    assert settings.workspace_dir == settings.data_dir / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "workspace"
     assert settings.data_dir == Path("/tmp/local-debug-volume-agent-gov/data")
-    assert settings.claude_root == settings.data_dir / "business-agents" / "main-agent" / "claude-root"
+    assert settings.claude_root == settings.data_dir / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "claude-root"
     assert settings.langfuse_base_url == "http://localhost:53000"
 
 
@@ -164,16 +147,16 @@ def test_settings_local_debug_env_uses_tmp_runtime_root(monkeypatch):
     assert settings.runtime_volume_mode == "local-debug"
     assert settings.api_host == "0.0.0.0"
     assert settings.host_runtime_volume_root == local_debug_root.as_posix()
-    main_layout_root = local_debug_root / "data" / "business-agents" / "main-agent"
-    assert settings.workspace_dir == main_layout_root / "workspace"
-    assert settings.main_workspace_dir == main_layout_root / "workspace"
+    default_layout_root = local_debug_root / "data" / "business-agents" / DEFAULT_BUSINESS_AGENT_ID
+    assert settings.workspace_dir == default_layout_root / "workspace"
+    assert settings.default_workspace_dir == default_layout_root / "workspace"
     assert settings.governor_workspace_dir == local_debug_root / "governor-workspace"
     assert settings.data_dir == local_debug_root / "data"
-    assert settings.claude_root == main_layout_root / "claude-root"
-    assert settings.main_claude_root == main_layout_root / "claude-root"
-    assert settings.claude_home == main_layout_root / "claude-root" / ".claude"
-    assert settings.agent_git_worktrees_dir == main_layout_root / "version" / "worktrees"
-    assert settings.agent_release_archives_dir == main_layout_root / "version" / "releases"
+    assert settings.claude_root == default_layout_root / "claude-root"
+    assert settings.default_claude_root == default_layout_root / "claude-root"
+    assert settings.claude_home == default_layout_root / "claude-root" / ".claude"
+    assert settings.agent_git_worktrees_dir == default_layout_root / "version" / "worktrees"
+    assert settings.agent_release_archives_dir == default_layout_root / "version" / "releases"
 
 
 def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
@@ -197,13 +180,14 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "provider_api_url_configured": False,
         "governance_agent_timeout_seconds": 300,
         "dspy_output_formatter_timeout_seconds": 300,
+        "agent_test_run_timeout_seconds": 1800,
         "claude_web_hitl_enabled": False,
         "hitl_timeout_seconds": 300,
         "api_host": "0.0.0.0",
         "api_port": 8080,
-        "workspace_dir": "/tmp/local-debug-volume-agent-gov/data/business-agents/main-agent/workspace",
+        "workspace_dir": f"/tmp/local-debug-volume-agent-gov/data/business-agents/{DEFAULT_BUSINESS_AGENT_ID}/workspace",
         "data_dir": "/tmp/local-debug-volume-agent-gov/data",
-        "claude_root": "/tmp/local-debug-volume-agent-gov/data/business-agents/main-agent/claude-root",
+        "claude_root": f"/tmp/local-debug-volume-agent-gov/data/business-agents/{DEFAULT_BUSINESS_AGENT_ID}/claude-root",
         "langfuse_base_url": "http://localhost:53000",
     }
     assert fields["provider_api_key_configured"] is False
@@ -225,6 +209,7 @@ def test_governance_and_hitl_timeout_defaults_and_overrides(monkeypatch):
 
     assert defaults.governance_agent_timeout_seconds == 300
     assert defaults.dspy_output_formatter_timeout_seconds == 300
+    assert defaults.agent_test_run_timeout_seconds == 1800
     assert defaults.hitl_timeout_seconds == 300
     assert inherited_formatter.dspy_output_formatter_timeout_seconds == 123
     assert overridden_formatter.governance_agent_timeout_seconds == 123
@@ -251,18 +236,16 @@ def test_get_settings_is_pure_and_does_not_create_runtime_dirs(tmp_path, monkeyp
         monkeypatch.delenv(key, raising=False)
     monkeypatch.chdir(tmp_path)
     runtime_root = tmp_path / "runtime"
-    monkeypatch.setenv("WORKSPACE_DIR", str(runtime_root / "main-workspace"))
     monkeypatch.setenv("DATA_DIR", str(runtime_root / "data"))
-    monkeypatch.setenv("CLAUDE_ROOT", str(runtime_root / "claude-roots" / "main"))
     get_settings.cache_clear()
 
     settings = get_settings()
 
     expected_dirs = (
         settings.data_dir,
-        settings.main_workspace_dir,
+        settings.default_workspace_dir,
         settings.governor_workspace_dir,
-        settings.main_claude_root,
+        settings.default_claude_root,
         settings.governor_claude_root,
         settings.claude_home,
         settings.agent_git_repository_dir,

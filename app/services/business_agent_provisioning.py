@@ -7,13 +7,11 @@ from pathlib import Path
 from app.runtime.business_agent_workspace import (
     WorkspaceProvisioningError,
     WorkspaceProvisionJournal,
-    WorkspaceSafetyError,
-    WorkspaceTemplatePlan,
+    WorkspaceProvisionPlan,
     apply_business_agent_workspace_plan,
-    prepare_business_agent_workspace,
     rollback_business_agent_workspace,
 )
-from app.runtime.errors import ConfigurationError, ConflictError, DataIntegrityError
+from app.runtime.errors import ConflictError, DataIntegrityError
 from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
 
 
@@ -23,22 +21,12 @@ def provision_business_agent(
     agent_id: str,
     name: str,
     workspace_dir: Path,
-    template_id: str,
-    plan: WorkspaceTemplatePlan | None = None,
+    plan: WorkspaceProvisionPlan,
     validate_workspace: Callable[[Path], None] | None = None,
     finalize_workspace: Callable[[Path], None] | None = None,
     rollback_workspace_finalization: Callable[[Path], bool] | None = None,
 ) -> AgentRegistryRecord:
-    """Coordinate preflight, DB reservation, FS apply and DB finalization."""
-    try:
-        prepared_plan = plan or prepare_business_agent_workspace(
-            agent_id=agent_id,
-            name=name,
-            template_id=template_id,
-        )
-    except WorkspaceSafetyError as exc:
-        raise ConfigurationError("Business Agent template failed safety validation") from exc
-
+    """Coordinate DB reservation, safe Workspace apply and DB finalization."""
     reservation = store.reserve_business_agent(
         name=name,
         agent_id=agent_id,
@@ -48,7 +36,7 @@ def provision_business_agent(
     try:
         journal = apply_business_agent_workspace_plan(
             workspace_dir,
-            prepared_plan,
+            plan,
             require_workspace_absent=reservation.require_workspace_absent,
         )
         if validate_workspace is not None:

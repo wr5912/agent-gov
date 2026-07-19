@@ -54,6 +54,7 @@ async def _execute_non_stream_query(
             runtime._track_query_message(msg, state, ResultMessage)
     finally:
         await close_async_iterator(messages)
+    runtime._ensure_query_terminal_error(state)
 
 
 async def run_claimed_claude_runtime(
@@ -133,6 +134,6 @@ async def run_claimed_claude_runtime(
             context,
             state,
             terminal_status="failed",
-            error=state.mirror_errors[-1] if state.mirror_errors else "SDK query ended without ResultMessage",
+            error=state.mirror_errors[-1] if state.mirror_errors else state.errors[-1],
         )
     return runtime._run_response(context, state, answer, agent_activity)

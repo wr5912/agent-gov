@@ -1,4 +1,4 @@
-import { Download, Loader2, RotateCcw, Upload } from "lucide-react";
+import { Loader2, RotateCcw, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   exportBusinessAgentWorkspace,
@@ -8,6 +8,7 @@ import {
 } from "../api/runtime";
 import type { AgentSummary, RuntimeClientConfig, WorkspaceImportResponse } from "../types/runtime";
 import { validateAgentId } from "./agentSettingsValidation";
+import { AgentWorkspaceInventory } from "./AgentWorkspaceInventory";
 import "./AgentWorkspacePackagePanel.css";
 
 interface AgentWorkspacePackagePanelProps {
@@ -204,7 +205,8 @@ export function AgentWorkspacePackagePanel(props: AgentWorkspacePackagePanelProp
       {runner.notice ? <WorkspaceOperationNotice notice={runner.notice} /> : null}
       {form.lastImport ? <WorkspaceImportReceipt receipt={form.lastImport} /> : null}
       <WorkspaceImportFields form={form} pending={runner.pending} disabled={disabled} />
-      <WorkspaceAgentActions
+      <AgentWorkspaceInventory
+        config={props.config}
         agents={props.agents}
         pending={runner.pending}
         disabled={disabled}
@@ -246,7 +248,7 @@ function WorkspacePackageHeader({
   return (
     <div className="settings-workspace-import-head">
       <div>
-        <strong>导入与导出 Agent workspace</strong>
+        <strong>业务 Agent Workspace 包</strong>
         <span>文件内容原样创建或覆盖；真实 endpoint、二进制和 executable bit 保持不变，下一 turn 生效。</span>
       </div>
       {lastImport?.rollback_target_commit_sha ? (
@@ -266,6 +268,11 @@ function WorkspaceImportReceipt({ receipt }: { receipt: WorkspaceImportResponse 
       <span>current <code title={receipt.current_commit_sha}>{receipt.current_commit_sha.slice(0, 12)}</code></span>
       <span>package <code title={receipt.package_sha256}>{receipt.package_sha256.slice(0, 12)}</code></span>
       <span>tree <code title={receipt.tree_sha256}>{receipt.tree_sha256.slice(0, 12)}</code></span>
+      <span>tests <strong>{receipt.test_suite_status}</strong> · {receipt.test_file_count} files</span>
+      <span>audit <code>{receipt.import_record_id}</code></span>
+      {(receipt.test_suite_warnings ?? []).map((warning) => (
+        <span className="is-warning" key={`${warning.code}-${warning.path || ""}`}>{warning.code}</span>
+      ))}
     </div>
   );
 }
@@ -291,38 +298,6 @@ function WorkspaceImportFields({
       <button className="primary-button" type="button" data-testid="settings-workspace-import-submit" disabled={disabled || !form.agentId.trim() || !form.file} aria-busy={pending === importKey} onClick={form.submit}>
         {pending === importKey ? <><Loader2 size={14} className="settings-spin" />导入中…</> : <><Upload size={14} />导入</>}
       </button>
-    </div>
-  );
-}
-
-function WorkspaceAgentActions({
-  agents,
-  pending,
-  disabled,
-  onExport,
-  onOverwrite,
-}: {
-  agents: AgentSummary[];
-  pending: string | null;
-  disabled: boolean;
-  onExport: (agentId: string) => void;
-  onOverwrite: (agentId: string) => void;
-}) {
-  return (
-    <div className="settings-workspace-agent-list" data-testid="settings-workspace-agent-list">
-      {agents.map((agent) => (
-        <div className="settings-workspace-agent-row" data-testid="settings-workspace-agent-item" key={agent.agent_id}>
-          <span><strong>{agent.name}</strong><code>{agent.agent_id}</code></span>
-          <div className="settings-agent-actions">
-            <button className="secondary-button" type="button" data-testid="settings-agent-export" disabled={disabled} aria-busy={pending === `export:${agent.agent_id}`} onClick={() => onExport(agent.agent_id)}>
-              {pending === `export:${agent.agent_id}` ? <Loader2 size={14} className="settings-spin" /> : <Download size={14} />}<span>导出</span>
-            </button>
-            <button className="secondary-button" type="button" data-testid="settings-agent-import" disabled={disabled} onClick={() => onOverwrite(agent.agent_id)}>
-              <Upload size={14} /><span>覆盖</span>
-            </button>
-          </div>
-        </div>
-      ))}
     </div>
   );
 }

@@ -41,13 +41,11 @@ def test_frontend_history_loader_does_not_restart_for_equivalent_session_refresh
 
     assert "const activeBackendSessionTurns = useMemo" in source
     assert "streaming || activeBackendSessionTurns <= 0" in source
-    assert (
-        "[activeBackendSessionTurns, activeMessageCount, activeSessionId, effectiveClientConfig, "
-        "setMessagesBySession, streaming]"
-    ) in source
+    assert ("[activeBackendSessionTurns, activeMessageCount, activeSessionId, effectiveClientConfig, setMessagesBySession, streaming]") in source
 
 
 # ---------------------------------------------------------------- adapter unit
+
 
 def test_normalize_message_role_from_type_and_blocks_passthrough() -> None:
     msg = _FakeMsg(
@@ -178,6 +176,7 @@ def test_read_session_history_scrub_applies_to_subagents(monkeypatch) -> None:
 
 # ------------------------------------------------------------ endpoint wiring
 
+
 def test_endpoint_unknown_session_404(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
@@ -201,7 +200,7 @@ def test_endpoint_projects_history(monkeypatch, tmp_path: Path) -> None:
         LocalSession(
             session_id="s1",
             sdk_session_id="sdk-1",
-            sdk_project_key=project_key_for_directory(str(module.settings.main_workspace_dir)),
+            sdk_project_key=project_key_for_directory(str(module.settings.default_workspace_dir)),
             sdk_store_ready_at="2026-07-13T00:00:00+00:00",
             agent_id="main-agent",
             title="t",
@@ -236,6 +235,7 @@ def test_endpoint_requires_auth_401(monkeypatch, tmp_path: Path) -> None:
 
 # -------------------------------------------------- owning-agent 强校验（无静默兜底）
 
+
 class _StubSettings:
     data_dir = Path("/data")
     main_workspace_dir = Path("/main-workspace")
@@ -260,9 +260,7 @@ def test_resolve_owning_profile_main_and_registered_business() -> None:
     # main-agent 已归一为预制业务 Agent：与其它业务 Agent 一样在注册表中（lifespan sync 登记），
     # 走完全相同的解析路径，无特判。
     settings = _StubSettings()
-    reg = _FakeRegistry(
-        {"main-agent": "/data/business-agents/main-agent/workspace", "biz-1": "/custom/biz-1-ws"}
-    )
+    reg = _FakeRegistry({"main-agent": "/data/business-agents/main-agent/workspace", "biz-1": "/custom/biz-1-ws"})
     ws, cfg = sessions_mod._resolve_owning_profile(settings, reg, LocalSession(session_id="x", agent_id="main-agent"))
     assert ws == Path("/data/business-agents/main-agent/workspace")
     assert cfg == Path("/data/business-agents/main-agent/claude-root/.claude")

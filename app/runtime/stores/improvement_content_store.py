@@ -14,7 +14,7 @@ from ..improvement_db import (
     ImprovementItemModel,
     NormalizedFeedbackModel,
     OptimizationPlanModel,
-    RegressionAssessmentModel,
+    RegressionTestDesignModel,
 )
 from ..runtime_db import utc_now
 from ..state_machines import validate_transition
@@ -79,16 +79,16 @@ class OptimizationPlanRecord:
 
 
 @dataclass(frozen=True)
-class RegressionAssessmentRecord:
-    regression_assessment_id: str
+class RegressionTestDesignRecord:
+    regression_test_design_id: str
     improvement_id: str
     summary: str
-    cases: list[dict]
+    tests: list[dict]
+    no_action_reason: str
     status: str
     created_at: str
     updated_at: str = ""
-    generated_by: str = "heuristic"
-    suggested_gate_thresholds: dict = field(default_factory=dict)
+    generated_by: str = "governor"
     generation_trace_id: str = ""
     generation_trace_url: str = ""
 
@@ -408,71 +408,99 @@ class ImprovementContentStore(ImprovementFeedbackStoreMixin):
                 advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _exec_record(row)
 
-    # ---- RegressionAssessment（回归保障评估，§11/§17.5）----
-    def upsert_regression_assessment(
+    def rebind_execution_candidate(
+        self,
+        improvement_id: str,
+        *,
+        change_set_id: str,
+        previous_commit_sha: str,
+        candidate_commit_sha: str,
+        applied_diff: dict,
+        generated_test_files: list[str],
+    ) -> ExecutionRecord:
+        with self._session_factory.begin() as db:
+            self._lock_mutable_improvement(db, improvement_id)
+            row = db.query(ExecutionRecordModel).filter(ExecutionRecordModel.improvement_id == improvement_id).one_or_none()
+            if row is None:
+                raise BusinessRuleViolation(f"No execution record for improvement: {improvement_id}")
+            if row.status != "confirmed" or row.change_set_id != change_set_id:
+                raise ConflictError(f"Confirmed execution does not own change set {change_set_id}: {improvement_id}")
+            current = row.applied_agent_version_id or row.agent_version
+            if current not in {previous_commit_sha, candidate_commit_sha}:
+                raise ConflictError(f"Execution candidate changed before tests were committed: {improvement_id}")
+            row.applied_agent_version_id = candidate_commit_sha
+            row.agent_version = candidate_commit_sha
+            row.applied_diff_json = dict(applied_diff)
+            row.changes_applied_json = list(dict.fromkeys([*list(row.changes_applied_json or []), *generated_test_files]))
+            row.updated_at = utc_now()
+            return _exec_record(row)
+
+    # ---- RegressionTestDesign（回归测试设计，§11/§17.5）----
+    def upsert_regression_test_design(
         self,
         improvement_id: str,
         *,
         summary: str,
-        cases: list[dict] | None = None,
-        suggested_gate_thresholds: dict | None = None,
-        generated_by: str = "heuristic",
+        tests: list[dict] | None = None,
+        no_action_reason: str = "",
+        generated_by: str = "governor",
         generation_trace_id: str = "",
         generation_trace_url: str = "",
         advance_to_stage: str | None = None,
-    ) -> RegressionAssessmentRecord:
+    ) -> RegressionTestDesignRecord:
         clean_summary = (summary or "").strip()
         if not clean_summary:
-            raise BusinessRuleViolation("regression assessment summary cannot be empty")
-        clean_cases: list[dict] = []
-        for case in cases or []:
-            if not isinstance(case, dict):
-                raise BusinessRuleViolation("regression assessment cases must be objects")
-            prompt = str(case.get("prompt") or "").strip()
-            if not prompt:
-                raise BusinessRuleViolation("regression assessment cases require a non-empty prompt")
-            clean_cases.append({**case, "prompt": prompt})
-        if not clean_cases:
-            raise BusinessRuleViolation("regression assessment requires at least one case")
+            raise BusinessRuleViolation("regression test design summary cannot be empty")
+        clean_tests: list[dict] = []
+        for test in tests or []:
+            if not isinstance(test, dict):
+                raise BusinessRuleViolation("regression test design tests must be objects")
+            normalized = {key: str(test.get(key) or "").strip() for key in ("target_path", "test_code", "test_intent", "assertion_rationale")}
+            if not all(normalized.values()):
+                raise BusinessRuleViolation("regression test design tests require target_path, test_code, test_intent and assertion_rationale")
+            clean_tests.append(normalized)
+        clean_no_action_reason = no_action_reason.strip()
+        if not clean_tests and not clean_no_action_reason:
+            raise BusinessRuleViolation("regression test design requires tests or no_action_reason")
         now = utc_now()
         with self._session_factory.begin() as db:
             self._lock_mutable_improvement(db, improvement_id)
-            row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
+            row = db.query(RegressionTestDesignModel).filter(RegressionTestDesignModel.improvement_id == improvement_id).one_or_none()
             if row is None:
-                row = RegressionAssessmentModel(regression_assessment_id=f"reg-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
+                row = RegressionTestDesignModel(regression_test_design_id=f"reg-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
                 db.add(row)
             row.summary = clean_summary
-            row.cases_json = clean_cases
-            row.suggested_gate_thresholds_json = dict(suggested_gate_thresholds or {})
+            row.tests_json = clean_tests
+            row.no_action_reason = clean_no_action_reason
             row.status = "draft"
             row.generated_by = generated_by
             row.generation_trace_id = generation_trace_id
             row.generation_trace_url = generation_trace_url
             row.updated_at = now
             db.flush()
-            if advance_to_stage:
+            if advance_to_stage and clean_tests:
                 advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
             return _reg_record(row)
 
-    def get_regression_assessment(self, improvement_id: str) -> RegressionAssessmentRecord | None:
+    def get_regression_test_design(self, improvement_id: str) -> RegressionTestDesignRecord | None:
         with self._session_factory.begin() as db:
-            row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
+            row = db.query(RegressionTestDesignModel).filter(RegressionTestDesignModel.improvement_id == improvement_id).one_or_none()
             return _reg_record(row) if row is not None else None
 
-    def set_regression_assessment_status(
+    def set_regression_test_design_status(
         self,
         improvement_id: str,
         *,
         status: str,
         advance_to_stage: str | None = None,
-    ) -> RegressionAssessmentRecord:
+    ) -> RegressionTestDesignRecord:
         if status not in CONTENT_STATUS:
             raise BusinessRuleViolation(f"Unknown status: {status}; expected one of {sorted(CONTENT_STATUS)}")
         with self._session_factory.begin() as db:
             self._lock_mutable_improvement(db, improvement_id)
-            row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
+            row = db.query(RegressionTestDesignModel).filter(RegressionTestDesignModel.improvement_id == improvement_id).one_or_none()
             if row is None:
-                raise BusinessRuleViolation(f"No regression assessment for improvement: {improvement_id}")
+                raise BusinessRuleViolation(f"No regression test design for improvement: {improvement_id}")
             row.status = status
             row.updated_at = utc_now()
             if advance_to_stage:
@@ -480,17 +508,17 @@ class ImprovementContentStore(ImprovementFeedbackStoreMixin):
             return _reg_record(row)
 
 
-def _reg_record(row: RegressionAssessmentModel) -> RegressionAssessmentRecord:
-    return RegressionAssessmentRecord(
-        regression_assessment_id=row.regression_assessment_id,
+def _reg_record(row: RegressionTestDesignModel) -> RegressionTestDesignRecord:
+    return RegressionTestDesignRecord(
+        regression_test_design_id=row.regression_test_design_id,
         improvement_id=row.improvement_id,
         summary=row.summary or "",
-        cases=list(row.cases_json or []),
-        suggested_gate_thresholds=dict(row.suggested_gate_thresholds_json or {}),
+        tests=list(row.tests_json or []),
+        no_action_reason=row.no_action_reason or "",
         status=row.status or "draft",
         created_at=row.created_at,
         updated_at=row.updated_at,
-        generated_by=row.generated_by or "heuristic",
+        generated_by=row.generated_by or "governor",
         generation_trace_id=row.generation_trace_id or "",
         generation_trace_url=row.generation_trace_url or "",
     )

@@ -12,7 +12,9 @@ export function ImprovementClosedLoopSpine({
   return (
     <div className="iw-four-stage-spine" data-testid="closed-loop-spine" aria-label="四阶段改进治理主链路">
       {stageView.stages.map((stage, index) => {
-        const state = index < stageView.stageIndex
+        const state = stageView.isCompleted && index === stageView.stageIndex
+          ? "done"
+          : index < stageView.stageIndex
             ? "done"
             : index === stageView.stageIndex
               ? "current"
@@ -36,7 +38,7 @@ export function ImprovementClosedLoopSpine({
             <span className="iw-four-stage-index">{state === "done" ? "✓" : index + 1}</span>
             <span>
               <strong>{stage.label}</strong>
-              <small>{isReviewing ? "正在回看" : index === stageView.stageIndex ? stageView.description : index < stageView.stageIndex ? "完成" : "待开始"}</small>
+              <small>{isReviewing ? "正在回看" : state === "done" ? "完成" : index === stageView.stageIndex ? stageView.description : "待开始"}</small>
             </span>
           </button>
         );

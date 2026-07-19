@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Protocol, TypedDict
 from urllib.parse import urlparse
 
-from app.runtime.business_agent_seed_catalog import runtime_volume_seeds_dir
+from app.runtime.runtime_bootstrap import runtime_bootstrap_dir
 
 BASH_ALLOW_RULE = "Bash(*)"
 GENERIC_MCP_MUTATION_RULES = (
@@ -194,11 +194,11 @@ def validate_managed_mcp_content(
     runtime_mode: str,
     env: Mapping[str, str],
     runtime_root: Path,
-    template_dir: Path | None = None,
+    bootstrap_dir: Path | None = None,
 ) -> tuple[PolicyViolation, ...]:
-    """Validate only Claude Code MCP syntax; seed content is not an authority."""
+    """Validate only Claude Code MCP syntax; initialization content is not an authority."""
 
-    del runtime_mode, env, runtime_root, template_dir
+    del runtime_mode, env, runtime_root, bootstrap_dir
     return validate_mcp_content(content, agent_id=agent_id)
 
 
@@ -317,9 +317,9 @@ def runtime_workspace_policy_violations(
     runtime_mode: str,
     env: Mapping[str, str],
     runtime_root: Path,
-    template_dir: Path | None = None,
+    bootstrap_dir: Path | None = None,
 ) -> tuple[PolicyViolation, ...]:
-    del runtime_mode, env, runtime_root, template_dir
+    del runtime_mode, env, runtime_root, bootstrap_dir
     return plan_workspace_policy(workspace=workspace, agent_id=agent_id).violations
 
 
@@ -330,7 +330,7 @@ def require_runtime_workspace_policy(
     runtime_mode: str,
     env: Mapping[str, str],
     runtime_root: Path,
-    template_dir: Path | None = None,
+    bootstrap_dir: Path | None = None,
 ) -> None:
     raise_for_policy_violations(
         runtime_workspace_policy_violations(
@@ -339,7 +339,7 @@ def require_runtime_workspace_policy(
             runtime_mode=runtime_mode,
             env=env,
             runtime_root=runtime_root,
-            template_dir=template_dir,
+            bootstrap_dir=bootstrap_dir,
         )
     )
 
@@ -366,5 +366,5 @@ def require_profile_runtime_workspace_policy(
     )
 
 
-def default_runtime_template_dir() -> Path:
-    return runtime_volume_seeds_dir()
+def default_runtime_bootstrap_dir() -> Path:
+    return runtime_bootstrap_dir()

@@ -1,8 +1,8 @@
-"""业务 Agent 删除：清磁盘 + 清运行态 seed + 不复活 + 重建不继承。
+"""业务 Agent 删除：清磁盘、不复活、重建不继承。
 
 删除此前只是注册表 tombstone，磁盘原样保留。这带来一个实测可复现的缺陷：删除后用同一
-agent_id 重建，新 Agent 会**静默继承**被删 Agent 的 prompt/skills/MCP 配置——因为 workspace
-目录还在，而播种语义是「文件存在则跳过」。本文件把清理与其后果固化为契约。
+agent_id 重建，新 Agent 会**静默继承**被删 Agent 的 prompt/skills/MCP 配置。本文件把清理与
+其后果固化为契约。
 """
 
 from __future__ import annotations
@@ -10,14 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from app.runtime.business_agent_seed_catalog import (
-    runtime_seed_catalog_dir,
-    seed_deletion_marker_path,
-)
 from app.runtime.protected_business_agents import SECURITY_OPERATIONS_EXPERT_AGENT_ID
 from app.services.business_agent_deletion import purge_business_agent_storage
 from fastapi.testclient import TestClient
 
+from test_agent_workspace_packages import _import_new_agent
 from test_api_execution_optimizer import _load_app
 
 
@@ -27,9 +24,9 @@ def app_module(monkeypatch, tmp_path: Path):
 
 
 def _create(client: TestClient, agent_id: str, name: str = "受测 Agent") -> Path:
-    created = client.post("/api/agent-registry", json={"name": name, "agent_id": agent_id})
-    assert created.status_code == 201, created.text
-    return Path(created.json()["workspace_dir"])
+    created = _import_new_agent(client, agent_id=agent_id, name=name)
+    assert created.status_code == 200, created.text
+    return Path(created.json()["agent"]["workspace_dir"])
 
 
 def test_delete_purges_disk_and_recreate_does_not_inherit(app_module) -> None:
@@ -56,26 +53,29 @@ def test_delete_purges_disk_and_recreate_does_not_inherit(app_module) -> None:
         assert "重建的 Agent" in content
 
 
-def test_delete_reports_disk_and_seed_outcome(app_module) -> None:
+def test_delete_reports_workspace_cleanup_outcome(app_module) -> None:
     """删除响应必须暴露清理结果——部分失败不能被吞掉。"""
 
     with TestClient(app_module.app) as client:
         _create(client, "outcome-agent")
         body = client.request("DELETE", "/api/agent-registry/outcome-agent").json()
 
-    assert set(body) >= {"deleted", "impact", "workspace_removed", "seed_removed", "cleanup_complete"}
+    assert set(body) >= {"deleted", "impact", "workspace_removed", "cleanup_complete"}
+    assert "seed_removed" not in body
     assert body["deleted"]["agent_id"] == "outcome-agent"
 
 
 def test_protected_agent_delete_is_rejected(app_module) -> None:
-    """受保护 Agent 的配置与 seed 在仓库，在线删除必须被拒。"""
+    """bootstrap 已登记的受保护 Agent 在线删除必须被拒。"""
 
     with TestClient(app_module.app) as client:
+        builtin = next(item for item in client.get("/api/agent-registry").json() if item["agent_id"] == SECURITY_OPERATIONS_EXPERT_AGENT_ID)
+        assert builtin["builtin"] is True
+        assert builtin["default"] is True
+        assert builtin["protected"] is True
         response = client.request("DELETE", f"/api/agent-registry/{SECURITY_OPERATIONS_EXPERT_AGENT_ID}")
 
-    # 该 Agent 在此测试卷中可能未注册（404）；只要不是「删成功」即满足保护语义。
-    assert response.status_code in (400, 404)
-    assert response.status_code != 200
+    assert response.status_code == 400
 
 
 def test_deleted_agent_is_not_runnable(app_module) -> None:
@@ -88,22 +88,6 @@ def test_deleted_agent_is_not_runnable(app_module) -> None:
         response = client.post("/api/chat", json={"message": "hi", "agent_id": "gone-agent"})
 
     assert response.status_code == 404
-
-
-def test_purge_writes_seed_deletion_marker_only_when_entry_removed(tmp_path: Path) -> None:
-    """标记必须在条目移除后写：没有标记，下次 bootstrap 会照仓库把 seed 填回来，删除就不粘。"""
-
-    data_dir = tmp_path / "data"
-    catalog = runtime_seed_catalog_dir(data_dir)
-    entry = catalog / "data" / "business-agents" / "seeded-agent" / "workspace"
-    entry.mkdir(parents=True)
-    (entry / "CLAUDE.md").write_text("seed\n", encoding="utf-8")
-
-    result = purge_business_agent_storage(data_dir=data_dir, agent_id="seeded-agent")
-
-    assert result.seed_removed is True
-    assert not entry.parent.exists()
-    assert seed_deletion_marker_path("seeded-agent", seed_root=catalog).exists()
 
 
 def test_purge_rejects_path_traversal_agent_id(tmp_path: Path) -> None:

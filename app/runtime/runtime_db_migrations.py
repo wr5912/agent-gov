@@ -129,7 +129,10 @@ def migrate_0011_change_set_release_agent_id(connection: Connection) -> None:
 
 
 def migrate_0012_eval_run_agent_id(connection: Connection) -> None:
-    if "agent_id" not in _table_columns(connection, "eval_runs"):
+    columns = _table_columns(connection, "eval_runs")
+    if not columns:
+        return
+    if "agent_id" not in columns:
         connection.exec_driver_sql("ALTER TABLE eval_runs ADD COLUMN agent_id VARCHAR(128)")
     connection.exec_driver_sql("UPDATE eval_runs SET agent_id = 'main-agent' WHERE agent_id IS NULL")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_runs_agent_id ON eval_runs (agent_id)")
@@ -490,104 +493,6 @@ def migrate_0028_remove_improvement_automation_policy(connection: Connection) ->
     connection.exec_driver_sql("DROP TABLE IF EXISTS automation_policies")
 
 
-_IMPROVEMENT_STAGE_REPAIR_SQL = """
-UPDATE improvement_items
-SET improvement_stage = CASE
-        WHEN __RELEASE_CLAUSE__ THEN 'release'
-        WHEN EXISTS (
-            SELECT 1 FROM regression_assessments AS r
-            WHERE r.improvement_id = improvement_items.improvement_id
-              AND TRIM(COALESCE(r.summary, '')) != ''
-              AND EXISTS (
-                SELECT 1 FROM json_each(COALESCE(r.cases_json, '[]')) AS regression_case
-                WHERE TRIM(COALESCE(json_extract(regression_case.value, '$.prompt'), '')) != ''
-              )
-        ) AND EXISTS (
-            SELECT 1 FROM execution_records AS e
-            WHERE e.improvement_id = improvement_items.improvement_id
-              AND TRIM(COALESCE(e.summary, '')) != ''
-              AND (
-                (
-                  TRIM(COALESCE(e.change_set_id, '')) != ''
-                  AND TRIM(COALESCE(e.applied_agent_version_id, '')) != ''
-                  AND COALESCE(e.applied_diff_json, '{}') NOT IN ('{}', 'null', '')
-                )
-                OR (
-                  TRIM(COALESCE(e.agent_version, '')) != ''
-                  AND COALESCE(e.changes_applied_json, '[]') NOT IN ('[]', 'null', '')
-                )
-              )
-        ) THEN 'regression'
-        WHEN EXISTS (
-            SELECT 1 FROM execution_records AS e
-            WHERE e.improvement_id = improvement_items.improvement_id
-              AND TRIM(COALESCE(e.summary, '')) != ''
-              AND (
-                (
-                  TRIM(COALESCE(e.change_set_id, '')) != ''
-                  AND TRIM(COALESCE(e.applied_agent_version_id, '')) != ''
-                  AND COALESCE(e.applied_diff_json, '{}') NOT IN ('{}', 'null', '')
-                )
-                OR (
-                  TRIM(COALESCE(e.agent_version, '')) != ''
-                  AND COALESCE(e.changes_applied_json, '[]') NOT IN ('[]', 'null', '')
-                )
-              )
-        ) THEN 'execution'
-        WHEN EXISTS (
-            SELECT 1 FROM optimization_plans AS p
-            WHERE p.improvement_id = improvement_items.improvement_id
-              AND TRIM(COALESCE(p.summary, '')) != ''
-              AND EXISTS (
-                SELECT 1 FROM json_each(COALESCE(p.changes_json, '[]')) AS plan_change
-                WHERE TRIM(COALESCE(json_extract(plan_change.value, '$.target'), '')) != ''
-                  AND TRIM(COALESCE(json_extract(plan_change.value, '$.change'), '')) != ''
-              )
-        ) THEN 'optimization'
-        WHEN EXISTS (
-            SELECT 1 FROM attributions AS a
-            WHERE a.improvement_id = improvement_items.improvement_id
-              AND TRIM(COALESCE(a.summary, '')) != ''
-        ) THEN 'attribution'
-        WHEN EXISTS (
-            SELECT 1 FROM normalized_feedbacks AS n
-            WHERE n.improvement_id = improvement_items.improvement_id
-              AND TRIM(COALESCE(n.problem, '')) != ''
-        ) THEN 'triage'
-        ELSE 'feedback_intake'
-    END,
-    improvement_status = CASE
-        WHEN improvement_status = 'archived' THEN 'archived'
-        WHEN __RELEASE_CLAUSE__ THEN 'done'
-        ELSE 'active'
-    END
-"""
-
-
-def migrate_0033_repair_improvement_stages_from_artifacts(connection: Connection) -> None:
-    """Repair stage/status shells left by the removed stage-only automation."""
-    required_tables = {
-        "improvement_items",
-        "normalized_feedbacks",
-        "attributions",
-        "optimization_plans",
-        "execution_records",
-        "regression_assessments",
-    }
-    if any(not _table_columns(connection, table) for table in required_tables):
-        return
-    release_clause = "0"
-    if {"status", "payload_json"}.issubset(_table_columns(connection, "agent_releases")):
-        release_clause = """
-            EXISTS (
-                SELECT 1 FROM agent_releases AS rel
-                WHERE rel.status = 'published'
-                  AND json_extract(rel.payload_json, '$.source_improvement_id') = improvement_items.improvement_id
-            )
-        """
-    connection.exec_driver_sql(_IMPROVEMENT_STAGE_REPAIR_SQL.replace("__RELEASE_CLAUSE__", release_clause))
-
-
 def migrate_0030_improvement_execution_intents(connection: Connection) -> None:
     """补齐执行 intent/fencing，并把 improvement link 收口为幂等身份引用。"""
     execution_columns = _table_columns(connection, "execution_records")
@@ -737,9 +642,8 @@ def migrate_0035_session_active_run_lease(connection: Connection) -> None:
         if session_columns and column_name not in session_columns:
             connection.exec_driver_sql(f"ALTER TABLE sessions ADD COLUMN {column_name} {ddl}")
     if session_columns:
-        connection.exec_driver_sql(
-            "CREATE INDEX IF NOT EXISTS ix_sessions_active_run_id ON sessions (active_run_id)"
-        )
+        connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_sessions_active_run_id ON sessions (active_run_id)")
+
 
 def migrate_0029_agent_release_tag_claims(connection: Connection) -> None:
     """Persist one release-tag owner per Agent while preserving conflicting legacy rows for audit."""

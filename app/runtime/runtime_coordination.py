@@ -13,7 +13,7 @@ from typing import Any, Protocol
 from app.runtime.advisory_lock import AdvisoryLockLease
 from app.runtime.runtime_initialization import prepare_runtime, runtime_root_for_data_dir, validate_runtime_policy
 
-RECEIPT_CONTRACT = "agent-gov-runtime-contract/v3"
+RECEIPT_CONTRACT = "agent-gov-runtime-contract/v4"
 
 
 class CoordinationSettings(Protocol):
@@ -88,7 +88,7 @@ def _contract_source_files(repo_root: Path) -> list[Path]:
 
 def desired_runtime_digest(
     *,
-    template_dir: Path,
+    bootstrap_dir: Path,
     runtime_mode: str,
     runtime_root: Path,
     env: Mapping[str, str],
@@ -99,9 +99,9 @@ def desired_runtime_digest(
     hasher.update(RECEIPT_CONTRACT.encode("utf-8"))
     for path in _contract_source_files(repo_root):
         _hash_file(hasher, root=repo_root, path=path)
-    if template_dir.is_dir():
-        for path in sorted(item for item in template_dir.rglob("*") if item.is_file()):
-            _hash_file(hasher, root=template_dir, path=path)
+    if bootstrap_dir.is_dir():
+        for path in sorted(item for item in bootstrap_dir.rglob("*") if item.is_file()):
+            _hash_file(hasher, root=bootstrap_dir, path=path)
     hasher.update(runtime_mode.encode("utf-8"))
     hasher.update(b"\0runtime_root=")
     hasher.update(runtime_root.resolve().as_posix().encode("utf-8"))
@@ -164,18 +164,18 @@ def read_runtime_receipt(paths: RuntimeCoordinationPaths) -> RuntimeReceipt | No
 def runtime_contract_status(
     *,
     settings: CoordinationSettings,
-    template_dir: Path,
+    bootstrap_dir: Path,
     env: Mapping[str, str],
 ) -> RuntimeContractStatus:
     paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
     runtime_root = runtime_root_for_data_dir(settings.data_dir)
     desired = desired_runtime_digest(
-        template_dir=template_dir,
+        bootstrap_dir=bootstrap_dir,
         runtime_mode=settings.runtime_volume_mode,
         runtime_root=runtime_root,
         env=env,
     )
-    compliant, output_digest, _ = validate_runtime_policy(settings=settings, template_dir=template_dir, env=env)
+    compliant, output_digest, _ = validate_runtime_policy(settings=settings, env=env)
     if not compliant:
         return RuntimeContractStatus(False, desired, output_digest, "workspace_validation_failed", read_runtime_receipt(paths))
     receipt = read_runtime_receipt(paths)
@@ -195,7 +195,7 @@ def runtime_contract_status(
 def prepare_runtime_contract(
     *,
     settings: CoordinationSettings,
-    template_dir: Path,
+    bootstrap_dir: Path,
     env: Mapping[str, str],
     lease: AdvisoryLockLease,
 ) -> RuntimeReceipt:
@@ -206,14 +206,14 @@ def prepare_runtime_contract(
     volume_id = _ensure_volume_id(paths)
     prepare_runtime(
         settings=settings,
-        template_dir=template_dir,
+        bootstrap_dir=bootstrap_dir,
         env=env,
         coordination_dir=paths.root,
     )
     receipt = RuntimeReceipt(
         contract=RECEIPT_CONTRACT,
         desired_digest=desired_runtime_digest(
-            template_dir=template_dir,
+            bootstrap_dir=bootstrap_dir,
             runtime_mode=settings.runtime_volume_mode,
             runtime_root=runtime_root_for_data_dir(settings.data_dir),
             env=env,

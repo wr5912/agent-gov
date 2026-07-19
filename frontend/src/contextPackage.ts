@@ -1,6 +1,6 @@
 // 四阶段改进治理 §10 ContextPackage：四种上下文类型（问题摘要 / AI 分析 / Playwright 复现 / 完整 JSON）。
 // 缺失归因、证据、Trace 或版本时输出 missing reason，不用空对象冒充完整上下文。
-import type { Asset, TestDataset } from "./api/assets";
+import type { Asset } from "./api/assets";
 import type {
   Attribution,
   ExecutionRecord,
@@ -9,6 +9,7 @@ import type {
   ImprovementLink,
   NormalizedFeedback,
   OptimizationPlan,
+  RegressionTestDesign,
 } from "./api/improvements";
 import { stageLabel } from "./improvementStage";
 
@@ -25,7 +26,7 @@ export interface ContextInputs {
   optimizationPlan?: OptimizationPlan | null;
   execution?: ExecutionRecord | null;
   assets?: Asset[];
-  testDataset?: TestDataset | null;
+  regressionTestDesign?: RegressionTestDesign | null;
   model?: string;
   langfuseUrl?: string;
 }
@@ -67,7 +68,9 @@ function missingReasons(inputs: ContextInputs): string[] {
   if (!inputs.optimizationPlan) reasons.push("optimization_plan 缺失：尚未生成或读取优化方案。");
   if (!inputs.execution) reasons.push("execution 缺失：尚未生成或读取执行记录。");
   if (!inputs.assets?.length) reasons.push("assets 缺失：尚未沉淀本事项资产。");
-  if (!inputs.testDataset) reasons.push("test_dataset_ref 缺失：尚未把当前测试集固化为 typed TestDataset。");
+  if (!inputs.regressionTestDesign?.generated_test_files?.length) {
+    reasons.push("workspace_tests 缺失：尚未确认待发布变更并写入 tests/test_*.py。");
+  }
   return reasons;
 }
 
@@ -134,7 +137,7 @@ function aiAnalysisContext(inputs: ContextInputs): string {
     execution ? `执行：${execution.summary}；版本：${execution.agent_version || "（缺失）"}` : "执行：（缺失）",
     ``,
     `## 关联闭环对象`,
-    links.length ? links.map((l) => `- ${l.kind}: ${l.ref_id}`).join("\n") : "- （尚未关联归因/方案/评估/变更集/批次）",
+    links.length ? links.map((l) => `- ${l.kind}: ${l.ref_id}`).join("\n") : "- （尚未关联归因/方案/评估/待发布变更/批次）",
     ``,
     `## 归属`,
     `- 业务 Agent：${agentName}（${item.agent_id}）`,
@@ -168,7 +171,18 @@ function playwrightReproduction(inputs: ContextInputs): string {
 }
 
 function fullJson(inputs: ContextInputs): string {
-  const { item, agentName, links, normalizedFeedback, attribution, feedbacks, optimizationPlan, execution, assets, testDataset } = inputs;
+  const {
+    item,
+    agentName,
+    links,
+    normalizedFeedback,
+    attribution,
+    feedbacks,
+    optimizationPlan,
+    execution,
+    assets,
+    regressionTestDesign,
+  } = inputs;
   const runIds = [...new Set((feedbacks ?? []).map((f) => f.run_id).filter(Boolean))];
   const sessionIds = [...new Set((feedbacks ?? []).map((f) => f.session_id).filter(Boolean))];
   const version = inferredAgentVersion(inputs);
@@ -208,20 +222,18 @@ function fullJson(inputs: ContextInputs): string {
         session_ids: sessionIds,
         langfuse_url: inputs.langfuseUrl || "",
       } : { missing: true, reason: "来源反馈没有 run_id，无法定位运行 Trace。" },
-      test_dataset_ref: testDataset ? {
-        dataset_id: testDataset.dataset_id,
-        agent_id: testDataset.agent_id,
-        owner_kind: testDataset.owner_kind,
-        owner_id: testDataset.owner_id,
-        source_improvement_id: testDataset.source_improvement_id,
-        lifecycle_state: testDataset.lifecycle_state,
-        revision: testDataset.revision,
-        name: testDataset.name,
-        scope: testDataset.scope,
-        quality_tags: testDataset.quality_tags,
-        provenance: testDataset.provenance,
-        cases: testDataset.cases,
-      } : { missing: true, reason: "尚未把当前测试集固化为 typed TestDataset。" },
+      regression_test_design: regressionTestDesign ?? {
+        missing: true,
+        reason: "尚未生成回归测试代码候选。",
+      },
+      workspace_tests: regressionTestDesign?.generated_test_files?.length ? {
+        candidate_commit_sha: regressionTestDesign.candidate_commit_sha,
+        files: regressionTestDesign.generated_test_files ?? [],
+        test_run: regressionTestDesign.test_run,
+      } : {
+        missing: true,
+        reason: "尚未确认待发布变更并写入 tests/test_*.py。",
+      },
       evidence: attribution?.evidence?.length ? attribution.evidence : { missing: true, reason: "归因记录没有证据条目。" },
       assets: assets?.length ? assets.map((asset) => ({
         asset_id: asset.asset_id,

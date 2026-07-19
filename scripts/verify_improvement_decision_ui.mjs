@@ -95,7 +95,7 @@ async function putJson(path, body) {
 
 async function seedRealData() {
   const agents = await apiJson("/api/agent-registry").catch(() => []);
-  const agentId = agents.find((agent) => agent.status === "active")?.agent_id || agents[0]?.agent_id || "main-agent";
+  const agentId = agents.find((agent) => agent.status === "active")?.agent_id || agents[0]?.agent_id || "security-operations-expert";
   const stamp = `decision-improvement-${Date.now().toString(36)}`;
   const item = await postJson("/api/improvements", {
     agent_id: agentId,
@@ -149,7 +149,7 @@ function mockState() {
     execution: {
       execution_id: "exec-legacy",
       improvement_id: target.improvement_id,
-      summary: "人工记录：已记录优化方案执行结果；未生成候选变更集。",
+      summary: "人工记录：已记录优化方案执行结果；未生成待发布变更。",
       changes_applied: ["prompt：补充时间窗口校验"],
       agent_version: "",
       status: "draft",
@@ -160,7 +160,7 @@ function mockState() {
       created_at: ts,
       updated_at: ts,
     },
-    regressionAssessment: null,
+    regressionTestDesign: null,
   };
 }
 
@@ -216,6 +216,9 @@ async function installMockRoutes(page, state) {
         changes: [{ target: "prompt", change: `补充事件时间与告警时间一致性校验（第 ${state.optimizationGenerateCount} 版）` }],
         status: "draft",
         generated_by: "governor",
+        generated_test_files: [],
+        candidate_commit_sha: "",
+        test_run: null,
         created_at: ts,
         updated_at: ts,
       };
@@ -235,7 +238,7 @@ async function installMockRoutes(page, state) {
       state.execution = {
         execution_id: "exec-1",
         improvement_id: state.target.improvement_id,
-        summary: "已在隔离变更集执行优化",
+        summary: "已在隔离的待发布变更中执行优化",
         changes_applied: ["补充时间窗口校验"],
         agent_version: "ver-cand",
         status: "draft",
@@ -251,7 +254,7 @@ async function installMockRoutes(page, state) {
     }
     if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) {
       state.execution = {
-        ...(state.execution || { execution_id: "exec-1", improvement_id: state.target.improvement_id, summary: "已在隔离变更集执行优化", changes_applied: ["补充时间窗口校验"], agent_version: "ver-cand", generated_by: "governor", created_at: ts }),
+        ...(state.execution || { execution_id: "exec-1", improvement_id: state.target.improvement_id, summary: "已在隔离的待发布变更中执行优化", changes_applied: ["补充时间窗口校验"], agent_version: "ver-cand", generated_by: "governor", created_at: ts }),
         status: "confirmed",
         updated_at: ts,
       };
@@ -274,22 +277,27 @@ async function installMockRoutes(page, state) {
         reason: null,
       });
     }
-    if (/^\/api\/improvements\/[^/]+\/regression-assessment\/generate$/.test(path)) {
-      state.regressionAssessment = {
-        regression_assessment_id: "reg-1",
+    if (/^\/api\/improvements\/[^/]+\/regression-test-design\/generate$/.test(path)) {
+      state.regressionTestDesign = {
+        regression_test_design_id: "reg-1",
         improvement_id: state.target.improvement_id,
-        summary: "生成覆盖时间窗口误判的回归用例候选。",
-        cases: [{ prompt: "校验事件时间与告警窗口不一致时不应误报", expected_behavior: "解释时间窗口差异并避免错误告警", checkpoints: ["核对事件时间", "核对告警窗口"] }],
-        suggested_gate_thresholds: { "通过率": "≥95%", "新增严重问题": "0" },
+        summary: "生成覆盖时间窗口误判的 pytest 代码候选。",
+        tests: [{
+          target_path: "tests/test_feedback_imp_decision_01.py",
+          test_code: "def test_time_window(agent):\n    result = agent.run('校验事件时间')\n    assert '时间窗口' in result.text\n",
+          test_intent: "验证时间窗口误判修复",
+          assertion_rationale: "回答必须明确时间窗口边界",
+        }],
+        no_action_reason: "",
         status: "draft",
         generated_by: "governor",
         created_at: ts,
         updated_at: ts,
       };
       state.target.improvement_stage = "regression";
-      return json(route, state.regressionAssessment);
+      return json(route, state.regressionTestDesign);
     }
-    if (/^\/api\/improvements\/[^/]+\/regression-assessment$/.test(path)) return state.regressionAssessment ? json(route, state.regressionAssessment) : json(route, { detail: "not found" }, 404);
+    if (/^\/api\/improvements\/[^/]+\/regression-test-design$/.test(path)) return state.regressionTestDesign ? json(route, state.regressionTestDesign) : json(route, { detail: "not found" }, 404);
     if (/^\/api\/improvements\/[^/]+\/similar$/.test(path) || /^\/api\/improvements\/[^/]+\/links$/.test(path) || path === "/api/assets") return json(route, []);
     if (/^\/api\/improvements\/[^/]+$/.test(path)) return json(route, state.target);
     if (/^\/api\/improvements\/[^/]+\/lifecycle$/.test(path)) {
@@ -298,7 +306,7 @@ async function installMockRoutes(page, state) {
       state.target.updated_at = ts;
       return json(route, state.target);
     }
-    if (["/api/agents", "/api/skills", "/api/sessions", "/api/agent-releases", "/api/agent-change-sets", "/api/test-datasets"].includes(path)) return json(route, []);
+    if (["/api/agents", "/api/skills", "/api/sessions", "/api/agent-releases", "/api/agent-change-sets", "/api/agent-test-runs"].includes(path)) return json(route, []);
     if (path === "/api/config") return json(route, { mappings: [] });
     if (path === "/api/agent-repository") return json(route, { status: "active", dirty: false, changed_files: [], file_diffs: [] });
     if (path === "/api/agent-repository/current") return json(route, { agent_version_id: "v0", commit_sha: "v0", created_at: ts, reason: "current" });
@@ -440,7 +448,7 @@ async function main() {
       if (cardExecutionEmpty !== 0) throw new Error(`optimization plan card should not render execution empty state, got ${cardExecutionEmpty}`);
       const unboundExecutionNote = await assertVisible(page, "execution-unbound-note");
       const unboundExecutionText = await unboundExecutionNote.innerText();
-      if (!unboundExecutionText.includes("未绑定候选 Agent 版本/变更集")) throw new Error(`legacy execution record is not marked unbound: ${unboundExecutionText}`);
+      if (!unboundExecutionText.includes("未绑定待发布 Agent 版本/待发布变更")) throw new Error(`legacy execution record is not marked unbound: ${unboundExecutionText}`);
       const executionNodeState = await page.getByTestId("stage-local-record-node").filter({ hasText: "执行优化" }).first().getAttribute("data-state");
       if (executionNodeState !== "pending") throw new Error(`legacy execution record should not mark execute step done, got ${executionNodeState}`);
       await optimizationCard.getByRole("button", { name: "查看详情" }).click();
@@ -503,15 +511,23 @@ async function main() {
       await page.getByTestId("stage-detail-drawer").getByLabel("关闭").click();
       await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 8000 });
 
-      const regressionResponse = page.waitForResponse((response) => response.url().includes("/regression-assessment/generate") && response.request().method() === "POST");
+      const regressionResponse = page.waitForResponse((response) => response.url().includes("/regression-test-design/generate") && response.request().method() === "POST");
       await page.getByTestId("current-decision-card").getByTestId("primary-action").click();
       const regressionResult = await regressionResponse;
       if (!regressionResult.ok()) throw new Error(`generate regression failed: ${regressionResult.status()}`);
-      await page.getByTestId("test-dataset-asset").waitFor({ timeout: 10_000 });
-      const testAssetCard = page.getByTestId("test-dataset-asset").first();
-      const assetGenerateButtons = await testAssetCard.getByTestId("generate-regression").count();
-      if (assetGenerateButtons !== 0) throw new Error(`test asset card still contains duplicate regression generate button count=${assetGenerateButtons}`);
-      await assertVisible(page, "regression-case-coverage");
+      await page.getByTestId("regression-test-design").waitFor({ timeout: 10_000 });
+      const workspaceFilesCard = await assertVisible(page, "workspace-test-files");
+      const designCard = page.getByTestId("regression-test-design").first();
+      const duplicateGenerateButtons = await page.getByTestId("stage-work-area").getByTestId("generate-regression").count();
+      if (duplicateGenerateButtons !== 0) throw new Error(`test design stage still contains duplicate regression generate button count=${duplicateGenerateButtons}`);
+      const confirmTests = await assertVisible(page, "confirm-regression-tests");
+      if (await confirmTests.isDisabled()) throw new Error("generated regression test design cannot be confirmed into Workspace pytest files");
+      const designText = await designCard.innerText();
+      const workspaceFilesText = await workspaceFilesCard.innerText();
+      if (!workspaceFilesText.includes("尚未生成") || designText.includes("TestDataset")) {
+        throw new Error(`unexpected regression test design state: ${designText} / ${workspaceFilesText}`);
+      }
+      await assertVisible(page, "regression-test-code-coverage");
     }
 
     await browser.close();

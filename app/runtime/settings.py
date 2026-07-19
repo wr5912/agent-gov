@@ -70,6 +70,7 @@ class RuntimeSettingsLogFields(TypedDict):
     governance_agent_timeout_seconds: int
     dspy_output_formatter_timeout_seconds: int
     agent_test_run_timeout_seconds: int
+    prompt_suggestion_source: Literal["backend", "claude_native"]
     claude_web_hitl_enabled: bool
     hitl_timeout_seconds: int
     api_host: str
@@ -405,6 +406,7 @@ def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFiel
         "governance_agent_timeout_seconds": settings.governance_agent_timeout_seconds,
         "dspy_output_formatter_timeout_seconds": settings.dspy_output_formatter_timeout_seconds,
         "agent_test_run_timeout_seconds": settings.agent_test_run_timeout_seconds,
+        "prompt_suggestion_source": ("backend" if settings.enable_backend_prompt_suggestion else "claude_native"),
         "claude_web_hitl_enabled": settings.enable_claude_web_hitl,
         "hitl_timeout_seconds": settings.hitl_timeout_seconds,
         "api_host": settings.api_host,

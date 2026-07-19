@@ -5,6 +5,7 @@ from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.settings import (
     AppSettings,
     runtime_settings_log_fields,
+    runtime_settings_log_message,
     settings_env_file_for_mode,
     validate_hitl_single_api_process,
 )
@@ -181,6 +182,7 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "governance_agent_timeout_seconds": 300,
         "dspy_output_formatter_timeout_seconds": 300,
         "agent_test_run_timeout_seconds": 1800,
+        "prompt_suggestion_source": "backend",
         "claude_web_hitl_enabled": False,
         "hitl_timeout_seconds": 300,
         "api_host": "0.0.0.0",
@@ -192,6 +194,19 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
     }
     assert fields["provider_api_key_configured"] is False
     assert not any("secret" in name.lower() for name in fields)
+
+
+def test_runtime_settings_log_exposes_prompt_suggestion_source(monkeypatch):
+    for key in _PROFILE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("ENABLE_BACKEND_PROMPT_SUGGESTION", raising=False)
+
+    native = AppSettings(_env_file=None)
+    backend = AppSettings(_env_file=None, ENABLE_BACKEND_PROMPT_SUGGESTION=True)
+
+    assert runtime_settings_log_fields(native)["prompt_suggestion_source"] == "claude_native"
+    assert runtime_settings_log_fields(backend)["prompt_suggestion_source"] == "backend"
+    assert "prompt_suggestion_source=backend" in runtime_settings_log_message(backend)
 
 
 def test_governance_and_hitl_timeout_defaults_and_overrides(monkeypatch):

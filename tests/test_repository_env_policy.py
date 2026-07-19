@@ -15,9 +15,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 _LOCAL_DEBUG_PORT_FAMILY_RE = re.compile(r"(?<![#A-Za-z0-9_])4\d{4}(?![A-Za-z0-9_])|" + "4" + r"[xX]{4}")
 _PORT_POLICY_VENDOR_PREFIXES = ("app/static/docs/",)
 RUNTIME_ENV_KEYS = (
+    "BACKEND_PROMPT_SUGGESTION_COUNT",
+    "BACKEND_PROMPT_SUGGESTION_MAX_TOKENS",
+    "BACKEND_PROMPT_SUGGESTION_MODEL",
     "CLAUDE_HOME",
     "DATA_DIR",
     "DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS",
+    "ENABLE_BACKEND_PROMPT_SUGGESTION",
     "GOVERNANCE_AGENT_TIMEOUT_SECONDS",
     "AGENT_TEST_RUN_TIMEOUT_SECONDS",
     "HITL_TIMEOUT_SECONDS",
@@ -322,6 +326,24 @@ def test_official_env_examples_define_mode_specific_log_level_defaults() -> None
     assert "LOG_LEVEL=debug" in local_debug_example
     assert "AGENT_JOB_WORKER_LOG_LEVEL" not in container_example
     assert "AGENT_JOB_WORKER_LOG_LEVEL" not in local_debug_example
+
+
+def test_official_env_examples_explicitly_enable_backend_prompt_suggestions() -> None:
+    expected = {
+        "ENABLE_BACKEND_PROMPT_SUGGESTION": "true",
+        "BACKEND_PROMPT_SUGGESTION_COUNT": "3",
+        "BACKEND_PROMPT_SUGGESTION_MAX_TOKENS": "1024",
+    }
+    for env_file in ("docker/.env.example", "docker/.env.local-debug.example"):
+        values = {}
+        for line in (REPO_ROOT / env_file).read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            values[key] = value
+
+        assert {key: values.get(key) for key in expected} == expected
 
 
 def test_official_env_examples_do_not_define_claude_config_takeover_keys() -> None:

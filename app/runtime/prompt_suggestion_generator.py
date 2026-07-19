@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -31,6 +32,8 @@ import litellm  # noqa: E402
 
 from .model_provider import ModelProviderRouter  # noqa: E402
 from .settings import AppSettings  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 _MAX_ANSWER_CHARS = 2000
 _MAX_SUGGESTION_CHARS = 60
@@ -84,6 +87,7 @@ class PromptSuggestionGenerator:
         try:
             model = self.settings.backend_prompt_suggestion_model or self.settings.agent_model
             if not model:
+                logger.warning("event=prompt_suggestion.generate status=skipped reason=model_not_configured")
                 return []
             kwargs: dict[str, Any] = dict(self.provider_router.formatter_kwargs())
             content = (
@@ -99,15 +103,35 @@ class PromptSuggestionGenerator:
                 ],
                 # 推理模型先吐思考再吐正文,max_tokens 要留够思考预算(见 settings 注释);
                 # 条数越多正文越长,下限随 N 抬。
-                max_tokens=max(
-                    self.settings.backend_prompt_suggestion_max_tokens, 512 + 64 * count
-                ),
+                max_tokens=max(self.settings.backend_prompt_suggestion_max_tokens, 512 + 64 * count),
                 temperature=0.4,
                 **kwargs,
             )
-            return _clean_many(response["choices"][0]["message"]["content"] or "", count)
-        except Exception:
+            choice = response["choices"][0]
+            message = choice["message"]
+            raw_content = message["content"] or ""
+            suggestions = _clean_many(raw_content, count)
+            if suggestions:
+                logger.info(
+                    "event=prompt_suggestion.generate status=completed count=%d",
+                    len(suggestions),
+                )
+            else:
+                reasoning = message.get("reasoning_content") or ""
+                logger.info(
+                    "event=prompt_suggestion.generate status=empty finish_reason=%s content_chars=%d reasoning_chars=%d",
+                    choice.get("finish_reason"),
+                    len(raw_content),
+                    len(reasoning),
+                )
+            return suggestions
+        except Exception as exc:
             # 受控特例的硬边界:建议是可选增强,任何失败都不得影响主 Run。
+            # 不记录异常正文，避免 provider URL、header 或响应片段进入通用服务日志。
+            logger.warning(
+                "event=prompt_suggestion.generate status=failed error_type=%s",
+                exc.__class__.__name__,
+            )
             return []
 
     def _count(self) -> int:
@@ -158,9 +182,7 @@ def _clean(raw: str) -> str | None:
     text = text.splitlines()[0].strip()
     # 顺序要紧:**先去前缀再去引号**。反过来的话,`建议:"跑测试"` 的左引号会被前缀挡住、
     # strip 不到,留下 `"跑测试`。
-    text = re.sub(
-        r"^(建议|下一句|next|suggestion)\s*[:：]\s*", "", text, flags=re.IGNORECASE
-    ).strip()
+    text = re.sub(r"^(建议|下一句|next|suggestion)\s*[:：]\s*", "", text, flags=re.IGNORECASE).strip()
     text = text.strip("\"'“”‘’「」").strip()
     if not text:
         return None

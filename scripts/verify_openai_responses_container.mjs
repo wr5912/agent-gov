@@ -21,6 +21,8 @@ const browserApiBase = normalizeBase(process.env.RUNTIME_BROWSER_API_BASE || doc
 const apiOrigins = new Set([new URL(apiBase).origin, new URL(browserApiBase).origin]);
 const apiKey = process.env.RUNTIME_API_KEY || dockerEnv.FRONTEND_RUNTIME_API_KEY || dockerEnv.API_KEY || "";
 const liveTimeoutMs = Number(process.env.OPENAI_RESPONSES_E2E_TIMEOUT_MS || 300000);
+const promptSuggestionTimeoutMs = Math.max(1000, Number(process.env.PROMPT_SUGGESTION_E2E_TIMEOUT_MS || 30000));
+const promptSuggestionMaxAttempts = Math.max(1, Number(process.env.PROMPT_SUGGESTION_E2E_ATTEMPTS || 2));
 const screenshotDir = process.env.VERIFY_SCREENSHOT_DIR || mkdtempSync(join(tmpdir(), "agentgov-openai-responses-"));
 
 function normalizeBase(value) {
@@ -179,7 +181,9 @@ async function main() {
       const url = new URL(request.url());
       return apiOrigins.has(url.origin) && url.pathname === "/v1/responses" && request.method() === "POST";
     }, { timeout: 30000 });
-    await page.getByTestId("chat-composer-input").fill("请只回复一行：AGENTGOV_OPENAI_E2E_OK。不要使用工具。");
+    await page.getByTestId("chat-composer-input").fill(
+      "请只回复一行：AGENTGOV_OPENAI_E2E_OK。不要使用工具；我下一步会继续询问你的核心能力。",
+    );
     await page.getByTestId("chat-send").click();
     const runRequest = await requestPromise;
     const runBody = JSON.parse(runRequest.postData() || "{}");
@@ -200,6 +204,48 @@ async function main() {
       assistantText.includes("AGENTGOV_OPENAI_E2E_OK"),
       `assistant response did not contain the requested live-model sentinel: ${assistantText.slice(0, 300)}`,
     );
+
+    const promptSuggestion = page.getByTestId("prompt-suggestion");
+    let promptSuggestionAttempt = 1;
+    while (promptSuggestionAttempt <= promptSuggestionMaxAttempts) {
+      try {
+        await promptSuggestion.waitFor({ timeout: promptSuggestionTimeoutMs });
+        break;
+      } catch (error) {
+        if (promptSuggestionAttempt >= promptSuggestionMaxAttempts) throw error;
+        promptSuggestionAttempt += 1;
+        const actionRowsBeforeRetry = await page.getByTestId("message-actions").count();
+        await page.getByTestId("chat-composer-input").fill(
+          "请只回复：AGENTGOV_PROMPT_SUGGESTION_RETRY_OK。之后我会继续询问告警研判步骤。",
+        );
+        await page.getByTestId("chat-send").click();
+        await waitForCondition(
+          async () => await page.getByTestId("message-actions").count() > actionRowsBeforeRetry,
+          "Playground did not finish the prompt suggestion retry turn",
+          liveTimeoutMs,
+        );
+      }
+    }
+    const promptSuggestionItems = promptSuggestion.getByTestId("prompt-suggestion-item");
+    const promptSuggestionCount = await promptSuggestionItems.count();
+    assert(promptSuggestionCount > 0, "backend prompt suggestion frame rendered no candidate chips");
+    const firstPromptSuggestion = (await promptSuggestionItems.first().innerText()).trim();
+    assert(firstPromptSuggestion.length > 0, "backend prompt suggestion rendered an empty candidate");
+    const responseRequestsBeforeSuggestionClick = apiRequests.filter(
+      (item) => item.method === "POST" && item.path === "/v1/responses",
+    ).length;
+    await promptSuggestionItems.first().click();
+    await delay(100);
+    assert(
+      await page.getByTestId("chat-composer-input").inputValue() === firstPromptSuggestion,
+      "clicking a live prompt suggestion did not fill the composer",
+    );
+    assert(
+      apiRequests.filter((item) => item.method === "POST" && item.path === "/v1/responses").length
+        === responseRequestsBeforeSuggestionClick,
+      "clicking a live prompt suggestion unexpectedly sent a new request",
+    );
+    assert(await page.getByTestId("prompt-suggestion").count() === 0, "used prompt suggestion was not cleared");
 
     const sessionId = runBody.conversation.slice("conv_".length);
     const runs = await api(`/api/agent-runs?session_id=${encodeURIComponent(sessionId)}&limit=1`);
@@ -230,6 +276,9 @@ async function main() {
       browserApiBase,
       selectedAgent,
       sawResponses: paths.includes("POST /v1/responses"),
+      promptSuggestionCount,
+      promptSuggestionAttempt,
+      promptSuggestionFilledComposer: true,
       sawConversations: paths.includes("GET /v1/conversations"),
       legacyChatStreamCalls: paths.filter((path) => path === "POST /api/chat/stream").length,
       hostileBoundaryChecks: 8,

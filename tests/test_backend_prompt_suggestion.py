@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 import pytest
 from app.runtime import claude_runtime_stream as crs
@@ -93,17 +94,20 @@ def test_generator_clamps_bad_count_instead_of_crashing(tmp_path, monkeypatch, c
     assert 1 <= len(got) <= 5
 
 
-def test_generator_returns_empty_when_model_content_empty(tmp_path, monkeypatch) -> None:
+def test_generator_returns_empty_when_model_content_empty(tmp_path, monkeypatch, caplog) -> None:
     """推理模型思考吃光 token / 明确沉默 → content 空 → [](不 emit)。"""
     gen = PromptSuggestionGenerator(_settings(tmp_path))
     monkeypatch.setattr(
         "app.runtime.prompt_suggestion_generator.litellm.completion",
         _fake_completion(None),
     )
+    caplog.set_level(logging.INFO, logger="app.runtime.prompt_suggestion_generator")
     assert gen.generate("完成型请求", "已交付") == []
+    assert "event=prompt_suggestion.generate status=empty" in caplog.text
+    assert "content_chars=0" in caplog.text
 
 
-def test_generator_swallows_errors(tmp_path, monkeypatch) -> None:
+def test_generator_swallows_errors_and_logs_sanitized_warning(tmp_path, monkeypatch, caplog) -> None:
     """硬边界:LLM 调用抛异常也绝不冒泡,返回 []。"""
     gen = PromptSuggestionGenerator(_settings(tmp_path))
 
@@ -111,7 +115,10 @@ def test_generator_swallows_errors(tmp_path, monkeypatch) -> None:
         raise RuntimeError("provider down")
 
     monkeypatch.setattr("app.runtime.prompt_suggestion_generator.litellm.completion", _boom)
+    caplog.set_level(logging.WARNING, logger="app.runtime.prompt_suggestion_generator")
     assert gen.generate("x", "y") == []
+    assert "event=prompt_suggestion.generate status=failed error_type=RuntimeError" in caplog.text
+    assert "provider down" not in caplog.text
 
 
 def test_generator_skips_empty_conversation(tmp_path, monkeypatch) -> None:

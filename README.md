@@ -410,7 +410,7 @@ curl -N -X POST "$API_BASE/api/chat/stream" \
   -d '{"message":"你好，先介绍你的能力", "agent_id":"main-agent"}'
 ```
 
-流式业务对话会尽力生成下一轮建议（每轮**至多 N 条**候选，默认 3，由 `BACKEND_PROMPT_SUGGESTION_COUNT` 配置；模型给不满就少给，不凑数）。原生 `/api/chat/stream` 以 `event: prompt_suggestion` 输出 `{suggestion, suggestions, run_id, session_id}`；canonical `/v1/responses` 仅在 control 模式以 `event: agentgov.prompt_suggestion` 输出统一信封，`payload` 为 `{suggestion, suggestions, session_id}`，strict 模式不输出 AgentGov 扩展事件。`suggestions` 是完整候选列表；`suggestion` 恒等于 `suggestions[0]`，为向后兼容保留，只读它的客户端无需改动。整批候选在**一帧**内下发。建议可能因上游缓存或模型条件缺失而不生成；它只用于当前 Playground 输入辅助，不进入正式消息历史、SQLite run、response retrieve 或 SDK transcript。
+流式业务对话会尽力生成下一轮建议（每轮**至多 N 条**候选，默认 3，由 `BACKEND_PROMPT_SUGGESTION_COUNT` 配置；模型给不满就少给，不凑数）。`AppSettings` 默认关闭后端派生这一受控特例，官方 `docker/.env.example` 与 `docker/.env.local-debug.example` 通过 `ENABLE_BACKEND_PROMPT_SUGGESTION=true` 显式开启；关闭时回退 Claude Code 原生 `--prompt-suggestions`，但该路径可能受上游 feature gate 或 cache 状态抑制。启动日志的 `prompt_suggestion_source` 会显示当前使用 `backend` 还是 `claude_native`。原生 `/api/chat/stream` 以 `event: prompt_suggestion` 输出 `{suggestion, suggestions, run_id, session_id}`；canonical `/v1/responses` 仅在 control 模式以 `event: agentgov.prompt_suggestion` 输出统一信封，`payload` 为 `{suggestion, suggestions, session_id}`，strict 模式不输出 AgentGov 扩展事件。`suggestions` 是完整候选列表；`suggestion` 恒等于 `suggestions[0]`，为向后兼容保留，只读它的客户端无需改动。整批候选在**一帧**内下发。建议生成失败或模型明确返回空时不影响正式回答，也不进入消息历史、SQLite run、response retrieve 或 SDK transcript；失败会记录不含异常正文的结构化 warning。
 
 ## OpenAI Compatible 接口
 

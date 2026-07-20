@@ -1,12 +1,15 @@
 agent:
-  name: 网络安全运营旗舰智能体
-  english_name: Security Operations Flagship Agent
-  version: 0.2.0
+  id: security-operations-expert
+  name: 网络安全运营专家智能体
+  english_name: Security Operations Expert Agent
+  version: 0.1.0
   language: zh-CN
   runtime: claude-code
   profile: security-operations-expert
-  # 原生 Web HITL 完全由 .claude/settings.json 的 permissions.ask 派生。
-  # 包被跨 ID 导入后仍按来源权限运行；业务 Agent 身份由导入 API 路径确定。
+  # 部署契约（被运行时读取+强制）：本 Agent 只连接 SOC 只读 MCP scope，
+  # 只负责筛选、生成或修订完整剧本。唯一整本确认、SOC 保存/manual 执行（内含预检）和实例监控
+  # 均由 response-orchestration lifecycle worker 负责，不使用 Agent 原生 Web HITL。
+  requires_web_hitl: false
 
 capabilities:
   - alert_triage
@@ -20,31 +23,30 @@ capabilities:
   - disposition_planning
   - playbook_resolution
   - playbook_dry_run
-  - playbook_execution_submission
 
 paths:
-  # 以下路径均以 workspace 为基准，容器与本机调试使用同一份初始化源。
-  workspace: .
-  claude_home: ../claude-root/.claude
-  data_root: ../../..
-  sessions: ../../../sessions
-  transcripts: ../../../transcripts
-  uploads: ../../../uploads
-  outputs: ../../../outputs
-  agent_memory: ../../../agent-memory
+  workspace: /data/business-agents/security-operations-expert/workspace
+  claude_home: /data/business-agents/security-operations-expert/claude-root/.claude
+  data_root: /data
+  sessions: /data/sessions
+  transcripts: /data/transcripts
+  uploads: /data/uploads
+  outputs: /data/outputs
+  agent_memory: /data/agent-memory
 
 mcp:
   default_transport: http
+  # .mcp.json 的 sec-ops server 只挂载 security-operations-expert 只读分组。
   servers:
     sec-ops:
-      purpose: 统一 SOC 网关，聚合 SOC 处置与研判数据能力
-      risk: mixed
+      purpose: SOC 已有剧本、原子动作、资产和拓扑只读事实
+      risk: read-only
       tool_families:
         - name: mcp__sec-ops__soc_api__*
-          purpose: SOC 处置能力；create/manual 由 Claude 原生工具卡逐次确认，execute 及其他 mutation 禁止
-          risk: mixed
+          purpose: 只读剧本与原子动作目录；写操作不注册且由权限层拒绝
+          risk: read-only
         - name: mcp__sec-ops__threat_analysis__*
-          purpose: 研判数据只读（告警/事件/资产/分析结果等）
+          purpose: 研判数据只读
           risk: read-only
 
 skills:
@@ -59,17 +61,7 @@ subagents:
 operational_model:
   evidence_first: true
   distinguish_fact_inference_action: true
-  default_output_dir: ../../../outputs/security-operations-expert
-  native_confirmation_source: .claude/settings.json
-  temporary_submission:
-    - create_playbook
-    - submit_manual
-  published_submission:
-    - submit_manual
-  stop_after_nonempty_instance_id: true
-  poll_execution_result: false
-  evaluate_effect_in_submission: false
-  close_response_case: false
+  default_output_dir: /data/outputs/security-operations-expert
   investigation_scopes:
     - alert
     - incident
@@ -81,10 +73,40 @@ operational_model:
     - cloud
     - vulnerability
 
+approval_policy:
+  owner: response-orchestration
+  phase_field: phase
+  proposal_phase: proposal
+  whole_playbook_only: true
+  user_confirmation_count: 1
+  execution_owner: response-orchestration-lifecycle
+  agent_soc_side_effects: deny
+  native_web_hitl_role: disabled
+  native_web_hitl_tools: []
+  proposal_side_effects: deny
+  forbidden_tools:
+    - mcp__sec-ops__soc_api__create*
+    - mcp__sec-ops__soc_api__manual
+    - mcp__sec-ops__soc_api__execute
+    - mcp__sec-ops__soc_api__post_*
+    - mcp__sec-ops__soc_api__put_*
+    - mcp__sec-ops__soc_api__delete_*
+    - mcp__sec-ops__soc_api__patch_*
+    - mcp__sec-ops__soc_api__create_1
+    - mcp__sec-ops__soc_api__update*
+    - mcp__sec-ops__soc_api__delete*
+    - mcp__sec-ops__soc_api__upload*
+    - mcp__sec-ops__soc_api__cancel*
+    - mcp__sec-ops__soc_api__rollback
+  lifecycle_worker_owns_save_and_execute: true
+  poll_execution_result: false
+  evaluate_effect: false
+  close_response_case: false
+
 observability:
-  hook_audit_log: ../../../transcripts/claude-hook-audit.jsonl
-  output_dir: ../../../outputs/security-operations-expert
-  response_case_dir: ../../../outputs/security-operations-expert/response
+  hook_audit_log: /data/transcripts/claude-hook-audit.jsonl
+  output_dir: /data/outputs/security-operations-expert
+  response_case_dir: /data/outputs/security-operations-expert/response
 
 extension_points:
   add_mcp_server: .mcp.json
@@ -92,3 +114,15 @@ extension_points:
   add_subagent: .claude/agents/<agent-name>.md
   add_command: .claude/commands/<command-name>.md
   add_rule: .claude/rules/<rule-name>.md
+
+conversation_revision_policy:
+  owner: response-orchestration
+  mode: same-agent-conversation
+  context_tool: mcp__sec-ops__response_orchestration_agent_tools__get_case_revision_context_api_v1_agent_tools_cases_case_id_context_get
+  revision_tool: mcp__sec-ops__response_orchestration_agent_tools__request_case_revision_api_v1_agent_tools_cases_case_id_revisions_post
+  require_explicit_user_acceptance: true
+  stable_message_provenance_required: true
+  trusted_actor_source: ai-console-proof
+  creates_new_whole_playbook_approval: true
+  soc_preflight_mode: embedded-in-execution-api
+  soc_execution_side_effects: deny

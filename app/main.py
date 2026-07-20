@@ -54,7 +54,6 @@ from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.runtime_recovery import RUNTIME_RECOVERY_INTERVAL_SECONDS
-from app.runtime.sdk_session_migration import ensure_sdk_store_ready
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings, runtime_settings_log_message, validate_hitl_single_api_process
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
@@ -256,23 +255,8 @@ async def lifespan(_: FastAPI):
     cleanup_summary = agent_governance.reconcile_worktree_cleanups()
     if cleanup_summary["completed"] or cleanup_summary["failed"]:
         logger.info("worktree cleanup reconciliation: %s", cleanup_summary)
-    for session in session_store.list():
-        if not session.sdk_session_id or session.sdk_store_ready_at is not None or session.active_run_id:
-            continue
-        profile = profiles.get(session.agent_id or "")
-        if profile is None:
-            logger.error("legacy SDK session %s has no resolvable owning Agent", session.session_id)
-            continue
-        try:
-            await ensure_sdk_store_ready(
-                session_store,
-                session,
-                workspace_dir=profile.workspace_dir,
-                claude_config_dir=profile.claude_config_dir,
-            )
-        except Exception as exc:
-            # 迁移失败保持 fail closed；请求路径会返回明确的 runtime unavailable，绝不回退本地读取。
-            logger.error("legacy SDK session migration failed for %s: %s", session.session_id, exc.__class__.__name__)
+    # 历史 SDK transcript 由会话恢复/历史读取路径按需迁移并保持 fail-closed。
+    # 启动阶段不得同步扫描全部历史会话，否则运行库规模会直接阻塞 API readiness。
     # 原生 project settings 含 ask 的 Agent 在 HITL 关闭时执行能力不可用；运行时统一 fail-loud。
     if not settings.enable_claude_web_hitl:
         requiring = agents_requiring_web_hitl(profiles)

@@ -160,6 +160,22 @@ def test_lifespan_syncs_discovered_business_agent_registry(monkeypatch, tmp_path
     assert all(agent.category == "business" for agent in agents)
 
 
+def test_lifespan_leaves_legacy_sdk_session_for_demand_driven_migration(monkeypatch, tmp_path: Path) -> None:
+    """API readiness 不得被历史 transcript 全量迁移阻塞；恢复/历史读取路径负责按需迁移。"""
+    module = _load_app(monkeypatch, tmp_path)
+    session = module.session_store.get_or_create_owned("legacy-session", agent_id=DEFAULT_BUSINESS_AGENT_ID)
+    session.sdk_session_id = "00000000-0000-4000-8000-000000000001"
+    module.session_store.save(session)
+
+    with TestClient(module.app) as client:
+        assert client.get("/health/live").status_code == 200
+
+    persisted = module.session_store.get(session.session_id)
+    assert persisted is not None
+    assert persisted.sdk_store_ready_at is None
+    assert persisted.sdk_store_migration_error is None
+
+
 def test_list_agents_endpoint_returns_registered_business_agents(monkeypatch, tmp_path: Path) -> None:
     """AGV-004/007：注册的业务 Agent 定义可经 API 查询，作为外部接入与归属对象的可见入口。"""
     module = _load_app(monkeypatch, tmp_path)

@@ -3,11 +3,13 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOOK_SCRIPT = REPO_ROOT / ".codex/hooks/codex_governance_stop.py"
+HOOK_CONFIG = REPO_ROOT / ".codex/hooks.json"
 
 
 def _load_hook_module():
@@ -62,3 +64,31 @@ def test_stop_hook_success_is_silent(monkeypatch, capsys):
 
     assert module.main() == 0
     assert capsys.readouterr().out == ""
+
+
+def test_stop_hook_command_resolves_nearest_project_from_monorepo_subdirectory(tmp_path: Path) -> None:
+    outer_root = tmp_path / "outer"
+    project_root = outer_root / "ai" / "agent-gov"
+    session_cwd = project_root / "app" / "runtime"
+    hook_script = project_root / ".codex" / "hooks" / "codex_governance_stop.py"
+    hook_script.parent.mkdir(parents=True)
+    session_cwd.mkdir(parents=True)
+    hook_script.write_text("import sys\nprint(sys.stdin.read())\n", encoding="utf-8")
+    subprocess.run(["git", "init", str(outer_root)], check=True, capture_output=True)
+
+    config = json.loads(HOOK_CONFIG.read_text(encoding="utf-8"))
+    command = config["hooks"]["Stop"][0]["hooks"][0]["command"]
+    hook_input = '{"hook_event_name":"Stop","cwd":"nested"}'
+
+    result = subprocess.run(
+        command,
+        cwd=session_cwd,
+        input=hook_input,
+        shell=True,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == hook_input

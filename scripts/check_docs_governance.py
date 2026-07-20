@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from git_worktree_paths import resolve_project_tree_ref
+
 if __package__:
     from .test_quality.collection import collect_pytest_nodeids, validate_pytest_selector
 else:
@@ -382,12 +384,13 @@ def collect_docs_governance_issues(root: Path, base_ref: str | None) -> list[Doc
 
 
 def _resolve_base_ref(root: Path, requested: str | None) -> str | None:
-    if requested:
-        return requested
-    result = _git(root, ["rev-parse", "--verify", "HEAD"])
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
+    repository_ref = requested
+    if repository_ref is None:
+        result = _git(root, ["rev-parse", "--verify", "HEAD"])
+        if result.returncode != 0:
+            return None
+        repository_ref = result.stdout.strip()
+    return resolve_project_tree_ref(root, repository_ref)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

@@ -33,6 +33,7 @@ from codex_governance_typed_output import (
     is_typed_output_runner_function,
     typed_output_stage_erasure_issue_specs,
 )
+from git_worktree_paths import resolve_project_tree_ref
 
 DEFAULT_SOURCE_ROOTS = ("src", "app", "backend", "server", "frontend/src", "packages", "scripts")
 PYTHON_SUFFIXES = {".py"}
@@ -108,12 +109,13 @@ def _git(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _resolve_base_ref(root: Path, requested: str | None) -> str | None:
-    if requested:
-        return requested
-    result = _git(root, ["rev-parse", "--verify", "HEAD"])
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
+    repository_ref = requested
+    if repository_ref is None:
+        result = _git(root, ["rev-parse", "--verify", "HEAD"])
+        if result.returncode != 0:
+            return None
+        repository_ref = result.stdout.strip()
+    return resolve_project_tree_ref(root, repository_ref)
 
 
 def _git_show(root: Path, ref: str, rel_path: str) -> str | None:

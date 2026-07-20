@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && python3 \"$repo_root/.codex/hooks/codex_governance_stop.py\""
+            "command": "hook_root=\"$(pwd -P)\"; while [ \"$hook_root\" != \"/\" ] && [ ! -f \"$hook_root/.codex/hooks/codex_governance_stop.py\" ]; do hook_root=\"$(dirname \"$hook_root\")\"; done; test -f \"$hook_root/.codex/hooks/codex_governance_stop.py\" && exec python3 \"$hook_root/.codex/hooks/codex_governance_stop.py\""
           }
         ]
       }

@@ -21,6 +21,7 @@ import pytest
 from app.runtime import claude_runtime_stream as crs
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.prompt_suggestion_generator import PromptSuggestionGenerator, _clean, _clean_many
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
@@ -195,7 +196,11 @@ def _runtime(tmp_path, monkeypatch, *, enabled: bool):
 
     settings = _settings(tmp_path, ENABLE_BACKEND_PROMPT_SUGGESTION=enabled)
     workspace = settings.default_workspace_dir
-    create_test_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    create_test_business_agent_workspace(
+        workspace,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        name="Security Operations Expert",
+    )
     (workspace / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}) + "\n",
         encoding="utf-8",

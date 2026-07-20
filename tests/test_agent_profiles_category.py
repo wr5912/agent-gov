@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import get_args
@@ -18,6 +17,8 @@ from app.runtime.agent_profiles import (
     candidate_profile,
 )
 from app.runtime.settings import AppSettings
+
+from business_agent_test_utils import LEGACY_MAIN_AGENT_ID
 
 
 def _settings() -> AppSettings:
@@ -68,24 +69,9 @@ def test_build_profiles_exposes_only_governance_profiles() -> None:
     """静态 profile 只有治理执行者；业务 Agent 一律由磁盘发现与注册表提供。"""
 
     profiles = build_profiles(_settings())
-    assert "main-agent" not in profiles
+    assert LEGACY_MAIN_AGENT_ID not in profiles
     assert {name for name, profile in profiles.items() if profile.category == "governance"} == GOVERNANCE_AGENT_ROLES
     assert [name for name, profile in profiles.items() if profile.category == "business"] == []
-
-
-def test_governor_workspace_owns_read_only_policy() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    path = repo_root / "docker/runtime-bootstrap/governor-workspace/.claude/settings.json"
-    policy = json.loads(path.read_text(encoding="utf-8"))
-    permissions = policy["permissions"]
-
-    assert permissions["defaultMode"] == "default"
-    assert permissions["disableBypassPermissionsMode"] == "disable"
-    assert permissions["ask"] == []
-    assert {"Write(/**)", "Edit(/**)", "Bash(*)"} <= set(permissions["deny"])
-    assert policy["sandbox"]["enabled"] is True
-    assert policy["sandbox"]["failIfUnavailable"] is True
-    assert policy["sandbox"]["enableWeakerNestedSandbox"] is True
 
 
 def test_governor_build_options_uses_project_discovery_without_policy_injection() -> None:

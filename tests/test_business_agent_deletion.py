@@ -14,8 +14,8 @@ from app.runtime.protected_business_agents import SECURITY_OPERATIONS_EXPERT_AGE
 from app.services.business_agent_deletion import purge_business_agent_storage
 from fastapi.testclient import TestClient
 
+from app_test_utils import load_test_app as _load_app
 from test_agent_workspace_packages import _import_new_agent
-from test_api_execution_optimizer import _load_app
 
 
 @pytest.fixture()

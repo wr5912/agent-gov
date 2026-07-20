@@ -19,8 +19,18 @@ from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from fastapi.testclient import TestClient
 
+from app_test_utils import load_test_app
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 from test_agent_workspace_packages import _import_new_agent
-from test_api_execution_optimizer import _load_app
+
+
+def _load_app(monkeypatch, tmp_path, **kwargs):
+    return load_test_app(
+        monkeypatch,
+        tmp_path,
+        extra_agent_ids=(ORDINARY_TEST_AGENT_ID,),
+        **kwargs,
+    )
 
 
 def _store(tmp_path: Path) -> tuple[AgentRegistryStore, dict]:
@@ -156,7 +166,7 @@ def test_lifespan_syncs_discovered_business_agent_registry(monkeypatch, tmp_path
         pass
 
     agents = module.agent_registry_store.list_agents()
-    assert {agent.agent_id for agent in agents} == {"main-agent", DEFAULT_BUSINESS_AGENT_ID}
+    assert {agent.agent_id for agent in agents} == {ORDINARY_TEST_AGENT_ID, DEFAULT_BUSINESS_AGENT_ID}
     assert all(agent.category == "business" for agent in agents)
 
 
@@ -184,7 +194,7 @@ def test_list_agents_endpoint_returns_registered_business_agents(monkeypatch, tm
 
     assert response.status_code == 200
     body = response.json()
-    assert {item["agent_id"] for item in body} == {"main-agent", DEFAULT_BUSINESS_AGENT_ID}
+    assert {item["agent_id"] for item in body} == {ORDINARY_TEST_AGENT_ID, DEFAULT_BUSINESS_AGENT_ID}
     assert all(item["category"] == "business" for item in body)
     assert all(item["workspace_dir"] for item in body)
     default = next(item for item in body if item["agent_id"] == DEFAULT_BUSINESS_AGENT_ID)
@@ -242,8 +252,7 @@ def test_business_agent_has_active_lifecycle_status_by_default(monkeypatch, tmp_
         listed = {a["agent_id"]: a["status"] for a in client.get("/api/agent-registry").json()}
         assert listed["soc-ops"] == "active"
         assert listed[DEFAULT_BUSINESS_AGENT_ID] == "active"
-        # main-agent 只是夹具中的普通业务 Agent，也使用同一生命周期默认值。
-        assert listed["main-agent"] == "active"
+        assert listed[ORDINARY_TEST_AGENT_ID] == "active"
 
 
 def test_feedback_asset_provenance_traces_agent_and_relationship(monkeypatch, tmp_path: Path) -> None:
@@ -309,8 +318,12 @@ def test_business_agent_lifecycle_transitions_and_archived_excluded_from_run(mon
         # archived Agent 仍可查询（审计）但不参与新运行（400）。
         assert any(a["agent_id"] == "soc-ops" for a in client.get("/api/agent-registry").json())
         assert client.post("/api/chat", json={"message": "hi", "agent_id": "soc-ops"}).status_code == 400
-        # main-agent 不再特判：它是普通业务 Agent，生命周期可正常转移。
-        assert client.post("/api/agent-registry/main-agent/lifecycle", json={"status": "archived"}).status_code == 200
+        # 普通业务 Agent 与导入 Agent 使用同一生命周期状态机。
+        ordinary_lifecycle = client.post(
+            f"/api/agent-registry/{ORDINARY_TEST_AGENT_ID}/lifecycle",
+            json={"status": "archived"},
+        )
+        assert ordinary_lifecycle.status_code == 200
 
 
 def test_delete_business_agent_reports_impact_and_protects_builtin_agent(monkeypatch, tmp_path: Path) -> None:
@@ -361,7 +374,7 @@ def test_delete_business_agent_reports_impact_and_protects_builtin_agent(monkeyp
         assert impact["change_sets"] >= 1 and impact["releases"] >= 1
         # 删除后不再出现在注册表。
         assert "soc-ops" not in {a["agent_id"] for a in client.get("/api/agent-registry").json()}
-        # 受保护的内置 Agent 不可删（400）；main-agent 不在保护名单；未知 agent_id 报 404。
+        # 受保护的内置 Agent 不可删（400）；未知 agent_id 报 404。
         assert client.delete(f"/api/agent-registry/{SECURITY_OPERATIONS_EXPERT_AGENT_ID}").status_code == 400
         assert client.delete("/api/agent-registry/biz-unknown").status_code == 404
 
@@ -422,12 +435,12 @@ def _settings_with_data_dir(monkeypatch, tmp_path: Path) -> AppSettings:
 def test_discover_business_agents_finds_all_live_workspaces(monkeypatch, tmp_path: Path) -> None:
     """运行态存在多个业务 Agent Workspace 时，发现逻辑识别全部。"""
     settings = _settings_with_data_dir(monkeypatch, tmp_path)
-    for agent_id in ("main-agent", "AAA", "BBB"):
+    for agent_id in (ORDINARY_TEST_AGENT_ID, "AAA", "BBB"):
         business_agent_layout(settings.data_dir, agent_id).workspace.mkdir(parents=True, exist_ok=True)
 
     discovered = {profile.name: profile for profile in discover_business_agents(settings)}
 
-    assert set(discovered) == {"main-agent", "AAA", "BBB"}
+    assert set(discovered) == {ORDINARY_TEST_AGENT_ID, "AAA", "BBB"}
     aaa = discovered["AAA"]
     # 全部走同一抽象：category=business、name=agent_id、workspace_dir 由 layout 单一真相派生。
     assert aaa.category == "business"
@@ -485,7 +498,7 @@ def test_lifespan_auto_registers_live_business_agent_workspaces(monkeypatch, tmp
         listed = client.get("/api/agent-registry").json()
         ids = {a["agent_id"] for a in listed}
         # 磁盘上的 AAA/BBB 与夹具已有业务 Agent 一同进入注册表。
-        assert {DEFAULT_BUSINESS_AGENT_ID, "main-agent", "AAA", "BBB"} <= ids
+        assert {DEFAULT_BUSINESS_AGENT_ID, ORDINARY_TEST_AGENT_ID, "AAA", "BBB"} <= ids
         discovered = next(a for a in listed if a["agent_id"] == "AAA")
         assert discovered["category"] == "business"
         assert discovered["status"] == "active"
@@ -504,11 +517,11 @@ def test_lifespan_discovery_keeps_each_business_agent_single_row_across_restarts
     with TestClient(module.app):
         pass
     first = [a.agent_id for a in module.agent_registry_store.list_agents()]
-    assert first.count("main-agent") == 1
+    assert first.count(ORDINARY_TEST_AGENT_ID) == 1
     assert first.count(DEFAULT_BUSINESS_AGENT_ID) == 1
     # 再次进入 lifespan（模拟重启）后仍各一行。
     with TestClient(module.app):
         pass
     second = [a.agent_id for a in module.agent_registry_store.list_agents()]
-    assert second.count("main-agent") == 1
+    assert second.count(ORDINARY_TEST_AGENT_ID) == 1
     assert second.count(DEFAULT_BUSINESS_AGENT_ID) == 1

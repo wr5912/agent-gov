@@ -17,7 +17,7 @@ from app.runtime.session_store import LocalSession
 from app.services import agent_workspace_package_codec as workspace_codec
 from fastapi.testclient import TestClient
 
-from test_api_execution_optimizer import _load_app
+from app_test_utils import load_test_app as _load_app
 
 
 def _workspace_package(files: dict[str, bytes], *, executable: frozenset[str] = frozenset()) -> bytes:
@@ -238,8 +238,9 @@ def test_builtin_workspace_package_can_create_a_new_agent_without_identity_rewri
     assert created.json()["action"] == "created"
     assert created.json()["agent"]["agent_id"] == "security-operations-derived"
     assert created.json()["agent"]["status"] == "active"
-    assert created.json()["test_suite_status"] == "ready"
+    assert created.json()["test_suite_status"] == "warning"
     assert created.json()["test_file_count"] == 2
+    assert {item["code"] for item in created.json()["test_suite_warnings"]} == {"AGENT_MANIFEST_ID_IGNORED"}
     assert created.json()["import_record_id"].startswith("awi-")
     target = Path(created.json()["agent"]["workspace_dir"])
     source_files = {path.relative_to(source).as_posix(): path for path in source.rglob("*") if path.is_file()}

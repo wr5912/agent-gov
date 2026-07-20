@@ -10,8 +10,9 @@ from app.runtime.schemas import ChatResponse
 from app.runtime.session_store import LocalSession
 from fastapi.testclient import TestClient
 
+from app_test_utils import load_test_app as _load_app
+from business_agent_test_utils import LEGACY_MAIN_AGENT_ID
 from test_agent_workspace_packages import _import_new_agent
-from test_api_execution_optimizer import _load_app
 
 
 def _register_biz(
@@ -158,7 +159,7 @@ def test_retired_response_disposition_fields_are_rejected_and_absent_from_openap
         for field, value in retired_fields.items():
             response = client.post(
                 "/v1/responses",
-                json={"input": "hi", "agentgov": {"agent_id": "main-agent", field: value}},
+                json={"input": "hi", "agentgov": {"agent_id": DEFAULT_BUSINESS_AGENT_ID, field: value}},
             )
             assert response.status_code == 422, (field, response.text)
         openapi = client.get("/openapi.json").json()
@@ -175,7 +176,7 @@ def test_retired_response_disposition_fields_are_rejected_and_absent_from_openap
 
 
 def test_strict_uses_operator_agent(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(monkeypatch, tmp_path, extra_agent_ids=(LEGACY_MAIN_AGENT_ID,))
     captured: dict = {}
     monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
     with TestClient(module.app) as client:
@@ -195,14 +196,14 @@ def test_strict_unconfigured_runs_platform_default(monkeypatch, tmp_path: Path) 
 
 
 def test_strict_explicit_main_is_configured_but_runs_main(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(monkeypatch, tmp_path, extra_agent_ids=(LEGACY_MAIN_AGENT_ID,))
     captured: dict = {}
     monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
     with TestClient(module.app) as client:
-        assert client.put("/api/settings/openai-compat-agent", json={"agent_id": "main-agent"}).json()["configured"] is True
+        assert client.put("/api/settings/openai-compat-agent", json={"agent_id": LEGACY_MAIN_AGENT_ID}).json()["configured"] is True
         assert client.post("/v1/responses", json={"input": "hi"}).status_code == 200
     # 显式配置普通历史 Agent 与未配置的平台默认状态不同。
-    assert captured["profile"] is not None and captured["profile"].agent_id == "main-agent"
+    assert captured["profile"] is not None and captured["profile"].agent_id == LEGACY_MAIN_AGENT_ID
 
 
 def test_strict_rejects_instructions_422(monkeypatch, tmp_path: Path) -> None:

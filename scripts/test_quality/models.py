@@ -14,6 +14,10 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CollectionPolicy(StrictModel):
+    selectors: Annotated[list[NonEmpty], Field(min_length=1)]
+
+
 class Lifecycle(StrEnum):
     KEEP = "KEEP"
     PROMOTE = "PROMOTE"
@@ -181,6 +185,7 @@ class Budgets(StrictModel):
 
 
 class QualityPolicy(StrictModel):
+    collection: CollectionPolicy
     coverage: CoveragePolicy
     owners: Annotated[list[Owner], Field(min_length=1)]
     capabilities: Annotated[list[Capability], Field(min_length=1)]

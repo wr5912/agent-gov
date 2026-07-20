@@ -21,7 +21,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from test_api_execution_optimizer import _load_app
+from app_test_utils import load_test_app as _load_app
 
 # HTML 中出现的绝对 URL；协议相对（//host/path）同样算外部引用。
 _ABSOLUTE_URL = re.compile(r"""(?:src|href)\s*=\s*["'](?:https?:)?//[^"']+["']""", re.IGNORECASE)

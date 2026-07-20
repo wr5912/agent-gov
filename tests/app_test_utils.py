@@ -1,13 +1,21 @@
+from __future__ import annotations
+
 import importlib
-import json
 import sys
+from collections.abc import Sequence
 
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 
 from business_agent_test_utils import create_test_business_agent_workspace
 
 
-def _load_app(monkeypatch, tmp_path, *, api_key=""):
+def load_test_app(
+    monkeypatch,
+    tmp_path,
+    *,
+    api_key: str = "",
+    extra_agent_ids: Sequence[str] = (),
+):
     root = tmp_path / "docker" / "volume"
     data = root / "data"
     governor_workspace = root / "governor-workspace"
@@ -25,26 +33,21 @@ def _load_app(monkeypatch, tmp_path, *, api_key=""):
 
     monkeypatch.setenv("RUNTIME_CONTAINER", "0")
     monkeypatch.setenv("RUNTIME_VOLUME_MODE", "local-debug")
-    default_ws = data / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "workspace"
-    create_test_business_agent_workspace(default_ws, agent_id=DEFAULT_BUSINESS_AGENT_ID, name="Security Operations Expert")
-    main_ws = data / "business-agents" / "main-agent" / "workspace"
-    create_test_business_agent_workspace(main_ws, agent_id="main-agent", name="Main Agent")
-    main_ws.joinpath("CLAUDE.md").write_text("原始规则\n", encoding="utf-8")
-    main_ws.joinpath(".mcp.json").write_text(
-        json.dumps(
-            {
-                "mcpServers": {
-                    "sec-ops-data": {
-                        "type": "http",
-                        "url": "http://localhost:58001/mcp",
-                    }
-                }
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
+    default_workspace = data / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "workspace"
+    create_test_business_agent_workspace(
+        default_workspace,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        name="Security Operations Expert",
     )
+    for agent_id in dict.fromkeys(extra_agent_ids):
+        if agent_id == DEFAULT_BUSINESS_AGENT_ID:
+            continue
+        create_test_business_agent_workspace(
+            data / "business-agents" / agent_id / "workspace",
+            agent_id=agent_id,
+            name=f"Test Business Agent {agent_id}",
+        )
+
     monkeypatch.setenv("HOST_RUNTIME_VOLUME_ROOT", str(root))
     monkeypatch.setenv("HOST_DATA_MOUNT", str(data))
     monkeypatch.setenv("HOST_GOVERNOR_WORKSPACE_MOUNT", str(governor_workspace))
@@ -56,7 +59,7 @@ def _load_app(monkeypatch, tmp_path, *, api_key=""):
     monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "")
     monkeypatch.setenv("API_KEY", api_key)
     monkeypatch.delenv("RESPONSE_ORCHESTRATOR_API_KEY", raising=False)
-    monkeypatch.setenv("AGENT_GIT_REPOSITORY_DIR", str(default_ws))
+    monkeypatch.setenv("AGENT_GIT_REPOSITORY_DIR", str(default_workspace))
     monkeypatch.setenv("AGENT_GIT_WORKTREES_DIR", str(agent_worktrees))
     monkeypatch.setenv("AGENT_RELEASE_ARCHIVES_DIR", str(release_archives))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
@@ -65,21 +68,16 @@ def _load_app(monkeypatch, tmp_path, *, api_key=""):
 
     settings_module.get_settings.cache_clear()
     module = importlib.reload(sys.modules["app.main"]) if "app.main" in sys.modules else importlib.import_module("app.main")
-    _register_business_agents(module)
+    register_discovered_business_agents(module)
     return module
 
 
-def _register_business_agents(module) -> None:
-    """把磁盘上的业务 Agent Workspace 登记进注册表。
-
-    所有业务 Agent 都必须在注册表里才能运行。生产由 lifespan 的 sync 完成；不经 TestClient 的用例（直接调 runtime）
-    不会触发 lifespan，因此夹具在此补上，与生产语义一致。
-    """
+def register_discovered_business_agents(module) -> None:
+    """Mirror lifespan registration for tests that call the app outside TestClient."""
 
     from app.runtime.agent_profiles import build_profiles, discover_business_agents
 
-    settings = module.settings
-    profiles = build_profiles(settings)
-    for profile in discover_business_agents(settings):
+    profiles = build_profiles(module.settings)
+    for profile in discover_business_agents(module.settings):
         profiles.setdefault(profile.name, profile)
     module.agent_registry_store.sync_business_agents(profiles)

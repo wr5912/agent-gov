@@ -5,7 +5,8 @@ from app.runtime.agent_git_store import AgentGitError
 from app.runtime.errors import BusinessRuleViolation
 from fastapi.testclient import TestClient
 
-from test_api_execution_optimizer import _load_app
+from app_test_utils import load_test_app as _load_app
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 
 
 def test_feedback_store_error_handler_returns_structured_error(monkeypatch, tmp_path):
@@ -105,9 +106,9 @@ def test_agent_change_set_publish_conflict_returns_structured_error(monkeypatch,
 
 
 def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path)
-    agent_store = module.agent_governance._store_for("main-agent")
-    improvement = module.improvement_store.create_improvement(agent_id="main-agent", title="执行取消")
+    module = _load_app(monkeypatch, tmp_path, extra_agent_ids=(ORDINARY_TEST_AGENT_ID,))
+    agent_store = module.agent_governance._store_for(ORDINARY_TEST_AGENT_ID)
+    improvement = module.improvement_store.create_improvement(agent_id=ORDINARY_TEST_AGENT_ID, title="执行取消")
     module.improvement_content_store.upsert_normalized_feedback(
         improvement.improvement_id,
         problem="p",
@@ -147,7 +148,7 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
         change_set_id=claim.change_set_id,
         base_commit_sha=base,
         execution_job_id=claim.execution_id,
-        agent_id="main-agent",
+        agent_id=ORDINARY_TEST_AGENT_ID,
     )
     worktree = Path(str(change_set["worktree_path"]))
     assert worktree.exists()
@@ -209,14 +210,12 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
 
 
 def test_chat_during_agent_version_maintenance_returns_structured_503(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path)
-    # 维护态由注入的 provider 判定（main.py 装配），不再由 main 专属的 agent_version_store 决定——
-    # main-agent 已是普通业务 Agent，它的版本 store 与其他 Agent 一样懒建，不是那个预置实例。
+    module = _load_app(monkeypatch, tmp_path, extra_agent_ids=(ORDINARY_TEST_AGENT_ID,))
+    # 维护态由 main.py 装配的 provider 判定，所有注册业务 Agent 走同一条校验路径。
     monkeypatch.setattr(module.runtime, "agent_version_maintenance_provider", lambda agent_id: True)
 
     with TestClient(module.app) as client:
-        # /api/chat 要求 agent_id 必填；用 main-agent 通过校验后才命中维护态 503。
-        response = client.post("/api/chat", json={"message": "hello", "agent_id": "main-agent"})
+        response = client.post("/api/chat", json={"message": "hello", "agent_id": ORDINARY_TEST_AGENT_ID})
 
     assert response.status_code == 503
     assert response.json() == {

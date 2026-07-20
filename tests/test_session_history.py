@@ -14,12 +14,14 @@ from pathlib import Path
 import app.routers.sessions as sessions_mod
 import pytest
 from app.runtime.errors import NotFoundError, SessionConflictError
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.session_history import _scrub_message, normalize_message, read_session_history
 from app.runtime.session_store import LocalSession
 from claude_agent_sdk import project_key_for_directory
 from fastapi.testclient import TestClient
 
-from test_api_execution_optimizer import _load_app
+from app_test_utils import load_test_app as _load_app
+from business_agent_test_utils import LEGACY_MAIN_AGENT_ID
 
 
 class _FakeMsg:
@@ -202,7 +204,7 @@ def test_endpoint_projects_history(monkeypatch, tmp_path: Path) -> None:
             sdk_session_id="sdk-1",
             sdk_project_key=project_key_for_directory(str(module.settings.default_workspace_dir)),
             sdk_store_ready_at="2026-07-13T00:00:00+00:00",
-            agent_id="main-agent",
+            agent_id=DEFAULT_BUSINESS_AGENT_ID,
             title="t",
         )
     )
@@ -260,8 +262,8 @@ def test_resolve_owning_profile_main_and_registered_business() -> None:
     # main-agent 已归一为预制业务 Agent：与其它业务 Agent 一样在注册表中（lifespan sync 登记），
     # 走完全相同的解析路径，无特判。
     settings = _StubSettings()
-    reg = _FakeRegistry({"main-agent": "/data/business-agents/main-agent/workspace", "biz-1": "/custom/biz-1-ws"})
-    ws, cfg = sessions_mod._resolve_owning_profile(settings, reg, LocalSession(session_id="x", agent_id="main-agent"))
+    reg = _FakeRegistry({LEGACY_MAIN_AGENT_ID: "/data/business-agents/main-agent/workspace", "biz-1": "/custom/biz-1-ws"})
+    ws, cfg = sessions_mod._resolve_owning_profile(settings, reg, LocalSession(session_id="x", agent_id=LEGACY_MAIN_AGENT_ID))
     assert ws == Path("/data/business-agents/main-agent/workspace")
     assert cfg == Path("/data/business-agents/main-agent/claude-root/.claude")
     ws, cfg = sessions_mod._resolve_owning_profile(settings, reg, LocalSession(session_id="x", agent_id="biz-1"))
@@ -330,7 +332,7 @@ def test_endpoint_routes_registered_business_agent(monkeypatch, tmp_path: Path) 
 def test_endpoint_rejects_invalid_limit_offset(monkeypatch, tmp_path: Path) -> None:
     # #23：limit/offset 越界由 FastAPI Query 约束在进入 handler 前 422，不透传给 SDK
     module = _load_app(monkeypatch, tmp_path)
-    module.session_store.save(LocalSession(session_id="s1", sdk_session_id="sdk-1", agent_id="main-agent"))
+    module.session_store.save(LocalSession(session_id="s1", sdk_session_id="sdk-1", agent_id=DEFAULT_BUSINESS_AGENT_ID))
     with TestClient(module.app) as client:
         assert client.get("/api/sessions/s1/messages", params={"offset": -1}).status_code == 422
         assert client.get("/api/sessions/s1/messages", params={"limit": 0}).status_code == 422

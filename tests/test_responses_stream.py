@@ -11,11 +11,12 @@ import pytest
 from app.runtime import claude_prompt_suggestions
 from app.runtime.async_iterators import close_async_iterator
 from app.runtime.openai_responses_stream import iter_responses_sse
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ChatRequest
 from fastapi.testclient import TestClient
 
+from app_test_utils import load_test_app as _load_app
 from test_agent_workspace_packages import _import_new_agent
-from test_api_execution_optimizer import _load_app
 
 
 def _patch_sdk_query(monkeypatch, fake_query) -> None:
@@ -596,8 +597,8 @@ def test_endpoint_stream_fails_closed_for_unmigratable_previous_response_session
     _patch_sdk_query(monkeypatch, fake_query)
 
     module = _load_app(monkeypatch, tmp_path)
-    module.feedback_store.record_run({"run_id": "prev-stale", "session_id": "sess-stale", "agent_id": "main-agent"})
-    session = module.session_store.get_or_create_owned("sess-stale", agent_id="main-agent")
+    module.feedback_store.record_run({"run_id": "prev-stale", "session_id": "sess-stale", "agent_id": DEFAULT_BUSINESS_AGENT_ID})
+    session = module.session_store.get_or_create_owned("sess-stale", agent_id=DEFAULT_BUSINESS_AGENT_ID)
     session.sdk_session_id = "stale-sdk"
     module.session_store.save(session)
 
@@ -608,7 +609,7 @@ def test_endpoint_stream_fails_closed_for_unmigratable_previous_response_session
                 "input": "continue",
                 "stream": True,
                 "previous_response_id": "resp_prev-stale",
-                "agentgov": {"agent_id": "main-agent"},
+                "agentgov": {"agent_id": DEFAULT_BUSINESS_AGENT_ID},
             },
         )
         assert resp.status_code == 200, resp.text

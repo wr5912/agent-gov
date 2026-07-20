@@ -533,7 +533,9 @@ class AgentGovernanceService:
             if not candidate:
                 raise AgentGovernanceError(409, "Agent change set has no candidate commit")
             publication_blocker = self._publication_blocker_for_change_set(payload)
-            self._validate_publication_start(row.status, publication_blocker=publication_blocker, force=force)
+            self._validate_publication_start(
+                row.status, publication_blocker=publication_blocker, force=force, feedback_managed=source_revision is not None
+            )
             if force and not (note or "").strip():
                 raise AgentGovernanceError(422, "Force publication requires an explicit reason")
             existing_release = self._release_row_for_change_set(db, change_set_id)
@@ -617,7 +619,18 @@ class AgentGovernanceService:
         return finalize_publication_once(self, intent, archive=archive)
 
     @staticmethod
-    def _validate_publication_start(status: str, *, publication_blocker: str | None, force: bool) -> None:
+    def _validate_publication_start(
+        status: str,
+        *,
+        publication_blocker: str | None,
+        force: bool,
+        feedback_managed: bool,
+    ) -> None:
+        if force and feedback_managed:
+            raise AgentGovernanceError(
+                409,
+                "反馈闭环待发布版本必须在精确候选提交上通过完整 Agent 测试集，不能强制绕过测试条件",
+            )
         if publication_blocker and not force:
             raise AgentGovernanceError(409, publication_blocker)
         if force and status not in PUBLISHABLE_CHANGE_SET_STATES:

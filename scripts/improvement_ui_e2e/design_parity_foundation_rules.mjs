@@ -389,7 +389,7 @@ const RULES = [
     await page.getByTestId("context-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
     return { ok: drawerSize === "medium" && found.length === 4 && download && rich, detail: `size=${drawerSize} 类型 ${found.length}/4，下载=${download}，证据链JSON=${rich}` };
   } },
-  { id: "release-workbench-target-binding", phase: "P2", desc: "发布工作台按选中待发布变更绑定 Workspace pytest、精确 commit 发布、强制发布原因和清理动作", async fn(page) {
+  { id: "release-workbench-target-binding", phase: "P2", desc: "发布工作台按选中待发布变更绑定 Workspace pytest、精确 commit 发布、反馈发布不可绕过测试和清理动作", async fn(page) {
     const base = {
       agent_id: "soc-ops", created_at: ts, updated_at: ts, base_commit_sha: "base-demo",
       branch_name: "agent-change/test", worktree_path: "/tmp/test", diff_summary: {},
@@ -431,18 +431,8 @@ const RULES = [
       const blocked = ready.map((item) => ({ ...item, publication_blocker: "当前待发布 commit 的平台测试未通过" }));
       await renderReleaseWorkbenchHarness(page, blocked);
       await page.getByTestId("release-changeset-select").selectOption("agc-target-b");
-      await page.getByTestId("release-action-force").click();
-      await page.getByTestId("release-force-confirm").waitFor({ timeout: 5000 });
-      const emptyReasonDisabled = await page.getByTestId("release-force-confirm-submit").isDisabled();
-      await page.getByTestId("release-force-reason").fill("已人工复核失败输出，批准带风险发布");
-      await page.getByTestId("release-changeset-select").selectOption("agc-target-a");
-      const frozenLabel = await page.getByTestId("release-force-confirm").innerText();
-      const frozenSubmitEnabled = !(await page.getByTestId("release-force-confirm-submit").isDisabled());
-      observedApiRequests.length = 0;
-      await page.getByTestId("release-force-confirm-submit").click();
-      const forceBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-target-b/publish");
-      const forceRequest = observedApiRequests.find((request) => request.path === "/api/agent-change-sets/agc-target-b/publish");
-      const forceBody = JSON.parse(forceRequest?.postData || "{}");
+      const blockedPublishDisabled = await page.getByTestId("release-action-publish").isDisabled();
+      const forceActionAbsent = await page.getByTestId("release-action-force").count() === 0;
 
       await renderReleaseWorkbenchHarness(page, [{
         ...ready[1],
@@ -450,7 +440,7 @@ const RULES = [
         publication_blocker: "改进执行来源不完整",
       }]);
       const provenancePublishDisabled = await page.getByTestId("release-action-publish").isDisabled();
-      const provenanceForceDisabled = await page.getByTestId("release-action-force").isDisabled();
+      const provenanceForceAbsent = await page.getByTestId("release-action-force").count() === 0;
 
       await renderReleaseWorkbenchHarness(page, [{ ...ready[0], status: "failed", worktree_cleanup_pending: true }]);
       observedApiRequests.length = 0;
@@ -467,14 +457,10 @@ const RULES = [
         && publishBody.force === false
         && testRunBound
         && testRunPayloadExact
-        && emptyReasonDisabled
-        && frozenLabel.includes("agc-target-b")
-        && frozenSubmitEnabled
-        && forceBound
-        && forceBody.force === true
-        && forceBody.force_reason === "已人工复核失败输出，批准带风险发布"
+        && blockedPublishDisabled
+        && forceActionAbsent
         && provenancePublishDisabled
-        && provenanceForceDisabled
+        && provenanceForceAbsent
         && cleanupVisible
         && cleanupBound;
       return {
@@ -484,8 +470,8 @@ const RULES = [
           "suite=" + suiteText.includes("tests/test_feedback_imp_demo04_01_time.py"),
           "publish=" + publishEnabled + "/" + publishBound + "/" + publishBody.force,
           "testRun=" + testRunBound + "/" + testRunPayloadExact,
-          "force=" + emptyReasonDisabled + "/" + frozenLabel.includes("agc-target-b") + "/" + frozenSubmitEnabled + "/" + forceBound,
-          "provenance=" + provenancePublishDisabled + "/" + provenanceForceDisabled,
+          "blocked=" + blockedPublishDisabled + "/forceAbsent=" + forceActionAbsent,
+          "provenance=" + provenancePublishDisabled + "/forceAbsent=" + provenanceForceAbsent,
           "cleanup=" + cleanupVisible + "/" + cleanupBound,
         ].join(" "),
       };

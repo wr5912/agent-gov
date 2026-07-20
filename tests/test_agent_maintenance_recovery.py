@@ -14,6 +14,7 @@ from app.runtime.agent_maintenance_db import (
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceError, AgentGovernanceService
 
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 from feedback_store_test_utils import _settings
 
 
@@ -387,7 +388,7 @@ def test_publish_revalidates_durable_claim_before_git_side_effect(monkeypatch, t
 
     class ExpiredLease:
         claim = AgentMaintenanceClaim(
-            agent_id="main-agent",
+            agent_id=ORDINARY_TEST_AGENT_ID,
             token="expired-token",
             generation=1,
             kind="publish",

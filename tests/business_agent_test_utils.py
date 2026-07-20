@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+ORDINARY_TEST_AGENT_ID = "test-business-agent"
+SECONDARY_TEST_AGENT_ID = "secondary-test-business-agent"
+LEGACY_MAIN_AGENT_ID = "main-agent"
+
 
 def create_test_business_agent_workspace(
     workspace: Path,

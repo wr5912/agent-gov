@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from app.runtime.improvement_db import ExecutionRecordModel
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import utc_now
 from app.runtime.schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
 from app.runtime.settings import AppSettings
@@ -32,7 +33,11 @@ def _settings(tmp_path):
     workspace = settings.default_workspace_dir
     workspace.mkdir(parents=True, exist_ok=True)
     (settings.default_claude_root / ".claude").mkdir(parents=True, exist_ok=True)
-    create_test_business_agent_workspace(workspace, agent_id="main-agent", name="Test Agent")
+    create_test_business_agent_workspace(
+        workspace,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        name="Security Operations Expert",
+    )
     (workspace / "CLAUDE.md").write_text("# Test Agent\n", encoding="utf-8")
     (workspace / ".mcp.json").write_text(
         json.dumps(
@@ -61,7 +66,7 @@ def _record_run(store: FeedbackStore):
     return store.record_run(
         {
             "run_id": "run-1",
-            "agent_id": "main-agent",
+            "agent_id": DEFAULT_BUSINESS_AGENT_ID,
             "session_id": "session-1",
             "alert_id": "alert-1",
             "case_id": "case-1",

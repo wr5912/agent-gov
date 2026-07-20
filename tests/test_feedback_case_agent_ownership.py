@@ -10,11 +10,13 @@ from app.runtime.schemas import FeedbackCaseCreateRequest, FeedbackSignalCreateR
 from app.runtime.stores.feedback_store import FeedbackStore
 from pydantic import ValidationError
 
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+
 
 def _store(tmp_path) -> FeedbackStore:
     return FeedbackStore(
         data_dir=tmp_path / "data",
-        agent_exists=lambda agent_id: agent_id in {"main-agent", "agent-a", "agent-b"},
+        agent_exists=lambda agent_id: agent_id in {ORDINARY_TEST_AGENT_ID, "agent-a", "agent-b"},
     )
 
 
@@ -347,7 +349,7 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
     version_agent_ids: list[str | None] = []
     store = FeedbackStore(
         data_dir=tmp_path / "data",
-        agent_exists=lambda agent_id: agent_id in {"main-agent", "agent-a", "agent-b"},
+        agent_exists=lambda agent_id: agent_id in {ORDINARY_TEST_AGENT_ID, "agent-a", "agent-b"},
         agent_version_provider=lambda agent_id: version_agent_ids.append(agent_id) or f"version-{agent_id}",
     )
     for run_id, agent_id in (("run-claimed", "agent-a"), ("run-stale", "agent-b")):
@@ -375,7 +377,7 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
             [
                 FeedbackCaseModel(
                     feedback_case_id="case-claim-winner",
-                    agent_id="main-agent",
+                    agent_id=ORDINARY_TEST_AGENT_ID,
                     created_at=now,
                     updated_at=now,
                     status="pending_evidence",
@@ -426,7 +428,7 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
     assert projected["event_ids"] == ["event-claimed"]
     assert projected["run_ids"] == ["run-claimed"]
     assert [case["feedback_case_id"] for case in store.list_cases(agent_id="agent-a")] == ["case-claim-winner"]
-    assert store.list_cases(agent_id="main-agent") == []
+    assert store.list_cases(agent_id=ORDINARY_TEST_AGENT_ID) == []
     assert store.find_case("case-unclaimed-loser") is None
     assert store.create_evidence_package("case-unclaimed-loser") is None
     assert store.find_feedback_source("soc_event", "event-claimed")["feedback_case_id"] == "case-claim-winner"

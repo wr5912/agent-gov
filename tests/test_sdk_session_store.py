@@ -14,6 +14,8 @@ from app.runtime.sdk_session_store import (
     promote_staged_entries,
 )
 
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+
 
 def _factory_with_active_turn(tmp_path, *, run_id="run-1"):
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
@@ -21,7 +23,7 @@ def _factory_with_active_turn(tmp_path, *, run_id="run-1"):
         db.add(
             SessionRecordModel(
                 session_id="api-session",
-                agent_id="main-agent",
+                agent_id=ORDINARY_TEST_AGENT_ID,
                 created_at="2026-07-13T00:00:00+00:00",
                 updated_at="2026-07-13T00:00:00+00:00",
                 turns=0,
@@ -34,7 +36,7 @@ def _factory_with_active_turn(tmp_path, *, run_id="run-1"):
             SessionTurnIntentModel(
                 run_id=run_id,
                 session_id="api-session",
-                agent_id="main-agent",
+                agent_id=ORDINARY_TEST_AGENT_ID,
                 attempted_sdk_session_id="sdk-session",
                 sdk_project_key="project-key",
                 base_turns=0,

@@ -81,7 +81,7 @@
     "client_run_label": "daily-report"
   },
   "agentgov": {
-    "agent_id": "main-agent",
+    "agent_id": "your-business-agent",
     "alert_id": "alert-001",
     "case_id": "case-001",
     "max_turns": 8,
@@ -135,7 +135,7 @@
     "conversation_id": "conv_sess_...",
     "session_id": "sess_...",
     "sdk_session_id": "sdk_...",
-    "agent_id": "main-agent",
+    "agent_id": "your-business-agent",
     "agent_version_id": "ver_...",
     "trace_id": "trace_...",
     "output_text": "日报正文...",

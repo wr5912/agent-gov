@@ -72,6 +72,8 @@ def _pytest_command(args: argparse.Namespace, artifact_dir: Path, selection: tup
         "junit_family=xunit2",
         "-p",
         "scripts.test_quality.pytest_plugin",
+        "-p",
+        "agentgov_testkit.pytest_plugin",
         "--cov=app",
         "--cov=scripts",
         "--cov-branch",
@@ -102,6 +104,7 @@ def main() -> int:
         return 1
     env = os.environ.copy()
     env["GIT_CONFIG_GLOBAL"] = str(artifact_dir / "gitconfig")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     command = _pytest_command(args, artifact_dir, selection)
     started_at = utc_now()
     started = time.monotonic()

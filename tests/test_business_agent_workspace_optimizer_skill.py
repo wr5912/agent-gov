@@ -1,7 +1,7 @@
-"""business-agent-workspace-optimizer skill 的回归：存在性、frontmatter、镜像一致、纠偏后的安全边界内容。
+"""business-agent-workspace-optimizer skill 的回归：存在性、frontmatter、镜像一致和通用边界。
 
 该 skill 是开发者离线工具，用于优化业务 Agent 自身 workspace 配置资产；本测试锁定评审纠偏点
-（per-agent 版本库不可改、Bash 直行且普通优化不新增 ask、复用现成脱敏扫描、业务 Agent 在 data/ 下、governor 单一）。
+（per-agent 版本库不可改、权限来自目标 Workspace、复用现成准入扫描、业务 Agent 在 data/ 下、governor 单一）。
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def test_skill_pair_is_mirror_consistent():
 
 
 def test_skill_encodes_review_corrected_boundaries():
-    """锁定评审纠偏：per-agent 边界、分类 HITL、现成脱敏扫描、data/ 业务路径与 governor 单一性。"""
+    """锁定评审纠偏：per-agent 边界、原生权限、现成准入扫描、data/ 业务路径与 governor 单一性。"""
     text = CODEX_PATH.read_text(encoding="utf-8")
     # B3 版本库与运行态状态默认拒绝。
     assert "version/" in text and "per-Agent" in text
@@ -71,13 +71,15 @@ def test_skill_encodes_review_corrected_boundaries():
     assert "不能整目录拒绝 `data/`" in text
     assert "`${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/`" in text
     assert "`data/` 和 `data/business-agents/` 父目录本身也不是优化目标" in text
-    # 权限模型对齐：通用 Bash 进入 ask，run grant 只覆盖低风险类别；旗舰样板使用原生逐次确认。
+    # 权限模型对齐：通用 Bash 进入 ask，run grant 只覆盖低风险类别，具体工具来自目标 Workspace。
     assert "宽泛 Bash 默认进入 `ask`" in text
     assert "run 级授权必须按低风险类别隔离" in text
     assert "高风险或未分类请求不得整轮放行" in text
-    assert "`soc_api__create` / `soc_api__manual` 走 Claude 原生逐次确认" in text
-    assert "其他处置 mutation 与 `AskUserQuestion` 拒绝" in text
-    assert "后端不得按 Agent ID 添加第二套授权" in text
+    assert "工具、权限、确认和业务流程契约只从目标 Workspace" in text
+    assert "本通用 skill 不硬编码具体工具名或领域流程" in text
+    assert "soc_api__" not in text
+    assert "security-operations-expert" not in text
+    assert "后端不得" in text and "按 Agent ID 添加第二套授权" in text
     # 复用现成运行卷初始化源准入扫描，不重复造轮子。
     assert "runtime-bootstrap-scan" in text
     assert "runtime_bootstrap_safety.py" in text

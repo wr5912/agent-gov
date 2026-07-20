@@ -84,4 +84,4 @@ def test_governance_workbenches_keep_tablet_and_mobile_width_bounded() -> None:
     assert ".iw-stage-panel-grid.test-release .iw-stage-card.is-stage-wide { grid-column: auto; }" in workbench_styles
     assert ".release-stage-workbench .iw-select" in workbench_styles
     assert ".iw-list-panel { min-height: 440px; }" in workbench_styles
-    assert "assertCreateControlsFullyVisible" in _read("scripts/improvement_ui_e2e/real_container_flow.mjs")
+    assert "assertCreateDrawerFullyVisible" in _read("scripts/improvement_ui_e2e/real_container_flow.mjs")

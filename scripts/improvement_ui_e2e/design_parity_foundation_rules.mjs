@@ -252,6 +252,15 @@ const RULES = [
       && await page.getByTestId("feedback-drawer").count() === 0
       && await page.getByTestId("playground-runtime-settings-drawer").count() === 0;
     const anchorRolesOk = previewRoles.every((role) => role === "user") && markRoles.every((role) => role === "user");
+    await seedPlaygroundMessages(page, 1);
+    await page.getByTestId("playground-scroll-rail").hover();
+    await waitPreviewOpen(page);
+    const singlePreviewRoles = await page.getByTestId("playground-scroll-preview-item")
+      .evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
+    const singleMarkRoles = await page.getByTestId("playground-scroll-mark")
+      .evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
+    const singleTurnFallback = singlePreviewRoles.join(",") === "user,assistant"
+      && singleMarkRoles.join(",") === "user,assistant";
     await seedPlaygroundMessages(page, 4);
     await page.getByTestId("playground-messages").evaluate((el) => {
       el.scrollTop = 0;
@@ -265,6 +274,13 @@ const RULES = [
     const fewMarkRoles = await page.getByTestId("playground-scroll-mark").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
     const fewMetrics = await scrollNavigationMetrics(page);
     const fewRolesOk = fewPreviewRoles.every((role) => role === "user") && fewMarkRoles.every((role) => role === "user");
+    await page.evaluate(() => {
+      window.sessionStorage.setItem("parity-preserve-playground-session", "1");
+      window.localStorage.setItem("playground-active-session", JSON.stringify("density-check-0"));
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByTestId("playground").waitFor({ timeout: 8000 });
+    const noOverflowNavigator = await page.getByTestId("playground-scroll-navigator").count() === 0;
     await page.evaluate(() => window.sessionStorage.removeItem("parity-preserve-playground-session"));
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByTestId("playground").waitFor({ timeout: 8000 });
@@ -277,6 +293,7 @@ const RULES = [
       && largeMetrics.railHeight >= 340
       && largeMetrics.maxGap <= 24
       && largeMetrics.centerDelta <= 24
+      && singleTurnFallback
       && fewPreviewItems === 4
       && fewMarkCount === 4
       && fewRolesOk
@@ -285,10 +302,11 @@ const RULES = [
       && fewMetrics.avgGap >= 24
       && fewMetrics.avgGap <= 40
       && fewMetrics.centerDelta <= 24
+      && noOverflowNavigator
       && nearTop
       && finalDistance <= 24
       && noPanelMix;
-    return { ok, detail: `initial=${initialDistance} jump=${jump} large=${previewItems}/${markCount}/${largeMetrics.railHeight}px gap=${largeMetrics.minGap}-${largeMetrics.maxGap} userOnly=${anchorRolesOk} few=${fewPreviewItems}/${fewMarkCount}/${fewMetrics.railHeight}px avgGap=${fewMetrics.avgGap} fewUserOnly=${fewRolesOk} center=${largeMetrics.centerDelta}/${fewMetrics.centerDelta} nearTop=${nearTop} final=${finalDistance} noPanelMix=${noPanelMix}` };
+    return { ok, detail: `initial=${initialDistance} jump=${jump} large=${previewItems}/${markCount}/${largeMetrics.railHeight}px gap=${largeMetrics.minGap}-${largeMetrics.maxGap} userOnly=${anchorRolesOk} singleFallback=${singlePreviewRoles.join("+")}/${singleMarkRoles.join("+")} few=${fewPreviewItems}/${fewMarkCount}/${fewMetrics.railHeight}px avgGap=${fewMetrics.avgGap} fewUserOnly=${fewRolesOk} noOverflow=${noOverflowNavigator} center=${largeMetrics.centerDelta}/${fewMetrics.centerDelta} nearTop=${nearTop} final=${finalDistance} noPanelMix=${noPanelMix}` };
   } },
   { id: "trace-evidence-panel", phase: "P0", desc: "SDK transcript 历史的查看 Trace 打开右侧 block 证据面板，不伪造 Langfuse run 元数据", async fn(page) {
     await page.getByTestId("nav-playground").click();

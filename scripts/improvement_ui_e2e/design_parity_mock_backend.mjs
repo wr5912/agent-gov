@@ -80,7 +80,7 @@ function agentTestRun({
 function mockConversationItems(sessionId) {
   const densityMatch = sessionId.match(/^density-check-(\d+)$/);
   const turnCount = densityMatch ? Number(densityMatch[1]) : 36;
-  const repeatCount = turnCount <= 4 ? 18 : 2;
+  const repeatCount = turnCount <= 1 ? 64 : turnCount <= 4 ? 18 : 2;
   return Array.from({ length: turnCount }, (_, index) => {
     const n = index + 1;
     return [
@@ -119,13 +119,18 @@ function basePayload(path) {
   if (path === "/health") return { status: "ok", model: "parity-mock" };
   if (path === "/v1/conversations") return {
     object: "list",
-    data: ["mock-session", "density-check-4"].map((sessionId) => ({
+    data: ["mock-session", "density-check-0", "density-check-1", "density-check-4"].map((sessionId) => ({
       id: `conv_${sessionId}`,
       object: "conversation",
       created_at: Date.parse(ts) / 1000,
       title: "Playground 历史验证",
       metadata: {},
-      agentgov: { agent_id: "security-operations-expert", sdk_session_id: sessionId, updated_at: Date.parse(ts) / 1000, turns: sessionId === "mock-session" ? 36 : 4 },
+      agentgov: {
+        agent_id: "security-operations-expert",
+        sdk_session_id: sessionId,
+        updated_at: Date.parse(ts) / 1000,
+        turns: sessionId === "mock-session" ? 36 : Number(sessionId.match(/\d+$/)?.[0] || 0),
+      },
     })),
   };
   const conversationItems = path.match(/^\/v1\/conversations\/conv_(.+)\/items$/);
@@ -266,7 +271,30 @@ function assetPayload(path, request) {
     created_at: ts,
     updated_at: ts,
   }];
-  if (path === "/api/improvements") return IMPROVEMENTS;
+  if (path === "/api/improvements") {
+    if (request.method === "POST") {
+      const body = JSON.parse(request.postData || "{}");
+      if (body.title === "触发受控创建失败") {
+        return { __status: 422, detail: "受控创建失败：请检查改进事项标题" };
+      }
+      const created = {
+        improvement_id: `imp-created-${IMPROVEMENTS.length + 1}`,
+        agent_id: body.agent_id || "",
+        title: body.title || "未命名改进事项",
+        summary: body.summary || "",
+        source_feedback_refs: body.source_feedback_refs || [],
+        improvement_stage: "intake",
+        improvement_status: "active",
+        created_at: ts,
+        updated_at: ts,
+      };
+      IMPROVEMENTS.push(created);
+      return created;
+    }
+    return request.agentId
+      ? IMPROVEMENTS.filter((item) => item.agent_id === request.agentId)
+      : IMPROVEMENTS;
+  }
   return UNHANDLED;
 }
 

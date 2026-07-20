@@ -28,5 +28,14 @@ export async function seedPlaygroundMessages(page, turnCount) {
     window.localStorage.setItem("playground-active-session", JSON.stringify(sessionId));
   }, turnCount);
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByTestId("playground-scroll-navigator").waitFor({ timeout: 8000 });
+  try {
+    await page.getByTestId("playground-scroll-navigator").waitFor({ timeout: 8000 });
+  } catch (error) {
+    const metrics = await page.getByTestId("playground-messages").evaluate((element) => ({
+      messages: element.querySelectorAll("[data-message-id]").length,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    })).catch(() => ({ messages: -1, clientHeight: -1, scrollHeight: -1 }));
+    throw new Error(`playground scroll navigator missing for ${turnCount} turns: ${JSON.stringify(metrics)}; ${error instanceof Error ? error.message : String(error)}`);
+  }
 }

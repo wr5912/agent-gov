@@ -445,11 +445,18 @@ async function publishPassedCandidate(page, config, flow) {
   return { endpoint, release, status: response.status() };
 }
 
-async function assertCreateControlsFullyVisible(page) {
+async function assertCreateDrawerFullyVisible(page) {
+  const legacyInlineForm = await page.locator(".iw-list-panel .iw-create").count();
+  const duplicateScopeText = await page.getByTestId("improvement-scope-label").locator("strong").count();
+  if (legacyInlineForm || duplicateScopeText) {
+    throw new Error(`obsolete improvement controls remain: inline=${legacyInlineForm} duplicateScope=${duplicateScopeText}`);
+  }
+  await page.getByTestId("improvement-create-open").click();
+  await page.getByTestId("improvement-create-drawer").waitFor({ timeout: 10000 });
   const visibility = await page.evaluate(() => {
-    const panel = document.querySelector(".iw-list-panel");
-    if (!(panel instanceof HTMLElement)) return { panel: false, clipped: ["iw-list-panel"] };
-    const panelRect = panel.getBoundingClientRect();
+    const drawer = document.querySelector('[data-testid="improvement-create-drawer"]');
+    if (!(drawer instanceof HTMLElement)) return { drawer: false, clipped: ["improvement-create-drawer"] };
+    const drawerRect = drawer.getBoundingClientRect();
     const clipped = [
       "improvement-create-agent",
       "improvement-create-title",
@@ -460,18 +467,21 @@ async function assertCreateControlsFullyVisible(page) {
       const rect = element.getBoundingClientRect();
       return rect.width <= 0
         || rect.height <= 0
-        || rect.left < panelRect.left
-        || rect.right > panelRect.right
-        || rect.top < panelRect.top
-        || rect.bottom > panelRect.bottom
+        || rect.left < drawerRect.left
+        || rect.right > drawerRect.right
+        || rect.top < drawerRect.top
+        || rect.bottom > drawerRect.bottom
         || rect.top < 0
+        || rect.right > window.innerWidth
         || rect.bottom > window.innerHeight;
     });
-    return { panel: true, clipped };
+    return { drawer: true, clipped };
   });
-  if (!visibility.panel || visibility.clipped.length) {
-    throw new Error("new improvement controls are clipped: " + JSON.stringify(visibility));
+  if (!visibility.drawer || visibility.clipped.length) {
+    throw new Error("new improvement drawer controls are clipped: " + JSON.stringify(visibility));
   }
+  await page.getByTestId("improvement-create-cancel").click();
+  await page.getByTestId("improvement-create-drawer").waitFor({ state: "detached", timeout: 5000 });
 }
 
 async function verifyResponsiveStates(browser, config, seed, flow, release) {
@@ -482,7 +492,7 @@ async function verifyResponsiveStates(browser, config, seed, flow, release) {
     await configurePage(page, config);
     try {
       await openImprovement(page, config, seed);
-      await assertCreateControlsFullyVisible(page);
+      await assertCreateDrawerFullyVisible(page);
       await page.getByTestId("improvement-terminal").filter({ hasText: "已完成平台测试并发布" }).waitFor({ timeout: 30000 });
       await page.getByTestId("workspace-test-files").filter({ hasText: "已写入发布版本" }).waitFor({ timeout: 30000 });
       await page.getByTestId("confirm-regression-tests").filter({ hasText: "待发布变更已确认" }).waitFor({ timeout: 30000 });

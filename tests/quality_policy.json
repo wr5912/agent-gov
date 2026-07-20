@@ -798,7 +798,7 @@
         },
         {
           "id": "improvement_design_parity_and_message_actions",
-          "description": "Playground 从 SDK transcript 恢复历史、Prompt Suggestion 填入但不自动发送、Trace、HITL、四阶段改进事项工作台、非法返回动作清零、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
+          "description": "Playground 从 SDK transcript 恢复历史、Prompt Suggestion 填入但不自动发送、单轮长回复与多轮会话滚动导航、Trace、HITL、四阶段改进事项工作台标题栏新建抽屉与范围对齐、非法返回动作清零、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
           "pytest": [
             "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
             "tests/test_claude_runtime_hitl.py::test_stream_hitl_consumes_prompt_eof_then_resumes_sdk_after_allow",

@@ -21,7 +21,6 @@ type GateState = "pass" | "fail" | "pending" | "not_applicable";
 
 const TERMINAL_CHANGE_SET_STATES = new Set(["published", "abandoned", "rejected", "failed"]);
 const TEST_RUNNING_STATES = new Set(["queued", "running"]);
-const FORCEABLE_CHANGE_SET_STATES = new Set(["candidate_committed", "approved"]);
 
 const GATE_TEXT: Record<GateState, string> = {
   pass: "通过",
@@ -98,8 +97,6 @@ export function ReleaseWorkbench({
   const [busyAction, setBusyAction] = useState<string>();
   const [actionMessage, setActionMessage] = useState<string>();
   const [actionError, setActionError] = useState<string>();
-  const [forceTargetId, setForceTargetId] = useState<string>();
-  const [forceReason, setForceReason] = useState("");
 
   const scopedChangeSets = scopedBy(changeSets as (AgentChangeSet & WithAgent)[], scopeAgentId)
     .filter((changeSet) => changeSet.source_improvement_id === sourceImprovementId);
@@ -131,19 +128,6 @@ export function ReleaseWorkbench({
   const retryTarget = selectedChangeSet?.candidate_commit_sha && selectedChangeSet.status === "publishing"
     ? selectedChangeSet
     : null;
-  const forceTarget = selectedChangeSet?.candidate_commit_sha
-    && FORCEABLE_CHANGE_SET_STATES.has(String(selectedChangeSet.status))
-    && !selectedChangeSet.publication_provenance_blocker
-    && Boolean(selectedChangeSet.publication_blocker)
-    ? selectedChangeSet
-    : null;
-  const confirmedForceTarget = pendingChangeSets.find((changeSet) => (
-    changeSet.change_set_id === forceTargetId
-    && Boolean(changeSet.candidate_commit_sha)
-    && FORCEABLE_CHANGE_SET_STATES.has(String(changeSet.status))
-    && !changeSet.publication_provenance_blocker
-    && Boolean(changeSet.publication_blocker)
-  )) || null;
   const activeTestRun = currentTestRun && TEST_RUNNING_STATES.has(currentTestRun.status)
     ? currentTestRun
     : null;
@@ -180,21 +164,6 @@ export function ReleaseWorkbench({
       setActionError(error instanceof Error ? error.message : String(error));
     });
   }, [refreshTests]);
-
-  useEffect(() => {
-    if (!forceTargetId) return;
-    const targetStillForceable = pendingChangeSets.some((changeSet) => (
-      changeSet.change_set_id === forceTargetId
-      && Boolean(changeSet.candidate_commit_sha)
-      && FORCEABLE_CHANGE_SET_STATES.has(String(changeSet.status))
-      && !changeSet.publication_provenance_blocker
-      && Boolean(changeSet.publication_blocker)
-    ));
-    if (!targetStillForceable) {
-      setForceTargetId(undefined);
-      setForceReason("");
-    }
-  }, [forceTargetId, pendingChangeSets]);
 
   useEffect(() => {
     if (!activeTestRun) return undefined;
@@ -268,21 +237,6 @@ export function ReleaseWorkbench({
         force: false,
       });
       setActionMessage(`发布已完成：${release.release_id}`);
-      await onRefresh();
-    });
-  };
-
-  const handleForcePublish = () => {
-    if (!confirmedForceTarget || !forceReason.trim()) return;
-    void runAction("force-publish", async () => {
-      const release = await publishAgentChangeSet(clientConfig, confirmedForceTarget.change_set_id, {
-        operator: "ui",
-        force: true,
-        force_reason: forceReason.trim(),
-      });
-      setForceTargetId(undefined);
-      setForceReason("");
-      setActionMessage(`已强制发布：${release.release_id}`);
       await onRefresh();
     });
   };
@@ -361,18 +315,6 @@ export function ReleaseWorkbench({
             </button>
             <button className="iw-secondary-button" type="button" data-testid="release-action-retry" disabled={!retryTarget || Boolean(busyAction)} onClick={handleRetryPublish}>
               {busyAction === "retry-publish" ? "重试中..." : "重试发布"}
-            </button>
-            <button
-              className="iw-secondary-button release-force-button"
-              type="button"
-              data-testid="release-action-force"
-              disabled={!forceTarget || Boolean(busyAction)}
-              onClick={() => {
-                setForceTargetId(forceTarget?.change_set_id);
-                setForceReason("");
-              }}
-            >
-              强制发布...
             </button>
           </div>
         ) : null}
@@ -479,32 +421,6 @@ export function ReleaseWorkbench({
         ))}
       </div>
 
-      {forceTargetId ? (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal-card version-confirm-modal" role="dialog" aria-modal="true" aria-label="确认强制发布" data-testid="release-force-confirm">
-            <header className="modal-head">
-              <div>
-                <h3>确认强制发布</h3>
-                <p>该动作会绕过当前发布条件，并把原因与阻塞项永久写入发布审计。</p>
-              </div>
-            </header>
-            <div className="iw-detail-section">
-              <div className="iw-next-step">目标变更：{forceTargetId}</div>
-              <div className="iw-next-step">阻塞项：{confirmedForceTarget?.publication_blocker || "未知"}</div>
-              <label>
-                强制发布原因
-                <textarea className="iw-input" data-testid="release-force-reason" rows={4} value={forceReason} onChange={(event) => setForceReason(event.target.value)} />
-              </label>
-            </div>
-            <div className="modal-actions">
-              <button className="secondary-button" type="button" onClick={() => setForceTargetId(undefined)}>取消</button>
-              <button className="primary-button" type="button" data-testid="release-force-confirm-submit" disabled={!confirmedForceTarget || !forceReason.trim() || Boolean(busyAction)} onClick={handleForcePublish}>
-                {busyAction === "force-publish" ? "发布中..." : "确认强制发布"}
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
     </section>
   );
 }

@@ -14,8 +14,9 @@ from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.generated_agent_tests import build_generated_agent_test
 from fastapi.testclient import TestClient
 
+from app_test_utils import load_test_app as _load_app
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 from feedback_store_test_utils import _seed_execution_record
-from test_api_execution_optimizer import _load_app
 
 
 def _store(tmp_path: Path) -> ImprovementContentStore:
@@ -62,9 +63,9 @@ def test_reassign_feedback_and_delete_improvement_cascade(tmp_path: Path) -> Non
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     items = ImprovementStore(factory)
     content = ImprovementContentStore(factory)
-    a = items.create_improvement(agent_id="main-agent", title="事项A")
-    b = items.create_improvement(agent_id="main-agent", title="事项B")
-    fb = content.create_feedback(a.improvement_id, agent_id="main-agent", summary="反馈一")
+    a = items.create_improvement(agent_id=ORDINARY_TEST_AGENT_ID, title="事项A")
+    b = items.create_improvement(agent_id=ORDINARY_TEST_AGENT_ID, title="事项B")
+    fb = content.create_feedback(a.improvement_id, agent_id=ORDINARY_TEST_AGENT_ID, summary="反馈一")
 
     # reassign：把 A 的反馈移到 B（跨事项调整）。
     moved = content.reassign_feedback(
@@ -76,7 +77,7 @@ def test_reassign_feedback_and_delete_improvement_cascade(tmp_path: Path) -> Non
     assert content.count_feedbacks(a.improvement_id) == 0  # A 被清空
     assert content.count_feedbacks(b.improvement_id) == 1
     # attachable：从 A 视角能看到 B 的反馈作为可调整来源。
-    attachable = content.list_attachable_feedbacks(agent_id="main-agent", exclude_improvement_id=a.improvement_id)
+    attachable = content.list_attachable_feedbacks(agent_id=ORDINARY_TEST_AGENT_ID, exclude_improvement_id=a.improvement_id)
     assert any(f.feedback_id == fb.feedback_id for f in attachable)
 
     # deletion_impact + 硬删除：删 B，其反馈随删；A 仍在。
@@ -90,10 +91,10 @@ def test_reassign_feedback_and_delete_improvement_cascade(tmp_path: Path) -> Non
 
 def test_part_b_reassign_attachable_delete_endpoints(monkeypatch, tmp_path: Path) -> None:
     """Part B API：reassign / attachable / deletion-impact / DELETE 端到端。"""
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(monkeypatch, tmp_path, extra_agent_ids=(ORDINARY_TEST_AGENT_ID,))
     with TestClient(module.app) as client:
-        a = client.post("/api/improvements", json={"agent_id": "main-agent", "title": "事项A"}).json()
-        b = client.post("/api/improvements", json={"agent_id": "main-agent", "title": "事项B"}).json()
+        a = client.post("/api/improvements", json={"agent_id": ORDINARY_TEST_AGENT_ID, "title": "事项A"}).json()
+        b = client.post("/api/improvements", json={"agent_id": ORDINARY_TEST_AGENT_ID, "title": "事项B"}).json()
         fb = client.post(f"/api/improvements/{a['improvement_id']}/feedbacks", json={"summary": "反馈一"}).json()
 
         # 跨事项调整：A 的反馈 reassign 到 B。
@@ -383,7 +384,7 @@ def test_artifact_and_stage_roll_back_together_when_stage_write_fails(tmp_path: 
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     items = ImprovementStore(factory)
     content = ImprovementContentStore(factory)
-    item = items.create_improvement(agent_id="main-agent", title="原子产物")
+    item = items.create_improvement(agent_id=ORDINARY_TEST_AGENT_ID, title="原子产物")
 
     def fail_stage(db, improvement_id, *, stage):
         raise RuntimeError("injected stage failure")

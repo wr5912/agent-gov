@@ -355,8 +355,6 @@
 .release-candidate-detail { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); }
 .release-candidate-detail strong { color: var(--text-primary); font-size: 15px; }
 .release-diff-summary { max-height: 260px; border-radius: 8px; margin-top: 6px; }
-.release-force-button { color: #dc2626; border-color: #fecaca; }
-.release-force-button:hover { border-color: #fca5a5; }
 .release-review-items { display: grid; gap: 8px; }
 .release-review-item {
   display: grid;

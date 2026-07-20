@@ -19,6 +19,8 @@ from app.runtime.session_turn_persistence import (
     reconcile_expired_turns,
 )
 
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+
 
 def _seed_turn(tmp_path, *, expires_at="2999-01-01T00:00:00+00:00", append_entry=True):
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
@@ -27,7 +29,7 @@ def _seed_turn(tmp_path, *, expires_at="2999-01-01T00:00:00+00:00", append_entry
             SessionRecordModel(
                 session_id="api-session",
                 sdk_session_id=None,
-                agent_id="main-agent",
+                agent_id=ORDINARY_TEST_AGENT_ID,
                 created_at="2026-07-13T00:00:00+00:00",
                 updated_at="2026-07-13T00:00:00+00:00",
                 turns=0,
@@ -41,7 +43,7 @@ def _seed_turn(tmp_path, *, expires_at="2999-01-01T00:00:00+00:00", append_entry
             SessionTurnIntentModel(
                 run_id="run-1",
                 session_id="api-session",
-                agent_id="main-agent",
+                agent_id=ORDINARY_TEST_AGENT_ID,
                 source_sdk_session_id=None,
                 attempted_sdk_session_id="sdk-session",
                 sdk_project_key="project-key",
@@ -267,7 +269,7 @@ def test_exact_completion_retry_allows_session_to_advance_to_next_turn(tmp_path)
     next_turn = store.begin_persisted_turn(
         current,
         run_id="run-2",
-        agent_id="main-agent",
+        agent_id=ORDINARY_TEST_AGENT_ID,
         new_sdk_session_id="sdk-session",
         sdk_project_key="project-key",
         resolve_agent_version_id=lambda: "version-2",
@@ -384,7 +386,7 @@ def test_exact_abort_retry_allows_session_to_advance_to_next_turn(tmp_path):
     next_turn = store.begin_persisted_turn(
         current,
         run_id="run-2",
-        agent_id="main-agent",
+        agent_id=ORDINARY_TEST_AGENT_ID,
         new_sdk_session_id="sdk-next",
         sdk_project_key="project-key",
         resolve_agent_version_id=lambda: "version-2",
@@ -404,7 +406,7 @@ def test_expired_running_intent_reconciliation_unblocks_agent_maintenance(tmp_pa
     with pytest.raises(AgentRunsActiveError):
         acquire_maintenance(
             factory,
-            agent_id="main-agent",
+            agent_id=ORDINARY_TEST_AGENT_ID,
             kind="publish",
             owner_id="tester",
             lease_seconds=60,
@@ -414,7 +416,7 @@ def test_expired_running_intent_reconciliation_unblocks_agent_maintenance(tmp_pa
     assert reconcile_expired_turns(factory, now="2999-01-01T00:00:00+00:00") == ["run-1"]
     claim = acquire_maintenance(
         factory,
-        agent_id="main-agent",
+        agent_id=ORDINARY_TEST_AGENT_ID,
         kind="publish",
         owner_id="tester",
         lease_seconds=60,

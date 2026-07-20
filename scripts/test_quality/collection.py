@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -19,6 +20,22 @@ def nodeid_digest(nodeids: list[str] | tuple[str, ...]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _repository_nodeid(line: str, *, repo_root: Path) -> str | None:
+    raw = line.strip()
+    if "::" not in raw:
+        return None
+    path_text, suffix = raw.split("::", 1)
+    path = Path(path_text)
+    candidate = path if path.is_absolute() else repo_root / path
+    try:
+        relative = candidate.resolve().relative_to(repo_root.resolve())
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    return f"{relative.as_posix()}::{suffix}"
+
+
 def collect_pytest_nodes(
     selectors: list[str] | None = None,
     *,
@@ -26,19 +43,22 @@ def collect_pytest_nodes(
     python_executable: str = sys.executable,
 ) -> CollectionResult:
     requested = selectors or ["tests"]
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     result = subprocess.run(
         [python_executable, "-m", "pytest", "--collect-only", "-q", "--disable-warnings", *requested],
         cwd=repo_root,
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     if result.returncode != 0:
         output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
         if len(output) > 6000:
             output = f"{output[:6000]}\n... collection output truncated ..."
         raise RuntimeError(f"pytest collection failed:\n{output}")
-    nodeids = tuple(sorted({line.strip() for line in result.stdout.splitlines() if line.startswith("tests/") and "::" in line}))
+    nodeids = tuple(sorted({nodeid for line in result.stdout.splitlines() if (nodeid := _repository_nodeid(line, repo_root=repo_root)) is not None}))
     if not nodeids:
         raise RuntimeError(f"pytest collection produced no leaf nodeids for selectors: {requested}")
     return CollectionResult(nodeids=nodeids, digest=nodeid_digest(nodeids))

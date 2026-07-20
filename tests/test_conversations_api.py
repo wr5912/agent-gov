@@ -7,12 +7,13 @@ from pathlib import Path
 
 import app.routers.conversations as conv_module
 from app.runtime.agent_paths import business_agent_layout
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import SessionRecordModel
 from app.runtime.session_store import LocalSession
 from fastapi.testclient import TestClient
 
+from app_test_utils import load_test_app as _load_app
 from test_agent_workspace_packages import _import_new_agent
-from test_api_execution_optimizer import _load_app
 
 
 def _register_biz(client: TestClient, agent_id: str = "soc-ops") -> None:
@@ -67,7 +68,7 @@ def test_create_get_list_delete(monkeypatch, tmp_path: Path) -> None:
 
 def test_active_turn_blocks_both_session_delete_surfaces(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    module.session_store.get_or_create_owned("sess-active-delete", agent_id="main-agent")
+    module.session_store.get_or_create_owned("sess-active-delete", agent_id=DEFAULT_BUSINESS_AGENT_ID)
     with module.session_store.Session.begin() as db:
         session = db.get(SessionRecordModel, "sess-active-delete")
         assert session is not None
@@ -173,7 +174,7 @@ def test_items_use_persisted_candidate_project_binding_after_worktree_cleanup(mo
     module.session_store.save(
         LocalSession(
             session_id="eval-candidate",
-            agent_id="main-agent",
+            agent_id=DEFAULT_BUSINESS_AGENT_ID,
             sdk_session_id="00000000-0000-4000-8000-000000000001",
             sdk_project_key="candidate-worktree-project-key",
             sdk_store_ready_at="2026-07-14T00:00:00+00:00",
@@ -187,7 +188,7 @@ def test_items_use_persisted_candidate_project_binding_after_worktree_cleanup(mo
     assert captured == {
         "project_key": "candidate-worktree-project-key",
         "sdk_session_id": "00000000-0000-4000-8000-000000000001",
-        "workspace_dir": str(business_agent_layout(module.settings.data_dir, "main-agent").workspace),
+        "workspace_dir": str(business_agent_layout(module.settings.data_dir, DEFAULT_BUSINESS_AGENT_ID).workspace),
     }
 
 

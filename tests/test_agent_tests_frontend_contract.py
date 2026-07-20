@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -62,14 +61,16 @@ def test_agent_settings_show_workspace_test_status_and_import_audit() -> None:
     assert "receipt.test_suite_status" in drawer
 
 
-def test_force_publish_requires_an_explicit_persisted_reason() -> None:
+def test_feedback_release_hides_force_publish_and_keeps_historical_audit() -> None:
     release = _read("frontend/src/components/ReleaseWorkbench.tsx")
 
-    assert 'data-testid="release-force-reason"' in release
-    assert "force_reason: forceReason.trim()" in release
-    assert "!forceReason.trim()" in release
+    assert 'data-testid="release-action-force"' not in release
+    assert 'data-testid="release-force-reason"' not in release
+    assert "force: true" not in release
+    assert "release.force_published" in release
     assert "测试条件被管理员绕过" in release
     assert "release.force_publication_blocker" in release
+    assert "release.force_publish_reason" in release
     assert "release.operator" in release
 
 

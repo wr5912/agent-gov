@@ -14,8 +14,9 @@ from app.runtime.schemas import ChatResponse
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from fastapi.testclient import TestClient
 
+from app_test_utils import load_test_app as _load_app
+from business_agent_test_utils import LEGACY_MAIN_AGENT_ID
 from test_agent_workspace_packages import _import_new_agent
-from test_api_execution_optimizer import _load_app
 
 
 def _register_biz(client: TestClient, agent_id: str = "soc-ops", name: str = "客服助手") -> None:
@@ -36,8 +37,8 @@ def _fake_capturing_run(captured: dict):
 def test_store_distinguishes_unset_from_explicit_agent(tmp_path: Path) -> None:
     store = RuntimeSettingsStore(make_session_factory(runtime_db_path_from_data_dir(tmp_path)))
     assert store.get_openai_compat_agent_id() is None  # 从未配置
-    store.set_openai_compat_agent_id("main-agent")
-    assert store.get_openai_compat_agent_id() == "main-agent"  # 显式 main（与未配置不同的状态）
+    store.set_openai_compat_agent_id(LEGACY_MAIN_AGENT_ID)
+    assert store.get_openai_compat_agent_id() == LEGACY_MAIN_AGENT_ID
     assert store.clear_openai_compat_agent_id() is True
     assert store.get_openai_compat_agent_id() is None  # 重置回未配置
     assert store.clear_openai_compat_agent_id() is False  # 已无行
@@ -57,13 +58,13 @@ def test_get_unconfigured_uses_platform_default(monkeypatch, tmp_path: Path) -> 
 
 
 def test_explicit_main_is_configured_distinct_from_unset(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(monkeypatch, tmp_path, extra_agent_ids=(LEGACY_MAIN_AGENT_ID,))
     with TestClient(module.app) as client:
         # 显式选择普通 main-agent 与“未配置”是两个状态。
-        assert client.put("/api/settings/openai-compat-agent", json={"agent_id": "main-agent"}).json() == {
-            "agent_id": "main-agent",
+        assert client.put("/api/settings/openai-compat-agent", json={"agent_id": LEGACY_MAIN_AGENT_ID}).json() == {
+            "agent_id": LEGACY_MAIN_AGENT_ID,
             "configured": True,
-            "effective_agent_id": "main-agent",
+            "effective_agent_id": LEGACY_MAIN_AGENT_ID,
         }
         # DELETE 重置回平台默认。
         assert client.delete("/api/settings/openai-compat-agent").json() == {

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 from scripts.run_mutation_lane import mutation_score
-from scripts.test_quality.collection import CollectionResult, collect_pytest_nodeids, nodeid_digest
+from scripts.test_quality.collection import CollectionResult, collect_pytest_nodeids, collect_pytest_nodes, nodeid_digest
 from scripts.test_quality.coverage import CoverageSnapshot, compare_coverage_snapshots, evaluate_coverage
 from scripts.test_quality.evidence import build_evidence, utc_now, validate_evidence, write_evidence
 from scripts.test_quality.impact import select_impacted_nodes
@@ -39,6 +39,14 @@ def test_quality_policy_schema_forbids_unknown_fields() -> None:
     raw["portfolio"]["rules"][0]["classification"]["legacy_bucket"] = "slow"
 
     with pytest.raises(ValidationError, match="legacy_bucket"):
+        QualityPolicy.model_validate(raw)
+
+
+def test_quality_policy_requires_explicit_collection_selectors() -> None:
+    raw = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+    raw.pop("collection")
+
+    with pytest.raises(ValidationError, match="collection"):
         QualityPolicy.model_validate(raw)
 
 
@@ -94,6 +102,8 @@ def test_repository_quality_policy_covers_every_collected_leaf() -> None:
     assert validation.errors == ()
     assert len(validation.collection.nodeids) == len(validation.classifications)
     assert len(validation.collection.nodeids) >= 1000
+    assert any(nodeid.startswith("docker/runtime-bootstrap/governor-workspace/tests/") for nodeid in validation.collection.nodeids)
+    assert not any("/business-agents/" in nodeid and "/workspace/tests/" in nodeid for nodeid in validation.collection.nodeids)
     assert {classification.owner for classification in validation.classifications.values()} == {
         "agent-lifecycle",
         "engineering-governance",
@@ -161,6 +171,26 @@ def test_collect_pytest_nodeids_rejects_unknown_parametrized_case(tmp_path: Path
 
     assert len(errors) == 1
     assert "could not collect" in errors[0]
+
+
+def test_collect_pytest_nodes_accepts_explicit_repository_test_roots(tmp_path: Path) -> None:
+    root_test = tmp_path / "tests" / "test_root.py"
+    workspace_test = tmp_path / "docker" / "runtime-bootstrap" / "agent" / "workspace" / "tests" / "test_workspace.py"
+    root_test.parent.mkdir(parents=True)
+    workspace_test.parent.mkdir(parents=True)
+    root_test.write_text("def test_root():\n    assert True\n", encoding="utf-8")
+    workspace_test.write_text("def test_workspace():\n    assert True\n", encoding="utf-8")
+
+    collection = collect_pytest_nodes(
+        ["tests", "docker/runtime-bootstrap/agent/workspace/tests"],
+        repo_root=tmp_path,
+    )
+
+    assert collection.nodeids == (
+        "docker/runtime-bootstrap/agent/workspace/tests/test_workspace.py::test_workspace",
+        "tests/test_root.py::test_root",
+    )
+    assert list(tmp_path.rglob("__pycache__")) == []
 
 
 def test_evidence_rejects_tamper_partial_and_stale_commit(tmp_path: Path) -> None:

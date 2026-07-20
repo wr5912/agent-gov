@@ -147,16 +147,6 @@ def test_bootstrap_initializes_only_governor_and_declared_builtin_agent(tmp_path
     assert result["copied"]
 
 
-def test_repository_governor_bootstrap_declares_and_allows_native_config_skill() -> None:
-    governor = ROOT / "docker" / "runtime-bootstrap" / "governor-workspace"
-    settings = json.loads((governor / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    skill = governor / ".claude" / "skills" / "read-business-agent-config" / "SKILL.md"
-
-    assert skill.is_file()
-    assert "Skill" in settings["permissions"]["allow"]
-    assert "Read" in settings["permissions"]["allow"]
-
-
 def test_bootstrap_never_reconciles_an_existing_business_agent_workspace(tmp_path: Path) -> None:
     source = _bootstrap_source(tmp_path)
     runtime_root = tmp_path / "runtime"

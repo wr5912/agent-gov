@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from test_api_execution_optimizer import _load_app
+from app_test_utils import load_test_app as _load_app
 
 ROOT = Path(__file__).resolve().parents[1]
 

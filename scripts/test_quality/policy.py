@@ -169,7 +169,7 @@ def validate_quality_policy(
     repo_root: Path,
     collection: CollectionResult | None = None,
 ) -> PolicyValidation:
-    collected = collection or collect_pytest_nodes(repo_root=repo_root)
+    collected = collection or collect_pytest_nodes(policy.collection.selectors, repo_root=repo_root)
     errors: list[str] = []
     errors.extend(_unique_ids(policy.owners, "owner"))
     errors.extend(_unique_ids(policy.capabilities, "capability"))

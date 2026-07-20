@@ -10,6 +10,8 @@ from app.runtime.sdk_session_store import SqliteSdkSessionStore
 from app.runtime.session_store import LocalSessionStore
 from claude_agent_sdk import get_session_messages_from_store, project_key_for_directory
 
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+
 
 def _legacy_session(tmp_path):
     workspace = tmp_path / "workspace"
@@ -35,7 +37,7 @@ def _legacy_session(tmp_path):
     ]
     transcript.write_text("".join(f"{json.dumps(entry)}\n" for entry in entries), encoding="utf-8")
     store = LocalSessionStore(tmp_path / "data" / "sessions")
-    session = store.get_or_create_owned("api-session", agent_id="main-agent")
+    session = store.get_or_create_owned("api-session", agent_id=ORDINARY_TEST_AGENT_ID)
     session.sdk_session_id = sdk_session_id
     store.save(session)
     return store, store.get("api-session"), workspace, config_dir, sdk_session_id, project_key
@@ -197,7 +199,7 @@ def test_mapping_invalidation_discards_inflight_import_staging(tmp_path, operati
     current = store.get(session.session_id)
     assert current is not None
     if operation == "clear":
-        store.clear_sdk_session(current, agent_id="main-agent")
+        store.clear_sdk_session(current, agent_id=ORDINARY_TEST_AGENT_ID)
     else:
         assert store.delete(session.session_id) is True
 

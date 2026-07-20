@@ -1,8 +1,6 @@
 import asyncio
 import json
-import shutil
 import threading
-from pathlib import Path
 
 import pytest
 from app.runtime import claude_prompt_suggestions, session_turn_lease
@@ -13,33 +11,33 @@ from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.claude_user_input_schemas import ClaudeUserInputDecisionRequest
 from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.runtime.errors import SessionConflictError
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
 
+from business_agent_test_utils import SECONDARY_TEST_AGENT_ID, create_test_business_agent_workspace
 from claude_runtime_test_utils import default_profile_resolver
 
-SECURITY_OPERATIONS_EXPERT_AGENT_ID = "security-operations-expert"
-SOC_CREATE_TOOL = "mcp__sec-ops__soc_api__create"
-SOC_MANUAL_TOOL = "mcp__sec-ops__soc_api__manual"
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BUILTIN_WORKSPACE = REPO_ROOT / "docker" / "runtime-bootstrap" / "business-agents" / SECURITY_OPERATIONS_EXPERT_AGENT_ID / "workspace"
+CHANGE_CREATE_TOOL = "mcp__change-control__create"
+CHANGE_MANUAL_TOOL = "mcp__change-control__manual"
+CHANGE_SUBMIT_TOOL = "mcp__change-control__submit"
 
 
 def _settings(
     tmp_path,
     *,
     enable_hitl: bool,
-    agent_id: str = SECURITY_OPERATIONS_EXPERT_AGENT_ID,
+    agent_id: str = DEFAULT_BUSINESS_AGENT_ID,
     ask_rules: list[str] | None = None,
 ) -> AppSettings:
     workspace = tmp_path / "volume" / "data" / "business-agents" / agent_id / "workspace"
     data = tmp_path / "volume" / "data"
     claude_root = tmp_path / "volume" / "data" / "business-agents" / agent_id / "claude-root"
     claude_home = claude_root / ".claude"
-    shutil.copytree(BUILTIN_WORKSPACE, workspace)
+    create_test_business_agent_workspace(workspace, agent_id=agent_id, name="Test Business Agent")
     settings_path = workspace / ".claude" / "settings.json"
     settings_data = json.loads(settings_path.read_text(encoding="utf-8"))
     if ask_rules is not None:
@@ -146,8 +144,8 @@ def test_stream_hitl_consumes_prompt_eof_then_resumes_sdk_after_allow(tmp_path, 
         seen["prompt_items"] = [item async for item in prompt]
         seen["control_open_at_callback"] = not seen.get("control_closed", False)
         seen["permission_result"] = await options.can_use_tool(
-            "mcp__soc-playbook-execution__submit",
-            {"playbook_id": "pb-1"},
+            CHANGE_SUBMIT_TOOL,
+            {"change_request_id": "change-1"},
             {"tool_use_id": "toolu-hitl", "agent_id": "sdk-subagent"},
         )
         yield await _success_result(options, text="approved")
@@ -200,7 +198,7 @@ def test_stream_hitl_consumes_prompt_eof_then_resumes_sdk_after_allow(tmp_path, 
     assert record.decision == "allow_once"
 
 
-def test_stream_imported_security_agent_uses_native_hitl_without_id_gate_or_input_rewrite(tmp_path, monkeypatch):
+def test_stream_registered_business_agent_uses_native_hitl_without_id_gate_or_input_rewrite(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
@@ -208,31 +206,31 @@ def test_stream_imported_security_agent_uses_native_hitl_without_id_gate_or_inpu
         await anext(prompt)
         seen["control_open_at_callback"] = not seen.get("control_closed", False)
         seen["create_result"] = await options.can_use_tool(
-            SOC_CREATE_TOOL,
-            {"playbookId": "model-draft"},
+            CHANGE_CREATE_TOOL,
+            {"changeRequestId": "model-draft"},
             {"tool_use_id": "create"},
         )
         seen["manual_result"] = await options.can_use_tool(
-            SOC_MANUAL_TOOL,
-            {"playbookId": "model-draft"},
+            CHANGE_MANUAL_TOOL,
+            {"changeRequestId": "model-draft"},
             {"tool_use_id": "manual"},
         )
         yield await _success_result(options, text="disposed")
 
     _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
 
-    imported_agent_id = "security-operations-derived"
+    registered_agent_id = SECONDARY_TEST_AGENT_ID
     settings = _settings(
         tmp_path,
         enable_hitl=True,
-        agent_id=imported_agent_id,
-        ask_rules=[SOC_CREATE_TOOL, SOC_MANUAL_TOOL],
+        agent_id=registered_agent_id,
+        ask_rules=[CHANGE_CREATE_TOOL, CHANGE_MANUAL_TOOL],
     )
     service, store = _service(tmp_path)
     runtime = ClaudeRuntime(
         settings, LocalSessionStore(settings.session_dir), business_profile_resolver=default_profile_resolver(settings), user_input_service=service
     )
-    profile = _profile(settings, imported_agent_id)
+    profile = _profile(settings, registered_agent_id)
 
     async def scenario():
         stream = runtime.stream(ChatRequest(message="dispose"), profile=profile)
@@ -273,8 +271,8 @@ def test_stream_imported_security_agent_uses_native_hitl_without_id_gate_or_inpu
     assert seen["control_open_at_callback"] is True
     records = store.list(run_id=str(events[0]["data"]["run_id"]))
     assert len(records) == 2
-    assert {record.tool_name for record in records} == {SOC_CREATE_TOOL, SOC_MANUAL_TOOL}
-    assert {record.business_agent_id for record in records} == {imported_agent_id}
+    assert {record.tool_name for record in records} == {CHANGE_CREATE_TOOL, CHANGE_MANUAL_TOOL}
+    assert {record.business_agent_id for record in records} == {registered_agent_id}
     assert {record.decision for record in records} == {"allow_once", "deny"}
 
 
@@ -316,7 +314,7 @@ def test_stream_fail_loud_when_hitl_required_but_disabled(tmp_path, monkeypatch)
         seen["options"] = options
         seen["prompt_items"] = [item async for item in prompt]
         seen["control_open_at_callback"] = not seen.get("control_closed", False)
-        seen["permission_result"] = await options.can_use_tool("mcp__soc-playbook-execution__submit", {}, {"tool_use_id": "t1"})
+        seen["permission_result"] = await options.can_use_tool(CHANGE_SUBMIT_TOOL, {}, {"tool_use_id": "t1"})
         if False:
             yield None
 
@@ -341,32 +339,32 @@ def test_stream_fail_loud_when_hitl_required_but_disabled(tmp_path, monkeypatch)
     assert store.list(limit=10) == []  # 未创建 HITL 请求（HITL 关）
 
 
-def test_stream_imported_security_agent_fails_closed_when_native_hitl_is_disabled(tmp_path, monkeypatch):
+def test_stream_registered_business_agent_fails_closed_when_native_hitl_is_disabled(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
         await anext(prompt)
         seen["control_open_at_callback"] = not seen.get("control_closed", False)
-        seen["create_result"] = await options.can_use_tool(SOC_CREATE_TOOL, {}, {"tool_use_id": "create"})
-        seen["manual_result"] = await options.can_use_tool(SOC_MANUAL_TOOL, {}, {"tool_use_id": "manual"})
+        seen["create_result"] = await options.can_use_tool(CHANGE_CREATE_TOOL, {}, {"tool_use_id": "create"})
+        seen["manual_result"] = await options.can_use_tool(CHANGE_MANUAL_TOOL, {}, {"tool_use_id": "manual"})
         if False:
             yield None
 
     _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
 
-    imported_agent_id = "security-operations-derived"
+    registered_agent_id = SECONDARY_TEST_AGENT_ID
     settings = _settings(
         tmp_path,
         enable_hitl=False,
-        agent_id=imported_agent_id,
-        ask_rules=[SOC_CREATE_TOOL, SOC_MANUAL_TOOL],
+        agent_id=registered_agent_id,
+        ask_rules=[CHANGE_CREATE_TOOL, CHANGE_MANUAL_TOOL],
     )
     service, store = _service(tmp_path)
     runtime = ClaudeRuntime(
         settings, LocalSessionStore(settings.session_dir), business_profile_resolver=default_profile_resolver(settings), user_input_service=service
     )
-    profile = _profile(settings, imported_agent_id)
+    profile = _profile(settings, registered_agent_id)
 
     async def collect():
         return [event async for event in runtime.stream(ChatRequest(message="dispose"), profile=profile)]
@@ -390,7 +388,7 @@ def test_run_fail_loud_when_hitl_required(tmp_path, monkeypatch):
         seen["options"] = options
         seen["prompt_items"] = [item async for item in prompt]
         seen["control_open_at_callback"] = not seen.get("control_closed", False)
-        seen["permission_result"] = await options.can_use_tool("mcp__soc-playbook-execution__submit", {}, {"tool_use_id": "t1"})
+        seen["permission_result"] = await options.can_use_tool(CHANGE_SUBMIT_TOOL, {}, {"tool_use_id": "t1"})
         if False:
             yield None
 
@@ -409,31 +407,31 @@ def test_run_fail_loud_when_hitl_required(tmp_path, monkeypatch):
     assert seen["control_open_at_callback"] is True
 
 
-def test_run_imported_security_agent_denies_native_ask_without_stream_hitl(tmp_path, monkeypatch):
+def test_run_registered_business_agent_denies_native_ask_without_stream_hitl(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
         seen["control_open_at_callback"] = not seen.get("control_closed", False)
-        seen["create_result"] = await options.can_use_tool(SOC_CREATE_TOOL, {}, {"tool_use_id": "create"})
-        seen["manual_result"] = await options.can_use_tool(SOC_MANUAL_TOOL, {}, {"tool_use_id": "manual"})
+        seen["create_result"] = await options.can_use_tool(CHANGE_CREATE_TOOL, {}, {"tool_use_id": "create"})
+        seen["manual_result"] = await options.can_use_tool(CHANGE_MANUAL_TOOL, {}, {"tool_use_id": "manual"})
         if False:
             yield None
 
     _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
 
-    imported_agent_id = "security-operations-derived"
+    registered_agent_id = SECONDARY_TEST_AGENT_ID
     settings = _settings(
         tmp_path,
         enable_hitl=False,
-        agent_id=imported_agent_id,
-        ask_rules=[SOC_CREATE_TOOL, SOC_MANUAL_TOOL],
+        agent_id=registered_agent_id,
+        ask_rules=[CHANGE_CREATE_TOOL, CHANGE_MANUAL_TOOL],
     )
     service, _store = _service(tmp_path)
     runtime = ClaudeRuntime(
         settings, LocalSessionStore(settings.session_dir), business_profile_resolver=default_profile_resolver(settings), user_input_service=service
     )
-    profile = _profile(settings, imported_agent_id)
+    profile = _profile(settings, registered_agent_id)
 
     asyncio.run(runtime.run(ChatRequest(message="dispose"), profile=profile))
     assert getattr(seen["options"], "permission_mode", None) == "default"

@@ -12,21 +12,21 @@ description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 W
 
 - 所有注册业务 Agent（含 `main-agent`）遵循同一运行态路径和治理机制；不得把 `main-agent`
   当作默认、模板或隐式兜底。
-- `security-operations-expert` 是当前唯一内置、默认且受保护的业务 Agent。这三个属性彼此独立，
-  不得用一个 `seed` 或 `origin` 字段合并表达。
+- 内置、默认和受保护是三个独立的平台属性；具体 Agent ID 以平台常量和注册表为准，
+  不得在本通用 skill 中复制某个 Agent 的业务行为或用 `seed` / `origin` 合并表达。
 - 普通业务 Agent 只能通过完整的业务 Agent Workspace 包导入创建。仓库不提供通用创建模板，
   也不存在运行态 seed catalog。
 - `docker/runtime-bootstrap/` 是运行卷初始化源，不是模板 catalog，也不是运行态副本。它只承载
   `governor-workspace/` 和显式声明的内置业务 Agent Workspace。
-- 导出 `security-operations-expert` 后可以将其 Workspace 包作为新 Agent 的修改起点；导入不会
-  重写包内身份文本或权限配置，运行归属由目标 `agent_id` 和注册表决定。
+- 导出的业务 Agent Workspace 包可以作为新 Agent 的修改起点；导入不会重写包内身份文本或
+  权限配置，运行归属由目标 `agent_id` 和注册表决定。
 
 ## 适用范围
 
 - 运行态业务 Agent Workspace：
   `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/`。
-- 仓库内唯一内置业务 Agent Workspace：
-  `docker/runtime-bootstrap/business-agents/security-operations-expert/workspace/`。
+- 仓库内置业务 Agent Workspace：
+  `docker/runtime-bootstrap/business-agents/<agent_id>/workspace/`。
 - 用户明确要求时，可处理 `docker/runtime-bootstrap/governor-workspace/`，但必须说明它是治理
   Agent，不属于业务 Agent。
 
@@ -40,7 +40,7 @@ description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 W
 | 用户目标 | 对象 | 允许路径 | 证据 | 验收 |
 | --- | --- | --- | --- | --- |
 | 已注册业务 Agent | 运行态 Workspace | `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/` | 用户给定路径或 `GET /api/agent-registry` 的 `workspace_dir` | 配置、权限、目标测试、下一 turn |
-| 内置安全运营 Agent | 运行卷初始化源 | `docker/runtime-bootstrap/business-agents/security-operations-expert/workspace/` | 明确要求修改内置配置 | 准入扫描、专项测试、空卷初始化 |
+| 内置业务 Agent | 运行卷初始化源 | `docker/runtime-bootstrap/business-agents/<agent_id>/workspace/` | 明确要求修改该内置配置 | 准入扫描、Agent 自测、空卷初始化 |
 | governor | 治理 Agent Workspace | `${RUNTIME_ROOT}/governor-workspace/` 或仓库初始化源 | 用户明确指定 governor | 治理 Agent 专项验证 |
 | runtime 父目录或并列层 | 非 Workspace | `data/`、`business-agents/`、`<agent_id>/version/`、`claude-root/` | 只是父目录或状态目录 | no-op 并重新定位 |
 
@@ -95,8 +95,9 @@ description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 W
 - `SKILL.md` 必须有合法 `name` 和 `description` frontmatter。
 - 通用业务 Agent 的宽泛 Bash 默认进入 `ask`；只允许审计过的具体低风险规则进入 `allow`。
   run 级授权必须按低风险类别隔离，高风险或未分类请求不得整轮放行。
-- `security-operations-expert` 的 `soc_api__create` / `soc_api__manual` 走 Claude 原生逐次确认，
-  其他处置 mutation 与 `AskUserQuestion` 拒绝；后端不得按 Agent ID 添加第二套授权。
+- 工具、权限、确认和业务流程契约只从目标 Workspace 的 `README.md`、`CLAUDE.md`、`agent.yaml`、
+  `.mcp.json` 与 `.claude/settings.json` 读取；本通用 skill 不硬编码具体工具名或领域流程，后端不得
+  按 Agent ID 添加第二套授权。
 - 仓库初始化源改动运行 `make runtime-bootstrap-scan`。唯一扫描实现是
   `scripts/runtime_bootstrap_safety.py` 的 `scan_path`；不得新建并行扫描器。只有用户明确要求
   替换敏感值时才使用其 `sanitize`，并复核 diff。

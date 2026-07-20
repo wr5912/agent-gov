@@ -1,25 +1,20 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
-TESTKIT_SRC = Path(__file__).resolve().parents[1] / "packages" / "agentgov-testkit" / "src"
-if str(TESTKIT_SRC) not in sys.path:
-    sys.path.insert(0, str(TESTKIT_SRC))
-
-from agentgov_testkit import (  # noqa: E402
+from agentgov_testkit import (
     AgentGovTestkitError,
     AgentInvocation,
     invoke_agent,
-    pytest_plugin,  # noqa: E402
+    pytest_plugin,
 )
-from agentgov_testkit import _reporting as testkit_reporting  # noqa: E402
-from agentgov_testkit import _transport as testkit_transport  # noqa: E402
+from agentgov_testkit import _reporting as testkit_reporting
+from agentgov_testkit import _transport as testkit_transport
 
 
 class _Response:

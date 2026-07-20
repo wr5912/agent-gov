@@ -72,3 +72,27 @@ def test_readme_directory_structure_matches_actual_repo_layout():
     tree_block = structure.split("```text", 1)[1].split("```", 1)[0]
     assert "volume/" not in tree_block
     assert "${HOME}/volume-agent-gov" in structure
+
+
+def test_project_level_docs_and_skills_do_not_embed_business_agent_behavior():
+    project_surfaces = (
+        "README.md",
+        "docs/AgentGov集成指南.md",
+        ".codex/skills/business-agent-workspace-optimizer/SKILL.md",
+        ".claude/skills/business-agent-workspace-optimizer/SKILL.md",
+    )
+    agent_specific_markers = (
+        "soc_api__",
+        "mcp__sec-ops",
+        "response-playbook",
+        "threat-response-disposition",
+        "security-operations-analysis",
+        "RO lifecycle",
+        "control scope",
+        "daily-secops",
+    )
+
+    for path in project_surfaces:
+        text = _read_repo_text(path)
+        for marker in agent_specific_markers:
+            assert marker not in text, f"项目级入口 {path} 不得复制业务 Agent 专属标记 {marker}"

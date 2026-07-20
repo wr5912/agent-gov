@@ -12,6 +12,7 @@ from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.services.improvement_governor_service import ImprovementGovernorService
 
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 from feedback_store_test_utils import _seed_execution_record
 
 
@@ -124,7 +125,7 @@ def test_attribution_rejects_governor_workspace_as_business_agent_evidence(tmp_p
             "confidence": "high",
             "human_review_required": False,
             "rationale": "错误引用了 governor 自身配置。",
-            "responsibility_boundary": {"owner": "main-agent", "reason": "错误证据"},
+            "responsibility_boundary": {"owner": ORDINARY_TEST_AGENT_ID, "reason": "错误证据"},
             "evidence_refs": [
                 {
                     "type": "file",

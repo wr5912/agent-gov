@@ -15,13 +15,12 @@ from app.runtime.session_store import LocalSession
 from app.services import agent_version_maintenance
 from app.services import agent_workspace_git_operations as workspace_git_operations
 from app.services import agent_workspace_package_codec as workspace_codec
-from app.services import agent_workspace_packages as workspace_packages
 from app.services.agent_governance import AgentGovernanceError
 from fastapi.testclient import TestClient
 
+from app_test_utils import load_test_app as _load_app
 from test_agent_workspace_packages import (
     _import_new_agent,
-    _load_app,
     _package_with_empty_pax_path,
     _package_with_large_reversed_conflict,
     _package_with_long_tar_metadata,

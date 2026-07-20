@@ -73,6 +73,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/test_quality/policy.py \
 	scripts/diagnose_runtime_health.py \
 	packages/agentgov-testkit/src/agentgov_testkit \
+	docker/runtime-bootstrap/governor-workspace/tests \
 	scripts/runtime_bootstrap_secret_assignments.py \
 	scripts/runtime_bootstrap_safety.py \
 	scripts/runtime_cleanup.py \
@@ -91,7 +92,7 @@ setup:
 	cp -n docker/.env.example docker/.env || true
 	@if ! command -v $(UV) >/dev/null 2>&1; then echo "uv is required. Install uv before running make setup." >&2; exit 1; fi
 	$(UV) venv $(VENV) --python 3.11
-	$(UV) pip install --python $(PYTHON) -r requirements.txt
+	$(UV) pip install --python $(PYTHON) -r requirements.txt -e packages/agentgov-testkit
 	$(MAKE) langfuse-dirs
 
 build:
@@ -208,10 +209,11 @@ chat:
 	api_key=$${API_KEY:-$$(awk -F= '$$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
 	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
 	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
+	agent_id=$${AGENT_ID:-security-operations-expert}; \
 	curl -s -X POST "$$api_base/api/chat" \
 		-H 'Content-Type: application/json' \
 		-H "Authorization: Bearer $${api_key:-change-me}" \
-		-d '{"message":"你好，请说明你当前可用的 agents 和 skills。","agent_id":"main-agent"}' | $(PYTHON_RUN) -m json.tool
+		-d "{\"message\":\"你好，请说明你当前可用的 agents 和 skills。\",\"agent_id\":\"$$agent_id\"}" | $(PYTHON_RUN) -m json.tool
 
 codex-guard:
 	$(PYTHON_RUN) .codex/skills/codex-config-optimizer/scripts/audit_codex_config.py --fail

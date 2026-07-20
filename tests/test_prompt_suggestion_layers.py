@@ -26,6 +26,7 @@ from app.runtime.claude_prompt_suggestions import (
     query_with_prompt_suggestions,
 )
 from app.runtime.openai_responses_stream import iter_responses_sse
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from claude_agent_sdk import ClaudeAgentOptions
 
 # ---------------------------------------------------------------- 注入用的假 CLI
@@ -266,7 +267,11 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
         RUNTIME_VOLUME_MODE="local-debug",
     )
     workspace = settings.default_workspace_dir
-    create_test_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    create_test_business_agent_workspace(
+        workspace,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        name="Security Operations Expert",
+    )
     (workspace / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}) + "\n",
         encoding="utf-8",
@@ -282,7 +287,12 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
                 yield frame
 
         sse_events: list[str] = []
-        async for chunk in iter_responses_sse(source(), model="m", effective_agent_id="main-agent", control=True):
+        async for chunk in iter_responses_sse(
+            source(),
+            model="m",
+            effective_agent_id=DEFAULT_BUSINESS_AGENT_ID,
+            control=True,
+        ):
             for line in chunk.split("\n"):
                 if line.startswith("event:"):
                     sse_events.append(line[len("event:") :].strip())

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+
 from feedback_store_test_utils import FeedbackSignalCreateRequest, FeedbackStore, _settings
 
 
@@ -33,7 +35,7 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
     store.record_run(
         {
             "run_id": run_id,
-            "agent_id": "main-agent",
+            "agent_id": DEFAULT_BUSINESS_AGENT_ID,
             "session_id": "sess-mcp-config-failed",
             "message": "生成一份日报",
             "answer_summary": "",

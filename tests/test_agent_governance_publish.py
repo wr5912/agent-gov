@@ -28,7 +28,7 @@ from app.services.agent_change_set_provisioner import ChangeSetSource
 from app.services.agent_governance import AgentGovernanceError, AgentGovernanceService
 from sqlalchemy.exc import OperationalError
 
-from business_agent_test_utils import create_test_business_agent_workspace
+from business_agent_test_utils import LEGACY_MAIN_AGENT_ID, ORDINARY_TEST_AGENT_ID, create_test_business_agent_workspace
 from feedback_store_test_utils import _settings
 
 
@@ -86,6 +86,70 @@ def _candidate_change_set(
         execution_job_id="job-publish-test",
         operator="tester",
     )
+
+
+def _feedback_candidate_change_set(
+    governance: AgentGovernanceService,
+    agent_store: GitAgentVersionStore,
+) -> tuple[dict, str]:
+    change_set_id = "agc-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    bound_at = "2026-07-10T00:00:00+00:00"
+    with governance.feedback_store.Session.begin() as db:
+        db.add(
+            ImprovementItemModel(
+                improvement_id="imp-publish",
+                agent_id=DEFAULT_BUSINESS_AGENT_ID,
+                title="来源治理",
+                improvement_stage="regression",
+                improvement_status="active",
+                created_at=bound_at,
+                updated_at=bound_at,
+            )
+        )
+        db.add(
+            AttributionModel(
+                attribution_id="attr-publish",
+                improvement_id="imp-publish",
+                status="confirmed",
+                created_at=bound_at,
+                updated_at=bound_at,
+            )
+        )
+        db.add(
+            OptimizationPlanModel(
+                optimization_plan_id="opt-publish",
+                improvement_id="imp-publish",
+                status="confirmed",
+                created_at=bound_at,
+                updated_at=bound_at,
+            )
+        )
+        db.add(
+            ExecutionRecordModel(
+                execution_id="exec-publish",
+                improvement_id="imp-publish",
+                change_set_id=change_set_id,
+                status="confirmed",
+                source_optimization_plan_id="opt-publish",
+                source_optimization_plan_updated_at=bound_at,
+                source_attribution_id="attr-publish",
+                source_attribution_updated_at=bound_at,
+            )
+        )
+    change_set = governance.create_change_set(
+        change_set_id=change_set_id,
+        execution_job_id="exec-publish",
+        source=ChangeSetSource("imp-publish", "attr-publish", "confirmed"),
+    )
+    worktree = Path(str(change_set["worktree_path"]))
+    worktree.joinpath("CLAUDE.md").write_text("provenance candidate\n", encoding="utf-8")
+    candidate = agent_store.commit_worktree(worktree, message="provenance candidate")
+    committed = governance.mark_candidate_committed(
+        change_set_id,
+        candidate_commit_sha=candidate,
+        execution_job_id="exec-publish",
+    )
+    return committed, bound_at
 
 
 def test_stable_change_set_intent_is_idempotent_and_candidate_can_advance_before_publish(tmp_path):
@@ -486,6 +550,38 @@ def test_force_publish_requires_reason_and_persists_warning_audit(tmp_path):
         AgentChangeSetPublishRequest(force=True)
 
 
+def test_feedback_publication_cannot_force_bypass_complete_agent_test_suite(tmp_path):
+    governance, agent_store = _governance(tmp_path)
+    change_set, _bound_at = _feedback_candidate_change_set(governance, agent_store)
+    change_set_id = str(change_set["change_set_id"])
+    commit_sha = str(change_set["candidate_commit_sha"])
+    agent_id = str(change_set["agent_id"])
+    governance.latest_passed_test_run = lambda _agent_id, _commit_sha: None
+
+    projected = governance.get_change_set(change_set_id)
+    assert projected is not None
+    assert "commit_sha 完全匹配" in str(projected["publication_blocker"])
+    with pytest.raises(AgentGovernanceError, match="完整 Agent 测试集.*不能强制绕过") as exc:
+        governance.publish_change_set(
+            change_set_id,
+            operator="tester",
+            note="请求跳过失败测试",
+            force=True,
+        )
+    assert exc.value.status_code == 409
+    assert governance.get_change_set(change_set_id)["status"] == "candidate_committed"
+
+    governance.latest_passed_test_run = lambda _agent_id, _commit_sha: {
+        "test_run_id": "atr-feedback-exact",
+        "agent_id": agent_id,
+        "commit_sha": commit_sha,
+        "status": "passed",
+    }
+    release = governance.publish_change_set(change_set_id, operator="tester")
+    assert release["commit_sha"] == commit_sha
+    assert release["force_published"] is False
+
+
 def test_publish_retries_after_archive_failure_without_duplicate_release(tmp_path, monkeypatch):
     governance, agent_store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, agent_store)
@@ -677,59 +773,9 @@ def test_source_claim_blocks_second_publication_before_git_side_effect(tmp_path,
 
 def test_improvement_publication_rejects_unconfirmed_or_revised_provenance_even_with_force(tmp_path, monkeypatch):
     governance, agent_store = _governance(tmp_path)
-    change_set_id = "agc-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    bound_at = "2026-07-10T00:00:00+00:00"
-    with governance.feedback_store.Session.begin() as db:
-        db.add(
-            ImprovementItemModel(
-                improvement_id="imp-publish",
-                agent_id=DEFAULT_BUSINESS_AGENT_ID,
-                title="来源治理",
-                improvement_stage="regression",
-                improvement_status="active",
-                created_at=bound_at,
-                updated_at=bound_at,
-            )
-        )
-        db.add(
-            AttributionModel(
-                attribution_id="attr-publish",
-                improvement_id="imp-publish",
-                status="confirmed",
-                created_at=bound_at,
-                updated_at=bound_at,
-            )
-        )
-        db.add(
-            OptimizationPlanModel(
-                optimization_plan_id="opt-publish",
-                improvement_id="imp-publish",
-                status="confirmed",
-                created_at=bound_at,
-                updated_at=bound_at,
-            )
-        )
-        db.add(
-            ExecutionRecordModel(
-                execution_id="exec-publish",
-                improvement_id="imp-publish",
-                change_set_id=change_set_id,
-                status="confirmed",
-                source_optimization_plan_id="opt-publish",
-                source_optimization_plan_updated_at=bound_at,
-                source_attribution_id="attr-publish",
-                source_attribution_updated_at=bound_at,
-            )
-        )
-    change_set = governance.create_change_set(
-        change_set_id=change_set_id,
-        execution_job_id="exec-publish",
-        source=ChangeSetSource("imp-publish", "attr-publish", "confirmed"),
-    )
-    worktree = Path(str(change_set["worktree_path"]))
-    worktree.joinpath("CLAUDE.md").write_text("provenance candidate\n", encoding="utf-8")
-    candidate = agent_store.commit_worktree(worktree, message="provenance candidate")
-    governance.mark_candidate_committed(change_set_id, candidate_commit_sha=candidate, execution_job_id="exec-publish")
+    change_set, bound_at = _feedback_candidate_change_set(governance, agent_store)
+    change_set_id = str(change_set["change_set_id"])
+    candidate = str(change_set["candidate_commit_sha"])
 
     with governance.feedback_store.Session.begin() as db:
         db.get(ExecutionRecordModel, "exec-publish").status = "draft"
@@ -1126,8 +1172,8 @@ def test_repository_ops_route_per_agent_not_always_platform_default(tmp_path):
     不再恒走平台默认业务 Agent 的版本库。"""
     governance, default_store = _governance(tmp_path)
     assert governance._store_for(None) is default_store
-    historical_main_store = governance._store_for("main-agent")
-    assert historical_main_store.repository_dir != default_store.repository_dir
+    ordinary_store = governance._store_for(ORDINARY_TEST_AGENT_ID)
+    assert ordinary_store.repository_dir != default_store.repository_dir
     # 其他业务 Agent 也走独立 per-Agent 库。
     biz_store = governance._store_for("biz-x")
     assert biz_store.repository_dir != default_store.repository_dir
@@ -1147,17 +1193,17 @@ def test_version_governance_rejects_unregistered_ghost_agent(tmp_path):
     404，而不是就地重建一个版本库把它复活。
     """
     governance, _ = _governance(tmp_path)
-    governance.agent_exists = lambda aid: aid in {"real-biz", "main-agent"}
+    governance.agent_exists = lambda aid: aid in {"real-biz", LEGACY_MAIN_AGENT_ID}
     with pytest.raises(AgentGovernanceError) as exc:
         governance.repository_status("ghost-agent")
     assert exc.value.status_code == 404
     # 已注册的放行（main-agent 与其他业务 Agent 同等对待）。
-    assert governance.repository_status("main-agent")
+    assert governance.repository_status(LEGACY_MAIN_AGENT_ID)
     assert governance.repository_status("real-biz")
 
     # main-agent 未注册（已删除）时同样 404——没有「恒有效」豁免。
-    governance.evict_agent_store("main-agent")
+    governance.evict_agent_store(LEGACY_MAIN_AGENT_ID)
     governance.agent_exists = lambda aid: aid == "real-biz"
     with pytest.raises(AgentGovernanceError) as deleted_main:
-        governance.repository_status("main-agent")
+        governance.repository_status(LEGACY_MAIN_AGENT_ID)
     assert deleted_main.value.status_code == 404

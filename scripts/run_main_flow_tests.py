@@ -15,10 +15,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def _run_pytest_bindings(pytest_nodes: list[str], *, repo_root: Path) -> int:
     if not pytest_nodes:
         return 0
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", *pytest_nodes],
+        [sys.executable, "-m", "pytest", "-q", "-p", "agentgov_testkit.pytest_plugin", *pytest_nodes],
         cwd=repo_root,
         check=False,
+        env=env,
     ).returncode
 
 

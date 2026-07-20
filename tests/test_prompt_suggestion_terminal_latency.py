@@ -27,6 +27,7 @@ import time
 import pytest
 from app.runtime import claude_prompt_suggestions
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
@@ -150,7 +151,11 @@ def _runtime(tmp_path) -> ClaudeRuntime:
         RUNTIME_VOLUME_MODE="local-debug",
     )
     workspace = settings.default_workspace_dir
-    create_test_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    create_test_business_agent_workspace(
+        workspace,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        name="Security Operations Expert",
+    )
     # 使用真实 endpoint fixture，覆盖 Claude Runtime 对 live workspace 原样配置的读取。
     (workspace / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}, indent=2) + "\n",

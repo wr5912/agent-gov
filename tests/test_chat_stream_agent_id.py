@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from fastapi.testclient import TestClient
 
-from test_api_execution_optimizer import _load_app
+from app_test_utils import load_test_app as _load_app
 
 
 def test_chat_stream_requires_agent_id_422(monkeypatch, tmp_path: Path) -> None:
@@ -52,7 +53,7 @@ def test_chat_rejects_removed_runtime_policy_fields(monkeypatch, tmp_path: Path)
     with TestClient(module.app) as client:
         for endpoint in ("/api/chat", "/api/chat/stream"):
             for field, value in removed_fields:
-                response = client.post(endpoint, json={"message": "hi", "agent_id": "main-agent", field: value})
+                response = client.post(endpoint, json={"message": "hi", "agent_id": DEFAULT_BUSINESS_AGENT_ID, field: value})
 
                 assert response.status_code == 422
                 assert any(error.get("type") == "extra_forbidden" for error in response.json()["detail"])
@@ -70,7 +71,7 @@ def test_chat_stream_projects_prompt_suggestion_event(monkeypatch, tmp_path: Pat
 
     monkeypatch.setattr(module.runtime, "stream", fake_stream)
     with TestClient(module.app) as client:
-        response = client.post("/api/chat/stream", json={"message": "hi", "agent_id": "main-agent"})
+        response = client.post("/api/chat/stream", json={"message": "hi", "agent_id": DEFAULT_BUSINESS_AGENT_ID})
 
     assert response.status_code == 200
     assert "event: prompt_suggestion" in response.text

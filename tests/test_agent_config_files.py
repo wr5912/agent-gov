@@ -56,16 +56,16 @@ def _register_agent(settings: AppSettings, registry: AgentRegistryStore, agent_i
 
 def test_agent_config_file_updates_mcp_json_and_invalidates_sdk_resume(tmp_path: Path) -> None:
     client, settings, registry, session_store = _test_app(tmp_path)
-    workspace = _register_agent(settings, registry, "main-agent")
+    workspace = _register_agent(settings, registry, TEST_AGENT_ID)
     target = workspace / ".mcp.json"
     target.write_text('{"mcpServers": {}}\n', encoding="utf-8")
     target.chmod(0o640)
     session = session_store.create()
-    session.agent_id = "main-agent"
+    session.agent_id = TEST_AGENT_ID
     session.sdk_session_id = "sdk-session-old"
     session_store.save(session)
 
-    read_response = client.get("/api/agent-config-file", params={"agent_id": "main-agent", "path": ".mcp.json"})
+    read_response = client.get("/api/agent-config-file", params={"agent_id": TEST_AGENT_ID, "path": ".mcp.json"})
     assert read_response.status_code == 200
     current = read_response.json()
     assert current["content"] == '{"mcpServers": {}}\n'
@@ -78,7 +78,7 @@ def test_agent_config_file_updates_mcp_json_and_invalidates_sdk_resume(tmp_path:
     )
     update_response = client.put(
         "/api/agent-config-file",
-        params={"agent_id": "main-agent", "path": ".mcp.json"},
+        params={"agent_id": TEST_AGENT_ID, "path": ".mcp.json"},
         json={
             "content": updated_content,
             "expected_sha256": current["sha256"],
@@ -136,9 +136,9 @@ def test_agent_config_file_rejects_invalid_json_and_stale_sha(tmp_path: Path) ->
 
 def test_agent_config_file_rejects_uneditable_paths_and_unknown_agents(tmp_path: Path) -> None:
     client, settings, registry, _ = _test_app(tmp_path)
-    _register_agent(settings, registry, "main-agent")
+    _register_agent(settings, registry, TEST_AGENT_ID)
 
-    uneditable = client.get("/api/agent-config-file", params={"agent_id": "main-agent", "path": "CLAUDE.md"})
+    uneditable = client.get("/api/agent-config-file", params={"agent_id": TEST_AGENT_ID, "path": "CLAUDE.md"})
     assert uneditable.status_code == 422
 
     hostile_agent = client.get("/api/agent-config-file", params={"agent_id": "../escape", "path": ".mcp.json"})
@@ -278,19 +278,19 @@ def test_agent_config_file_rolls_back_failed_invalidation_and_serializes_expecte
 
 def test_catalog_router_discovers_agent_scoped_project_assets(tmp_path: Path) -> None:
     client, settings, registry, _ = _test_app(tmp_path)
-    main_workspace = _register_agent(settings, registry, "main-agent")
+    test_workspace = _register_agent(settings, registry, TEST_AGENT_ID)
     disposal_workspace = _register_agent(settings, registry, "response-disposal")
-    _write_agent_asset(main_workspace, "main-subagent", "main-skill")
+    _write_agent_asset(test_workspace, "test-subagent", "test-skill")
     _write_agent_asset(disposal_workspace, "disposal-subagent", "disposal-skill")
 
-    main_agents = client.get("/api/agents", params={"agent_id": "main-agent"})
+    test_agents = client.get("/api/agents", params={"agent_id": TEST_AGENT_ID})
     disposal_agents = client.get("/api/agents", params={"agent_id": "response-disposal"})
     disposal_skills = client.get("/api/skills", params={"agent_id": "response-disposal"})
 
-    assert main_agents.status_code == 200
+    assert test_agents.status_code == 200
     assert disposal_agents.status_code == 200
     assert disposal_skills.status_code == 200
-    assert [item["name"] for item in main_agents.json()] == ["main-subagent"]
+    assert [item["name"] for item in test_agents.json()] == ["test-subagent"]
     assert [item["name"] for item in disposal_agents.json()] == ["disposal-subagent"]
     assert [item["name"] for item in disposal_skills.json()] == ["disposal-skill"]
 

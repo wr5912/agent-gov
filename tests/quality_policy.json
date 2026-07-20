@@ -1,4 +1,10 @@
 {
+  "collection": {
+    "selectors": [
+      "tests",
+      "docker/runtime-bootstrap/governor-workspace/tests"
+    ]
+  },
   "coverage": {
     "global": {
       "line_percent_min": 75.85,
@@ -201,7 +207,6 @@
           "tests/test_bootstrap_business_agent_protection.py",
           "tests/test_managed_agent_policy.py",
           "tests/test_mcp_config.py",
-          "tests/test_native_workspace_policy.py",
           "tests/test_pre_tool_guard.py",
           "tests/test_repository_env_policy.py",
           "tests/test_workspace_hooks.py"
@@ -215,6 +220,22 @@
           "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["hermetic", "process"]
+        }
+      },
+      {
+        "id": "governor-workspace-suite",
+        "selectors": [
+          "docker/runtime-bootstrap/governor-workspace/tests/test_*.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "security",
+          "purpose": "architecture-contract",
+          "owner": "improvement-governance",
+          "capabilities": ["feedback-improvement-loop", "security-boundaries"],
+          "lanes": ["main-full"],
+          "parallelism": "worker-safe",
+          "resources": ["hermetic"]
         }
       },
       {
@@ -284,7 +305,6 @@
           "tests/test_mcp_config.py",
           "tests/test_model_provider*.py",
           "tests/test_multi_business_agent_governance.py",
-          "tests/test_native_workspace_policy.py",
           "tests/test_normalized_feedback_generation.py",
           "tests/test_openai*.py",
           "tests/test_openapi*.py",
@@ -422,7 +442,8 @@
           "tests/test_managed_agent_policy.py",
           "tests/test_runtime_coordination.py",
           "tests/test_runtime_bootstrap_tools.py",
-          "tests/test_workspace_hooks.py"
+          "tests/test_workspace_hooks.py",
+          "docker/runtime-bootstrap/governor-workspace/tests/test_*.py"
         ]
       },
       {
@@ -602,13 +623,11 @@
             "tests/test_normalized_feedback_generation.py::test_llm_organizes_title_problem_and_backfills",
             "tests/test_normalized_feedback_generation.py::test_hostile_formatter_missing_problem_falls_back",
             "tests/test_normalized_feedback_generation.py::test_backfill_does_not_overwrite_user_edited_title",
-            "tests/test_agent_profiles_category.py::test_governor_workspace_owns_read_only_policy",
+            "docker/runtime-bootstrap/governor-workspace/tests/test_governor_native_config.py::test_governor_is_read_only_and_cannot_bypass_permissions",
             "tests/test_agent_profiles_category.py::test_governor_build_options_uses_project_discovery_without_policy_injection",
             "tests/test_managed_agent_policy.py::test_builtin_business_agent_workspaces_match_managed_policy",
             "tests/test_managed_agent_policy.py::test_symlinked_hook_parent_is_rejected_without_reading_external_content",
             "tests/test_agent_governance_publish.py::test_publish_rejects_candidate_with_missing_referenced_hook",
-            "tests/test_native_workspace_policy.py::test_native_pre_tool_guard_invalid_input_blocks_with_exit_two",
-            "tests/test_native_workspace_policy.py::test_native_pre_tool_guard_ignores_valid_non_bash_events",
             "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_not_rewritten_or_recommitted",
             "tests/test_improvement_governor_service.py::test_attribution_accepts_relative_claude_md_evidence",
             "tests/test_improvement_governor_service.py::test_attribution_rejects_path_traversal_evidence",
@@ -650,7 +669,7 @@
         },
         {
           "id": "workspace_pytest_assets_and_exact_commit_release_gate",
-          "description": "所有注册业务 Agent 的 tests/ 是版本化测试资产唯一真相；平台只执行固定 pytest 命令，不接受客户端 command/result。省略 commit 时创建请求只钉住一次当前版本，待发布变更测试必须精确绑定待发布 commit、Agent、suite digest 与不可变运行记录；同一目标只允许一个活跃运行，运行支持超时、取消，服务重启把 running 标为 interrupted 并重新排队 queued。反馈优化确认回归测试设计后仅在同一待发布变更中新增扁平 tests/test_*.py、推进待发布 commit 且不覆盖既有测试。普通发布只接受当前待发布 commit 的 passed 记录；强制发布必须给出原因并持久化警告和审计。导入包缺少 tests/ 只告警，包身份始终由 URL agent_id 指定。",
+          "description": "所有注册业务 Agent 的 tests/ 是版本化测试资产唯一真相；平台只执行固定 pytest 命令，不接受客户端 command/result。省略 commit 时创建请求只钉住一次当前版本，待发布变更测试必须精确绑定待发布 commit、Agent、suite digest 与不可变运行记录；同一目标只允许一个活跃运行，运行支持超时、取消，服务重启把 running 标为 interrupted 并重新排队 queued。反馈优化确认回归测试设计后仅在同一待发布变更中新增扁平 tests/test_*.py、推进待发布 commit 且不覆盖既有测试。平台每次运行完整 tests/，已有失败和新增失败都必须修复；反馈闭环待发布版本只接受当前待发布 commit 的 passed 记录且不能强制绕过。未关联反馈的手工变更集强制发布仍必须给出原因并持久化警告和审计。导入包缺少 tests/ 只告警，包身份始终由 URL agent_id 指定。",
           "pytest": [
             "tests/test_agentgov_testkit.py::test_invoke_agent_uses_explicit_session_and_preserves_typed_response",
             "tests/test_agentgov_testkit.py::test_invoke_agent_rejects_missing_context_and_wraps_http_errors",
@@ -678,11 +697,12 @@
             "tests/test_agent_governance_publish.py::test_candidate_committed_change_set_can_publish_directly",
             "tests/test_agent_governance_publish.py::test_publish_requires_passed_platform_test_for_exact_candidate_commit",
             "tests/test_agent_governance_publish.py::test_force_publish_requires_reason_and_persists_warning_audit",
+            "tests/test_agent_governance_publish.py::test_feedback_publication_cannot_force_bypass_complete_agent_test_suite",
             "tests/test_agent_tests_frontend_contract.py::test_workspace_tests_are_the_only_active_business_agent_test_asset",
             "tests/test_agent_tests_frontend_contract.py::test_release_workbench_runs_fixed_commit_bound_platform_tests",
-            "tests/test_agent_tests_frontend_contract.py::test_force_publish_requires_an_explicit_persisted_reason",
+            "tests/test_agent_tests_frontend_contract.py::test_feedback_release_hides_force_publish_and_keeps_historical_audit",
             "tests/test_release_workbench_contract.py::test_release_workbench_uses_exact_commit_test_gate_and_separate_publish_actions",
-            "tests/test_release_workbench_contract.py::test_force_publish_requires_reason_and_displays_persisted_warning"
+            "tests/test_release_workbench_contract.py::test_feedback_workbench_displays_historical_force_warning_without_force_action"
           ],
           "ui_scripts": [
             "verify:design-parity",
@@ -844,9 +864,9 @@
             "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_not_rewritten_or_recommitted",
             "tests/test_runtime_coordination.py::test_dirty_workspace_does_not_block_receipt_refresh_or_get_committed",
             "tests/test_runtime_coordination.py::test_open_change_set_does_not_trigger_workspace_migration",
-            "tests/test_claude_runtime_hitl.py::test_stream_imported_security_agent_uses_native_hitl_without_id_gate_or_input_rewrite",
-            "tests/test_claude_runtime_hitl.py::test_stream_imported_security_agent_fails_closed_when_native_hitl_is_disabled",
-            "tests/test_claude_runtime_hitl.py::test_run_imported_security_agent_denies_native_ask_without_stream_hitl",
+            "tests/test_claude_runtime_hitl.py::test_stream_registered_business_agent_uses_native_hitl_without_id_gate_or_input_rewrite",
+            "tests/test_claude_runtime_hitl.py::test_stream_registered_business_agent_fails_closed_when_native_hitl_is_disabled",
+            "tests/test_claude_runtime_hitl.py::test_run_registered_business_agent_denies_native_ask_without_stream_hitl",
             "tests/test_claude_user_input.py::test_high_risk_mcp_uses_generic_one_shot_confirmation_for_any_agent_id"
           ]
         },

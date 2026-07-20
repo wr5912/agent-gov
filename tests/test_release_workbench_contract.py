@@ -5,6 +5,7 @@ from app.runtime.response_schemas.agent_governance_response_schemas import (
     AgentChangeSetResponse,
 )
 
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -13,7 +14,7 @@ def test_change_set_response_hides_publication_intent_and_types_error() -> None:
     response = AgentChangeSetResponse.model_validate(
         {
             "change_set_id": "agc-test",
-            "agent_id": "main-agent",
+            "agent_id": ORDINARY_TEST_AGENT_ID,
             "created_at": "2026-07-10T00:00:00Z",
             "updated_at": "2026-07-10T00:01:00Z",
             "status": "publishing",
@@ -55,24 +56,23 @@ def test_release_workbench_uses_exact_commit_test_gate_and_separate_publish_acti
     assert 'data-testid="release-action-cancel-tests"' in source
     assert 'data-testid="release-action-publish"' in source
     assert 'data-testid="release-action-retry"' in source
-    assert 'data-testid="release-action-force"' in source
+    assert 'data-testid="release-action-force"' not in source
     assert 'data-testid="release-action-retry-cleanup"' in source
     assert "latestExactRun(testRuns, selectedChangeSet?.candidate_commit_sha)" in source
     assert 'testRun.status === "passed"' in source
     assert "!selectedChangeSet.publication_blocker" in source
-    assert "!selectedChangeSet.publication_provenance_blocker" in source
     assert "selectedChangeSet.publication_error?.detail" in source
     assert "selectedChangeSet?.latest_eval_run" not in source
     assert "reviewAgentChangeSetRegression" not in source
 
 
-def test_force_publish_requires_reason_and_displays_persisted_warning() -> None:
+def test_feedback_workbench_displays_historical_force_warning_without_force_action() -> None:
     source = (ROOT / "frontend/src/components/ReleaseWorkbench.tsx").read_text(encoding="utf-8")
     runtime_api = (ROOT / "frontend/src/api/runtime.ts").read_text(encoding="utf-8")
 
-    assert 'data-testid="release-force-reason"' in source
-    assert "force_reason: forceReason.trim()" in source
-    assert "!forceReason.trim()" in source
+    assert 'data-testid="release-action-force"' not in source
+    assert 'data-testid="release-force-reason"' not in source
+    assert "force: true" not in source
     assert "release.force_published" in source
     assert "测试条件被管理员绕过" in source
     assert "release.force_publication_blocker" in source

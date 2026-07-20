@@ -1,7 +1,13 @@
 [tool.ruff]
 target-version = "py311"
 line-length = 160
-src = ["app", "scripts", "tests"]
+src = [
+  "app",
+  "scripts",
+  "tests",
+  "packages/agentgov-testkit/src",
+  "docker/runtime-bootstrap/governor-workspace/tests",
+]
 extend-exclude = [
   ".venv",
   ".mypy_cache",

@@ -15,6 +15,8 @@ from app.runtime.agent_paths import business_agent_layout
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.stores.feedback_store import FeedbackStore
 
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+
 
 def _make_store(tmp_path: Path) -> FeedbackStore:
     data_dir = tmp_path / "data"
@@ -35,7 +37,7 @@ def test_current_agent_version_id_routes_per_agent(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     assert store._current_agent_version_id("AAA") == "ver-AAA"
     assert store._current_agent_version_id("BBB") == "ver-BBB"
-    assert store._current_agent_version_id("main-agent") == "ver-main-agent"
+    assert store._current_agent_version_id(ORDINARY_TEST_AGENT_ID) == f"ver-{ORDINARY_TEST_AGENT_ID}"
     assert store._current_agent_version_id() == f"ver-{DEFAULT_BUSINESS_AGENT_ID}"
 
 
@@ -44,7 +46,7 @@ def test_execution_targets_and_sha_are_per_agent(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     # workspace 解析按 agent_id；只有未指定 ID 时使用平台默认 policy。
     assert store._execution_targets_for("AAA").workspace_dir == business_agent_layout(data_dir, "AAA").workspace
-    assert store._execution_targets_for("main-agent") is not store.execution_targets
+    assert store._execution_targets_for(ORDINARY_TEST_AGENT_ID) is not store.execution_targets
     assert store._execution_targets_for(None) is store.execution_targets
     # B 的核心：AAA 与默认 Agent 的配置内容不同，sha 也必须不同。
     ctx_default = store._execution_target_file_context("CLAUDE.md", DEFAULT_BUSINESS_AGENT_ID)

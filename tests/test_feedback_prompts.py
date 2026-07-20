@@ -13,6 +13,8 @@ from app.runtime.prompts.feedback_prompts import (
     regression_test_design_prompt,
 )
 
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+
 
 def test_improvement_optimization_prompt_delegates_wire_format_to_dspy():
     prompt = improvement_optimization_plan_prompt(
@@ -100,31 +102,35 @@ def test_prompt_context_builders_prune_backend_and_boundary_fields():
 
 
 def test_target_agent_context_is_preserved_as_locator_not_config_snapshot():
+    workspace_dir = f"/data/business-agents/{ORDINARY_TEST_AGENT_ID}/workspace"
     target_context = {
-        "agent_id": "main-agent",
-        "workspace_dir": "/data/business-agents/main-agent/workspace",
-        "claude_path": "/data/business-agents/main-agent/workspace/CLAUDE.md",
-        "settings_path": "/data/business-agents/main-agent/workspace/.claude/settings.json",
-        "mcp_path": "/data/business-agents/main-agent/workspace/.mcp.json",
-        "skills_glob": "/data/business-agents/main-agent/workspace/.claude/skills/*/SKILL.md",
-        "agents_glob": "/data/business-agents/main-agent/workspace/.claude/agents/*.md",
-        "allowed_evidence_roots": ["/data/business-agents/main-agent/workspace"],
+        "agent_id": ORDINARY_TEST_AGENT_ID,
+        "workspace_dir": workspace_dir,
+        "claude_path": f"{workspace_dir}/CLAUDE.md",
+        "settings_path": f"{workspace_dir}/.claude/settings.json",
+        "mcp_path": f"{workspace_dir}/.mcp.json",
+        "skills_glob": f"{workspace_dir}/.claude/skills/*/SKILL.md",
+        "agents_glob": f"{workspace_dir}/.claude/agents/*.md",
+        "allowed_evidence_roots": [workspace_dir],
         "forbidden_evidence_roots": ["/governor-workspace"],
         "CLAUDE.md": "SHOULD_NOT_INLINE_FULL_PROMPT",
     }
 
     attribution_context = build_attribution_prompt_context(
-        {"feedback_case": {"agent_id": "main-agent", "problem": "Bash 权限问题"}, "target_agent_context": target_context}
+        {
+            "feedback_case": {"agent_id": ORDINARY_TEST_AGENT_ID, "problem": "Bash 权限问题"},
+            "target_agent_context": target_context,
+        }
     )
     optimization_context = build_improvement_optimization_prompt_context(
         {
-            "improvement": {"agent_id": "main-agent", "title": "Bash 权限问题"},
+            "improvement": {"agent_id": ORDINARY_TEST_AGENT_ID, "title": "Bash 权限问题"},
             "target_agent_context": target_context,
         }
     )
     serialized = json.dumps([attribution_context, optimization_context], ensure_ascii=False)
 
-    assert "/data/business-agents/main-agent/workspace/.claude/settings.json" in serialized
+    assert f"{workspace_dir}/.claude/settings.json" in serialized
     assert "/governor-workspace" in serialized
     assert "SHOULD_NOT_INLINE_FULL_PROMPT" not in serialized
 
@@ -161,10 +167,8 @@ def test_execution_prompt_requires_exact_backend_allowed_target_path():
 
 
 def test_only_grounding_stages_invite_workspace_tool_reads():
-    attribution = attribution_prompt(prompt_context={"target_agent_context": {"agent_id": "main-agent"}})
-    optimization = improvement_optimization_plan_prompt(
-        prompt_context={"target_agent_context": {"agent_id": "main-agent"}}
-    )
+    attribution = attribution_prompt(prompt_context={"target_agent_context": {"agent_id": ORDINARY_TEST_AGENT_ID}})
+    optimization = improvement_optimization_plan_prompt(prompt_context={"target_agent_context": {"agent_id": ORDINARY_TEST_AGENT_ID}})
     execution = execution_plan_prompt(prompt_context={"target_paths": ["CLAUDE.md"]})
     regression = regression_test_design_prompt(prompt_context={"feedback": {"problem": "冲突证据"}})
 

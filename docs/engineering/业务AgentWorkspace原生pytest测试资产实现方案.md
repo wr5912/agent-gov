@@ -36,6 +36,19 @@
 权威版本标识是 Git `commit_sha`。`suite_digest` 是测试文件内容的派生校验值；`change_set_id` 只表达
 未发布变更的业务关联。三者职责不同，不组合成新的人工身份。
 
+仓库测试与运行态测试按内容所有权分层，不按执行工具分层：
+
+| 测试位置 | 内容所有者 | 仓库质量策略 |
+| --- | --- | --- |
+| 根 `tests/` | AgentGov 平台开发者 | 收集，验证平台代码、API、迁移和契约 |
+| `docker/runtime-bootstrap/business-agents/<agent_id>/workspace/tests/` | 对应内置业务 Agent 开发者 | 不纳入系统质量策略；按该 Agent 的精确 Git commit 独立执行 |
+| `docker/runtime-bootstrap/governor-workspace/tests/` | governor Workspace 开发者 | 原路径收集，不参与业务 Agent 发布条件 |
+| `${HOME}/volume-agent-gov/data/business-agents/<agent_id>/workspace/tests/` | 对应业务 Agent 开发者 | 不做仓库静态扫描；按该 Agent 的精确 Git commit 执行 |
+
+`tests/quality_policy.json` 的 `collection.selectors` 只声明根系统测试与 governor 测试。无论业务 Agent
+位于仓库初始化源还是运行卷，其自测都不进入平台源码提交门；平台按待发布 commit 执行完整
+`workspace/tests/`，不按本次 Diff 选择用例，并以全部通过作为该 Agent 版本发布条件。
+
 ## 3. Workspace 契约
 
 ```text
@@ -55,7 +68,7 @@ workspace/
 2. 每个测试文件、fixture 和辅助资产都随 Workspace Git 提交。
 3. 包导入缺少 `tests/` 或 `tests/README.md` 时成功但返回结构化 warning；没有测试文件时不能满足普通发布条件。
 4. 导入目标身份只取 URL 中的 `agent_id`。包文件名、压缩包名和 `agent.yaml` 中的 ID 都不是平台身份。
-5. `security-operations-expert` 初始化源和 governor Workspace 均提供 `tests/`；普通业务 Agent 只存在于运行卷和其导出包中。
+5. `security-operations-expert` 初始化源和 governor Workspace 均提供自有 `tests/`；普通业务 Agent 只存在于运行卷和其导出包中。
 
 ## 4. agentgov_testkit
 
@@ -187,8 +200,10 @@ running --服务关闭/重启--> interrupted
 `tests/`、失败、错误、取消或重启中断均不能放行。UI 使用
 “修复前版本”“待发布版本”，不使用含义不清的“基线”“候选”作为用户标签。
 
-强制发布是显式例外：必须通过受保护 API、提供非空原因，并把原阻塞项、原因、操作人和警告持久化到
-release 与审计事件。provenance 不完整时不得强制绕过。
+反馈闭环待发布版本不允许强制绕过测试条件：完整 `workspace/tests/` 中无论是已有失败还是本次新增失败，
+都必须整改并在当前待发布 commit 上重新取得 `passed` 结果。反馈发布工作台不提供强制发布入口。
+未关联反馈、由版本治理 API 手工创建的待发布版本仍可通过受保护 API 强制发布，但必须提供非空原因，并把原阻塞项、原因、
+操作人和警告持久化到 release 与审计事件；provenance 不完整始终不得强制绕过。
 
 ## 9. 导入、远程开发与调试
 
@@ -232,7 +247,7 @@ python -m pytest -q -p agentgov_testkit.pytest_plugin tests
 - testkit：显式/环境变量调用、commit 一次固定、每用例会话隔离、错误透传和 pytest 报告均有单测。
 - 平台运行：固定命令、精确 commit、取消、输出限制、失败详情和服务重启恢复有专项测试。
 - 反馈闭环：生成只形成代码 Diff；确认只新增扁平测试文件并形成配置与测试同一 commit；运行由独立动作排队。
-- 发布：旧 commit 通过不能放行；当前 commit 通过可普通发布；强制发布必须有原因和持久化警告。
+- 发布：旧 commit 通过不能放行；当前 commit 的完整测试集通过才可发布；反馈闭环不可强制绕过，未关联反馈的手工待发布版本强制发布必须有原因和持久化警告。
 - UI：设计、测试文件、平台运行和发布条件分层呈现；桌面、平板和移动端无重叠或横向溢出。
 - 工程门：专项 pytest、前端构建、`verify:design-parity`、`make main-flow-test`、`make codex-guard`
   和真实 Compose `ui-feedback-smoke` 通过。

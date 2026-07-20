@@ -10,11 +10,12 @@ def _read(path: str) -> str:
 def test_workspace_tests_are_the_only_active_business_agent_test_asset() -> None:
     asset_api = _read("frontend/src/api/assets.ts")
     registry = _read("frontend/src/components/AssetRegistry.tsx")
+    test_assets = _read("frontend/src/components/AgentTestAssets.tsx")
     stage = _read("frontend/src/components/ImprovementStagePanels.tsx")
     context = _read("frontend/src/contextPackage.ts")
 
-    assert "TestDataset" not in asset_api + registry + stage + context
-    assert "test-dataset" not in asset_api + registry + stage + context
+    assert "TestDataset" not in asset_api + registry + test_assets + stage + context
+    assert "test-dataset" not in asset_api + registry + test_assets + stage + context
     assert not (ROOT / "frontend/src/components/useImprovementTestDataset.ts").exists()
     assert not (ROOT / "frontend/src/components/TestDatasetLifecycleControls.tsx").exists()
     assert 'data-testid="confirm-regression-tests"' in stage
@@ -26,9 +27,55 @@ def test_workspace_tests_are_the_only_active_business_agent_test_asset() -> None
     assert "regression_test_design" in context
 
 
+def test_asset_center_projects_workspace_tests_runs_and_per_agent_schedule() -> None:
+    registry = _read("frontend/src/components/AssetRegistry.tsx")
+    test_assets = _read("frontend/src/components/AgentTestAssets.tsx")
+    runtime_api = _read("frontend/src/api/runtime.ts") + _read("frontend/src/api/agentTesting.ts")
+    scheduler = _read("app/agent_testing/schedule.py")
+
+    assert 'useState<"tests" | "governance">("tests")' in registry
+    assert 'data-testid="asset-center-tab-tests"' in registry
+    assert 'data-testid="asset-center-tab-governance"' in registry
+    assert 'data-testid="test-asset-workspace"' in test_assets
+    assert 'data-testid="test-agent-navigator"' in test_assets
+    assert 'data-testid="test-agent-search"' in test_assets
+    assert 'data-testid="test-asset-agent-item"' in test_assets
+    assert 'data-testid="test-asset-card-grid"' not in test_assets
+    assert 'data-testid="test-file-browser"' in test_assets
+    assert 'data-testid="test-file-select"' in test_assets
+    assert 'data-testid="test-source-code"' in test_assets
+    assert 'height="clamp(520px, 68vh, 780px)"' in test_assets
+    assert "getAgentTestSuiteFile" in test_assets
+    assert 'data-testid="test-run-history"' in test_assets
+    assert 'data-testid="test-schedule-panel"' in test_assets
+    assert "保存配置不会立即运行测试" in test_assets
+    assert "触发时当前有效 commit" in test_assets
+    assert "/api/agent-test-assets" in runtime_api
+    assert "/agent-test-runs/history" in runtime_api
+    assert "/test-schedule" in runtime_api
+    assert 'source="scheduled"' in scheduler
+    assert "change_set_id=None" in scheduler
+
+
+def test_asset_center_keeps_many_agents_in_a_scrollable_master_detail_layout() -> None:
+    styles = _read("frontend/src/agent-test-assets.css")
+    e2e = _read("scripts/verify_asset_registry.mjs")
+
+    assert ".test-asset-workspace" in styles
+    assert "grid-template-columns: minmax(230px, 280px) minmax(0, 1fr);" in styles
+    assert ".test-agent-list" in styles
+    assert "overflow-y: auto;" in styles
+    assert ".test-file-list" not in styles
+    assert "Array.from({ length: 24 }" in e2e
+    assert "detailBox.width <= navigatorBox.width * 2.4" in e2e
+    assert "element.scrollHeight > element.clientHeight" in e2e
+    assert "sourceBox.width < detailBox.width * 0.9" in e2e
+    assert "test_source_persists_after_history_filter" in e2e
+
+
 def test_release_workbench_runs_fixed_commit_bound_platform_tests() -> None:
     release = _read("frontend/src/components/ReleaseWorkbench.tsx")
-    runtime_api = _read("frontend/src/api/runtime.ts")
+    runtime_api = _read("frontend/src/api/runtime.ts") + _read("frontend/src/api/agentTesting.ts")
 
     assert "inspectAgentTestSuite" in release
     assert "createAgentChangeSetTestRun" in release
@@ -57,6 +104,9 @@ def test_agent_settings_show_workspace_test_status_and_import_audit() -> None:
     assert 'data-testid="settings-agent-test-status"' in table
     assert "suite?.commit_sha" in table
     assert "Workspace / 测试" in table
+    assert 'data-testid="settings-agent-test-assets-link"' in table
+    assert "onOpenAgentTestAssets" in _read("frontend/src/components/SettingsModal.tsx")
+    assert 'setActiveWindow("asset")' in _read("frontend/src/App.tsx")
     assert "receipt.import_record_id" in drawer
     assert "receipt.test_suite_status" in drawer
 

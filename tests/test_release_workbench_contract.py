@@ -68,7 +68,7 @@ def test_release_workbench_uses_exact_commit_test_gate_and_separate_publish_acti
 
 def test_feedback_workbench_displays_historical_force_warning_without_force_action() -> None:
     source = (ROOT / "frontend/src/components/ReleaseWorkbench.tsx").read_text(encoding="utf-8")
-    runtime_api = (ROOT / "frontend/src/api/runtime.ts").read_text(encoding="utf-8")
+    runtime_api = "".join((ROOT / path).read_text(encoding="utf-8") for path in ("frontend/src/api/runtime.ts", "frontend/src/api/agentTesting.ts"))
 
     assert 'data-testid="release-action-force"' not in source
     assert 'data-testid="release-force-reason"' not in source

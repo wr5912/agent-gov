@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.runtime.json_types import JsonObject
@@ -16,6 +16,8 @@ class AgentTestRunModel(Base):
     agent_id: Mapped[str] = mapped_column(String(128), index=True)
     commit_sha: Mapped[str] = mapped_column(String(64), index=True)
     change_set_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    schedule_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    scheduled_for: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
     source: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(32), index=True)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -33,6 +35,43 @@ class AgentTestRunModel(Base):
 
 Index("ix_agent_test_runs_agent_created", AgentTestRunModel.agent_id, AgentTestRunModel.created_at)
 Index("ix_agent_test_runs_change_commit", AgentTestRunModel.change_set_id, AgentTestRunModel.commit_sha)
+Index("ix_agent_test_runs_schedule_occurrence", AgentTestRunModel.schedule_id, AgentTestRunModel.scheduled_for)
+
+
+class AgentTestScheduleModel(Base):
+    __tablename__ = "agent_test_schedules"
+
+    schedule_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    cron_expression: Mapped[str] = mapped_column(String(128))
+    timezone: Mapped[str] = mapped_column(String(128))
+    next_run_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+
+
+class AgentTestScheduleEventModel(Base):
+    __tablename__ = "agent_test_schedule_events"
+    __table_args__ = (UniqueConstraint("schedule_id", "scheduled_for", name="ux_agent_test_schedule_events_occurrence"),)
+
+    schedule_event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    schedule_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("agent_test_schedules.schedule_id", ondelete="CASCADE"),
+        index=True,
+    )
+    agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    scheduled_for: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    resolved_commit_sha: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    test_run_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    detail_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+Index("ix_agent_test_schedule_events_agent_created", AgentTestScheduleEventModel.agent_id, AgentTestScheduleEventModel.created_at)
 
 
 class AgentTestRunItemModel(Base):

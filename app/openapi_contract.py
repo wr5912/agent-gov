@@ -57,6 +57,7 @@ _ERROR_DESCRIPTIONS = {
 _MUTATING_METHODS = frozenset({"post", "put", "patch", "delete"})
 _DOMAIN_PREFIXES = (
     "/api/agent-registry",
+    "/api/agent-test-assets",
     "/api/agent-test-runs",
     "/api/agent-test-sessions",
     "/api/improvements",
@@ -136,6 +137,12 @@ def expected_error_statuses(path: str, method: str, operation: OpenApiMapping) -
 
 
 def _special_error_statuses(path: str, method: str) -> set[int]:
+    if path == "/api/agent-test-assets":
+        return {409}
+    if path == "/api/agent-registry/{agent_id}/test-suite/file":
+        return {409, 413}
+    if path == "/api/agent-test-runs/history":
+        return {404}
     if method == "post" and path == "/api/agent-test-runs":
         return {404}
     if method == "post" and path == "/api/feedback-cases":

@@ -63,6 +63,7 @@ from .runtime_db_migrations_0048 import migrate_0048_workspace_pytest_source_of_
 from .runtime_db_migrations_0049 import migrate_0049_rename_regression_test_design
 from .runtime_db_migrations_0050 import migrate_0050_deduplicate_active_agent_test_runs
 from .runtime_db_migrations_0051 import migrate_0051_replace_regression_design_with_pytest_code
+from .runtime_db_migrations_0052 import migrate_0052_agent_test_asset_schedules
 from .schema_self_heal import sync_missing_columns
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
@@ -71,6 +72,8 @@ _ENGINE_CACHE_LOCK = RLock()
 from app.agent_testing.models import (  # noqa: E402,F401
     AgentTestRunItemModel,
     AgentTestRunModel,
+    AgentTestScheduleEventModel,
+    AgentTestScheduleModel,
     AgentWorkspaceImportRecordModel,
 )
 
@@ -517,6 +520,7 @@ def _runtime_migrations():
         ("0049_rename_regression_test_design", migrate_0049_rename_regression_test_design),
         ("0050_deduplicate_active_agent_test_runs", migrate_0050_deduplicate_active_agent_test_runs),
         ("0051_replace_regression_design_with_pytest_code", migrate_0051_replace_regression_design_with_pytest_code),
+        ("0052_agent_test_asset_schedules", migrate_0052_agent_test_asset_schedules),
     )
 
 

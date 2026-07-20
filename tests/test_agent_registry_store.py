@@ -307,10 +307,18 @@ def test_business_agent_lifecycle_transitions_and_archived_excluded_from_run(mon
     monkeypatch.setattr(module.runtime, "run", fake_run)
     with TestClient(module.app) as client:
         _import_new_agent(client, agent_id="soc-ops", name="客服助手")  # 默认 active
+        module.agent_test_schedule_service.update_schedule(
+            "soc-ops",
+            enabled=True,
+            cron_expression="0 2 * * *",
+            timezone_name="UTC",
+        )
         # 合法转移：active -> deprecated -> archived。
         assert client.post("/api/agent-registry/soc-ops/lifecycle", json={"status": "deprecated"}).status_code == 200
+        assert module.agent_test_schedule_store.get_schedule("soc-ops")["enabled"] is True
         archived = client.post("/api/agent-registry/soc-ops/lifecycle", json={"status": "archived"})
         assert archived.status_code == 200 and archived.json()["status"] == "archived"
+        assert module.agent_test_schedule_store.get_schedule("soc-ops")["enabled"] is False
         # 非法转移：archived 为终态，archived -> active 被拒绝并返回可理解的状态机错误（409）。
         rejected = client.post("/api/agent-registry/soc-ops/lifecycle", json={"status": "active"})
         assert rejected.status_code == 409
@@ -362,6 +370,13 @@ def test_delete_business_agent_reports_impact_and_protects_builtin_agent(monkeyp
         assert signal["agent_id"] == "soc-ops"
         assert test_run["agent_id"] == "soc-ops"
         assert change_set["agent_id"] == "soc-ops" and release["agent_id"] == "soc-ops"
+        schedule = module.agent_test_schedule_service.update_schedule(
+            "soc-ops",
+            enabled=True,
+            cron_expression="0 2 * * *",
+            timezone_name="UTC",
+        )
+        assert schedule["enabled"] is True
 
         deleted = client.delete("/api/agent-registry/soc-ops")
         assert deleted.status_code == 200
@@ -372,6 +387,10 @@ def test_delete_business_agent_reports_impact_and_protects_builtin_agent(monkeyp
         assert impact["runs"] >= 1 and impact["feedback_signals"] >= 1
         assert impact["test_runs"] >= 1
         assert impact["change_sets"] >= 1 and impact["releases"] >= 1
+        retained_schedule = module.agent_test_schedule_store.get_schedule("soc-ops")
+        assert retained_schedule is not None
+        assert retained_schedule["enabled"] is False
+        assert retained_schedule["next_run_at"] is None
         # 删除后不再出现在注册表。
         assert "soc-ops" not in {a["agent_id"] for a in client.get("/api/agent-registry").json()}
         # 受保护的内置 Agent 不可删（400）；未知 agent_id 报 404。

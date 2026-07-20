@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import ast
 import logging
 import re
 import shutil
 import threading
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from .store import AgentTestingStore, AgentTestRunAlreadyActive
 from .suite import inspect_agent_test_suite
 
 _FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_MAX_TEST_SOURCE_BYTES = 512 * 1024
 logger = logging.getLogger(__name__)
 
 
@@ -56,12 +58,18 @@ class AgentTestingService:
         api_base_url: str,
         api_key: str | None,
         run_timeout_seconds: int,
+        list_agents: Callable[[], Iterable[object]] | None = None,
+        schedule_reader: Callable[[str], JsonObject | None] | None = None,
+        schedule_list_reader: Callable[[list[str]], list[JsonObject]] | None = None,
     ) -> None:
         self.store = store
         self._store_for = store_for
         self._agent_exists = agent_exists
         self._get_change_set = get_change_set
         self._run_candidate = run_candidate
+        self._list_agents = list_agents or (lambda: ())
+        self._schedule_reader = schedule_reader
+        self._schedule_list_reader = schedule_list_reader
         self._sessions_dir = artifacts_dir / "sessions"
         self._sessions: dict[str, _TestSession] = {}
         self._sessions_lock = threading.RLock()
@@ -117,7 +125,21 @@ class AgentTestingService:
         commit_sha: str | None,
         change_set_id: str | None,
         source: str,
+        schedule_id: str | None = None,
+        scheduled_for: str | None = None,
     ) -> JsonObject:
+        if source == "scheduled" and (not schedule_id or not scheduled_for):
+            raise AgentTestingError(
+                409,
+                "AGENT_TEST_SCHEDULE_BINDING_INVALID",
+                "Scheduled test runs require schedule_id and scheduled_for.",
+            )
+        if source != "scheduled" and (schedule_id is not None or scheduled_for is not None):
+            raise AgentTestingError(
+                409,
+                "AGENT_TEST_SCHEDULE_BINDING_INVALID",
+                "Only scheduled test runs may carry schedule provenance.",
+            )
         safe_agent_id = self._require_agent(agent_id)
         store = self._store_for(safe_agent_id)
         resolved_commit = self._resolve_commit(store, commit_sha)
@@ -138,6 +160,8 @@ class AgentTestingService:
                 command=FIXED_PYTEST_COMMAND,
                 suite=suite.model_dump(mode="json"),
                 suite_digest=suite.suite_digest,
+                schedule_id=schedule_id,
+                scheduled_for=scheduled_for,
             )
         except AgentTestRunAlreadyActive as exc:
             raise AgentTestingError(
@@ -147,6 +171,109 @@ class AgentTestingService:
             ) from exc
         self.runner.enqueue(str(run["test_run_id"]))
         return run
+
+    def resolve_current_commit(self, agent_id: str) -> str:
+        safe_agent_id = self._require_agent(agent_id)
+        return self._resolve_commit(self._store_for(safe_agent_id), None)
+
+    def get_suite_file(self, agent_id: str, *, path: str, commit_sha: str | None = None) -> JsonObject:
+        safe_path = path.strip()
+        if not safe_path.startswith("tests/") or ".." in Path(safe_path).parts or Path(safe_path).is_absolute():
+            raise AgentTestingError(422, "AGENT_TEST_FILE_PATH_INVALID", "path must identify a test file inside Workspace tests/")
+        suite = self.inspect_suite(agent_id, commit_sha=commit_sha)
+        if safe_path not in suite.test_files:
+            raise AgentTestingError(404, "AGENT_TEST_FILE_NOT_FOUND", f"Test file is not part of this suite: {safe_path}")
+        source = self._store_for(suite.agent_id).read_text_at_ref(suite.commit_sha, safe_path)
+        if source is None:
+            raise AgentTestingError(404, "AGENT_TEST_FILE_NOT_FOUND", f"Test file not found at commit {suite.commit_sha}: {safe_path}")
+        if len(source.encode("utf-8")) > _MAX_TEST_SOURCE_BYTES:
+            raise AgentTestingError(413, "AGENT_TEST_FILE_TOO_LARGE", f"Test file exceeds {_MAX_TEST_SOURCE_BYTES} bytes")
+        try:
+            tree = ast.parse(source, filename=safe_path)
+        except SyntaxError as exc:  # suite inspection normally catches this; retain a stable read-boundary error
+            raise AgentTestingError(409, "AGENT_TEST_FILE_INVALID", f"Test file is not parseable at the selected commit: {exc}") from exc
+        symbols: list[JsonObject] = []
+        for node in tree.body:
+            if isinstance(node, ast.AsyncFunctionDef):
+                symbols.append({"kind": "async_function", "name": node.name, "line": node.lineno})
+            elif isinstance(node, ast.FunctionDef):
+                symbols.append({"kind": "function", "name": node.name, "line": node.lineno})
+            elif isinstance(node, ast.ClassDef):
+                symbols.append({"kind": "class", "name": node.name, "line": node.lineno})
+        return {
+            "agent_id": suite.agent_id,
+            "commit_sha": suite.commit_sha,
+            "path": safe_path,
+            "content": source,
+            "line_count": len(source.splitlines()),
+            "symbols": symbols,
+        }
+
+    def list_run_history(
+        self,
+        *,
+        agent_id: str | None,
+        status: str | None,
+        source: str | None,
+        commit_sha: str | None,
+        cursor: str | None,
+        limit: int,
+    ) -> JsonObject:
+        if agent_id:
+            self._require_agent(agent_id)
+        if commit_sha and not _FULL_COMMIT_RE.fullmatch(commit_sha.strip().lower()):
+            raise AgentTestingError(422, "AGENT_COMMIT_INVALID", "commit_sha must be a full 40-character Git commit SHA")
+        try:
+            items, next_cursor = self.store.list_run_history(
+                agent_id=agent_id,
+                status=status,
+                source=source,
+                commit_sha=commit_sha.strip().lower() if commit_sha else None,
+                cursor=cursor,
+                limit=limit,
+            )
+        except ValueError as exc:
+            raise AgentTestingError(422, "AGENT_TEST_RUN_CURSOR_INVALID", str(exc)) from exc
+        return {"items": items, "next_cursor": next_cursor}
+
+    def list_test_assets(self) -> list[JsonObject]:
+        records = list(self._list_agents())
+        agent_ids = [str(getattr(record, "agent_id", "")) for record in records]
+        agent_ids = [agent_id for agent_id in agent_ids if agent_id]
+        latest_runs = {str(item["agent_id"]): item for item in self.store.latest_run_summaries(agent_ids)}
+        schedule_items = self._schedule_list_reader(agent_ids) if self._schedule_list_reader is not None else []
+        schedules = {str(item["agent_id"]): item for item in schedule_items}
+        assets: list[JsonObject] = []
+        for record in records:
+            agent_id = str(getattr(record, "agent_id", ""))
+            if not agent_id:
+                continue
+            suite = self.inspect_suite(agent_id)
+            latest = latest_runs.get(agent_id)
+            schedule = schedules.get(agent_id)
+            if schedule is None and self._schedule_list_reader is None and self._schedule_reader is not None:
+                schedule = self._schedule_reader(agent_id)
+            assets.append(
+                {
+                    "agent_id": agent_id,
+                    "agent_name": str(getattr(record, "name", agent_id)),
+                    "agent_status": str(getattr(record, "status", "active")),
+                    "suite": suite.model_dump(mode="json"),
+                    "latest_run": latest,
+                    "schedule": schedule
+                    or {
+                        "schedule_id": None,
+                        "agent_id": agent_id,
+                        "enabled": False,
+                        "cron_expression": "0 2 * * *",
+                        "timezone": "UTC",
+                        "next_run_at": None,
+                        "created_at": None,
+                        "updated_at": None,
+                    },
+                }
+            )
+        return assets
 
     def create_change_set_run(self, change_set_id: str) -> JsonObject:
         change_set = self._get_change_set(change_set_id)

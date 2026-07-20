@@ -2,6 +2,9 @@
 
 本目录由该业务 Agent 的开发者维护，是 Agent 行为测试的权威来源。
 
+在 AgentGov 源码仓库中，本目录由 `tests/quality_policy.json` 直接从当前路径收集；不得为了平台门禁
+把测试正文复制到根 `tests/`。导出或导入后的运行态 Workspace 仍以自身 Git 中的本目录为准。
+
 ## 平台执行契约
 
 平台始终以 `workspace/` 为工作目录，固定执行：

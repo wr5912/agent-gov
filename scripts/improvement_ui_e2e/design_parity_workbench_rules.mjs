@@ -507,9 +507,14 @@ const RULES = [
       detail: "design=" + design + " files=" + filesText.includes("3 个文件") + " sediment=" + sediment + " types=" + sedimentTypes.join(",") + " legacy=" + legacyLifecycle + " oldRequests=" + oldRequests,
     };
   } },
-  { id: "asset-browse-first", phase: "P1", desc: "资产 Registry 默认浏览/追溯优先，创建资产进入抽屉", async fn(page) {
+  { id: "asset-browse-first", phase: "P1", desc: "资产中心默认展示测试资产，治理资产保留浏览追溯与抽屉创建", async fn(page) {
     await page.getByTestId("nav-asset").click();
     await page.getByTestId("asset-registry").waitFor({ timeout: 8000 });
+    const testAssets = await visible(page, "agent-test-assets");
+    const testTabSelected = await page.getByTestId("asset-center-tab-tests").getAttribute("aria-selected");
+    const governanceVisibleBefore = await visible(page, "governance-asset-registry");
+    await page.getByTestId("asset-center-tab-governance").click();
+    await page.getByTestId("governance-asset-registry").waitFor({ timeout: 8000 });
     const toolbar = await has(page, "asset-browser-toolbar");
     const typeFilter = await has(page, "asset-type-filter");
     const sourceFilter = await has(page, "asset-source-filter");
@@ -519,7 +524,17 @@ const RULES = [
     const drawer = await visible(page, "asset-create-drawer");
     const drawerSize = await page.getByTestId("asset-create-drawer").getAttribute("data-size").catch(() => "");
     await page.getByTestId("asset-create-drawer").getByLabel("关闭").click().catch(() => {});
-    return { ok: toolbar && typeFilter && sourceFilter && createButton && !titleVisibleBefore && drawer && drawerSize === "narrow", detail: `toolbar=${toolbar} type=${typeFilter} source=${sourceFilter} createBtn=${createButton} titleBefore=${titleVisibleBefore} drawer=${drawer}/${drawerSize}` };
+    const ok = testAssets
+      && testTabSelected === "true"
+      && !governanceVisibleBefore
+      && toolbar
+      && typeFilter
+      && sourceFilter
+      && createButton
+      && !titleVisibleBefore
+      && drawer
+      && drawerSize === "narrow";
+    return { ok, detail: `tests=${testAssets}/${testTabSelected} governanceBefore=${governanceVisibleBefore} toolbar=${toolbar} type=${typeFilter} source=${sourceFilter} createBtn=${createButton} titleBefore=${titleVisibleBefore} drawer=${drawer}/${drawerSize}` };
   } },
   { id: "theme-governance-light", phase: "P4", desc: "主工作台统一 Governance Light（主区背景非旧暖色，含背景渐变）", async fn(page) {
     await page.getByTestId("nav-playground").click();

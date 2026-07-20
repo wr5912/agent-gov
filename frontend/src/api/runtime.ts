@@ -1,6 +1,7 @@
 import { authHeaders, makeUrl, readError, requestBlob, requestJson } from "./request";
 import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
 export { defaultRuntimeConfig, isLegacyDockerApiBase } from "./request";
+export * from "./agentTesting";
 export * from "./feedback";
 import type {
   AgentInfo,
@@ -24,9 +25,6 @@ import type {
   AgentRepositoryDiscardChangesRequest,
   AgentRepositorySnapshotRequest,
   AgentRepositoryStatus,
-  AgentTestRun,
-  AgentTestRunCreateRequest,
-  AgentTestSuite,
   ChatRequest,
   ClaudeUserInputDecisionPayload,
   ClaudeUserInputDecisionResponse,
@@ -355,66 +353,6 @@ export function rejectAgentChangeSet(config: RuntimeClientConfig, changeSetId: s
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
-  );
-}
-
-export function inspectAgentTestSuite(config: RuntimeClientConfig, agentId: string, commitSha?: string) {
-  const params = new URLSearchParams();
-  if (commitSha) params.set("commit_sha", commitSha);
-  const query = params.size ? `?${params.toString()}` : "";
-  return requestJson<AgentTestSuite>(
-    config,
-    `/api/agent-registry/${encodeURIComponent(agentId)}/test-suite${query}`,
-  );
-}
-
-export function createAgentTestRun(
-  config: RuntimeClientConfig,
-  payload: AgentTestRunCreateRequest,
-) {
-  return requestJson<AgentTestRun>(
-    config,
-    "/api/agent-test-runs",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
-}
-
-export function createAgentChangeSetTestRun(
-  config: RuntimeClientConfig,
-  changeSetId: string,
-) {
-  return requestJson<AgentTestRun>(
-    config,
-    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/test-runs`,
-    { method: "POST" },
-  );
-}
-
-export function listAgentTestRuns(
-  config: RuntimeClientConfig,
-  filters: { agentId?: string; changeSetId?: string; limit?: number } = {},
-) {
-  const params = new URLSearchParams();
-  if (filters.agentId) params.set("agent_id", filters.agentId);
-  if (filters.changeSetId) params.set("change_set_id", filters.changeSetId);
-  if (filters.limit) params.set("limit", String(filters.limit));
-  const query = params.size ? `?${params.toString()}` : "";
-  return requestJson<AgentTestRun[]>(config, `/api/agent-test-runs${query}`);
-}
-
-export function getAgentTestRun(config: RuntimeClientConfig, testRunId: string) {
-  return requestJson<AgentTestRun>(config, `/api/agent-test-runs/${encodeURIComponent(testRunId)}`);
-}
-
-export function cancelAgentTestRun(config: RuntimeClientConfig, testRunId: string) {
-  return requestJson<AgentTestRun>(
-    config,
-    `/api/agent-test-runs/${encodeURIComponent(testRunId)}/cancel`,
-    { method: "POST", headers: { "Content-Type": "application/json" } },
   );
 }
 

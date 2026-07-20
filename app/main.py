@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from scripts.bootstrap_runtime_volume import load_runtime_env
 
 from app.agent_testing.router import create_agent_testing_router
+from app.agent_testing.schedule import AgentTestScheduleService, AgentTestScheduleStore
 from app.agent_testing.service import AgentTestingService
 from app.agent_testing.store import AgentTestingStore
 from app.openapi_contract import install_openapi_contract
@@ -149,6 +150,7 @@ improvement_governor_service = ImprovementGovernorService(
 asset_store = AssetStore(runtime_db_session_factory)
 runtime_settings_store = RuntimeSettingsStore(runtime_db_session_factory)
 agent_testing_store = AgentTestingStore(runtime_db_session_factory)
+agent_test_schedule_store = AgentTestScheduleStore(runtime_db_session_factory)
 execution_application = WorkspaceExecutionApplier()
 improvement_execution_service = ImprovementExecutionService(
     improvement_store=improvement_store,
@@ -167,6 +169,15 @@ agent_testing_service = AgentTestingService(
     api_base_url=f"http://127.0.0.1:{settings.api_port}",
     api_key=settings.api_key,
     run_timeout_seconds=settings.agent_test_run_timeout_seconds,
+    list_agents=agent_registry_store.list_agents,
+    schedule_reader=agent_test_schedule_store.get_schedule,
+    schedule_list_reader=agent_test_schedule_store.schedules_for_agents,
+)
+agent_test_schedule_service = AgentTestScheduleService(
+    store=agent_test_schedule_store,
+    testing=agent_testing_service,
+    agent_exists=lambda agent_id: agent_registry_store.get_agent(agent_id) is not None,
+    agent_status=lambda agent_id: getattr(agent_registry_store.get_agent(agent_id), "status", None),
 )
 agent_governance.latest_passed_test_run = lambda agent_id, commit_sha: agent_testing_service.latest_passed_for_commit(
     agent_id=agent_id,
@@ -252,6 +263,9 @@ async def lifespan(_: FastAPI):
     test_recovery = agent_testing_service.recover()
     if any(test_recovery.values()):
         logger.warning("recovered Agent test runs: %s", test_recovery)
+    schedule_recovery = agent_test_schedule_service.recover()
+    if any(schedule_recovery.values()):
+        logger.info("recovered Agent test schedule events: %s", schedule_recovery)
     cleanup_summary = agent_governance.reconcile_worktree_cleanups()
     if cleanup_summary["completed"] or cleanup_summary["failed"]:
         logger.info("worktree cleanup reconciliation: %s", cleanup_summary)
@@ -276,12 +290,13 @@ async def lifespan(_: FastAPI):
         name="runtime-dependency-snapshot",
     )
     recovery_task = asyncio.create_task(_runtime_orphan_recovery_loop(), name="runtime-orphan-recovery")
+    test_schedule_task = asyncio.create_task(agent_test_schedule_service.run_forever(), name="agent-test-scheduler")
     try:
         yield
     finally:
-        for task in (provider_probe_task, dependency_probe_task, recovery_task):
+        for task in (provider_probe_task, dependency_probe_task, recovery_task, test_schedule_task):
             task.cancel()
-        for task in (provider_probe_task, dependency_probe_task, recovery_task):
+        for task in (provider_probe_task, dependency_probe_task, recovery_task, test_schedule_task):
             with suppress(asyncio.CancelledError):
                 await task
         agent_testing_service.close()
@@ -475,6 +490,7 @@ app.include_router(
         improvement_store=improvement_store,
         agent_governance=agent_governance,
         agent_testing_store=agent_testing_store,
+        agent_test_schedule_service=agent_test_schedule_service,
         require_api_key=require_api_key,
     )
 )
@@ -488,7 +504,13 @@ app.include_router(
         require_api_key=require_api_key,
     )
 )
-app.include_router(create_agent_testing_router(service=agent_testing_service, require_api_key=require_api_key))
+app.include_router(
+    create_agent_testing_router(
+        service=agent_testing_service,
+        schedule_service=agent_test_schedule_service,
+        require_api_key=require_api_key,
+    )
+)
 app.include_router(
     create_improvements_router(
         improvement_store=improvement_store,

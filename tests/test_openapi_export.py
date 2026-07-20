@@ -97,7 +97,12 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/improvements/{improvement_id}/execution/apply",
         "/api/improvements/{improvement_id}/regression-test-design/generate",
         "/api/agent-registry/{agent_id}/test-suite",
+        "/api/agent-registry/{agent_id}/test-suite/file",
+        "/api/agent-registry/{agent_id}/test-schedule",
+        "/api/agent-registry/{agent_id}/test-schedule/events",
+        "/api/agent-test-assets",
         "/api/agent-test-runs",
+        "/api/agent-test-runs/history",
         "/api/agent-change-sets/{change_set_id}/test-runs",
         "/api/agent-test-runs/{test_run_id}",
         "/api/agent-test-runs/{test_run_id}/cancel",
@@ -131,10 +136,7 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/optimization-tasks/{task_id}/execution-jobs",
     }
     assert set(schema["paths"]).isdisjoint(legacy_paths)
-    assert not any(
-        path.startswith(("/api/regression-assets", "/api/scenario-packs", "/api/test-datasets"))
-        for path in schema["paths"]
-    )
+    assert not any(path.startswith(("/api/regression-assets", "/api/scenario-packs", "/api/test-datasets")) for path in schema["paths"])
 
     for schema_name in (
         "AutomationPolicyResponse",

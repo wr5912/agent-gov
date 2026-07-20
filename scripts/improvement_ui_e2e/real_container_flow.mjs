@@ -503,6 +503,8 @@ async function verifyResponsiveStates(browser, config, seed, flow, release) {
 
       await page.getByTestId("nav-asset").click();
       await page.getByTestId("asset-registry").waitFor({ timeout: 30000 });
+      await page.getByTestId("asset-center-tab-governance").click();
+      await page.getByTestId("governance-asset-registry").waitFor({ timeout: 30000 });
       await page.getByTestId("asset-source-filter").fill("missing-" + seed.stamp);
       await page.locator(".iw-empty").filter({ hasText: "当前范围还没有沉淀资产" }).waitFor({ timeout: 15000 });
       const empty = await screenshotAndAudit(page, config.screenshotDir, viewport.name + "-empty");

@@ -607,6 +607,7 @@ AI 友好层与人类友好层必须同源：
 | Workspace 测试文件 | 可执行 pytest 测试资产 | 精确 Git commit 中的 `tests/test_*.py` |
 | `AgentTestSuiteSummary` | 指定提交测试目录、文件、诊断和摘要的派生视图 | 运行时扫描，不单独保存测试正文 |
 | `AgentTestRun` | 平台固定命令的一次执行证据 | SQLite 运行记录 + pytest 输出 |
+| `AgentTestSchedule` / `AgentTestScheduleEvent` | 每 Agent 定时策略及触发审计 | SQLite 调度记录，不保存测试正文 |
 | `AgentChangeSet` | 同一未发布改动的业务关联 | 后端版本治理记录 |
 | `Release` | 发布、强制发布警告、恢复和回滚事实 | 后端发布记录 |
 
@@ -650,7 +651,7 @@ workspace/
    在隔离 worktree 新增已确认测试文件，不覆盖、删除或弱化已有测试；将配置修改和测试文件压缩为
    相对修复前版本的单一待发布 Git commit。失败时恢复原待发布提交。
 3. **运行测试**：用户在发布工作台显式触发后，平台 checkout 当前待发布 commit，运行完整 `tests/`
-   并创建 `source=feedback_optimization` 的 `AgentTestRun`。确认动作不得隐式排队或执行测试。
+   并创建 `source=release_check` 的 `AgentTestRun`。确认动作不得隐式排队或执行测试。
 
 同一待发布变更可以因返工产生更新的待发布提交。旧提交和旧运行继续可审计，但只允许当前待发布提交参与普通发布条件判断。
 
@@ -688,6 +689,8 @@ test_run_id
 agent_id
 commit_sha
 change_set_id          # 可选业务关联
+schedule_id            # 定时触发时存在
+scheduled_for          # 定时计划窗口
 source
 status
 suite_digest           # 从该 commit 派生
@@ -739,9 +742,26 @@ running --服务关闭或重启--> interrupted
 - 开发者可在本地运行 pytest，通过 testkit 连接已导入 Agent；
 - 平台远程接口负责调用精确版本的被测 Agent，不上传或反向执行开发者本地任意测试代码。
 
-### 13.10 资产关系
+### 13.10 资产复利中心
 
-Asset Registry 可以投影测试文件、运行、改进事项、待发布变更和发布之间的关系及审计摘要，但不能成为测试内容的第二写入源。它至少应能回答：测试属于哪个业务 Agent、来自哪个改进事项、保护哪个待发布提交、最近运行结果是什么、在哪次发布中被使用。
+一级导航“资产复利中心”包含两个页签，默认进入“测试资产”：“测试资产”只读投影 Workspace Git 与平台
+运行/调度证据；“治理资产”继续管理方法论、执行和审计资产的沉淀与跨 Agent 继承。测试页不展示通用
+资产的“沉淀新资产”“继承复用”动作，也不提供跨 Agent 自动复制测试代码。
+
+测试资产按业务 Agent 展示文件数、当前有效 commit、suite digest/诊断、最近运行和定时状态。Agent 详情
+固定分为：
+
+1. **测试文件**：只允许读取当前 suite 中的 `tests/test_*.py`，以只读 Python 代码视图展示行号、搜索、
+   复制、折叠和顶层符号；正文仍只存在于 Workspace Git。
+2. **运行历史**：轻量摘要分页并支持状态/来源筛选；点击后再加载 stdout、stderr、pytest item、
+   invocation 和结构化错误。
+3. **定时策略**：每 Agent 唯一，支持常用频率和自定义五字段 Cron、IANA 时区，最短间隔 15 分钟；
+   保存配置不立即运行。
+
+定时触发只读取触发时当前有效 commit，创建 `source=scheduled`、`change_set_id=null` 的运行；它不读取
+待发布 worktree，也不推进待发布变更或 release。错过多个窗口时只补一次，同 Agent/commit 已有活跃
+运行时合并并记录触发事件。测试与改进事项、待发布变更或 release 的 provenance 只有在持久化关联存在时
+才展示，不从文件名猜测来源。
 
 ### 13.11 已删除设计
 

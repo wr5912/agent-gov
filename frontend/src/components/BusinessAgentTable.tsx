@@ -34,6 +34,7 @@ interface BusinessAgentTableProps {
   packagePending: string | null;
   openMenuAgentId?: string;
   onLifecycle: (agentId: string, status: string) => void;
+  onOpenTestAssets: (agentId: string) => void;
   onToggleMenu: (agent: AgentSummary, element: HTMLButtonElement) => void;
 }
 
@@ -61,6 +62,7 @@ export function BusinessAgentTable(props: BusinessAgentTableProps) {
             packagePending={props.packagePending}
             menuOpen={props.openMenuAgentId === agent.agent_id}
             onLifecycle={props.onLifecycle}
+            onOpenTestAssets={props.onOpenTestAssets}
             onToggleMenu={props.onToggleMenu}
           />
         ))}
@@ -77,6 +79,7 @@ function BusinessAgentRow({
   packagePending,
   menuOpen,
   onLifecycle,
+  onOpenTestAssets,
   onToggleMenu,
 }: {
   agent: AgentSummary;
@@ -86,6 +89,7 @@ function BusinessAgentRow({
   packagePending: string | null;
   menuOpen: boolean;
   onLifecycle: (agentId: string, status: string) => void;
+  onOpenTestAssets: (agentId: string) => void;
   onToggleMenu: (agent: AgentSummary, element: HTMLButtonElement) => void;
 }) {
   const isArchived = agent.status === "archived";
@@ -102,6 +106,7 @@ function BusinessAgentRow({
       <div className="settings-agent-workspace">
         <code title={agent.workspace_dir || "-"}>{agent.workspace_dir || "-"}</code>
         <AgentTestStatusLine status={status} />
+        <button className="settings-agent-test-link" data-testid="settings-agent-test-assets-link" type="button" onClick={() => onOpenTestAssets(agent.agent_id)}>查看测试资产</button>
       </div>
       <select
         className="select"

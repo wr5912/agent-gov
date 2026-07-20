@@ -34,6 +34,7 @@ interface BusinessAgentManagementPanelProps {
   onAgentsChanged: () => void;
   onBusyChange: (busy: boolean) => void;
   onLifecycle: (agentId: string, status: string) => void;
+  onOpenTestAssets: (agentId: string) => void;
   onDelete: (agentId: string) => void;
 }
 
@@ -318,6 +319,7 @@ export function BusinessAgentManagementPanel(props: BusinessAgentManagementPanel
         packagePending={runner.pending}
         openMenuAgentId={menuAnchor?.agent.agent_id}
         onLifecycle={props.onLifecycle}
+        onOpenTestAssets={props.onOpenTestAssets}
         onToggleMenu={(agent, element) => {
           surface.setMenuAnchor(menuAnchor?.agent.agent_id === agent.agent_id ? null : { agent, element });
         }}

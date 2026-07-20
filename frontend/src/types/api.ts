@@ -295,6 +295,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-registry/{agent_id}/test-schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Test Schedule */
+        get: operations["get_agent_test_schedule_api_agent_registry__agent_id__test_schedule_get"];
+        /** Update Agent Test Schedule */
+        put: operations["update_agent_test_schedule_api_agent_registry__agent_id__test_schedule_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-registry/{agent_id}/test-schedule/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Test Schedule Events */
+        get: operations["list_agent_test_schedule_events_api_agent_registry__agent_id__test_schedule_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-registry/{agent_id}/test-suite": {
         parameters: {
             query?: never;
@@ -304,6 +339,23 @@ export interface paths {
         };
         /** Inspect Agent Test Suite */
         get: operations["inspect_agent_test_suite_api_agent_registry__agent_id__test_suite_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-registry/{agent_id}/test-suite/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Test Suite File */
+        get: operations["get_agent_test_suite_file_api_agent_registry__agent_id__test_suite_file_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -516,6 +568,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-test-assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Test Assets */
+        get: operations["list_agent_test_assets_api_agent_test_assets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-test-runs": {
         parameters: {
             query?: never;
@@ -528,6 +597,23 @@ export interface paths {
         put?: never;
         /** Create Agent Test Run */
         post: operations["create_agent_test_run_api_agent_test_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-test-runs/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Test Run History */
+        get: operations["list_agent_test_run_history_api_agent_test_runs_history_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2601,6 +2687,18 @@ export interface components {
             /** Workspace Dir */
             workspace_dir: string;
         };
+        /** AgentTestAssetSummaryResponse */
+        AgentTestAssetSummaryResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Agent Name */
+            agent_name: string;
+            /** Agent Status */
+            agent_status: string;
+            latest_run?: components["schemas"]["AgentTestRunSummaryResponse"] | null;
+            schedule: components["schemas"]["AgentTestScheduleResponse"];
+            suite: components["schemas"]["AgentTestSuiteSummary"];
+        };
         /** AgentTestDiagnostic */
         AgentTestDiagnostic: {
             /** Code */
@@ -2614,6 +2712,18 @@ export interface components {
             message: string;
             /** Path */
             path?: string | null;
+        };
+        /** AgentTestFileSymbol */
+        AgentTestFileSymbol: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "function" | "async_function" | "class";
+            /** Line */
+            line: number;
+            /** Name */
+            name: string;
         };
         /** AgentTestMessageRequest */
         AgentTestMessageRequest: {
@@ -2672,6 +2782,13 @@ export interface components {
              */
             commit_sha?: string | null;
         };
+        /** AgentTestRunHistoryResponse */
+        AgentTestRunHistoryResponse: {
+            /** Items */
+            items?: components["schemas"]["AgentTestRunSummaryResponse"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
         /** AgentTestRunItemResponse */
         AgentTestRunItemResponse: {
             /** Detail */
@@ -2722,6 +2839,10 @@ export interface components {
             report?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
+            /** Schedule Id */
+            schedule_id?: string | null;
+            /** Scheduled For */
+            scheduled_for?: string | null;
             /** Source */
             source: string;
             /** Started At */
@@ -2750,6 +2871,96 @@ export interface components {
             /** Test Run Id */
             test_run_id: string;
         };
+        /** AgentTestRunSummaryResponse */
+        AgentTestRunSummaryResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Change Set Id */
+            change_set_id?: string | null;
+            /** Commit Sha */
+            commit_sha: string;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Duration Seconds */
+            duration_seconds?: number | null;
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Schedule Id */
+            schedule_id?: string | null;
+            /** Scheduled For */
+            scheduled_for?: string | null;
+            /** Source */
+            source: string;
+            /** Started At */
+            started_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "passed" | "failed" | "error" | "cancelled" | "interrupted";
+            /** Suite Digest */
+            suite_digest?: string | null;
+            /** Test Run Id */
+            test_run_id: string;
+        };
+        /** AgentTestScheduleEventResponse */
+        AgentTestScheduleEventResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Detail */
+            detail?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Resolved Commit Sha */
+            resolved_commit_sha?: string | null;
+            /** Schedule Event Id */
+            schedule_event_id: string;
+            /** Schedule Id */
+            schedule_id: string;
+            /** Scheduled For */
+            scheduled_for: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "enqueued" | "coalesced" | "skipped" | "failed";
+            /** Test Run Id */
+            test_run_id?: string | null;
+        };
+        /** AgentTestScheduleResponse */
+        AgentTestScheduleResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Cron Expression */
+            cron_expression: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Next Run At */
+            next_run_at?: string | null;
+            /** Schedule Id */
+            schedule_id?: string | null;
+            /** Timezone */
+            timezone: string;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** AgentTestScheduleUpdateRequest */
+        AgentTestScheduleUpdateRequest: {
+            /** Cron Expression */
+            cron_expression: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Timezone */
+            timezone: string;
+        };
         /** AgentTestSessionCreateRequest */
         AgentTestSessionCreateRequest: {
             /** Agent Id */
@@ -2774,6 +2985,21 @@ export interface components {
             created_at: string;
             /** Test Session Id */
             test_session_id: string;
+        };
+        /** AgentTestSuiteFileResponse */
+        AgentTestSuiteFileResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Commit Sha */
+            commit_sha: string;
+            /** Content */
+            content: string;
+            /** Line Count */
+            line_count: number;
+            /** Path */
+            path: string;
+            /** Symbols */
+            symbols?: components["schemas"]["AgentTestFileSymbol"][];
         };
         /** AgentTestSuiteSummary */
         AgentTestSuiteSummary: {
@@ -6205,6 +6431,177 @@ export interface operations {
             };
         };
     };
+    get_agent_test_schedule_api_agent_registry__agent_id__test_schedule_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestScheduleResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    update_agent_test_schedule_api_agent_registry__agent_id__test_schedule_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentTestScheduleUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestScheduleResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    list_agent_test_schedule_events_api_agent_registry__agent_id__test_schedule_events_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestScheduleEventResponse"][];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
     inspect_agent_test_suite_api_agent_registry__agent_id__test_suite_get: {
         parameters: {
             query?: {
@@ -6243,6 +6640,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    get_agent_test_suite_file_api_agent_registry__agent_id__test_suite_file_get: {
+        parameters: {
+            query: {
+                path: string;
+                commit_sha?: string | null;
+            };
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestSuiteFileResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Requested editable payload is too large. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
             /** @description Request validation error or route-level semantic validation error. */
@@ -7050,6 +7517,44 @@ export interface operations {
             };
         };
     };
+    list_agent_test_assets_api_agent_test_assets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestAssetSummaryResponse"][];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
     list_agent_test_runs_api_agent_test_runs_get: {
         parameters: {
             query?: {
@@ -7150,6 +7655,60 @@ export interface operations {
             };
             /** @description Request conflicts with the current resource state. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    list_agent_test_run_history_api_agent_test_runs_history_get: {
+        parameters: {
+            query?: {
+                agent_id?: string | null;
+                status?: string | null;
+                source?: string | null;
+                commit_sha?: string | null;
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestRunHistoryResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

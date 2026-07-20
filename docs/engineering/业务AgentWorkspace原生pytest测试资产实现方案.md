@@ -30,6 +30,8 @@
 | `agentgov_testkit` | AgentGov 平台 | 小型、版本化 Python 库和 pytest plugin |
 | `AgentTestSuiteSummary` | 平台派生 | 从指定 commit 扫描文件、诊断和 `suite_digest`，不单独存内容 |
 | `AgentTestRun` | AgentGov 平台 | 记录一次固定命令的状态、输出、条目和精确 commit |
+| `AgentTestSchedule` | AgentGov 平台 | 每个业务 Agent 唯一定时策略；保存 Cron、IANA 时区和下一次触发时间，不保存测试正文 |
+| `AgentTestScheduleEvent` | AgentGov 平台 | 一次计划窗口的持久化触发审计；记录跳过、合并、入队或失败结果 |
 | 回归测试代码候选 | 治理 Agent + 平台 | 治理 Agent 输出测试代码、测试意图和断言依据；平台确定目标路径。确认前不是 Workspace 资产 |
 | `change_set_id` | AgentGov 平台 | 关联同一未发布变更；不是测试身份或版本身份 |
 
@@ -106,11 +108,17 @@ fixture；HTTP client 与会话对象均由 testkit 内部封装。
 
 ```text
 GET    /api/agent-registry/{agent_id}/test-suite?commit_sha=<sha>
+GET    /api/agent-registry/{agent_id}/test-suite/file?path=<path>&commit_sha=<sha>
+GET    /api/agent-test-assets
 POST   /api/agent-test-runs
 GET    /api/agent-test-runs
+GET    /api/agent-test-runs/history
 GET    /api/agent-test-runs/{test_run_id}
 POST   /api/agent-test-runs/{test_run_id}/cancel
 POST   /api/agent-change-sets/{change_set_id}/test-runs
+GET    /api/agent-registry/{agent_id}/test-schedule
+PUT    /api/agent-registry/{agent_id}/test-schedule
+GET    /api/agent-registry/{agent_id}/test-schedule/events
 
 POST   /api/agent-test-sessions
 POST   /api/agent-test-sessions/{test_session_id}/messages
@@ -127,8 +135,37 @@ DELETE /api/agent-test-sessions/{test_session_id}
 python -m pytest -q -p agentgov_testkit.pytest_plugin tests
 ```
 
-客户端不能提交命令、工作目录、测试结果、通过状态或任意安装步骤。首版不在 API 容器内执行
-`pip install`，也不自动运行上传代码；测试只能由用户显式点击“运行测试”或调用对应运行 API 触发。
+客户端不能提交命令、工作目录、测试结果、通过状态或任意安装步骤。平台不在 API 容器内执行
+`pip install`，也不因上传或确认待发布变更而自动运行代码。测试运行只有两类合法来源：用户显式调用运行
+API 的 `manual` / `release_check`，以及用户预先保存并启用的每 Agent 定时策略所产生的 `scheduled`。
+
+### 5.1 资产复利中心投影
+
+“资产复利中心”默认展示“测试资产”，并保留“治理资产”页签中的方法论、执行和审计资产。测试页按业务
+Agent 展示当前有效 commit 的 suite、文件数、诊断、最近运行和定时状态；详情分为“测试文件”“运行历史”
+和“定时策略”。源码查看满足以下约束：
+
+- 只接受当前 suite 已声明的 `tests/test_*.py` 路径，拒绝绝对路径和目录穿越；
+- 通过 Workspace Git 在指定 commit 读取 UTF-8 正文，提供行号、Python 语法高亮、搜索、复制和顶层符号；
+- 不把源码复制到 `governance_assets`、运行记录或新的数据库测试集；
+- 历史列表只返回轻量摘要并分页，点击单次运行后再读取 stdout、stderr、pytest item、invocation 和错误详情；
+- 测试资产不提供跨 Agent“继承测试代码”动作；需要复用时仍通过 Workspace Git 评审和提交。
+
+### 5.2 每 Agent 定时策略
+
+每个业务 Agent 最多一条策略，支持常用频率和自定义五字段 Cron（分、时、日、月、周）。时区使用 IANA
+名称，前端默认采用浏览器时区；两次计划窗口最短间隔为 15 分钟。保存策略只修改配置，不立即运行测试。
+
+调度由 API lifespan 内的后台循环执行，复用现有 runtime SQLite 和 pytest runner，不新增 Celery、服务、
+环境变量或 Docker 卷。每个计划窗口先持久化唯一 `(schedule_id, scheduled_for)` 事件，再触发运行：
+
+1. 仅 `active`、`evaluating` Agent 可触发；其他生命周期记为 `skipped`，其中终态 `archived` 或已删除
+   Agent 会同步停用策略，避免后续窗口继续积累，也避免同 ID 重建时继承旧启用状态；
+2. 触发时读取该 Agent 当前有效 commit，只读取一次；未发布 `AgentChangeSet` 的候选 commit 不参与解析；
+3. 创建 `source=scheduled`、`change_set_id=null` 的 `AgentTestRun`，记录 `schedule_id` 和 `scheduled_for`；
+4. 同 Agent、同 commit 已有 `queued/running` 时不重复执行，事件记为 `coalesced` 并关联原运行；
+5. 服务停机错过多个窗口时只补一次最早待处理窗口，再把 `next_run_at` 推进到当前时间之后，避免无界补跑；
+6. 定时策略和事件不得推进、批准、发布或回滚任何待发布变更。
 
 ## 6. 运行生命周期与服务重启
 
@@ -149,6 +186,9 @@ running --服务关闭/重启--> interrupted
 - 同一 Agent、同一 commit、同一待发布变更只能有一个 `queued/running` 记录，重复请求返回 `409`；
 - 临时测试会话只存在于当前进程，重启后调用返回明确的 session unavailable 错误；
 - stdout、stderr、结构化 pytest item 和错误详情均持久化，并有大小上限。
+
+调度事件使用独立终态：`pending -> enqueued | coalesced | skipped | failed`。重启先恢复 `pending` 事件；若
+对应 `(schedule_id, scheduled_for)` 的运行已经创建，则直接补记 `enqueued`，不会再次创建运行。
 
 ## 7. 反馈优化生成测试
 
@@ -229,6 +269,8 @@ python -m pytest -q -p agentgov_testkit.pytest_plugin tests
 - 迁移 `0050` 收敛重复活跃测试运行，并建立精确目标唯一索引；
 - 迁移 `0051` 原样归档旧的自然语言 `expected_behavior + checks_json` 回归设计，删除旧表并建立
   测试代码、测试意图和断言依据的新契约；不把旧设计猜测转换为可执行测试；
+- 迁移 `0052` 增加每 Agent 唯一定时策略、调度事件表，以及运行记录上的 `schedule_id`、
+  `scheduled_for` 触发来源字段；测试正文仍只存在于 Workspace Git；
 - `make runtime-migrate-workspace-tests-scan` 只读扫描运行卷，确认后使用
   `make runtime-migrate-workspace-tests` 将旧 `evals/` 归档到 Workspace 外，并为缺测试的内置安全运营
   Agent 提交产品自带测试；已有普通业务 Agent 缺测试时仍只告警；迁移同时删除内置或运行态
@@ -248,6 +290,9 @@ python -m pytest -q -p agentgov_testkit.pytest_plugin tests
 - 平台运行：固定命令、精确 commit、取消、输出限制、失败详情和服务重启恢复有专项测试。
 - 反馈闭环：生成只形成代码 Diff；确认只新增扁平测试文件并形成配置与测试同一 commit；运行由独立动作排队。
 - 发布：旧 commit 通过不能放行；当前 commit 的完整测试集通过才可发布；反馈闭环不可强制绕过，未关联反馈的手工待发布版本强制发布必须有原因和持久化警告。
-- UI：设计、测试文件、平台运行和发布条件分层呈现；桌面、平板和移动端无重叠或横向溢出。
+- UI：资产复利中心默认显示测试资产；测试文件、运行历史、定时策略和治理资产分层呈现；桌面、平板和
+  移动端无重叠或横向溢出，测试页不出现通用资产的“沉淀/继承”动作。
+- 调度：五字段 Cron、IANA 时区、15 分钟下限、每 Agent 唯一、重启错过窗口合并、持久化 pending 续处理、
+  重复活跃运行合并、非活跃 Agent 跳过、归档/删除停用和终态非法转移均有专项测试。
 - 工程门：专项 pytest、前端构建、`verify:design-parity`、`make main-flow-test`、`make codex-guard`
   和真实 Compose `ui-feedback-smoke` 通过。

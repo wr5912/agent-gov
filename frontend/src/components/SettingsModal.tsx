@@ -38,9 +38,10 @@ interface SettingsModalProps {
   onClose: () => void;
   onSave: (config: RuntimeClientConfig) => void;
   onAgentsChanged: () => void;
+  onOpenAgentTestAssets: (agentId: string) => void;
 }
 
-export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, onSave, onAgentsChanged }: SettingsModalProps) {
+export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, onSave, onAgentsChanged, onOpenAgentTestAssets }: SettingsModalProps) {
   const [apiBase, setApiBase] = useState(config.apiBase);
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
@@ -223,6 +224,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                   onAgentsChanged={onAgentsChanged}
                   onBusyChange={setWorkspaceBusy}
                   onLifecycle={handleLifecycle}
+                  onOpenTestAssets={onOpenAgentTestAssets}
                   onDelete={handleDelete}
                 />
               </section>

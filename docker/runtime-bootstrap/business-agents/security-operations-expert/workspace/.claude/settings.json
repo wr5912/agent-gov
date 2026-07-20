@@ -5,43 +5,43 @@
     "disableBypassPermissionsMode": "disable",
     "allow": [
       "Read(./**)",
-      "Read(../../../uploads/**)",
-      "Read(../../../outputs/security-operations-expert/**)",
+      "Read(/data/uploads/**)",
+      "Read(/data/outputs/security-operations-expert/**)",
       "Glob",
       "Grep",
       "Skill",
-      "Bash(*)",
       "Bash(jq *)",
       "Bash(date *)",
       "Bash(date)",
       "Bash(pwd)",
-      "Bash(mkdir -p ../../../outputs/security-operations-expert/**)",
-      "Edit(./**)",
-      "Write(./**)",
-      "Write(../../../outputs/security-operations-expert/**)",
+      "Bash(mkdir -p /data/outputs/security-operations-expert/**)",
+      "Edit(/data/outputs/security-operations-expert/**)",
+      "Write(/data/outputs/security-operations-expert/**)",
       "mcp__sec-ops__*"
     ],
-    "ask": [
-      "mcp__sec-ops__soc_api__create",
-      "mcp__sec-ops__soc_api__manual"
-    ],
+    "ask": [],
     "deny": [
       "AskUserQuestion",
-      "mcp__sec-ops__soc_api__execute",
-      "mcp__sec-ops__soc_api__create_1",
-      "mcp__sec-ops__soc_api__update*",
-      "mcp__sec-ops__soc_api__delete*",
-      "mcp__sec-ops__soc_api__upload*",
-      "mcp__sec-ops__soc_api__cancel*",
-      "mcp__sec-ops__soc_api__rollback*",
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./secrets/**)",
-      "Read(../../*/claude-root/**)",
-      "Read(../../../agent-governance/**)",
-      "Read(../../../runtime.sqlite3*)",
-      "Read(../claude-root/.claude.json)",
-      "Read(../claude-root/.claude/projects/**)",
+      "Read(/data/business-agents/security-operations-expert/claude-root/.claude.json)",
+      "Read(/data/business-agents/security-operations-expert/claude-root/.claude/projects/**)",
+      "Edit(./.mcp.json)",
+      "Write(./.mcp.json)",
+      "NotebookEdit(./.mcp.json)",
+      "Edit(./CLAUDE.md)",
+      "Write(./CLAUDE.md)",
+      "NotebookEdit(./CLAUDE.md)",
+      "Edit(./agent.yaml)",
+      "Write(./agent.yaml)",
+      "NotebookEdit(./agent.yaml)",
+      "Edit(./.claude/**)",
+      "Write(./.claude/**)",
+      "NotebookEdit(./.claude/**)",
+      "Edit(./hooks/**)",
+      "Write(./hooks/**)",
+      "NotebookEdit(./hooks/**)",
       "Bash(cat *claude-root*)",
       "Bash(head *claude-root*)",
       "Bash(tail *claude-root*)",
@@ -52,19 +52,39 @@
       "Bash(rm -rf /)",
       "Bash(:(){ :|:& };:*)",
       "Bash(curl *|sh*)",
-      "Bash(wget *|sh*)"
+      "Bash(wget *|sh*)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(http *)",
+      "Bash(httpie *)",
+      "Bash(nc *)",
+      "Bash(ncat *)",
+      "Bash(socat *)",
+      "mcp__sec-ops__soc_api__create*",
+      "mcp__sec-ops__soc_api__manual",
+      "mcp__sec-ops__soc_api__execute",
+      "mcp__sec-ops__soc_api__post_*",
+      "mcp__sec-ops__soc_api__put_*",
+      "mcp__sec-ops__soc_api__delete_*",
+      "mcp__sec-ops__soc_api__patch_*",
+      "mcp__sec-ops__soc_api__create_1",
+      "mcp__sec-ops__soc_api__update*",
+      "mcp__sec-ops__soc_api__delete*",
+      "mcp__sec-ops__soc_api__upload*",
+      "mcp__sec-ops__soc_api__cancel*",
+      "mcp__sec-ops__soc_api__rollback"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\"",
             "timeout": 10,
-            "statusMessage": "Checking command safety"
+            "statusMessage": "检查安全运营动作风险"
           }
         ]
       }
@@ -100,29 +120,21 @@
   "sandbox": {
     "enabled": true,
     "failIfUnavailable": true,
-    "autoAllowBashIfSandboxed": true,
-    "enableWeakerNestedSandbox": true,
+    "autoAllowBashIfSandboxed": false,
     "filesystem": {
       "allowWrite": [
-        "../../../outputs/security-operations-expert",
-        "../../../transcripts"
+        "/data/outputs/security-operations-expert"
       ],
       "denyRead": [
         "./.env",
         "./secrets",
-        "../../*/claude-root/**",
-        "../../../agent-governance/**",
-        "../../../runtime.sqlite3*",
-        "../claude-root/.claude.json"
+        "/data/business-agents/security-operations-expert/claude-root/.claude.json"
       ]
     },
     "network": {
       "allowedDomains": [
-        "localhost",
-        "127.0.0.1",
-        "host.docker.internal",
-        "*.internal",
-        "*.corp"
+        "${SERVICE_HOST}",
+        "${INTERNAL_DOMAIN}"
       ],
       "deniedDomains": []
     },
@@ -134,7 +146,7 @@
       "安全运营先区分事实、推断和行动。",
       "响应处置先查实 SOC 能力，再规划、再预演。",
       "高危处置动作需四要素：证据、审批、先 dry-run、回滚方案。",
-      "执行完成不等于效果达成，必须做效果评估。"
+      "Agent 只形成整本剧本候选；保存、SOC manual 执行（内含预检）和监控由 RO 状态机完成。"
     ]
   },
   "includeGitInstructions": false

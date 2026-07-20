@@ -131,7 +131,11 @@ scripts/deploy_agent_gov_to_host \
 并写入 `releases/<environment>-<短SHA>/release.json`。目标 Compose 选择
 `shared/docker.env`，运行数据继续位于目标 `${HOME}/volume-agent-gov`；私有 env 和运行
 数据都不进入部署快照。部署通过 `flock` 串行执行，API、UI 或 Langfuse 健康检查失败时
-立即恢复前一个健康部署快照。正式部署前还会通过公开 GitHub API 只读核对同仓库
+在存在可用快照时恢复前一个健康版本。首次接管旧 Compose 时若缺少 legacy 镜像，
+脚本输出 `WARN` 后继续，不把“无回滚目标”当作部署前置阻断；新版本健康失败仍明确失败。
+回滚快照不包含 `shared/docker.env` 或 `${HOME}/volume-agent-gov`，因此不承诺回退共享配置与数据库变化。
+持久化 Postgres、Redis 或 MinIO 的凭据轮换必须同时更新存储内凭据与所选 env，不能只改 env 文件后重建容器。
+正式部署前还会通过公开 GitHub API 只读核对同仓库
 `master` push、成功 `quality-gate` 和完整 SHA；提供 `--aid` + `--pr-number` 时额外核对
 已合并 PR 与 AID。workflow URL 不能单独充当成功证明，因此它只是定位符、可省略（按 SHA
 反查同一份事实）。`master` 目前未启用分支保护、允许直推，故 PR 与 AID 不是部署准入的必要

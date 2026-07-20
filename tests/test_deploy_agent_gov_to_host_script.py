@@ -115,6 +115,14 @@ def test_deploy_keeps_release_metadata_and_images_immutable_without_github_secre
     assert "GH_TOKEN" not in verifier
 
 
+def test_deploy_omits_empty_workflow_url_so_the_verifier_discovers_by_sha() -> None:
+    text = text_of(DEPLOY_SCRIPT)
+
+    assert 'workflow_args=(--workflow-url "$WORKFLOW_URL")' in text
+    assert '"${workflow_args[@]}"' in text
+    assert '      --workflow-url "$WORKFLOW_URL" \\' not in text
+
+
 def test_remote_helper_restores_archived_images_and_checks_readiness() -> None:
     text = text_of(REMOTE_HELPER)
 

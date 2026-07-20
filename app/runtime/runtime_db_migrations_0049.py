@@ -4,10 +4,23 @@ import json
 
 from sqlalchemy.engine import Connection
 
+from .runtime_db_base import utc_now
+from .runtime_db_migrations_0040 import _archive_table_rows, _create_archive_table
+
 
 def migrate_0049_rename_regression_test_design(connection: Connection) -> None:
     """Rename the active test-design artifact without keeping a dual schema."""
 
+    columns = _table_columns(connection, "regression_test_designs")
+    if "tests_json" in columns and "cases_json" not in columns:
+        _archive_legacy_assessments(connection)
+    else:
+        _move_legacy_assessments(connection)
+    _rename_legacy_job_type(connection)
+    _remove_legacy_change_set_test_payload(connection)
+
+
+def _move_legacy_assessments(connection: Connection) -> None:
     connection.exec_driver_sql(
         """
         CREATE TABLE IF NOT EXISTS regression_test_designs (
@@ -25,22 +38,13 @@ def migrate_0049_rename_regression_test_design(connection: Connection) -> None:
         )
         """
     )
-    connection.exec_driver_sql(
-        "CREATE UNIQUE INDEX IF NOT EXISTS ix_regression_test_designs_improvement_id "
-        "ON regression_test_designs (improvement_id)"
-    )
+    connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ix_regression_test_designs_improvement_id ON regression_test_designs (improvement_id)")
 
     if _table_exists(connection, "regression_assessments"):
-        existing = int(
-            connection.exec_driver_sql("SELECT COUNT(*) FROM regression_test_designs").scalar_one()
-        )
-        legacy = int(
-            connection.exec_driver_sql("SELECT COUNT(*) FROM regression_assessments").scalar_one()
-        )
+        existing = int(connection.exec_driver_sql("SELECT COUNT(*) FROM regression_test_designs").scalar_one())
+        legacy = int(connection.exec_driver_sql("SELECT COUNT(*) FROM regression_assessments").scalar_one())
         if existing and legacy:
-            raise RuntimeError(
-                "regression_test_designs and regression_assessments both contain rows; refusing an ambiguous merge"
-            )
+            raise RuntimeError("regression_test_designs and regression_assessments both contain rows; refusing an ambiguous merge")
         if legacy:
             connection.exec_driver_sql(
                 """
@@ -74,12 +78,23 @@ def migrate_0049_rename_regression_test_design(connection: Connection) -> None:
             )
         connection.exec_driver_sql("DROP TABLE regression_assessments")
 
+
+def _archive_legacy_assessments(connection: Connection) -> None:
+    if not _table_exists(connection, "regression_assessments"):
+        return
+    _create_archive_table(connection)
+    _archive_table_rows(
+        connection,
+        table_name="regression_assessments",
+        archived_at=utc_now(),
+        reason="replaced_by_executable_pytest_contract",
+    )
+    connection.exec_driver_sql("DROP TABLE regression_assessments")
+
+
+def _rename_legacy_job_type(connection: Connection) -> None:
     if _table_exists(connection, "agent_jobs") and "job_type" in _table_columns(connection, "agent_jobs"):
-        connection.exec_driver_sql(
-            "UPDATE agent_jobs SET job_type = 'regression_test_design' "
-            "WHERE job_type = 'regression_assessment'"
-        )
-    _remove_legacy_change_set_test_payload(connection)
+        connection.exec_driver_sql("UPDATE agent_jobs SET job_type = 'regression_test_design' WHERE job_type = 'regression_assessment'")
 
 
 def _table_exists(connection: Connection, table: str) -> bool:
@@ -97,13 +112,9 @@ def _table_columns(connection: Connection, table: str) -> set[str]:
 
 
 def _remove_legacy_change_set_test_payload(connection: Connection) -> None:
-    if not _table_exists(connection, "agent_change_sets") or "payload_json" not in _table_columns(
-        connection, "agent_change_sets"
-    ):
+    if not _table_exists(connection, "agent_change_sets") or "payload_json" not in _table_columns(connection, "agent_change_sets"):
         return
-    for change_set_id, raw_payload in connection.exec_driver_sql(
-        "SELECT change_set_id, payload_json FROM agent_change_sets"
-    ).fetchall():
+    for change_set_id, raw_payload in connection.exec_driver_sql("SELECT change_set_id, payload_json FROM agent_change_sets").fetchall():
         if isinstance(raw_payload, str):
             try:
                 payload = json.loads(raw_payload)

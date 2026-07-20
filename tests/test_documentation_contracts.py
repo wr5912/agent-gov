@@ -72,3 +72,18 @@ def test_readme_directory_structure_matches_actual_repo_layout():
     tree_block = structure.split("```text", 1)[1].split("```", 1)[0]
     assert "volume/" not in tree_block
     assert "${HOME}/volume-agent-gov" in structure
+
+
+def test_deployment_docs_match_optional_ci_discovery_and_degraded_rollback_contract():
+    readme = _read_repo_text("README.md")
+    runbook = _read_repo_text("docs/engineering/Multica持续CI与联调环境部署.md")
+
+    assert "缺少上述任一证据时必须失败" not in runbook
+    assert "无参数调用会解析并打印当前 `origin/master` tip" in runbook
+    assert "不得把空字符串当成显式 URL" in runbook
+    for text in (readme, runbook):
+        assert "WARN" in text
+        assert "shared/docker.env" in text
+        assert "${HOME}/volume-agent-gov" in text
+        assert "不能只改 env 文件后重建容器" in text
+        assert "无回滚目标" in text or "无 legacy 回滚目标" in text

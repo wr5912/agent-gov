@@ -55,6 +55,10 @@ log() {
   printf '[release-remote] %s\n' "$*"
 }
 
+warn() {
+  printf '[release-remote] WARN: %s\n' "$*" >&2
+}
+
 die() {
   printf '[release-remote] ERROR: %s\n' "$*" >&2
   exit 1
@@ -158,7 +162,7 @@ ensure_shared_env() {
 
 bootstrap_legacy_release() {
   local image legacy_dir legacy_tmp legacy_version
-  local -a legacy_images
+  local -a legacy_images missing_images=()
   [[ ! -e "$CURRENT_LINK" ]] || return 0
   [[ -f "$RELEASE_ROOT/docker/docker-compose.yml" ]] || return 0
 
@@ -187,11 +191,21 @@ bootstrap_legacy_release() {
         --env-file "$SHARED_ENV" -f docker/docker-compose.yml \
         --profile langfuse config --images | awk 'NF' | sort -u
     )
-    (( ${#legacy_images[@]} > 0 )) || die "legacy deployment resolved no images"
+    if (( ${#legacy_images[@]} == 0 )); then
+      warn "Legacy rollback snapshot is unavailable because the existing Compose deployment resolved no images; continuing without a rollback target"
+      rm -rf "$legacy_tmp"
+      return 0
+    fi
     for image in "${legacy_images[@]}"; do
-      docker image inspect "$image" >/dev/null \
-        || die "legacy image is unavailable for rollback capture: $image"
+      if ! docker image inspect "$image" >/dev/null; then
+        missing_images+=("$image")
+      fi
     done
+    if (( ${#missing_images[@]} > 0 )); then
+      warn "Legacy rollback snapshot is unavailable because required image(s) are missing: ${missing_images[*]}; continuing without a rollback target"
+      rm -rf "$legacy_tmp"
+      return 0
+    fi
     docker save "${legacy_images[@]}" | gzip -1 \
       > "$legacy_tmp/images/legacy-images.tar.gz"
     (

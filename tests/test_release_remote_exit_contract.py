@@ -37,11 +37,22 @@ _DOCKER_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$FAKE_DOCKER_LOG"
 if [[ "${1:-}" == "compose" ]]; then
   for arg in "$@"; do
+    if [[ "$arg" == "config" ]]; then
+      printf '%s\\n' ${FAKE_COMPOSE_IMAGES:-}
+      exit 0
+    fi
     if [[ "$arg" == "up" ]]; then
       exit "${FAKE_COMPOSE_UP_RC:-0}"
     fi
   done
   exit 0
+fi
+if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then
+  for image in ${FAKE_MISSING_IMAGES:-}; do
+    if [[ "${3:-}" == "$image" ]]; then
+      exit 1
+    fi
+  done
 fi
 if [[ "${1:-}" == "load" ]]; then
   cat > /dev/null
@@ -131,6 +142,12 @@ def _make_release(root: Path, release_id: str) -> Path:
     return directory
 
 
+def _make_legacy_deployment(root: Path) -> None:
+    (root / "docker").mkdir(parents=True, exist_ok=True)
+    (root / "docker" / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (root / "VERSION").write_text("2.8.8\n", encoding="utf-8")
+
+
 @pytest.fixture()
 def release_root(tmp_path: Path) -> Path:
     root = tmp_path / "release-root"
@@ -171,6 +188,8 @@ def _run_deploy(
     *,
     smoke_fail_seq: str = "",
     compose_up_rc: int = 0,
+    compose_images: tuple[str, ...] = (),
+    missing_images: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "fakebin"
     bin_dir.mkdir(exist_ok=True)
@@ -189,6 +208,8 @@ def _run_deploy(
         "FAKE_SMOKE_COUNTER": str(tmp_path / "smoke.count"),
         "FAKE_SMOKE_FAIL_SEQ": smoke_fail_seq,
         "FAKE_COMPOSE_UP_RC": str(compose_up_rc),
+        "FAKE_COMPOSE_IMAGES": " ".join(compose_images),
+        "FAKE_MISSING_IMAGES": " ".join(missing_images),
     }
     return subprocess.run(
         [
@@ -253,3 +274,51 @@ def test_first_deploy_failure_without_previous_exits_three(release_root: Path, t
 
     assert result.returncode == 3, f"无上一版时部署失败必须返回 3（FAILED），不能退化为含义不明的 1。\nstdout={result.stdout}\nstderr={result.stderr}"
     assert not (release_root / "current").exists()
+
+
+def test_missing_legacy_rollback_image_warns_and_continues_deployment(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    _make_legacy_deployment(release_root)
+    directory = _make_release(release_root, "staging-232-dddddddddddd")
+    legacy_image = "agent-gov-api:2.8.8"
+
+    result = _run_deploy(
+        release_root,
+        "staging-232-dddddddddddd",
+        tmp_path,
+        compose_images=(legacy_image,),
+        missing_images=(legacy_image,),
+    )
+
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert "WARN: Legacy rollback snapshot is unavailable" in result.stderr
+    assert legacy_image in result.stderr
+    assert "continuing without a rollback target" in result.stderr
+    assert (release_root / "current").resolve() == directory.resolve()
+    assert not (release_root / "releases" / "legacy-bootstrap").exists()
+    assert not list((release_root / "releases").glob(".legacy-bootstrap.*"))
+
+
+def test_missing_legacy_rollback_does_not_hide_new_release_failure(
+    release_root: Path,
+    tmp_path: Path,
+) -> None:
+    _make_legacy_deployment(release_root)
+    directory = _make_release(release_root, "staging-232-eeeeeeeeeeee")
+    legacy_image = "agent-gov-api:2.8.8"
+
+    result = _run_deploy(
+        release_root,
+        "staging-232-eeeeeeeeeeee",
+        tmp_path,
+        compose_up_rc=1,
+        compose_images=(legacy_image,),
+        missing_images=(legacy_image,),
+    )
+
+    assert result.returncode == 3, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert "WARN: Legacy rollback snapshot is unavailable" in result.stderr
+    assert not (release_root / "current").exists()
+    assert json.loads((directory / "release.json").read_text())["status"] == "rollback_failed"

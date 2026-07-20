@@ -60,11 +60,10 @@ verifies its public GitHub workflow run (master push, matching head SHA) and a
 successful quality-gate job. Supplying --aid with --pr-number additionally binds
 the deployment to a merged pull request and its AID metadata.
 It builds immutable SHA-tagged images, writes release.json, deploys through a
-serialized remote helper, and immediately restores the previous healthy
-release if health validation fails. GitHub credentials are never read here.
+serialized remote helper, and restores an available previous healthy release
+if validation fails. A missing legacy rollback snapshot warns but does not block deployment.
 USAGE
 }
-
 MODE="deploy"
 REF_SHA=""
 DEPLOY_HOST="${DEPLOY_HOST:-$DEFAULT_HOST}"
@@ -294,18 +293,19 @@ resolve_exact_master_sha() {
 verify_ci_evidence() {
   [[ -f "$CI_EVIDENCE_VERIFIER" ]] \
     || die "CI evidence verifier not found: $CI_EVIDENCE_VERIFIER"
-  local -a trace_args=()
+  local -a trace_args=() workflow_args=()
   if [[ -n "$PR_NUMBER" ]]; then
     trace_args+=(--aid "$AID_IDENTIFIER" --pr-number "$PR_NUMBER")
     log "Verifying successful CI, merged PR, and AID evidence for $REF_SHA"
   else
     log "Verifying successful master-push quality-gate evidence for $REF_SHA (no PR supplied)"
   fi
+  [[ -z "$WORKFLOW_URL" ]] || workflow_args=(--workflow-url "$WORKFLOW_URL")
   if ! CI_EVIDENCE_JSON=$(python3 "$CI_EVIDENCE_VERIFIER" \
       --repository "$SOURCE_REPOSITORY" \
       --ref "$REF_SHA" \
       "${trace_args[@]}" \
-      --workflow-url "$WORKFLOW_URL" \
+      "${workflow_args[@]}" \
       --branch "$EXPECTED_GIT_BRANCH" \
       --workflow-file "$EXPECTED_WORKFLOW_FILE"); then
     die "deployment trace is not backed by successful CI evidence"

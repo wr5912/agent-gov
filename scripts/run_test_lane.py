@@ -136,7 +136,6 @@ def main() -> int:
         policy_path=policy_path,
         expected_selection=selection,
         expected_collection=validation.collection,
-        require_clean=os.environ.get("CI", "").lower() == "true",
         require_all_passed=True,
     )
     if not args.skip_coverage_threshold:

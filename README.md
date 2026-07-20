@@ -2,7 +2,7 @@
 
 一个 **Docker 化的智能体治理平台 AgentGov** 项目（Agent Runtime · Feedback Loop · Version Governance）。
 
-当前阶段聚焦把 AgentGov 平台本身做好，强化智能体开发、运行、反馈优化、评估回归、版本治理和多业务 Agent 治理闭环。Multica 当前只用于 `agent-gov` 仓库的持续 CI 通知；待核心能力稳定且出现真实的多智能体协作需求后，再重新做协作平台选型，Multica 只是候选之一。本期不建设产品内的通用协作模型，也不承诺后期一定采用某个平台。
+当前阶段聚焦把 AgentGov 平台本身做好，强化智能体开发、运行、反馈优化、评估回归、版本治理和多业务 Agent 治理闭环。本期不建设产品内的通用协作模型，也不接入外部研发协作平台；待核心能力稳定且出现真实需求后，再重新做协作平台选型。
 
 目标：
 
@@ -104,54 +104,26 @@ make smoke
 make container-health-e2e
 ```
 
-本地默认使用 `docker/.env`。干净 CI 或隔离验收可从 `docker/.env.example` 生成单一临时文件，并用 `COMPOSE_ENV_FILE=/path/to/env make container-health-e2e` 显式选择；该文件不是 layered override。健康 E2E 始终使用独立 Compose project、动态端口和临时 runtime 根，不写 `${HOME}/volume-agent-gov`。
+本地默认使用 `docker/.env`。隔离验收可从 `docker/.env.example` 生成单一临时文件，并用 `COMPOSE_ENV_FILE=/path/to/env make container-health-e2e` 显式选择；该文件不是 layered override。健康 E2E 始终使用独立 Compose project、动态端口和临时 runtime 根，不写 `${HOME}/volume-agent-gov`。
 
 部署到 Docker Compose 主机：
 
 ```bash
-# 部署 origin/master tip：SHA 与其 quality-gate run 都会被反查并打印
-scripts/deploy_agent_gov_to_host --host 172.16.112.232 --environment staging-232
-
-# 钉住某个提交；--aid 与 --pr-number 可选，成对提供时额外绑定已合并 PR
-scripts/deploy_agent_gov_to_host \
-  --preflight-only \
-  --ref <40位master提交SHA> \
-  --host 172.16.112.232 \
-  --environment staging-232
-
-scripts/deploy_agent_gov_to_host \
-  --ref <40位master提交SHA> \
-  --workflow-url https://github.com/<owner>/<repo>/actions/runs/<run-id> \
-  --aid AID-123 --pr-number 456 \
-  --host 172.16.112.232 \
-  --environment staging-232
+scripts/deploy_agent_gov_to_host
+# 或使用位置参数指定主机；默认用户 root、默认目录 ~/work/agent-gov
+scripts/deploy_agent_gov_to_host 172.16.112.232
 ```
 
-该脚本只接受可从 `origin/master` 到达的完整 SHA，构建 `VERSION-短SHA` 不可变镜像，
-并写入 `releases/<environment>-<短SHA>/release.json`。目标 Compose 选择
-`shared/docker.env`，运行数据继续位于目标 `${HOME}/volume-agent-gov`；私有 env 和运行
-数据都不进入部署快照。部署通过 `flock` 串行执行，API、UI 或 Langfuse 健康检查失败时
-在存在可用快照时恢复前一个健康版本。首次接管旧 Compose 时若缺少 legacy 镜像，
-脚本输出 `WARN` 后继续，不把“无回滚目标”当作部署前置阻断；新版本健康失败仍明确失败。
-回滚快照不包含 `shared/docker.env` 或 `${HOME}/volume-agent-gov`，因此不承诺回退共享配置与数据库变化。
-持久化 Postgres、Redis 或 MinIO 的凭据轮换必须同时更新存储内凭据与所选 env，不能只改 env 文件后重建容器。
-正式部署前还会通过公开 GitHub API 只读核对同仓库
-`master` push、成功 `quality-gate` 和完整 SHA；提供 `--aid` + `--pr-number` 时额外核对
-已合并 PR 与 AID。workflow URL 不能单独充当成功证明，因此它只是定位符、可省略（按 SHA
-反查同一份事实）。`master` 目前未启用分支保护、允许直推，故 PR 与 AID 不是部署准入的必要
-条件——代价与恢复方式见
-[CI-CD 宪法](docs/engineering/CI-CD宪法与交付链两阶段整改计划.md) §2.3。
-SSH 必须命中已确认的 `known_hosts`，不会自动信任新主机。
+该脚本获取并归档最新 `origin/master`，在本机构建 `VERSION` 对应的
+`agent-gov-api`、`agent-gov-ui` 和 `agent-gov-litellm-sidecar` 镜像，然后把跟踪代码、
+项目镜像包和 Langfuse 依赖镜像包同步到目标机。目标机私有 `docker/.env` 会被保留；
+尚未创建时才从 `docker/.env.example` 初始化。部署使用目标机
+`${HOME}/volume-agent-gov`，停止并删除已有 AgentGov 容器，加载归档镜像后启动包含
+Langfuse profile 的全量 Compose 服务，并验证 API、UI 和 Langfuse 地址。
 
-GitHub CI 终态经 228 写入 Multica、systemd 中继安装以及人工联调部署的当前契约见
-[Multica 持续 CI 与联调环境部署](docs/engineering/Multica持续CI与联调环境部署.md)。
-
-需要重启或修复当前联调版本时，重新执行上一次完整的
-`scripts/deploy_agent_gov_to_host` 命令，保持相同的完整 SHA（以及当初提供过的 AID、PR
-和 workflow URL）。
-部署入口会复核同一份 CI 证据并复用已经提交的不可变部署快照；远端 helper 发现该快照
-已经是 `current` 时，只重新加载归档镜像、幂等协调 Compose 和健康检查，不再维护一个绕过
-部署快照、SSH 校验和证据链的平行重启脚本。
+部署前由操作者在本地执行 `make test` 和需要的真实容器验收。脚本只接受零个或一个主机
+位置参数；如需调整用户、远端目录或本地构建 env，分别使用 `DEPLOY_USER`、`REMOTE_DIR`
+和 `LOCAL_COMPOSE_ENV_FILE`。
 
 ## 前端 UI
 

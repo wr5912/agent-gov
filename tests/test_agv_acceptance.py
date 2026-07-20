@@ -106,8 +106,8 @@ def test_agv_037_047_governance_scope_not_business_ownership(monkeypatch, tmp_pa
     assert "高风险动作的人工确认" in boundary
 
 
-def test_agv_049_collaboration_platform_selection_is_deferred_while_multica_ci_is_current() -> None:
-    """AGV-049 当前 Multica 只服务 CI，智能体协作留到核心能力稳定后。"""
+def test_agv_049_collaboration_platform_selection_is_deferred() -> None:
+    """AGV-049 当前不接入协作平台，智能体协作留到核心能力稳定后。"""
     vision = _read("docs/项目目标愿景使命.md")
     readme = _read("README.md")
 
@@ -116,16 +116,15 @@ def test_agv_049_collaboration_platform_selection_is_deferred_while_multica_ci_i
     assert "通用协作看板、issue/task 生命周期、协作成员管理、squad 管理" in vision  # 明列为不属于能力边界
     assert "本期不建设产品内的通用协作模型" in readme
 
-    # 当前 Multica 只用于 agent-gov 仓库 CI。
-    assert "Multica 当前只用于 `agent-gov` 仓库持续 CI" in vision
-    assert "Multica 当前只用于 `agent-gov` 仓库的持续 CI 通知" in readme
+    # 当前不接入外部研发协作平台。
+    assert "当前不接入 Multica 或其他外部研发协作平台" in vision
+    assert "也不接入外部研发协作平台" in readme
     assert "不定义智能体之间如何协作" in vision
 
-    # 后期多智能体协作重新选型，Multica 不是既定路线，也不预设任务分配模型。
+    # 后期多智能体协作重新选型，不预设候选产品或任务分配模型。
     assert "不属于当前阶段目标" in vision
-    assert "Multica 只是候选之一，不是既定技术路线" in vision
+    assert "不预设任何候选产品" in vision
     assert "重新做协作平台选型" in vision
     assert "不预先定义任务分配" in vision
     assert "至少三个产品大版本" not in vision
-    assert "不承诺后期一定采用某个平台" in readme
     assert "当前重点是把智能体开发与反馈优化闭环做强" in vision

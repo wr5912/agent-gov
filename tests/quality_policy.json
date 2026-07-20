@@ -34,7 +34,7 @@
     },
     {
       "id": "engineering-governance",
-      "description": "架构、文档、配置、测试和 CI 治理",
+      "description": "架构、文档、配置与测试治理",
       "contacts": ["@wr5912"]
     },
     {
@@ -82,46 +82,24 @@
   ],
   "lanes": [
     {
-      "id": "pr-fast",
-      "description": "受影响测试选择的 PR 快速反馈；满足证据门前只做 shadow",
-      "enforcement": "shadow",
-      "triggers": ["pull_request"]
-    },
-    {
       "id": "main-full",
-      "description": "主干完整后端套件，排除依赖真实模型的 live 测试",
-      "enforcement": "blocking",
-      "triggers": ["pull_request", "push"]
+      "description": "提交前完整后端套件，排除依赖真实模型的 live 测试",
+      "enforcement": "blocking"
     },
     {
       "id": "main-flow",
       "description": "产品主流程绑定的后端与浏览器验收",
-      "enforcement": "blocking",
-      "triggers": ["pull_request", "push"]
-    },
-    {
-      "id": "nightly-full",
-      "description": "固定串行哨兵、并行 shadow、跨版本与长时测试",
-      "enforcement": "scheduled",
-      "triggers": ["schedule", "workflow_dispatch"]
-    },
-    {
-      "id": "xdist-shadow",
-      "description": "n2/n4 与 load/worksteal 的同 SHA 配对并行证据",
-      "enforcement": "shadow",
-      "triggers": ["schedule", "workflow_dispatch"]
+      "enforcement": "blocking"
     },
     {
       "id": "mutation",
       "description": "高风险变更范围内的限时变异测试",
-      "enforcement": "scheduled",
-      "triggers": ["schedule", "workflow_dispatch", "release"]
+      "enforcement": "manual"
     },
     {
       "id": "container-live-acceptance",
-      "description": "人工触发的真实容器、模型、迁移、恢复与回滚验收，不阻塞持续 CI",
-      "enforcement": "manual",
-      "triggers": ["workflow_dispatch"]
+      "description": "人工执行的真实容器、模型、迁移、恢复与回滚验收",
+      "enforcement": "manual"
     }
   ],
   "portfolio": {
@@ -147,7 +125,7 @@
           "purpose": "compatibility-migration",
           "owner": "agent-lifecycle",
           "capabilities": ["agent-lifecycle"],
-          "lanes": ["main-full", "nightly-full"],
+          "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["db", "git"]
         }
@@ -165,7 +143,7 @@
           "purpose": "requirement-acceptance",
           "owner": "agent-lifecycle",
           "capabilities": ["agent-lifecycle", "security-boundaries"],
-          "lanes": ["main-full", "nightly-full"],
+          "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["db", "git", "process"]
         }
@@ -175,9 +153,7 @@
         "selectors": [
           "tests/test_claude*.py",
           "tests/test_config_mapping.py",
-          "tests/test_ci_status_relay*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
-          "tests/test_pr_aid_metadata.py",
           "tests/test_health*.py",
           "tests/test_import.py",
           "tests/test_logging_config.py",
@@ -194,7 +170,7 @@
           "purpose": "defect-regression",
           "owner": "runtime-platform",
           "capabilities": ["runtime-deployment"],
-          "lanes": ["main-full", "nightly-full"],
+          "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["db", "process", "port"]
         }
@@ -214,7 +190,7 @@
           "purpose": "requirement-acceptance",
           "owner": "improvement-governance",
           "capabilities": ["feedback-improvement-loop"],
-          "lanes": ["main-full", "nightly-full"],
+          "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["db", "git"]
         }
@@ -236,7 +212,7 @@
           "purpose": "security-boundary",
           "owner": "security-response",
           "capabilities": ["security-boundaries"],
-          "lanes": ["main-full", "nightly-full"],
+          "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["hermetic", "process"]
         }
@@ -254,7 +230,7 @@
           "purpose": "requirement-acceptance",
           "owner": "frontend-experience",
           "capabilities": ["frontend-workflows"],
-          "lanes": ["main-full", "nightly-full"],
+          "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["hermetic"]
         }
@@ -276,7 +252,7 @@
           "purpose": "architecture-contract",
           "owner": "integrations",
           "capabilities": ["integration-observability"],
-          "lanes": ["main-full", "nightly-full"],
+          "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["db", "process"]
         }
@@ -294,9 +270,7 @@
           "tests/test_claude*.py",
           "tests/test_config_mapping.py",
           "tests/test_conversations*.py",
-          "tests/test_ci_status_relay*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
-          "tests/test_pr_aid_metadata.py",
           "tests/test_execution_content_guards.py",
           "tests/test_feedback*.py",
           "tests/test_governor*.py",
@@ -334,7 +308,7 @@
           "purpose": "architecture-contract",
           "owner": "engineering-governance",
           "capabilities": ["cross-cutting-quality"],
-          "lanes": ["main-full", "nightly-full"],
+          "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["git", "process"]
         }
@@ -376,7 +350,6 @@
     "mode": "shadow",
     "unknown_change_lane": "main-full",
     "always_full_paths": [
-      ".github/workflows/**",
       "Makefile",
       "pyproject.toml",
       "requirements.txt",
@@ -514,7 +487,7 @@
     ]
   },
   "budgets": {
-    "pr_p95_seconds": 600,
+    "impact_selection_p95_seconds": 600,
     "main_full_p95_seconds": 1800,
     "max_flaky_rate_percent": 0,
     "max_quarantine_days": 14,

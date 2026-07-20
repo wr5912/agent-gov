@@ -144,7 +144,7 @@ def _lifecycle_errors(
         for nodeid in matches:
             delete_matches[nodeid] = delete_matches.get(nodeid, 0) + 1
     blocking_lanes = {lane.id for lane in policy.lanes if lane.enforcement == "blocking"}
-    scheduled_lanes = {lane.id for lane in policy.lanes if lane.enforcement == "scheduled"}
+    non_blocking_lanes = {lane.id for lane in policy.lanes if lane.enforcement in {"shadow", "manual"}}
     for nodeid, classification in classifications.items():
         quarantined = quarantine_matches.get(nodeid, 0)
         delete_candidate = delete_matches.get(nodeid, 0)
@@ -158,8 +158,8 @@ def _lifecycle_errors(
             errors.append(f"DELETE-CANDIDATE lifecycle and registry disagree: {nodeid}")
         if quarantined and blocking_lanes.intersection(classification.lanes):
             errors.append(f"quarantined pytest leaf remains in a blocking lane: {nodeid}")
-        if quarantined and not scheduled_lanes.intersection(classification.lanes):
-            errors.append(f"quarantined pytest leaf is missing a scheduled lane: {nodeid}")
+        if quarantined and not non_blocking_lanes.intersection(classification.lanes):
+            errors.append(f"quarantined pytest leaf is missing a non-blocking lane: {nodeid}")
     return errors
 
 

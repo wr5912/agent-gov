@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -45,10 +44,6 @@ def _artifact_errors(directory: Path, policy_path: Path) -> list[str]:
     return validate_evidence(
         artifact_dir=directory,
         policy_path=policy_path,
-        require_clean=os.environ.get("CI", "").lower() == "true",
-        expected_sha=os.environ.get("GITHUB_SHA"),
-        expected_run_id=os.environ.get("GITHUB_RUN_ID"),
-        expected_run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT"),
         require_all_passed=True,
     )
 

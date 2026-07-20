@@ -1,6 +1,6 @@
 # Claude Code 团队项目说明
 
-本文件是团队级 Claude Code 通用说明，可在多个项目中复用。项目专属路径、脚本、CI、端口、密钥边界和产品不变量放在 `.claude/rules/agentgov-project.md`，不要硬编码进通用规则。
+本文件是团队级 Claude Code 通用说明，可在多个项目中复用。项目专属路径、脚本、自动化流水线、端口、密钥边界和产品不变量放在 `.claude/rules/agentgov-project.md`，不要硬编码进通用规则。
 
 ## 读取顺序
 

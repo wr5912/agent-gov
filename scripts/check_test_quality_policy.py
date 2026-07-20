@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 from test_quality.coverage import evaluate_coverage, load_coverage
@@ -20,10 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--lane", default="main-full")
     parser.add_argument("--require-clean", action="store_true")
-    parser.add_argument("--expected-sha", default=os.environ.get("GITHUB_SHA"))
-    parser.add_argument("--expected-run-id", default=os.environ.get("GITHUB_RUN_ID"))
-    parser.add_argument("--expected-run-attempt", default=os.environ.get("GITHUB_RUN_ATTEMPT"))
-    parser.add_argument("--expected-job")
+    parser.add_argument("--expected-sha")
     parser.add_argument("--skip-collection", action="store_true")
     return parser.parse_args()
 
@@ -46,9 +42,6 @@ def main() -> int:
                 expected_collection=None if validation is None else validation.collection,
                 require_clean=args.require_clean,
                 expected_sha=args.expected_sha,
-                expected_run_id=args.expected_run_id,
-                expected_run_attempt=args.expected_run_attempt,
-                expected_job=args.expected_job,
                 require_all_passed=True,
             )
         )

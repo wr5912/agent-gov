@@ -291,7 +291,7 @@ seed 根目录的环境变量覆盖只被部分代码路径认可：工作区准
 - 内循环：目标 pytest、OpenAPI 类型生成、前端类型检查。
 - 主流程：`make main-flow-test`。
 - 治理硬门：`make codex-guard`。
-- 提交、CI 或发版：`make test`。
+- 提交或发版：`make test`。
 
 ## 9. 验收标准
 

@@ -53,8 +53,7 @@ class Capability(StrictModel):
 class Lane(StrictModel):
     id: Identifier
     description: NonEmpty
-    enforcement: Literal["blocking", "shadow", "scheduled", "manual"]
-    triggers: Annotated[list[Literal["pull_request", "push", "schedule", "workflow_dispatch", "release"]], Field(min_length=1)]
+    enforcement: Literal["blocking", "shadow", "manual"]
 
 
 class Classification(StrictModel):
@@ -174,7 +173,7 @@ class MutationPolicy(StrictModel):
 
 
 class Budgets(StrictModel):
-    pr_p95_seconds: Annotated[int, Field(ge=1)]
+    impact_selection_p95_seconds: Annotated[int, Field(ge=1)]
     main_full_p95_seconds: Annotated[int, Field(ge=1)]
     max_flaky_rate_percent: Annotated[float, Field(ge=0, le=100)]
     max_quarantine_days: Annotated[int, Field(ge=1)]

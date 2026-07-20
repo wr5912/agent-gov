@@ -22,8 +22,6 @@
 | `docs/多业务Agent治理基座设计.md` | `docs/archive/design/多业务Agent治理基座设计.md` | `docs/反馈闭环当前实现基线.md` | `2026-07-10` |
 | `docs/Agent版本治理与Diff对比重构方案.md` | `docs/archive/design/Agent版本治理与Diff对比重构方案.md` | `docs/反馈闭环当前实现基线.md` | `2026-07-10` |
 | `docs/engineering/Governor合并设计.md` | `docs/archive/design/Governor合并设计.md` | `docs/反馈闭环当前实现基线.md` | `2026-07-10` |
-| 同名活跃文档的 2026-07-16 旧完整稿 | `docs/archive/design/CI-CD可信发布与生产准入远期蓝图.md` | `docs/engineering/CI-CD宪法与交付链两阶段整改计划.md` | `2026-07-16` |
-| `docs/engineering/PAT-only持续交付与Staging发布.md` | `docs/archive/design/PAT-only持续交付与Staging发布.md` | `docs/engineering/Multica持续CI与联调环境部署.md` | `2026-07-16` |
 | 同名活跃文档的复杂安全旧稿 | `docs/archive/design/业务AgentWorkspace包导入与热加载产品工程方案_复杂安全旧稿.md` | `docs/业务AgentWorkspace包导入与热加载产品工程方案.md` | `2026-07-16` |
 | 同名活跃文档的旧复杂稿 | `docs/archive/design/业务Agent工作区资产闭环产品工程方案_旧复杂稿.md` | `docs/业务AgentWorkspace包导入与热加载产品工程方案.md` | `2026-07-16` |
 | `docs/业务Agent工作区资产闭环产品工程方案.md` | `docs/archive/design/业务Agent工作区资产闭环产品工程方案.md` | `docs/业务AgentWorkspace包导入与热加载产品工程方案.md` | `2026-07-17` |

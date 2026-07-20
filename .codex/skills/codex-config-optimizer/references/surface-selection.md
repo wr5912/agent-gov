@@ -20,11 +20,11 @@
 1. 是否只影响当前任务？是则留在 prompt。
 2. 是否每次进入仓库都必须知道？是则考虑唯一根 `AGENTS.md`；不要在同目录并列创建会遮蔽它的 override。
 3. 是否是按需执行的流程？是则放 skill。
-4. 是否能确定性检查？是则写脚本；需要阻断时接 hook 或 CI。
+4. 是否能确定性检查？是则写脚本；需要阻断时接 hook 或本地验证入口。
 5. 是否需要跨仓库分发？验证稳定后再做 plugin 或全局 skill。
 
 ## 本仓库注意点
 
-- `agent-gov` 的治理命令、CI、Docker 卷路径和反馈闭环产品不变量属于项目覆盖层。
+- `agent-gov` 的治理命令、自动化门禁、Docker 卷路径和反馈闭环产品不变量属于项目覆盖层。
 - 团队通用层不得硬编码本仓库脚本名和路径。
 - `.codex/guidance` 承载模型治理入口并由根 `AGENTS.md` 显式引用；`.codex/rules` 只承载可由 `codex execpolicy check` 验证的 Starlark 执行策略。

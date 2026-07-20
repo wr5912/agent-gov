@@ -291,7 +291,7 @@ def test_both_emitters_produce_the_same_frame_shape(tmp_path, monkeypatch) -> No
 
     `/api/chat/stream` 直接透传 runtime 帧,`/v1/responses` 从同一帧投影,所以帧形状漂了
     就会让两条公开通道各说各话。而 OpenAPI 硬门只查 media type、**看不见 SSE payload 形状**
-    (audit_openapi_contract.py),CI 不会拦——这条测试就是补那个盲区。
+    (audit_openapi_contract.py)，现有契约审计不会拦截；这条测试用于补齐该盲区。
     """
     from app.runtime.claude_prompt_suggestions import PromptSuggestionMessage
 

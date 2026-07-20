@@ -1,6 +1,6 @@
 # agent-gov 项目覆盖说明
 
-本文件只放本项目（智能体治理平台 AgentGov）的专属约束。团队通用行为以 `CLAUDE.md` 和 `.claude/rules/` 为准；复制模板到其他项目时，不要保留本文件的路径、命令、CI 和产品不变量。
+本文件只放本项目（智能体治理平台 AgentGov）的专属约束。团队通用行为以 `CLAUDE.md` 和 `.claude/rules/` 为准；复制模板到其他项目时，不要保留本文件的路径、命令、自动化流水线和产品不变量。
 
 ## 项目上下文
 
@@ -47,16 +47,15 @@
 - 主流程验证：`make main-flow-test`（改动反馈优化主流程、治理模型任务、formatter、store 投影、API response 或用户可见 tab 状态时必须运行，并确认 `tests/quality_policy.json` 已绑定对应 nodeid 或 UI verification script）。
 - 完整验证硬门：`make test`（依赖 `codex-guard`，先运行 Agent 配置审计、Codex/docs 治理、阶段语言、版本一致性和 OpenAPI 契约检查，再跑 `main-full`、coverage 与可信证据校验）。
 - 测试资产单一入口：`tests/quality_policy.json`，统一管理覆盖率、双维分类、owner、lane、主流程、TIA、并行晋级、mutation 和 GAP；旧 coverage-only manifest 不得恢复。
-- TIA 与 xdist 在至少 20 组同 SHA 配对样本、跨越 14 天且零漏测/并行特有失败前只允许 shadow；PR/push 始终由完整串行后端 lane 阻塞。
+- TIA 与 xdist 在至少 20 组同 SHA 配对样本、跨越 14 天且零漏测/并行特有失败前只允许 shadow；提交前始终运行完整串行后端 lane。
 
 `warn`、dry-run 或只读审计类命令只能用于 Analyze 阶段观察；Verify 阶段必须运行正式 `--mode fail`，不得以 `warn` 作为通过标准。
 
-## CI 与差异治理
+## 测试与差异治理
 
-- PR 对比基线：目标分支。
-- 主分支 push 对比基线：`HEAD^`（本地 hook 默认对比 `HEAD`）。
+- 目标分支差异检查使用目标分支作为 base。
+- 主分支本地增量检查使用 `HEAD^`（本地 hook 默认对比 `HEAD`）。
 - 旧债处理策略：治理输出 `BASELINE` 表示既有超限未增长、不阻断；`FAIL` 表示新增超限或旧债增长、阻断。旧债清单只放普通 docs 或 issue，不得作为治理放行豁免。
-- CI workflow：`.github/workflows/governance.yml`（PR 及 `main`/`master` push 上运行治理硬门与测试）。
 
 ## 版本与 tag 纪律
 
@@ -97,5 +96,5 @@
 
 ## 专属边界
 
-- 不要把本项目的脚本名、CI workflow、私有路径、端口、产品不变量或临时迁移策略写回通用 `CLAUDE.md`、`.claude/rules/` 或通用 skill。
+- 不要把本项目的脚本名、自动化流水线、私有路径、端口、产品不变量或临时迁移策略写回通用 `CLAUDE.md`、`.claude/rules/` 或通用 skill。
 - 如果其他项目复用本模板，必须重新填写自己的覆盖层、治理命令、base-ref 策略和环境边界。

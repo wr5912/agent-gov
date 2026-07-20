@@ -4,154 +4,46 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DEFAULT_HOST="172.16.112.232"
 DEFAULT_REMOTE_DIR="~/work/agent-gov"
-DEFAULT_ENVIRONMENT="staging-232"
-EXPECTED_GIT_REMOTE_PROJECT="agent-gov"
-EXPECTED_GIT_BRANCH="master"
-EXPECTED_WORKFLOW_FILE=".github/workflows/governance.yml"
 COMPOSE_FILE="docker/docker-compose.yml"
 LOCAL_COMPOSE_ENV_FILE="${LOCAL_COMPOSE_ENV_FILE:-docker/.env}"
-SOURCE_REPO_DIR="${AGENT_GOV_SOURCE_REPO_DIR:-$ROOT_DIR}"
-SOURCE_REPOSITORY="${AGENT_GOV_REPOSITORY:-wr5912/agent-gov}"
-REMOTE_HELPER="${AGENT_GOV_REMOTE_HELPER:-$ROOT_DIR/scripts/agent_gov_release_remote}"
-CI_EVIDENCE_VERIFIER="$ROOT_DIR/scripts/verify_agent_gov_ci_evidence.py"
 
 usage() {
   cat <<'USAGE'
-Usage:
-  scripts/deploy_agent_gov_to_host \
-    [--ref <40-character-master-SHA>] \
-    [--workflow-url <successful-quality-gate-url>] \
-    [--aid <AID-N> --pr-number <number>] \
-    [--host 172.16.112.232] \
-    [--environment staging-232]
+Usage: scripts/deploy_agent_gov_to_host [host]
 
-  With no arguments this deploys the current origin/master tip, discovering its
-  successful quality-gate run from the commit SHA. The resolved SHA and run are
-  printed before anything is built or transported.
+Deploy latest origin/master to a remote Docker Compose host.
 
-  scripts/deploy_agent_gov_to_host --preflight-only --ref <SHA> [options]
-  scripts/deploy_agent_gov_to_host --rollback <release-id> [options]
-  scripts/deploy_agent_gov_to_host --diagnose <release-id> [options]
-  scripts/deploy_agent_gov_to_host --remote-status [options]
+Defaults:
+  host        172.16.112.232
+  user        root          (override with DEPLOY_USER)
+  remote dir  ~/work/agent-gov (override with REMOTE_DIR)
 
---remote-status 把目标机实际在跑的版本以 JSON 打到 stdout（日志走 stderr），
-供人工联调和故障诊断使用。
-
-Options:
-  --host <host>              Default: 172.16.112.232
-  --environment <name>      Default: staging-232
-  --ref <sha>                Optional full master SHA; defaults to origin/master tip.
-  --workflow-url <url>       Optional successful master quality-gate URL; defaults to
-                             the run discovered from the commit SHA.
-  --aid <AID-N>             Optional deployment trace identifier; requires --pr-number.
-  --pr-number <number>       Optional deployment pull request number; requires --aid.
-
-Environment:
-  DEPLOY_USER                SSH user, default root.
-  REMOTE_DIR                 Release root, default ~/work/agent-gov.
-  SSH_KNOWN_HOSTS_FILE       Pinned known_hosts file, default ~/.ssh/known_hosts.
-  LOCAL_COMPOSE_ENV_FILE     Complete local build env selection, default docker/.env.
-  AGENT_GOV_SOURCE_REPO_DIR  Read-only agent-gov source clone used for exact archives.
-  AGENT_GOV_REPOSITORY       GitHub owner/repository written to release metadata.
-  AGENT_GOV_REMOTE_HELPER    External remote helper; defaults inside this module.
-
-The deploy path requires an exact full SHA reachable from origin/master and
-verifies its public GitHub workflow run (master push, matching head SHA) and a
-successful quality-gate job. Supplying --aid with --pr-number additionally binds
-the deployment to a merged pull request and its AID metadata.
-It builds immutable SHA-tagged images, writes release.json, deploys through a
-serialized remote helper, and restores an available previous healthy release
-if validation fails. A missing legacy rollback snapshot warns but does not block deployment.
+The script preserves the remote private docker/.env, stores image archives in
+remote images/, loads the images on the remote host, removes existing agent-gov
+containers, starts the full Compose stack including Langfuse, and validates
+API/UI/Langfuse endpoints.
 USAGE
 }
-MODE="deploy"
-REF_SHA=""
-DEPLOY_HOST="${DEPLOY_HOST:-$DEFAULT_HOST}"
-ENVIRONMENT="${DEPLOY_ENVIRONMENT:-$DEFAULT_ENVIRONMENT}"
-ROLLBACK_RELEASE_ID=""
-DIAGNOSE_RELEASE_ID=""
-AID_IDENTIFIER=""
-PR_NUMBER=""
-WORKFLOW_URL=""
-POSITIONAL_HOST_SEEN=0
 
-while (( $# )); do
-  case "$1" in
-    --ref)
-      REF_SHA=${2:-}
-      shift 2
-      ;;
-    --host)
-      DEPLOY_HOST=${2:-}
-      shift 2
-      ;;
-    --environment)
-      ENVIRONMENT=${2:-}
-      shift 2
-      ;;
-    --preflight-only)
-      MODE="preflight"
-      shift
-      ;;
-    --rollback)
-      MODE="rollback"
-      ROLLBACK_RELEASE_ID=${2:-}
-      shift 2
-      ;;
-    --diagnose)
-      MODE="diagnose"
-      DIAGNOSE_RELEASE_ID=${2:-}
-      shift 2
-      ;;
-    --remote-status)
-      MODE="remote-status"
-      shift
-      ;;
-    --aid)
-      AID_IDENTIFIER=${2:-}
-      shift 2
-      ;;
-    --pr-number)
-      PR_NUMBER=${2:-}
-      shift 2
-      ;;
-    --workflow-url)
-      WORKFLOW_URL=${2:-}
-      shift 2
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    -* )
-      printf '[deploy] ERROR: unknown argument: %s\n' "$1" >&2
-      usage >&2
-      exit 1
-      ;;
-    *)
-      if (( POSITIONAL_HOST_SEEN )); then
-        printf '[deploy] ERROR: unexpected positional argument: %s\n' "$1" >&2
-        exit 1
-      fi
-      DEPLOY_HOST=$1
-      POSITIONAL_HOST_SEEN=1
-      shift
-      ;;
-  esac
-done
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
 
+if (( $# > 1 )); then
+  usage >&2
+  exit 2
+fi
+
+DEPLOY_HOST="${1:-${DEPLOY_HOST:-$DEFAULT_HOST}}"
 DEPLOY_USER="${DEPLOY_USER:-root}"
 REMOTE_DIR="${REMOTE_DIR:-$DEFAULT_REMOTE_DIR}"
 REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
 SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
-SSH_KNOWN_HOSTS_FILE="${SSH_KNOWN_HOSTS_FILE:-$HOME/.ssh/known_hosts}"
-LOCAL_TARGET=0
-TARGET_LABEL="$REMOTE"
 SSH_OPTIONS=(
-  -o StrictHostKeyChecking=yes
+  -o StrictHostKeyChecking=accept-new
   -o BatchMode=yes
   -o "ConnectTimeout=${SSH_CONNECT_TIMEOUT}"
-  -o "UserKnownHostsFile=${SSH_KNOWN_HOSTS_FILE}"
 )
 
 log() {
@@ -167,24 +59,8 @@ quote() {
   printf '%q' "$1"
 }
 
-is_local_host() {
-  case "$1" in
-    localhost|127.0.0.1|::1) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-if is_local_host "$DEPLOY_HOST"; then
-  LOCAL_TARGET=1
-  TARGET_LABEL="localhost"
-fi
-
-target_run() {
-  if (( LOCAL_TARGET )); then
-    bash -c "$1"
-  else
-    ssh "${SSH_OPTIONS[@]}" "$REMOTE" "$@"
-  fi
+remote_run() {
+  ssh "${SSH_OPTIONS[@]}" "$REMOTE" "$@"
 }
 
 rsync_ssh_command() {
@@ -197,198 +73,26 @@ rsync_ssh_command() {
 }
 
 require_command() {
-  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+  local name=$1
+  command -v "$name" >/dev/null 2>&1 || die "required command not found: $name"
 }
 
-validate_environment() {
-  [[ "$ENVIRONMENT" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid environment: $ENVIRONMENT"
-}
+fetch_origin_master() {
+  git fetch origin master --prune --tags
 
-validate_release_id() {
-  [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid release id: $1"
-}
-
-validate_trace_arguments() {
-  [[ "$SOURCE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
-    || die "invalid AGENT_GOV_REPOSITORY: $SOURCE_REPOSITORY"
-  if [[ -n "$AID_IDENTIFIER" && ! "$AID_IDENTIFIER" =~ ^AID-[0-9]+$ ]]; then
-    die "invalid AID identifier: $AID_IDENTIFIER"
-  fi
-  if [[ -n "$PR_NUMBER" && ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
-    die "invalid pull request number: $PR_NUMBER"
-  fi
-  if [[ -n "$WORKFLOW_URL" ]]; then
-    local workflow_prefix="https://github.com/${SOURCE_REPOSITORY}/actions/runs/"
-    [[ "$WORKFLOW_URL" == "$workflow_prefix"* ]] \
-      || die "workflow URL must belong to $SOURCE_REPOSITORY"
-    local workflow_path=${WORKFLOW_URL#"$workflow_prefix"}
-    [[ "$workflow_path" =~ ^[0-9]+(/attempts/[0-9]+)?/?$ ]] \
-      || die "invalid workflow run URL: $WORKFLOW_URL"
-  fi
-}
-
-require_deploy_trace_arguments() {
-  # 部署证据是「该 SHA 在 master push 上跑出 quality-gate success」这条机器事实，
-  # 它由 verify_ci_evidence 只读回查 GitHub API 得到，不依赖调用者转述：
-  #   --ref          省略即取 origin/master tip（解析结果会打印出来）。
-  #   --workflow-url 省略即按 SHA 反查该 run；它只是定位符、不是成功证明，
-  #                  手填与反查校验的是同一份 API 事实。
-  #   --aid/--pr-number 可选（master 无分支保护、允许直推，提交可以没有 PR）；
-  #                  给了就按 PR 流程全量校验，且必须成对——AID 是从 PR 元数据里
-  #                  读出来比对的，只给一个会让 AID 校验静默失效。
-  if [[ -n "$AID_IDENTIFIER" && -z "$PR_NUMBER" ]]; then
-    die "--pr-number is required when --aid is supplied"
-  fi
-  if [[ -n "$PR_NUMBER" && -z "$AID_IDENTIFIER" ]]; then
-    die "--aid is required when --pr-number is supplied"
-  fi
-}
-
-validate_git_origin_project() {
-  local remote_url remote_repository
-  remote_url=$(git -C "$SOURCE_REPO_DIR" remote get-url origin 2>/dev/null) \
-    || die "git origin remote is required in $SOURCE_REPO_DIR"
-  remote_url=${remote_url%/}
-  remote_url=${remote_url%.git}
-  case "$remote_url" in
-    *://*)
-      remote_repository=${remote_url#*://}
-      remote_repository=${remote_repository#*/}
-      ;;
-    *:*)
-      remote_repository=${remote_url#*:}
-      ;;
-    *)
-      die "git origin must be a GitHub repository URL, got $remote_url"
-      ;;
-  esac
-  [[ "${remote_repository##*/}" == "$EXPECTED_GIT_REMOTE_PROJECT" ]] \
-    || die "git origin project must be $EXPECTED_GIT_REMOTE_PROJECT, got ${remote_repository##*/}"
-  [[ "$remote_repository" == "$SOURCE_REPOSITORY" ]] \
-    || die "git origin repository must be $SOURCE_REPOSITORY, got ${remote_repository:-<empty>}"
-}
-
-resolve_exact_master_sha() {
-  # 格式校验必须在 fetch 之前：--ref 写错是本地错误，不该先打一次网络才报出来。
-  if [[ -n "$REF_SHA" ]]; then
-    [[ "$REF_SHA" =~ ^[0-9a-f]{40}$ ]] || die "--ref must be a lowercase full 40-character commit SHA"
-  fi
-  git -C "$SOURCE_REPO_DIR" fetch origin master --prune
-  if [[ -z "$REF_SHA" ]]; then
-    # 省略 --ref 就部署 origin/master tip。必须打印解析结果和提交标题：staging 跟随 master
-    # 是常态，但并发推送会让「我以为部的是自己那笔」变成别人的 tip，看不见就查不出来。
-    REF_SHA=$(git -C "$SOURCE_REPO_DIR" rev-parse --verify "origin/master^{commit}") \
-      || die "failed to resolve origin/master"
-    log "--ref omitted; using origin/master tip $REF_SHA"
-    log "  $(git -C "$SOURCE_REPO_DIR" log -1 --format='%s' "$REF_SHA")"
-  fi
-  local resolved
-  resolved=$(git -C "$SOURCE_REPO_DIR" rev-parse --verify "${REF_SHA}^{commit}" 2>/dev/null) \
-    || die "commit is unavailable after fetching origin/master: $REF_SHA"
-  [[ "$resolved" == "$REF_SHA" ]] || die "--ref did not resolve exactly to $REF_SHA"
-  git -C "$SOURCE_REPO_DIR" merge-base --is-ancestor "$REF_SHA" origin/master \
-    || die "commit is not reachable from origin/master: $REF_SHA"
-}
-
-verify_ci_evidence() {
-  [[ -f "$CI_EVIDENCE_VERIFIER" ]] \
-    || die "CI evidence verifier not found: $CI_EVIDENCE_VERIFIER"
-  local -a trace_args=() workflow_args=()
-  if [[ -n "$PR_NUMBER" ]]; then
-    trace_args+=(--aid "$AID_IDENTIFIER" --pr-number "$PR_NUMBER")
-    log "Verifying successful CI, merged PR, and AID evidence for $REF_SHA"
-  else
-    log "Verifying successful master-push quality-gate evidence for $REF_SHA (no PR supplied)"
-  fi
-  [[ -z "$WORKFLOW_URL" ]] || workflow_args=(--workflow-url "$WORKFLOW_URL")
-  if ! CI_EVIDENCE_JSON=$(python3 "$CI_EVIDENCE_VERIFIER" \
-      --repository "$SOURCE_REPOSITORY" \
-      --ref "$REF_SHA" \
-      "${trace_args[@]}" \
-      "${workflow_args[@]}" \
-      --branch "$EXPECTED_GIT_BRANCH" \
-      --workflow-file "$EXPECTED_WORKFLOW_FILE"); then
-    die "deployment trace is not backed by successful CI evidence"
-  fi
-  # 省略 --workflow-url 时，回填校验器实际校验的那个 run 的规范 URL：release.json 和
-  # prepared_release_state 的等值比对都用它，留痕必须是被校验的 run 而非空串。
-  if [[ -z "$WORKFLOW_URL" ]]; then
-    WORKFLOW_URL=$(printf '%s' "$CI_EVIDENCE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["workflow_url"])') \
-      || die "CI evidence did not report the verified workflow URL"
-    log "--workflow-url omitted; verified run $WORKFLOW_URL"
-  fi
-  log "Verified CI evidence: $CI_EVIDENCE_JSON"
-}
-
-resolve_remote_path() {
-  REMOTE_PATH=$(target_run "REMOTE_DIR=$(quote "$REMOTE_DIR") python3 - <<'PY'
-import os
-print(os.path.abspath(os.path.expanduser(os.environ['REMOTE_DIR'])))
-PY
-")
-  [[ -n "$REMOTE_PATH" ]] || die "failed to resolve target release root"
-}
-
-ensure_local_target_is_not_current_repo() {
-  local source_real target_real
-  (( LOCAL_TARGET )) || return 0
-  source_real=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$SOURCE_REPO_DIR")
-  target_real=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$REMOTE_PATH")
-  [[ "$target_real" != "$source_real" ]] \
-    || die "local target dir must not be the source repository: $REMOTE_PATH"
-}
-
-target_preflight() {
-  log "Checking target prerequisites on $TARGET_LABEL"
-  target_run "command -v awk >/dev/null \
-    && command -v python3 >/dev/null \
-    && command -v docker >/dev/null \
-    && command -v flock >/dev/null \
-    && command -v gzip >/dev/null \
-    && command -v install >/dev/null \
-    && command -v sha256sum >/dev/null \
-    && command -v sort >/dev/null \
-    && command -v tar >/dev/null \
-    && docker compose version >/dev/null"
-  resolve_remote_path
-  ensure_local_target_is_not_current_repo
-}
-
-sync_remote_helper() {
-  local helper_dir="$REMOTE_PATH/shared/bin"
-  local helper_path="$helper_dir/agent-gov-release-remote"
-  local temporary="$helper_dir/.agent-gov-release-remote.$$"
-  [[ -f "$REMOTE_HELPER" ]] || die "remote helper not found: $REMOTE_HELPER"
-  target_run "mkdir -p $(quote "$helper_dir")"
-  if (( LOCAL_TARGET )); then
-    install -m 755 "$REMOTE_HELPER" "$temporary"
-  else
-    rsync -a -e "$(rsync_ssh_command)" --chmod=F755 \
-      "$REMOTE_HELPER" "${REMOTE}:${temporary}"
-  fi
-  target_run "chmod 755 $(quote "$temporary") && mv -f $(quote "$temporary") $(quote "$helper_path")"
-}
-
-install_shared_env_if_missing() {
-  local shared_env="$REMOTE_PATH/shared/docker.env"
-  target_run "mkdir -p $(quote "$REMOTE_PATH/releases") $(quote "$REMOTE_PATH/shared")"
-  if target_run "test -f $(quote "$shared_env")"; then
-    target_run "chmod 600 $(quote "$shared_env")"
-    return 0
-  fi
-  if target_run "test -f $(quote "$REMOTE_PATH/docker/.env")"; then
-    target_run "install -m 600 $(quote "$REMOTE_PATH/docker/.env") $(quote "$shared_env")"
-    return 0
-  fi
-  die "target private Compose env is missing: $shared_env"
+  ORIGIN_MASTER=$(git rev-parse origin/master)
+  VERSION=$(git show origin/master:VERSION | tr -d '[:space:]')
+  [[ -n "$VERSION" ]] || die "origin/master VERSION is empty"
 }
 
 ensure_local_image() {
   local image=$1
-  if ! docker image inspect "$image" >/dev/null 2>&1; then
-    log "Local image missing, pulling: $image"
-    docker pull "$image"
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    return 0
   fi
+
+  log "Local image missing, pulling: $image"
+  docker pull "$image"
 }
 
 dedupe_images() {
@@ -403,10 +107,108 @@ dedupe_images() {
   done
 }
 
-resolve_dependency_images() {
-  mapfile -t DEPENDENCY_IMAGES < <(target_run "bash -s -- $(quote "$REMOTE_PATH/shared/docker.env")" <<'REMOTE_IMAGES'
+upload_image_archive() {
+  local archive=$1
+  shift
+  local images=("$@")
+
+  log "Writing remote image archive: images/$archive"
+  docker save "${images[@]}" | gzip -1 | remote_run "bash -c 'set -euo pipefail
+    remote_path=\$1
+    archive=\$2
+    mkdir -p \"\$remote_path/images\"
+    cat > \"\$remote_path/images/\${archive}.tmp\"
+    mv \"\$remote_path/images/\${archive}.tmp\" \"\$remote_path/images/\$archive\"
+    sha256sum \"\$remote_path/images/\$archive\" > \"\$remote_path/images/\$archive.sha256\"
+    ls -lh \"\$remote_path/images/\$archive\"
+    cat \"\$remote_path/images/\$archive.sha256\"
+  ' bash $(quote "$REMOTE_PATH") $(quote "$archive")"
+}
+
+cd "$ROOT_DIR"
+
+for command_name in git docker gzip rsync ssh tar; do
+  require_command "$command_name"
+done
+
+[[ -f VERSION ]] || die "VERSION file not found"
+[[ -f "$COMPOSE_FILE" ]] || die "$COMPOSE_FILE not found"
+
+log "Consumer x Mode x Boundary: remote containers use docker/.env, runtime root stays on the remote host, secrets stay in private env files"
+fetch_origin_master
+
+TMP_DIR=$(mktemp -d /tmp/agent-gov-master.XXXXXX)
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+log "Exporting origin/master ${ORIGIN_MASTER}"
+git archive origin/master | tar -x -C "$TMP_DIR"
+
+if [[ "$LOCAL_COMPOSE_ENV_FILE" = /* ]]; then
+  LOCAL_COMPOSE_ENV_PATH="$LOCAL_COMPOSE_ENV_FILE"
+else
+  LOCAL_COMPOSE_ENV_PATH="$ROOT_DIR/$LOCAL_COMPOSE_ENV_FILE"
+fi
+
+if [[ ! -f "$LOCAL_COMPOSE_ENV_PATH" ]]; then
+  LOCAL_COMPOSE_ENV_PATH="$TMP_DIR/docker/.env.example"
+  log "$LOCAL_COMPOSE_ENV_FILE not found; using origin/master docker/.env.example for local build interpolation"
+fi
+[[ -f "$LOCAL_COMPOSE_ENV_PATH" ]] || die "compose env file not found"
+
+log "Checking remote prerequisites on $REMOTE"
+remote_run "command -v python3 >/dev/null && command -v docker >/dev/null && docker compose version >/dev/null"
+
+REMOTE_PATH=$(remote_run "REMOTE_DIR=$(quote "$REMOTE_DIR") python3 - <<'PY'
+import os
+
+print(os.path.abspath(os.path.expanduser(os.environ['REMOTE_DIR'])))
+PY
+")
+[[ -n "$REMOTE_PATH" ]] || die "failed to resolve remote path"
+
+log "Remote path: $REMOTE:$REMOTE_PATH"
+remote_run "mkdir -p $(quote "$REMOTE_PATH") $(quote "$REMOTE_PATH/images")"
+
+log "Building project images for version $VERSION"
+APP_VERSION="$VERSION" docker compose --env-file "$LOCAL_COMPOSE_ENV_PATH" -f "$TMP_DIR/$COMPOSE_FILE" build \
+  agent-gov-litellm-sidecar \
+  claude-agent-api \
+  claude-agent-ui
+
+PROJECT_IMAGES=(
+  "agent-gov-api:${VERSION}"
+  "agent-gov-ui:${VERSION}"
+  "agent-gov-litellm-sidecar:${VERSION}"
+)
+for image in "${PROJECT_IMAGES[@]}"; do
+  ensure_local_image "$image"
+done
+
+log "Syncing origin/master tracked code"
+rsync -az --delete \
+  -e "$(rsync_ssh_command)" \
+  --exclude='/.git/' \
+  --exclude='/images/' \
+  --exclude='/docker/.env' \
+  --exclude='/docker/.env.local-debug' \
+  --exclude='/frontend/.env.local' \
+  "$TMP_DIR"/ "${REMOTE}:${REMOTE_PATH}/"
+
+remote_run "bash -s -- $(quote "$REMOTE_PATH")" <<'REMOTE_SYNC'
 set -euo pipefail
-env_file=$1
+remote_path=$1
+cd "$remote_path"
+mkdir -p images
+cp -n docker/.env.example docker/.env
+printf 'remote VERSION=%s\n' "$(tr -d '[:space:]' < VERSION)"
+REMOTE_SYNC
+
+log "Resolving Langfuse dependency image names from remote docker/.env"
+mapfile -t DEPENDENCY_IMAGES < <(remote_run "bash -s -- $(quote "$REMOTE_PATH")" <<'REMOTE_IMAGES'
+set -euo pipefail
+remote_path=$1
+cd "$remote_path"
+
 env_value() {
   local key=$1
   local default=$2
@@ -419,9 +221,10 @@ env_value() {
       print
       exit
     }
-  ' "$env_file" 2>/dev/null || true)
+  ' docker/.env 2>/dev/null || true)
   printf '%s\n' "${value:-$default}"
 }
+
 env_value LANGFUSE_WORKER_IMAGE docker.io/langfuse/langfuse-worker:3
 env_value LANGFUSE_WEB_IMAGE docker.io/langfuse/langfuse:3
 env_value LANGFUSE_POSTGRES_IMAGE docker.io/postgres:17
@@ -429,375 +232,127 @@ env_value LANGFUSE_CLICKHOUSE_IMAGE docker.io/clickhouse/clickhouse-server:24.3
 env_value LANGFUSE_REDIS_IMAGE docker.io/redis:7
 env_value LANGFUSE_MINIO_IMAGE cgr.dev/chainguard/minio
 REMOTE_IMAGES
-  )
-  mapfile -t DEPENDENCY_IMAGES < <(dedupe_images "${DEPENDENCY_IMAGES[@]}")
-}
-
-sync_release_code() {
-  local release_path="$REMOTE_PATH/releases/$RELEASE_ID"
-  log "Syncing exact commit $REF_SHA into $release_path"
-  if (( LOCAL_TARGET )); then
-    mkdir -p "$release_path"
-    rsync -az --delete "$TMP_DIR/" "$release_path/"
-  else
-    rsync -az --delete -e "$(rsync_ssh_command)" \
-      "$TMP_DIR/" "${REMOTE}:${release_path}/"
-  fi
-  target_run "mkdir -p $(quote "$release_path/images")"
-}
-
-upload_image_archive() {
-  local target_name=$1
-  shift
-  local images=("$@")
-  local release_images="$REMOTE_PATH/releases/$RELEASE_ID/images"
-  log "Writing $target_name for release $RELEASE_ID"
-  docker save "${images[@]}" | gzip -1 | target_run "bash -c 'set -euo pipefail
-    target_dir=\$1
-    target_name=\$2
-    temporary=\"\$target_dir/\${target_name}.tmp\"
-    mkdir -p \"\$target_dir\"
-    cat > \"\$temporary\"
-    mv \"\$temporary\" \"\$target_dir/\$target_name\"
-    cd \"\$target_dir\"
-    sha256sum \"\$target_name\" > \"\$target_name.sha256\"
-  ' bash $(quote "$release_images") $(quote "$target_name")"
-}
-
-write_release_metadata() {
-  local manifest="$TMP_DIR/release.json"
-  local app_version_file="$TMP_DIR/.app-version"
-  local image digest
-  local image_args=()
-  printf '%s\n' "$IMAGE_VERSION" > "$app_version_file"
-  for image in "${PROJECT_IMAGES[@]}" "${DEPENDENCY_IMAGES[@]}"; do
-    digest=$(docker image inspect --format '{{.Id}}' "$image")
-    image_args+=("${image}=${digest}")
-  done
-  python3 - "$manifest" "$RELEASE_ID" "$AID_IDENTIFIER" "$SOURCE_REPOSITORY" \
-    "$REF_SHA" "$IMAGE_VERSION" "$ENVIRONMENT" "$DEPLOY_HOST" "$PR_NUMBER" \
-    "$WORKFLOW_URL" "$CI_EVIDENCE_JSON" "${image_args[@]}" <<'PY'
-from __future__ import annotations
-
-import json
-import sys
-from datetime import datetime, timezone
-
-(
-    path,
-    release_id,
-    aid,
-    repository,
-    sha,
-    image_version,
-    environment,
-    host,
-    pr_number,
-    workflow_url,
-    ci_evidence_json,
-    *image_pairs,
-) = sys.argv[1:]
-images = {}
-for pair in image_pairs:
-    name, digest = pair.rsplit("=", 1)
-    images[name] = digest
-payload = {
-    "release_id": release_id,
-    "aid_identifier": aid or None,
-    "repository": repository,
-    "commit_sha": sha,
-    "image_version": image_version,
-    "image_digests": images,
-    "environment": environment,
-    "host": host,
-    # PR/AID 可选：直推部署时写 null，不写空串——null 表达「本次没有 PR 追踪」，
-    # 空串会和「有 PR 但值为空」混淆，也过不了下面 prepared_release_state 的等值比对。
-    "pr_number": int(pr_number) if pr_number else None,
-    "workflow_url": workflow_url,
-    "ci_evidence": json.loads(ci_evidence_json),
-    "status": "prepared",
-    "created_at": datetime.now(timezone.utc).isoformat(),
-}
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-    handle.write("\n")
-PY
-  local release_path="$REMOTE_PATH/releases/$RELEASE_ID"
-  if (( LOCAL_TARGET )); then
-    install -m 644 "$manifest" "$release_path/release.json"
-    install -m 644 "$app_version_file" "$release_path/.app-version"
-  else
-    rsync -a -e "$(rsync_ssh_command)" "$manifest" "${REMOTE}:${release_path}/release.json"
-    rsync -a -e "$(rsync_ssh_command)" "$app_version_file" "${REMOTE}:${release_path}/.app-version"
-  fi
-}
-
-invoke_remote_helper() {
-  local command=$1
-  # status 不针对某个 release，故 release-id 可选：不传就不下发该参数，
-  # 而不是下发一个空串让远端脚本去猜。
-  local release_id=${2:-}
-  local helper="$REMOTE_PATH/shared/bin/agent-gov-release-remote"
-  local remote_command
-  remote_command="$(quote "$helper") $(quote "$command") --release-root $(quote "$REMOTE_PATH")"
-  if [[ -n "$release_id" ]]; then
-    remote_command+=" --release-id $(quote "$release_id")"
-  fi
-  target_run "$remote_command"
-}
-
-prepared_release_state() {
-  local release_path="$REMOTE_PATH/releases/$RELEASE_ID"
-  target_run "python3 - $(quote "$release_path") $(quote "$REF_SHA") \
-    $(quote "$SOURCE_REPOSITORY") $(quote "$ENVIRONMENT") \
-    $(quote "$AID_IDENTIFIER") $(quote "$PR_NUMBER") $(quote "$WORKFLOW_URL") \
-    $(quote "$EXPECTED_WORKFLOW_FILE")" <<'PY'
-from __future__ import annotations
-
-import hashlib
-import json
-import sys
-from pathlib import Path
-
-release = Path(sys.argv[1])
-(
-    expected_sha,
-    expected_repository,
-    expected_environment,
-    expected_aid,
-    expected_pr_number,
-    expected_workflow_url,
-    expected_workflow_file,
-) = sys.argv[2:]
-manifest_path = release / "release.json"
-if not manifest_path.is_file():
-    print("absent")
-    raise SystemExit(0)
-try:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError) as exc:
-    raise SystemExit(f"committed release manifest is invalid: {exc}") from exc
-expected = {
-    "commit_sha": expected_sha,
-    "repository": expected_repository,
-    "environment": expected_environment,
-    # 与 release.json 的写法保持一致：PR/AID 缺省是 null 而非空串，
-    # 否则同一次直推部署复跑会因 None != "" 被误判成 conflicting release。
-    "aid_identifier": expected_aid or None,
-    "pr_number": int(expected_pr_number) if expected_pr_number else None,
-    "workflow_url": expected_workflow_url,
-}
-for key, value in expected.items():
-    if manifest.get(key) != value:
-        raise SystemExit(
-            f"committed release {release.name} has conflicting {key}: "
-            f"{manifest.get(key)!r} != {value!r}"
-        )
-ci_evidence = manifest.get("ci_evidence")
-if not isinstance(ci_evidence, dict):
-    raise SystemExit(f"committed release {release.name} has invalid ci_evidence")
-expected_ci = {
-    "repository": expected_repository,
-    "commit_sha": expected_sha,
-    "workflow_file": expected_workflow_file,
-    "quality_gate": "success",
-    "pr_number": int(expected_pr_number) if expected_pr_number else None,
-    "aid_identifier": expected_aid or None,
-}
-for key, value in expected_ci.items():
-    if ci_evidence.get(key) != value:
-        raise SystemExit(
-            f"committed release {release.name} has conflicting ci_evidence.{key}: "
-            f"{ci_evidence.get(key)!r} != {value!r}"
-        )
-for key in ("workflow_run_id", "workflow_attempt"):
-    value = ci_evidence.get(key)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise SystemExit(
-            f"committed release {release.name} has invalid ci_evidence.{key}"
-        )
-version_path = release / ".app-version"
-if not version_path.is_file() or version_path.read_text(encoding="utf-8").strip() != manifest.get(
-    "image_version"
-):
-    raise SystemExit(f"committed release {release.name} has inconsistent image version")
-for name in ("project-images.tar.gz", "dependency-images.tar.gz"):
-    archive = release / "images" / name
-    checksum = archive.with_name(f"{name}.sha256")
-    if not archive.is_file() or not checksum.is_file():
-        raise SystemExit(f"committed release {release.name} is missing {name} or its checksum")
-    expected_digest = checksum.read_text(encoding="utf-8").split()[0]
-    hasher = hashlib.sha256()
-    with archive.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            hasher.update(chunk)
-    digest = hasher.hexdigest()
-    if digest != expected_digest:
-        raise SystemExit(f"committed release {release.name} failed checksum validation for {name}")
-print("ready")
-PY
-}
-
-validate_environment
-validate_trace_arguments
-
-if [[ "$MODE" == "rollback" ]]; then
-  [[ -n "$ROLLBACK_RELEASE_ID" ]] || die "--rollback requires a release id"
-  validate_release_id "$ROLLBACK_RELEASE_ID"
-  for command_name in install python3 rsync; do require_command "$command_name"; done
-  (( LOCAL_TARGET )) || require_command ssh
-  target_preflight
-  sync_remote_helper
-  set +e
-  invoke_remote_helper rollback "$ROLLBACK_RELEASE_ID"
-  rc=$?
-  set -e
-  exit "$rc"
-fi
-
-if [[ "$MODE" == "remote-status" ]]; then
-  require_command python3
-  (( LOCAL_TARGET )) || require_command ssh
-  # 只读探测，刻意不做部署预检、也不同步 helper：
-  # - 观测不该改写被观测对象。控制器每 30 秒对账一次，若在这里 rsync，就是每天往目标机
-  #   写 2880 次文件，只为读一个符号链接；而且 rsync 一旦失败，会把"机器好好的"误报成
-  #   探测失败。
-  # - 部署预检查的是 docker/flock/gzip/tar，与读 current 无关；只有 resolve_remote_path
-  #   是必需的（它定出 REMOTE_PATH）。
-  # - helper 由部署安装。机器从没被部署过 → 没有 current 可对账 → 探测失败正是正确答案
-  #   （控制器会记 active_probe_failed 并继续）。
-  # 此路径不调用 log，故 stdout 天然只有 helper 输出的 JSON。
-  resolve_remote_path
-  invoke_remote_helper status
-  exit 0
-fi
-
-if [[ "$MODE" == "diagnose" ]]; then
-  [[ -n "$DIAGNOSE_RELEASE_ID" ]] || die "--diagnose requires a release id"
-  validate_release_id "$DIAGNOSE_RELEASE_ID"
-  for command_name in install python3 rsync; do require_command "$command_name"; done
-  (( LOCAL_TARGET )) || require_command ssh
-  target_preflight
-  sync_remote_helper
-  invoke_remote_helper diagnose "$DIAGNOSE_RELEASE_ID"
-  exit 0
-fi
-
-# --ref 省略时由 resolve_exact_master_sha 取 origin/master tip（需要先 fetch，故不在这里解析）。
-if [[ "$MODE" == "deploy" ]]; then
-  require_deploy_trace_arguments
-fi
-for command_name in git python3; do require_command "$command_name"; done
-if (( LOCAL_TARGET )); then
-  require_command rsync
-else
-  require_command ssh
-fi
-validate_git_origin_project
-resolve_exact_master_sha
-if [[ "$MODE" == "deploy" ]]; then
-  verify_ci_evidence
-fi
-target_preflight
-
-SHORT_SHA=${REF_SHA:0:12}
-RELEASE_ID="${ENVIRONMENT}-${SHORT_SHA}"
-validate_release_id "$RELEASE_ID"
-
-if [[ "$MODE" == "preflight" ]]; then
-  printf 'REF_SHA=%s\nRELEASE_ID=%s\nTARGET=%s:%s\n' \
-    "$REF_SHA" "$RELEASE_ID" "$TARGET_LABEL" "$REMOTE_PATH"
-  exit 0
-fi
-
-for command_name in docker gzip install rsync tar; do require_command "$command_name"; done
-
-PREPARED_STATE=$(prepared_release_state)
-if [[ "$PREPARED_STATE" == "ready" ]]; then
-  log "Reusing committed immutable release $RELEASE_ID after idempotent reconciliation"
-  sync_remote_helper
-  printf 'RELEASE_ID=%s\n' "$RELEASE_ID"
-  set +e
-  invoke_remote_helper deploy "$RELEASE_ID"
-  rc=$?
-  set -e
-  case "$rc" in
-    0) log "Deployment completed: $RELEASE_ID" ;;
-    2) log "Deployment failed and automatic rollback completed: $RELEASE_ID" ;;
-    3) log "Deployment and rollback both failed: $RELEASE_ID" ;;
-    *) log "Deployment preflight or transport failed: $RELEASE_ID" ;;
-  esac
-  exit "$rc"
-fi
-[[ "$PREPARED_STATE" == "absent" ]] || die "unexpected prepared release state: $PREPARED_STATE"
-
-TMP_DIR=$(mktemp -d /tmp/agent-gov-release.XXXXXX)
-trap 'rm -rf "$TMP_DIR"' EXIT
-git -C "$SOURCE_REPO_DIR" archive "$REF_SHA" | tar -x -C "$TMP_DIR"
-[[ -f "$TMP_DIR/$COMPOSE_FILE" ]] || die "$COMPOSE_FILE not found at $REF_SHA"
-VERSION=$(tr -d '[:space:]' < "$TMP_DIR/VERSION")
-[[ -n "$VERSION" ]] || die "VERSION is empty at $REF_SHA"
-IMAGE_VERSION="${VERSION}-${SHORT_SHA}"
-
-if [[ "$LOCAL_COMPOSE_ENV_FILE" = /* ]]; then
-  LOCAL_COMPOSE_ENV_PATH="$LOCAL_COMPOSE_ENV_FILE"
-else
-  LOCAL_COMPOSE_ENV_PATH="$SOURCE_REPO_DIR/$LOCAL_COMPOSE_ENV_FILE"
-fi
-if [[ ! -f "$LOCAL_COMPOSE_ENV_PATH" ]]; then
-  LOCAL_COMPOSE_ENV_PATH="$TMP_DIR/docker/.env.example"
-  log "$LOCAL_COMPOSE_ENV_FILE is absent; selecting the exact commit docker/.env.example for build interpolation"
-fi
-LOCAL_COMPOSE_ENV_PATH=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$LOCAL_COMPOSE_ENV_PATH")
-
-log "Consumer x Mode x Boundary: target containers select shared/docker.env; runtime data remains on the target; the CI relay never invokes this deployment path"
-
-# 构建跑在人工部署执行机上，而这份 compose 来自待部署提交本身。
-# 先确认它没把构建面伸出 release 归档——否则把 build.context 指向部署执行机 HOME
-# 的 PR，就能把执行机上的私有配置打包进镜像。
-# 门取自 $SOURCE_REPO_DIR（部署执行机的工作树）而非 $TMP_DIR（被部署提交的归档）：
-# 部署只做 fetch + archive，从不 checkout 工作树，所以这里跑的是**安装时的版本**，
-# 被发布的提交改不动它。若改用归档里那份，恶意 PR 一个提交就能把 compose 和门一起换掉。
-BUILD_SERVICES=(agent-gov-litellm-sidecar claude-agent-api claude-agent-ui)
-sandbox_args=()
-for service in "${BUILD_SERVICES[@]}"; do sandbox_args+=(--service "$service"); done
-python3 "$SOURCE_REPO_DIR/scripts/assert_release_build_is_sandboxed.py" \
-  --compose "$TMP_DIR/$COMPOSE_FILE" --archive-root "$TMP_DIR" "${sandbox_args[@]}" \
-  || die "released commit tries to build outside its own release archive"
-
-log "Building immutable project images for $IMAGE_VERSION"
-APP_VERSION="$IMAGE_VERSION" \
-AGENT_GOV_COMPOSE_ENV_FILE="$LOCAL_COMPOSE_ENV_PATH" \
-docker compose \
-  --env-file "$LOCAL_COMPOSE_ENV_PATH" -f "$TMP_DIR/$COMPOSE_FILE" build \
-  "${BUILD_SERVICES[@]}"
-
-PROJECT_IMAGES=(
-  "agent-gov-api:${IMAGE_VERSION}"
-  "agent-gov-ui:${IMAGE_VERSION}"
-  "agent-gov-litellm-sidecar:${IMAGE_VERSION}"
 )
-for image in "${PROJECT_IMAGES[@]}"; do ensure_local_image "$image"; done
+mapfile -t DEPENDENCY_IMAGES < <(dedupe_images "${DEPENDENCY_IMAGES[@]}")
+for image in "${DEPENDENCY_IMAGES[@]}"; do
+  ensure_local_image "$image"
+done
 
-install_shared_env_if_missing
-sync_remote_helper
-resolve_dependency_images
-for image in "${DEPENDENCY_IMAGES[@]}"; do ensure_local_image "$image"; done
+PROJECT_ARCHIVE="agent-gov-${VERSION}-images.tar.gz"
+DEPENDENCY_ARCHIVE="agent-gov-${VERSION}-langfuse-deps-images.tar.gz"
+upload_image_archive "$PROJECT_ARCHIVE" "${PROJECT_IMAGES[@]}"
+upload_image_archive "$DEPENDENCY_ARCHIVE" "${DEPENDENCY_IMAGES[@]}"
 
-sync_release_code
-upload_image_archive project-images.tar.gz "${PROJECT_IMAGES[@]}"
-upload_image_archive dependency-images.tar.gz "${DEPENDENCY_IMAGES[@]}"
-write_release_metadata
+log "Loading images and restarting all agent-gov services on $REMOTE"
+remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$VERSION")" <<'REMOTE_DEPLOY'
+set -euo pipefail
+remote_path=$1
+version=$2
+cd "$remote_path"
 
-printf 'RELEASE_ID=%s\n' "$RELEASE_ID"
-set +e
-invoke_remote_helper deploy "$RELEASE_ID"
-rc=$?
-set -e
-case "$rc" in
-  0) log "Deployment completed: $RELEASE_ID" ;;
-  2) log "Deployment failed and automatic rollback completed: $RELEASE_ID" ;;
-  3) log "Deployment and rollback both failed: $RELEASE_ID" ;;
-  *) log "Deployment preflight or transport failed: $RELEASE_ID" ;;
-esac
-exit "$rc"
+project_archive="images/agent-gov-${version}-images.tar.gz"
+dependency_archive="images/agent-gov-${version}-langfuse-deps-images.tar.gz"
+for archive in "$project_archive" "$dependency_archive"; do
+  [ -f "$archive" ] || { echo "missing archive: $archive" >&2; exit 1; }
+  [ -f "$archive.sha256" ] || { echo "missing checksum: $archive.sha256" >&2; exit 1; }
+  sha256sum -c "$archive.sha256"
+done
+
+gzip -dc "$project_archive" | docker load
+gzip -dc "$dependency_archive" | docker load
+
+read_env() {
+  local key=$1
+  local default=$2
+  local value
+  value=$(awk -F= -v key="$key" '
+    $1 == key {
+      sub(/^[^=]*=/, "")
+      sub(/[[:space:]]+#.*$/, "")
+      gsub(/^"|"$/, "")
+      print
+      exit
+    }
+  ' docker/.env 2>/dev/null || true)
+  printf '%s' "${value:-$default}"
+}
+
+expand_remote_value() {
+  local value=$1
+  value=${value//\$\{HOME\}/$HOME}
+  value=${value//\$HOME/$HOME}
+  value=${value/#\~/$HOME}
+  printf '%s' "$value"
+}
+
+runtime_root=$(expand_remote_value "$(read_env HOST_RUNTIME_VOLUME_ROOT '$HOME/volume-agent-gov')")
+echo "Using runtime root=$runtime_root"
+mkdir -p \
+  "$runtime_root/data" \
+  "$runtime_root/governor-workspace" \
+  "$runtime_root/claude-roots/governor" \
+  "$runtime_root/langfuse/postgres" \
+  "$runtime_root/langfuse/clickhouse/data" \
+  "$runtime_root/langfuse/clickhouse/logs" \
+  "$runtime_root/langfuse/redis" \
+  "$runtime_root/langfuse/minio"
+chmod a+rwx \
+  "$runtime_root/langfuse" \
+  "$runtime_root/langfuse/postgres" \
+  "$runtime_root/langfuse/clickhouse" \
+  "$runtime_root/langfuse/clickhouse/data" \
+  "$runtime_root/langfuse/clickhouse/logs" \
+  "$runtime_root/langfuse/redis" \
+  "$runtime_root/langfuse/minio" 2>/dev/null || true
+
+# Cleanup for the historical accidental literal path created by shell-side ${HOME} handling.
+rm -rf '${HOME}'
+
+export APP_VERSION="$version"
+docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse down --remove-orphans || true
+leftover_containers=$(docker ps -aq --filter "name=agent-gov" || true)
+if [ -n "$leftover_containers" ]; then
+  docker rm -f $leftover_containers
+fi
+
+docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse up -d --no-build --pull never
+docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse ps
+
+host_port=$(expand_remote_value "$(read_env HOST_PORT 48080)")
+frontend_port=$(expand_remote_value "$(read_env FRONTEND_HOST_PORT 45173)")
+langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 43000)")
+
+python3 - <<PY
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+import time
+
+checks = [
+    ("API health", "http://127.0.0.1:${host_port}/health", 60, True),
+    ("UI", "http://127.0.0.1:${frontend_port}", 60, False),
+    ("Langfuse", "http://127.0.0.1:${langfuse_port}", 90, False),
+]
+
+for name, url, attempts, print_body in checks:
+    last_error = None
+    for _ in range(attempts):
+        try:
+            request = Request(url, headers={"User-Agent": "agent-gov-deploy-smoke"})
+            with urlopen(request, timeout=5) as response:
+                body = response.read(500)
+                print(f"{name} OK: {url} status={response.status}")
+                if print_body:
+                    print(body.decode("utf-8", "replace"))
+                break
+        except HTTPError as exc:
+            print(f"{name} OK: {url} status={exc.code}")
+            break
+        except Exception as exc:  # noqa: BLE001 - remote smoke reports final failure text.
+            last_error = exc
+            time.sleep(2)
+    else:
+        raise SystemExit(f"{name} failed: {url}: {last_error!r}")
+PY
+REMOTE_DEPLOY
+
+log "Deployment completed on ${REMOTE}:${REMOTE_PATH}"

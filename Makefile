@@ -54,10 +54,6 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/stores/improvement_content_store.py \
 	app/runtime/stores/improvement_store.py \
 	scripts/bootstrap_runtime_volume.py \
-	scripts/agent_gov_ci_relay_store.py \
-	scripts/agent_gov_ci_status_relay.py \
-	scripts/agent_gov_multica.py \
-	scripts/check_pr_aid.py \
 	scripts/check_codex_governance.py \
 	scripts/check_docs_governance.py \
 	scripts/check_orphan_tests.py \
@@ -77,8 +73,6 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/test_quality/policy.py \
 	scripts/diagnose_runtime_health.py \
 	packages/agentgov-testkit/src/agentgov_testkit \
-	scripts/snapshot_legacy_release_controller_audit.py \
-	scripts/verify_agent_gov_ci_evidence.py \
 	scripts/runtime_bootstrap_secret_assignments.py \
 	scripts/runtime_bootstrap_safety.py \
 	scripts/runtime_cleanup.py \
@@ -91,7 +85,7 @@ QUALITY_POLICY ?= tests/quality_policy.json
 GOVERNANCE_BASE_REF ?=
 GOVERNANCE_BASE_REF_ARG := $(if $(strip $(GOVERNANCE_BASE_REF)),--base-ref $(GOVERNANCE_BASE_REF),)
 
-.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test ci-static openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -257,8 +251,6 @@ pyright:
 	$(PYTHON_RUN) -m pyright
 
 typecheck: ruff-check ruff-format-check pyright
-
-ci-static: codex-guard typecheck runtime-bootstrap-scan
 
 test-backend:
 	mkdir -p $(BACKEND_TEST_ARTIFACT_DIR)

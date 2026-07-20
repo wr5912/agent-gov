@@ -84,7 +84,7 @@ def main() -> int:
     )
     stats_path = mutants_dir / "mutmut-cicd-stats.json"
     if export.returncode != 0 or not stats_path.is_file():
-        print("MUTATION_FAIL: mutmut did not export CI statistics")
+        print("MUTATION_FAIL: mutmut did not export statistics")
         return export.returncode or 1
     stats = json.loads(stats_path.read_text(encoding="utf-8"))
     artifact_dir.mkdir(parents=True, exist_ok=True)

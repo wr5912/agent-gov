@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
-import os
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -16,12 +15,6 @@ from pydantic import Field
 
 from .collection import CollectionResult, nodeid_digest
 from .models import NonEmpty, StrictModel
-
-
-class GitHubRun(StrictModel):
-    run_id: str
-    run_attempt: str
-    job: str
 
 
 class CollectionEvidence(StrictModel):
@@ -47,7 +40,6 @@ class ArtifactEvidence(StrictModel):
 class TestEvidence(StrictModel):
     commit_sha: NonEmpty
     dirty: bool
-    github: GitHubRun
     policy_sha256: NonEmpty
     dependency_hashes: dict[str, NonEmpty]
     lane: NonEmpty
@@ -151,11 +143,6 @@ def build_evidence(
     return TestEvidence(
         commit_sha=commit,
         dirty=dirty,
-        github=GitHubRun(
-            run_id=os.environ.get("GITHUB_RUN_ID", ""),
-            run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT", ""),
-            job=os.environ.get("GITHUB_JOB", ""),
-        ),
         policy_sha256=sha256_file(policy_path),
         dependency_hashes=dependency_hashes(repo_root),
         lane=lane,
@@ -206,9 +193,6 @@ def validate_evidence(
     expected_collection: CollectionResult | None = None,
     require_clean: bool = False,
     expected_sha: str | None = None,
-    expected_run_id: str | None = None,
-    expected_run_attempt: str | None = None,
-    expected_job: str | None = None,
     require_all_passed: bool = False,
 ) -> list[str]:
     errors: list[str] = []
@@ -225,12 +209,6 @@ def validate_evidence(
         errors.append("trusted evidence was produced from a dirty tracked worktree")
     if expected_sha and evidence.commit_sha != expected_sha:
         errors.append(f"evidence commit mismatch: {evidence.commit_sha} != {expected_sha}")
-    if expected_run_id and evidence.github.run_id != expected_run_id:
-        errors.append(f"evidence GitHub run mismatch: {evidence.github.run_id} != {expected_run_id}")
-    if expected_run_attempt and evidence.github.run_attempt != expected_run_attempt:
-        errors.append(f"evidence GitHub run attempt mismatch: {evidence.github.run_attempt} != {expected_run_attempt}")
-    if expected_job and evidence.github.job != expected_job:
-        errors.append(f"evidence GitHub job mismatch: {evidence.github.job} != {expected_job}")
     if evidence.policy_sha256 != sha256_file(policy_path):
         errors.append("evidence policy hash does not match the checked-out policy")
     expected_dependencies = dependency_hashes(policy_path.resolve().parents[1])

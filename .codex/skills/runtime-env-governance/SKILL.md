@@ -43,7 +43,7 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 - `tests/test_settings.py` 覆盖 env 文件选择、`runtime_volume_mode`、`LOG_LEVEL`、路径派生和启动日志字段。
 - `tests/test_repository_env_policy.py` 覆盖 root `.env` 禁止、官方 env 示例不含 `RUNTIME_VOLUME_MODE`、local-debug 与 container key 差异、模型 key 示例为空。
 - `tests/test_documentation_contracts.py` 覆盖 README 术语、PyCharm 环境变量留空、`AGENT_AUTH_REQUIRED` 和启动日志字段说明。
-- 影响治理模型主流程时运行 `make main-flow-test`；提交、CI、发版或用户要求完整验证时运行 `make test`。
+- 影响治理模型主流程时运行 `make main-flow-test`；提交、发版或用户要求完整验证时运行 `make test`。
 - 提交前确认 `docker/.env`、`docker/.env.local-debug`、`frontend/.env.local`、runtime volume、SQLite、logs、dist 和 cache 都未进入 staged diff。
 
 ## 测试模式选择矩阵
@@ -52,7 +52,7 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 | --- | --- | --- | --- |
 | docs / skill / README 术语同步 | 宿主机仓库环境 | `git diff --check`、`scripts/check_docs_governance.py`、`scripts/check_codex_governance.py --mode fail`、相关 skill 单测 | 不默认跑 `make test`，不使用 `local-debug` |
 | settings/env 选择代码 | 宿主机仓库环境 | `tests/test_settings.py`、`tests/test_repository_env_policy.py`、`tests/test_documentation_contracts.py` | 不用 `docker/.env.local-debug` 伪装容器 |
-| provider 健康降级回归 | Docker Compose 容器 | `make container-health-e2e`；CI 由示例生成临时 `COMPOSE_ENV_FILE`，使用真实 API/UI/LiteLLM 容器、临时 runtime 根和 Playwright | 不使用 local-debug、真实宿主卷或后端单测替代浏览器证据 |
+| provider 健康降级回归 | Docker Compose 容器 | `make container-health-e2e`；隔离验收由示例生成临时 `COMPOSE_ENV_FILE`，使用真实 API/UI/LiteLLM 容器、临时 runtime 根和 Playwright | 不使用 local-debug、真实宿主卷或后端单测替代浏览器证据 |
 | live 模型或真实运行态验收 | Docker Compose 容器 | `make container-live-test`，使用 Compose 注入的 `docker/.env` 和容器路径 | 不使用 `docker/.env.local-debug` |
 | 启动 / 重启 / 重建 / 部署生效 | Docker Compose 既有服务 | `make ui-build && make ui-up && make ui-smoke`，必要时追加 API `/health` 与 `docker ps` | 不另起临时 Vite 服务，不用 local-debug 代替容器 |
 | local-debug 专项能力 | 宿主机 Python / PyCharm | 明确命名的 local-debug 专项测试和 bootstrap/repair 命令 | 不把结果声明为容器验收 |

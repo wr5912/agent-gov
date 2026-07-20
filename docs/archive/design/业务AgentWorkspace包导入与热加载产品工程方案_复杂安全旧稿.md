@@ -833,7 +833,7 @@ git commit 的 author 是固定机器人身份、message 无结构化 trailer，
 - 内循环：目标 pytest、OpenAPI 类型生成、前端 typecheck/build。
 - 主流程：`make main-flow-test`，并运行真实容器 import/next-turn/rollback smoke。
 - 治理硬门：`make codex-guard`。
-- 提交、CI 或发版：`make test`；安全专项按质量策略运行 coverage/mutation。
+- 提交或发版：`make test`；安全专项按质量策略运行 coverage/mutation。
 
 ## 15. 验收标准
 

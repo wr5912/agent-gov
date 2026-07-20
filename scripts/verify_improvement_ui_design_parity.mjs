@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 四阶段改进治理 UI 设计一致性硬门（不是功能可用门）。
-// 原设计规则保持逐条记分；本入口固定使用自启 Vite + mock 后端，可确定性进入 CI。
+// 原设计规则保持逐条记分；本入口固定使用自启 Vite + mock 后端，可确定性用于自动化验收。
 // 真实容器功能与视觉验收由 verify_improvement_ui_real_container.mjs 单独负责。
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";

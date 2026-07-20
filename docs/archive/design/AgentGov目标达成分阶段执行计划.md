@@ -137,7 +137,7 @@
 - 凭据来源：私有、gitignored 的 `docker/.env`（容器部署 env 文件）。live 验收必须在已部署的
   Docker Compose 容器环境中运行，使用 Compose 从 `docker/.env` 注入的
   `MODEL_PROVIDER_API_KEY`/`MODEL_PROVIDER_API_URL`/`AGENT_MODEL`；真实 key 绝不写入仓库、绝不出现在命令行。
-- 门控行为：`docker/.env` 缺失、未配 key（如 CI），或当前 pytest 不在 `RUNTIME_CONTAINER=1` 且具备
+- 门控行为：`docker/.env` 缺失、未配 key（如无凭据的本地测试环境），或当前 pytest 不在 `RUNTIME_CONTAINER=1` 且具备
   `/data`、`/main-workspace`、`/claude-roots/main` 挂载的真实容器环境中运行时整文件 skip，不打网络。
   `make test` 保持离线功能硬门；真实 live 验收使用 `make container-live-test`。
 - `docker/.env.local-debug` 只用于本机调试专项场景，不用于功能测试或 live 验收；除非测试目标就是
@@ -148,7 +148,7 @@
     且 backend-owned 字段不被模型回填）。
 
 已用 `deepseek-v4-flash`（Anthropic 兼容端点）实测通过：无凭据或非容器环境 skipped，容器环境 live 2 passed。
-此门验证"闭环对真实模型成立"，但因 CI 默认不带凭据、不进离线硬门覆盖率基线，故**不作为任何 AGV 用例的离线 `current` 依据**，
+此门验证"闭环对真实模型成立"，但因离线门禁默认不带凭据、不进覆盖率基线，故**不作为任何 AGV 用例的离线 `current` 依据**，
 只作为 live 环境下的端到端可用性证据。
 
 ## 验收标准

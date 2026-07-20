@@ -163,7 +163,7 @@ def test_collect_pytest_nodeids_rejects_unknown_parametrized_case(tmp_path: Path
     assert "could not collect" in errors[0]
 
 
-def test_evidence_rejects_tamper_partial_and_stale_run(tmp_path: Path) -> None:
+def test_evidence_rejects_tamper_partial_and_stale_commit(tmp_path: Path) -> None:
     nodeid = "tests/test_example.py::test_case"
     artifact_dir = tmp_path / "evidence"
     _write_run_artifacts(artifact_dir, nodeid)
@@ -198,13 +198,11 @@ def test_evidence_rejects_tamper_partial_and_stale_run(tmp_path: Path) -> None:
         policy_path=POLICY_PATH,
         expected_selection=(nodeid, "tests/test_example.py::test_missing"),
         expected_collection=CollectionResult((nodeid, "tests/test_example.py::test_missing"), nodeid_digest([nodeid, "tests/test_example.py::test_missing"])),
-        expected_run_id="different-run",
-        expected_job="different-job",
+        expected_sha="different-commit",
     )
     assert any("complete expected lane" in error for error in stale_errors)
     assert any("global collection" in error for error in stale_errors)
-    assert any("GitHub run mismatch" in error for error in stale_errors)
-    assert any("GitHub job mismatch" in error for error in stale_errors)
+    assert any("commit mismatch" in error for error in stale_errors)
 
     (artifact_dir / "junit.xml").write_text(
         '<testsuites><testsuite><testcase name="test_case">'

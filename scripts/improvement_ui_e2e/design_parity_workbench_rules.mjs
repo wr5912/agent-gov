@@ -112,6 +112,56 @@ const RULES = [
       .locator(":scope > .iw-detail-panel > .iw-panel-body > .iw-empty").isVisible().catch(() => false);
     return { ok: detail && !emptyVisible, detail: `detail=${detail} emptyVisible=${emptyVisible}` };
   } },
+  { id: "improvement-create-drawer", phase: "P1", desc: "改进事项从标题栏新建，使用独立窄抽屉并在成功后对齐归属范围", async fn(page) {
+    await page.getByTestId("nav-improvement").click();
+    await page.getByTestId("improvement-workbench").waitFor({ timeout: 8000 });
+    const legacyInlineForm = await page.locator(".iw-list-panel .iw-create").count();
+    const duplicateScopeText = await page.getByTestId("improvement-scope-label").locator("strong").count();
+    const refreshIconOnly = await page.getByTestId("improvement-refresh").getAttribute("aria-label") === "刷新改进事项"
+      && (await page.getByTestId("improvement-refresh").innerText()).trim() === "";
+
+    await page.getByTestId("status-filter-done").click();
+    await page.getByTestId("improvement-scope-filter").selectOption("shop-bot");
+    await page.getByTestId("improvement-create-open").click();
+    const drawer = page.getByTestId("improvement-create-drawer");
+    await drawer.waitFor({ timeout: 6000 });
+    const size = await drawer.getAttribute("data-size");
+    const defaultAgent = await page.getByTestId("improvement-create-agent").inputValue();
+    await page.getByTestId("improvement-create-cancel").click();
+    await drawer.waitFor({ state: "detached", timeout: 4000 });
+
+    await page.getByTestId("improvement-create-open").click();
+    await page.getByTestId("improvement-create-agent").selectOption("soc-ops");
+    await page.getByTestId("improvement-create-title").fill("触发受控创建失败");
+    await page.getByTestId("improvement-create-title").press("Enter");
+    await page.getByTestId("improvement-create-error").waitFor({ timeout: 6000 });
+    const errorVisible = (await page.getByTestId("improvement-create-error").innerText()).includes("受控创建失败");
+    const stayedOpen = await drawer.isVisible();
+
+    const createdTitle = "抽屉创建的改进事项";
+    await page.getByTestId("improvement-create-title").fill(createdTitle);
+    await page.getByTestId("improvement-create-title").press("Enter");
+    await drawer.waitFor({ state: "detached", timeout: 6000 });
+    await page.getByTestId("improvement-list-item").filter({ hasText: createdTitle }).waitFor({ timeout: 6000 });
+    const selectedScope = await page.getByTestId("improvement-scope-filter").inputValue();
+    const createdSelected = await page.getByTestId("improvement-list-item").filter({ hasText: createdTitle }).evaluate((node) => node.classList.contains("is-active"));
+    const statusReset = await page.getByTestId("status-filter-all").evaluate((node) => node.classList.contains("active"));
+
+    const ok = legacyInlineForm === 0
+      && duplicateScopeText === 0
+      && refreshIconOnly
+      && size === "narrow"
+      && defaultAgent === "shop-bot"
+      && errorVisible
+      && stayedOpen
+      && selectedScope === "soc-ops"
+      && createdSelected
+      && statusReset;
+    return {
+      ok,
+      detail: `legacy=${legacyInlineForm} duplicateScope=${duplicateScopeText} refreshIcon=${refreshIconOnly} size=${size} default=${defaultAgent} error=${errorVisible}/${stayedOpen} scope=${selectedScope} selected=${createdSelected} statusReset=${statusReset}`,
+    };
+  } },
   { id: "decision-card-slim", phase: "P1", desc: "决策卡只承载主决策/返回/事实变更动作，不混入查看 Trace/Diff/日志/上下文", async fn(page) {
     if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     const card = page.getByTestId("current-decision-card");
@@ -457,9 +507,14 @@ const RULES = [
       detail: "design=" + design + " files=" + filesText.includes("3 个文件") + " sediment=" + sediment + " types=" + sedimentTypes.join(",") + " legacy=" + legacyLifecycle + " oldRequests=" + oldRequests,
     };
   } },
-  { id: "asset-browse-first", phase: "P1", desc: "资产 Registry 默认浏览/追溯优先，创建资产进入抽屉", async fn(page) {
+  { id: "asset-browse-first", phase: "P1", desc: "资产中心默认展示测试资产，治理资产保留浏览追溯与抽屉创建", async fn(page) {
     await page.getByTestId("nav-asset").click();
     await page.getByTestId("asset-registry").waitFor({ timeout: 8000 });
+    const testAssets = await visible(page, "agent-test-assets");
+    const testTabSelected = await page.getByTestId("asset-center-tab-tests").getAttribute("aria-selected");
+    const governanceVisibleBefore = await visible(page, "governance-asset-registry");
+    await page.getByTestId("asset-center-tab-governance").click();
+    await page.getByTestId("governance-asset-registry").waitFor({ timeout: 8000 });
     const toolbar = await has(page, "asset-browser-toolbar");
     const typeFilter = await has(page, "asset-type-filter");
     const sourceFilter = await has(page, "asset-source-filter");
@@ -469,7 +524,17 @@ const RULES = [
     const drawer = await visible(page, "asset-create-drawer");
     const drawerSize = await page.getByTestId("asset-create-drawer").getAttribute("data-size").catch(() => "");
     await page.getByTestId("asset-create-drawer").getByLabel("关闭").click().catch(() => {});
-    return { ok: toolbar && typeFilter && sourceFilter && createButton && !titleVisibleBefore && drawer && drawerSize === "narrow", detail: `toolbar=${toolbar} type=${typeFilter} source=${sourceFilter} createBtn=${createButton} titleBefore=${titleVisibleBefore} drawer=${drawer}/${drawerSize}` };
+    const ok = testAssets
+      && testTabSelected === "true"
+      && !governanceVisibleBefore
+      && toolbar
+      && typeFilter
+      && sourceFilter
+      && createButton
+      && !titleVisibleBefore
+      && drawer
+      && drawerSize === "narrow";
+    return { ok, detail: `tests=${testAssets}/${testTabSelected} governanceBefore=${governanceVisibleBefore} toolbar=${toolbar} type=${typeFilter} source=${sourceFilter} createBtn=${createButton} titleBefore=${titleVisibleBefore} drawer=${drawer}/${drawerSize}` };
   } },
   { id: "theme-governance-light", phase: "P4", desc: "主工作台统一 Governance Light（主区背景非旧暖色，含背景渐变）", async fn(page) {
     await page.getByTestId("nav-playground").click();

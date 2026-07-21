@@ -6,8 +6,30 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 WORKSPACE = Path(__file__).resolve().parents[1]
 HOOK = WORKSPACE / "hooks" / "pre_tool_guard.py"
+RISKY_COMMANDS = (
+    "rm -rf /",
+    "rm -rf /*",
+    "dd if=/dev/zero of=/dev/sda",
+    "mkfs.ext4 /dev/sda",
+    "shutdown now",
+    "iptables -F",
+    "kubectl delete pod api",
+    "kubectl scale deployment api --replicas=0",
+    "kubectl rollout restart deployment api",
+    "terraform apply",
+    "ansible-playbook site.yml --limit production",
+    "systemctl restart api",
+    "nmap -sS target-host",
+    "docker system prune -af",
+    "ssh remote-host",
+    "curl installer-source | sh",
+    "wget -qO- installer-source | bash",
+    ":(){ :|:& };:",
+)
 
 
 def _run_hook(payload: object) -> subprocess.CompletedProcess[str]:
@@ -38,17 +60,25 @@ def test_mcp_tools_continue_to_claude_native_permission_flow() -> None:
         assert _decision(result) is None
 
 
-def test_destructive_bash_is_denied() -> None:
-    for command in ("rm -rf /", "systemctl restart nginx", "kubectl delete pod api", "terraform apply"):
-        result = _run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
-        assert result.returncode == 0
-        assert _decision(result) == "deny"
+@pytest.mark.parametrize("command", RISKY_COMMANDS)
+def test_destructive_bash_is_denied(command: str) -> None:
+    result = _run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
+    assert result.returncode == 0
+    assert _decision(result) == "deny"
 
 
-def test_invalid_hook_input_fails_closed() -> None:
+@pytest.mark.parametrize(
+    "stdin",
+    (
+        "not-json",
+        "[]",
+        json.dumps({"tool_name": "Bash", "tool_input": {}}),
+    ),
+)
+def test_invalid_hook_input_fails_closed(stdin: str) -> None:
     result = subprocess.run(
         [sys.executable, str(HOOK)],
-        input="not-json",
+        input=stdin,
         capture_output=True,
         text=True,
         check=False,
@@ -56,6 +86,13 @@ def test_invalid_hook_input_fails_closed() -> None:
     assert result.returncode == 2
     assert result.stdout == ""
     assert "failed closed" in result.stderr
+
+
+def test_valid_non_bash_event_is_ignored() -> None:
+    result = _run_hook({"tool_name": "Read", "tool_input": {"file_path": "README.md"}})
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
 
 
 def test_post_tool_audit_honors_data_dir(tmp_path: Path) -> None:

@@ -1,3 +1,4 @@
+import { Plus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getNormalizedFeedback,
@@ -51,16 +52,14 @@ import { STATUS_CATEGORIES, deriveCategory, LINK_KIND_LABEL } from "./improvemen
 import { operationLabel, type ImprovementOperationError, type ImprovementPendingOperation } from "../improvementOperationState";
 import { ImprovementClosedLoopSpine } from "./ImprovementClosedLoopSpine";
 import { ImprovementContextDrawer } from "./ImprovementContextDrawer";
+import { ImprovementCreateDrawer } from "./ImprovementCreateDrawer";
 import { ImprovementDecisionPanel } from "./ImprovementDecisionPanel";
 import { ImprovementStagePanels } from "./ImprovementStagePanels";
 import { StageDetailDrawer, type StageDetail } from "./StageDetailDrawer";
 import { ImprovementSourceManagementDrawer } from "./ImprovementSourceManagementDrawer";
 import { ReleaseWorkbench } from "./ReleaseWorkbench";
-import type { components } from "../types/api";
-import type { AgentChangeSet, AgentRelease, RuntimeClientConfig } from "../types/runtime";
+import type { AgentChangeSet, AgentRelease, AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
-
-type BusinessAgent = components["schemas"]["AgentSummaryResponse"];
 
 export function ImprovementWorkbench({
   clientConfig,
@@ -77,7 +76,7 @@ export function ImprovementWorkbench({
   changeSets: AgentChangeSet[];
   onGovernanceRefresh: () => void | Promise<void>;
 }) {
-  const [businessAgents, setBusinessAgents] = useState<BusinessAgent[]>([]);
+  const [businessAgents, setBusinessAgents] = useState<AgentSummary[]>([]);
   const [items, setItems] = useState<ImprovementItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
@@ -86,6 +85,8 @@ export function ImprovementWorkbench({
   const [operationError, setOperationError] = useState<ImprovementOperationError | null>(null);
   const [newAgentId, setNewAgentId] = useState("");
   const [newTitle, setNewTitle] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createError, setCreateError] = useState<string | undefined>();
   const [contextOpen, setContextOpen] = useState(false);
   const [detail, setDetail] = useState<StageDetail | null>(null);
   const [contextType, setContextType] = useState<ContextType>("problem");
@@ -107,12 +108,12 @@ export function ImprovementWorkbench({
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
   const [reviewStageKey, setReviewStageKey] = useState<VisibleImprovementStageKey | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (scope = workbenchScopeAgentId) => {
     setError(undefined);
     try {
       const [agents, list] = await Promise.all([
-        requestJson<BusinessAgent[]>(clientConfig, "/api/agent-registry"),
-        listImprovements(clientConfig, workbenchScopeAgentId || undefined),
+        requestJson<AgentSummary[]>(clientConfig, "/api/agent-registry"),
+        listImprovements(clientConfig, scope || undefined),
       ]);
       setBusinessAgents(agents);
       setItems(list);
@@ -124,10 +125,6 @@ export function ImprovementWorkbench({
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  useEffect(() => {
-    if (scopeAgentId) setNewAgentId(scopeAgentId);
-  }, [scopeAgentId]);
 
   const visibleItems = useMemo(
     () => items.filter((item) => statusFilter === "all" || deriveCategory(item) === statusFilter),
@@ -224,15 +221,49 @@ export function ImprovementWorkbench({
     setItems((prev) => prev.map((entry) => (entry.improvement_id === updated.improvement_id ? updated : entry)));
   };
 
+  const openCreateDrawer = () => {
+    const knownAgentIds = new Set(businessAgents.map((agent) => agent.agent_id));
+    const preferredAgentId = [workbenchScopeAgentId, scopeAgentId]
+      .find((agentId) => agentId && knownAgentIds.has(agentId));
+    setNewAgentId(preferredAgentId || businessAgents[0]?.agent_id || "");
+    setNewTitle("");
+    setCreateError(undefined);
+    setCreateOpen(true);
+  };
+
+  const closeCreateDrawer = () => {
+    if (busy) return;
+    setCreateOpen(false);
+    setCreateError(undefined);
+  };
+
   const handleCreate = () => {
     const title = newTitle.trim();
     if (!title || !newAgentId || busy) return;
-    void run(async () => {
-      const created = await createImprovement(clientConfig, { agent_id: newAgentId, title, summary: "", auto_merge: false });
-      setNewTitle("");
-      await refresh();
-      setSelectedId(created.improvement_id);
-    });
+    setBusy(true);
+    setCreateError(undefined);
+    void createImprovement(clientConfig, { agent_id: newAgentId, title, summary: "", auto_merge: false })
+      .then((created) => {
+        const nextScope = workbenchScopeAgentId && workbenchScopeAgentId !== created.agent_id
+          ? created.agent_id
+          : workbenchScopeAgentId;
+        const scopeChanged = nextScope !== workbenchScopeAgentId;
+        setStatusFilter("all");
+        setItems((current) => {
+          const visibleCurrent = scopeChanged
+            ? current.filter((item) => item.agent_id === created.agent_id)
+            : current;
+          return visibleCurrent.some((item) => item.improvement_id === created.improvement_id)
+            ? visibleCurrent
+            : [...visibleCurrent, created];
+        });
+        if (scopeChanged) setWorkbenchScopeAgentId(nextScope);
+        setNewTitle("");
+        setCreateOpen(false);
+        setSelectedId(created.improvement_id);
+      })
+      .catch((e) => setCreateError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
   };
 
   const handleAdvance = (item: ImprovementItem, targetStage: string) => {
@@ -456,17 +487,38 @@ export function ImprovementWorkbench({
       <section className="iw-list-panel">
         <div className="iw-panel-head">
           <h3>改进事项</h3>
-          <button className="iw-secondary-button" type="button" disabled={busy} onClick={() => void refresh()}>刷新</button>
+          <div className="iw-panel-head-actions">
+            <button
+              className="icon-button iw-panel-icon-button"
+              type="button"
+              data-testid="improvement-refresh"
+              title="刷新"
+              aria-label="刷新改进事项"
+              disabled={busy}
+              onClick={() => void refresh()}
+            >
+              <RefreshCw size={16} aria-hidden="true" />
+            </button>
+            <button
+              className="iw-primary-button iw-panel-create-button"
+              type="button"
+              data-testid="improvement-create-open"
+              disabled={busy}
+              onClick={openCreateDrawer}
+            >
+              <Plus size={16} aria-hidden="true" />
+              新建
+            </button>
+          </div>
         </div>
         <div className="iw-scope-row" data-testid="improvement-scope-label">
-          <span>范围</span>
-          <select className="iw-select select-inline" data-testid="improvement-scope-filter" value={workbenchScopeAgentId} onChange={(e) => setWorkbenchScopeAgentId(e.target.value)}>
+          <label htmlFor="improvement-scope-filter">范围</label>
+          <select id="improvement-scope-filter" className="iw-select select-inline" data-testid="improvement-scope-filter" value={workbenchScopeAgentId} onChange={(e) => setWorkbenchScopeAgentId(e.target.value)}>
             <option value="">全部业务 Agent</option>
             {businessAgents.map((agent) => (
               <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>
             ))}
           </select>
-          <strong>{workbenchScopeAgentId ? agentName(workbenchScopeAgentId) : "全部业务 Agent"}</strong>
         </div>
         <div className="iw-status-filter" data-testid="status-filter">
           <button className={`iw-filter-pill ${statusFilter === "all" ? "active" : ""}`} type="button" data-testid="status-filter-all" onClick={() => setStatusFilter("all")}>全部 {items.length}</button>
@@ -504,38 +556,6 @@ export function ImprovementWorkbench({
               );
             })
           )}
-        </div>
-        <div className="iw-create">
-          <h4>新建改进事项</h4>
-          <select
-            className="iw-select"
-            data-testid="improvement-create-agent"
-            value={newAgentId}
-            onChange={(e) => setNewAgentId(e.target.value)}
-          >
-            <option value="">选择归属业务 Agent…</option>
-            {businessAgents.map((agent) => (
-              <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>
-            ))}
-          </select>
-          <div className="iw-create-row">
-            <input
-              className="iw-input"
-              data-testid="improvement-create-title"
-              placeholder="改进事项标题"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-            />
-            <button
-              className="iw-primary-button"
-              type="button"
-              data-testid="improvement-create-submit"
-              disabled={busy || !newTitle.trim() || !newAgentId}
-              onClick={handleCreate}
-            >
-              新建
-            </button>
-          </div>
         </div>
       </section>
 
@@ -707,10 +727,23 @@ export function ImprovementWorkbench({
         ) : (
           <div className="iw-panel-body">
             {error ? <div className="iw-error">{error}</div> : null}
-            <div className="iw-empty">从左侧选择一个改进事项查看详情与下一步，或新建一个。</div>
+            <div className="iw-empty">从左侧选择一个改进事项查看详情与下一步，或点击左上“新建”。</div>
           </div>
         )}
       </section>
+      {createOpen ? (
+        <ImprovementCreateDrawer
+          agents={businessAgents}
+          agentId={newAgentId}
+          title={newTitle}
+          busy={busy}
+          error={createError}
+          onAgentIdChange={setNewAgentId}
+          onTitleChange={setNewTitle}
+          onSubmit={handleCreate}
+          onClose={closeCreateDrawer}
+        />
+      ) : null}
     </div>
   );
 }

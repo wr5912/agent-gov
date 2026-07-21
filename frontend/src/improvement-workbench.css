@@ -51,11 +51,14 @@
   gap: 10px;
 }
 .iw-panel-head h3 { margin: 0; font-size: 14px; }
+.iw-panel-head-actions { display: flex; align-items: center; gap: 8px; }
+.iw-panel-icon-button { width: 32px; min-height: 32px; border-radius: 8px; }
+.iw-panel-create-button,
+.iw-create-submit { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .iw-panel-body { overflow: auto; min-height: 0; padding: 12px 14px; }
 
 .iw-scope-row { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-subtle); }
-.iw-scope-row label, .iw-scope-row > span:first-child { font-size: 12px; color: var(--text-secondary); }
-.iw-scope-row strong { font-size: 13px; color: var(--text-primary); }
+.iw-scope-row label { font-size: 12px; color: var(--text-secondary); }
 .iw-scope-hint { font-size: 11px; color: var(--text-muted); }
 .iw-select, .iw-input {
   height: 32px; border-radius: 6px; border: 1px solid #d1d5db; background: #fff;
@@ -271,9 +274,7 @@
 }
 .iw-empty { color: var(--text-muted); font-size: 13px; padding: 16px; text-align: center; }
 
-.iw-create { border-top: 1px solid var(--border-subtle); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
-.iw-create h4 { margin: 0; font-size: 12px; color: var(--text-secondary); }
-.iw-create-row { display: flex; gap: 8px; }
+.iw-create-form { display: flex; flex-direction: column; gap: 14px; }
 .iw-flow-head {
   display: flex;
   align-items: flex-start;
@@ -844,9 +845,8 @@
   .improvement-workbench { grid-template-columns: minmax(0, 1fr); overflow: auto; }
   .iw-list-panel, .iw-detail-panel { min-width: 0; }
   .iw-list-panel > .iw-panel-body { min-height: 96px; max-height: 220px; }
-  .iw-panel-head, .iw-scope-row, .iw-create-row { flex-wrap: wrap; }
+  .iw-panel-head, .iw-scope-row { flex-wrap: wrap; }
   .iw-scope-row .iw-select { flex: 1 1 180px; }
-  .iw-create-row .iw-input { flex: 1 1 200px; }
   .iw-list-item-title, .iw-list-item-decision, .iw-list-item-meta { overflow-wrap: anywhere; }
   .iw-decision-grid, .iw-decision-meta, .iw-form-grid, .iw-test-plan-card-body { grid-template-columns: 1fr; }
   .iw-four-stage-spine,
@@ -866,7 +866,6 @@
 @media (max-width: 560px) {
   .improvement-workbench { gap: 10px; padding: 10px; }
   .iw-list-panel { min-height: 440px; }
-  .iw-scope-row strong { flex: 1 1 100%; }
   .release-stage-workbench,
   .release-stage-band {
     grid-template-columns: minmax(0, 1fr);

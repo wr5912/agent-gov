@@ -46,10 +46,12 @@ function messagePreviewText(message: ChatMessage) {
 }
 
 function buildPreviews(messages: ChatMessage[]): MessagePreview[] {
-  const entries = messages
+  const userEntries = messages
     .map((message, index) => ({ message, index }))
     .filter((entry) => entry.message.role === "user");
-  const anchors = entries.length > 0 ? entries : messages.map((message, index) => ({ message, index }));
+  const anchors = userEntries.length >= 2
+    ? userEntries
+    : messages.map((message, index) => ({ message, index }));
   const denominator = Math.max(1, anchors.length - 1);
 
   return anchors.map(({ message, index }, anchorIndex) => ({
@@ -57,7 +59,7 @@ function buildPreviews(messages: ChatMessage[]): MessagePreview[] {
     messageRole: message.role,
     role: messageRoleLabel(message.role),
     text: messagePreviewText(message),
-    position: anchors.length <= 1 ? 100 : (anchorIndex / denominator) * 100,
+    position: anchors.length <= 1 ? 0 : (anchorIndex / denominator) * 100,
     sourceIndex: index,
   }));
 }
@@ -108,7 +110,7 @@ export function PlaygroundMessageScrollNavigator({
     [messages, previews, scrollSnapshot.activeMessageId],
   );
 
-  if (!scrollSnapshot.canScroll || previews.length < 2) return null;
+  if (!scrollSnapshot.canScroll) return null;
 
   const updateFromPointer = (clientY: number) => {
     const rail = railRef.current;

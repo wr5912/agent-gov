@@ -40,6 +40,22 @@ AGENT_TEST_RUN_TRANSITIONS: Mapping[str, set[str]] = {
     "interrupted": set(),
 }
 
+AGENT_TEST_SCHEDULE_EVENT_STATES = {
+    "pending",
+    "enqueued",
+    "coalesced",
+    "skipped",
+    "failed",
+}
+
+AGENT_TEST_SCHEDULE_EVENT_TRANSITIONS: Mapping[str, set[str]] = {
+    "pending": {"enqueued", "coalesced", "skipped", "failed"},
+    "enqueued": set(),
+    "coalesced": set(),
+    "skipped": set(),
+    "failed": set(),
+}
+
 PENDING_CORRELATION_STATES = {
     "pending",
     "resolved",
@@ -182,6 +198,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "needs_human_review": {"pending_attribution", "attribution_queued", "pending_review"},
     },
     "agent_test_run": AGENT_TEST_RUN_TRANSITIONS,
+    "agent_test_schedule_event": AGENT_TEST_SCHEDULE_EVENT_TRANSITIONS,
     "pending_correlation": {
         "pending": {"resolved"},
         "resolved": set(),
@@ -215,6 +232,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
 _KNOWN_STATES = {
     "case": CASE_STATES,
     "agent_test_run": AGENT_TEST_RUN_STATES,
+    "agent_test_schedule_event": AGENT_TEST_SCHEDULE_EVENT_STATES,
     "pending_correlation": PENDING_CORRELATION_STATES,
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,

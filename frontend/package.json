@@ -1,7 +1,7 @@
 {
   "name": "agent-gov-ui",
   "private": true,
-  "version": "3.0.0",
+  "version": "3.0.1",
   "packageManager": "pnpm@10.30.3",
   "type": "module",
   "scripts": {
@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-python": "^6.2.1",
     "@codemirror/lint": "^6.9.7",
     "@codemirror/view": "^6.43.4",
     "@uiw/react-codemirror": "^4.25.10",
@@ -35,7 +36,7 @@
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "typescript": "latest",
-    "vite": "latest"
+    "vite": "8.0.16"
   },
   "devDependencies": {
     "@types/react": "^19.2.14",

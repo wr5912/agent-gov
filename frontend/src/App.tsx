@@ -622,8 +622,7 @@ export default function App() {
     setActiveWindow("asset");
   }
 
-  const currentAgentName = businessAgents.find((a) => a.agent_id === selectedBusinessAgentId)?.name
-    || (selectedBusinessAgentId || "默认业务 Agent");
+  const currentAgentName = businessAgents.find((a) => a.agent_id === selectedBusinessAgentId)?.name || (selectedBusinessAgentId || "默认业务 Agent");
 
   function openFeedbackDrawer(message?: ChatMessage) {
     const feedbackAlertId = message?.alertId || alertId.trim() || undefined;
@@ -791,6 +790,7 @@ export default function App() {
           setTimeout(refresh, 0);
         }}
         onAgentsChanged={() => setTimeout(refresh, 0)}
+        onOpenAgentTestAssets={(agentId) => { setSelectedBusinessAgentId(agentId); setSettingsOpen(false); setActiveWindow("asset"); }}
       />
     </div>
   );

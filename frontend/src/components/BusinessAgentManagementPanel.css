@@ -115,6 +115,21 @@
   font-size: 11px;
 }
 
+.settings-agent-test-link {
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+}
+
+.settings-agent-test-link:hover {
+  text-decoration: underline;
+}
+
 .settings-agent-test-status.is-error,
 .settings-agent-test-status .is-warning,
 .settings-workspace-receipt .is-warning {

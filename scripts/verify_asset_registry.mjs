@@ -71,9 +71,24 @@ async function ensureRealTargetAgent() {
 }
 
 const agents = [{ agent_id: "soc-ops", name: "SOC 运营", category: "", workspace_dir: "", created_at: ts, status: "active" }, { agent_id: "shop-bot", name: "电商客服", category: "", workspace_dir: "", created_at: ts, status: "active" }];
+const testAssets = Array.from({ length: 24 }, (_, index) => {
+  const agentId = index === 0 ? "soc-ops" : `batch-agent-${String(index).padStart(2, "0")}`;
+  return {
+    agent_id: agentId,
+    agent_name: index === 0 ? "SOC 运营" : `批量 Agent ${String(index).padStart(2, "0")}`,
+    agent_status: "active",
+    suite: { agent_id: agentId, commit_sha: (index + 1).toString(16).padStart(40, "0"), tests_directory_present: true, readme_present: true, test_file_count: 1, test_files: ["tests/test_alert.py"], suite_digest: `suite-${index}`, diagnostics: [] },
+    latest_run: null,
+    schedule: { schedule_id: null, agent_id: agentId, enabled: false, cron_expression: "0 2 * * *", timezone: "UTC", next_run_at: null, created_at: null, updated_at: null },
+  };
+});
 function defaultPayload(path) {
   if (path === "/health") return { status: "ok", model: "governance-mock" };
   if (path === "/api/agent-registry") return agents;
+  if (path === "/api/agent-test-assets") return testAssets;
+  if (path === "/api/agent-test-runs/history") return { items: [], next_cursor: null };
+  if (path === "/api/agent-registry/soc-ops/test-suite/file") return { agent_id: "soc-ops", commit_sha: "a".repeat(40), path: "tests/test_alert.py", content: "def test_alert():\n    assert True\n", line_count: 2, symbols: [{ kind: "function", name: "test_alert", line: 1 }] };
+  if (path === "/api/agent-registry/soc-ops/test-schedule/events") return [];
   if (path === "/api/sessions" || path === "/api/agents" || path === "/api/skills" || path === "/api/improvements" || path === "/api/agent-change-sets" || path === "/api/agent-releases" || path === "/api/agent-test-runs") return [];
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
@@ -130,6 +145,38 @@ async function main() {
       // 资产 Registry 经一级导航「资产复利」(nav-asset) 进入（四阶段改进治理 W3 修订，资产复利为第三支柱）。
       await page.getByTestId("nav-asset").click();
       await page.getByTestId("asset-registry").waitFor({ timeout: 20000 });
+      if (!REAL) {
+        await page.getByTestId("agent-test-assets").waitFor({ timeout: 15000 });
+        await page.getByTestId("test-asset-workspace").waitFor({ timeout: 15000 });
+        if (await page.getByTestId("test-asset-card-grid").count()) throw new Error("旧测试资产卡片网格不应继续存在");
+        if ((await page.getByTestId("test-asset-agent-item").count()) !== testAssets.length) throw new Error("左侧导航未完整投影多 Agent 测试资产");
+        const navigatorBox = await page.getByTestId("test-agent-navigator").boundingBox();
+        const detailBox = await page.getByTestId("test-asset-detail").boundingBox();
+        if (!navigatorBox || !detailBox || detailBox.x <= navigatorBox.x || detailBox.width <= navigatorBox.width * 2.4) {
+          throw new Error(`测试资产应为窄左栏 + 宽右栏布局: navigator=${JSON.stringify(navigatorBox)} detail=${JSON.stringify(detailBox)}`);
+        }
+        const navigatorScrolls = await page.getByTestId("test-agent-list").evaluate((element) => element.scrollHeight > element.clientHeight);
+        if (!navigatorScrolls) throw new Error("多 Agent 导航应在固定高度内独立滚动");
+        await page.getByTestId("test-agent-search").fill("批量 Agent 23");
+        if ((await page.getByTestId("test-asset-agent-item").count()) !== 1) throw new Error("Agent 搜索没有收窄左侧导航");
+        await page.getByTestId("test-agent-search").fill("");
+        await page.getByTestId("test-asset-agent-item").first().click();
+        await page.getByTestId("test-file-browser").waitFor({ timeout: 15000 });
+        await page.getByTestId("test-file-select").waitFor({ timeout: 15000 });
+        const sourceBox = await page.getByTestId("test-source-code").boundingBox();
+        if (!sourceBox || sourceBox.width < detailBox.width * 0.9 || sourceBox.height < 500) {
+          throw new Error(`源码区未充分占用右栏: source=${JSON.stringify(sourceBox)} detail=${JSON.stringify(detailBox)}`);
+        }
+        await page.getByTestId("test-assets-tab-history").click();
+        await page.getByTestId("test-run-history").waitFor({ timeout: 15000 });
+        await page.locator(".test-history-filters select").first().selectOption("passed");
+        await page.getByTestId("test-assets-tab-files").click();
+        await page.getByTestId("test-source-code").waitFor({ timeout: 15000 });
+        await page.getByTestId("test-assets-tab-schedule").click();
+        await page.getByTestId("test-schedule-panel").waitFor({ timeout: 15000 });
+      }
+      await page.getByTestId("asset-center-tab-governance").click();
+      await page.getByTestId("governance-asset-registry").waitFor({ timeout: 15000 });
       // Playground 的顶栏运行 Agent 必须是具体对象；资产页用自己的范围筛选查看跨 Agent 资产。
       await page.getByTestId("asset-scope-filter").selectOption("");
       await page.getByTestId("asset-browser-toolbar").waitFor({ timeout: 15000 });
@@ -166,7 +213,7 @@ async function main() {
       if ((await page.getByTestId("asset-provenance").count()) < afterInheritCount) throw new Error("expected provenance for every visible asset");
 
       // 负路径（仅 mock）：业务 Agent 列表为空时，「沉淀」按钮应禁用 + 给空态提示 + 不发 POST /api/assets（不静默吞）。
-      const scenarios = ["asset_create", "asset_inherit", "asset_provenance"];
+      const scenarios = ["test_asset_projection", "test_asset_master_detail_layout", "test_asset_many_agent_scroll", "test_source_full_width", "test_source_view", "test_source_persists_after_history_filter", "test_run_history", "test_schedule_view", "asset_create", "asset_inherit", "asset_provenance"];
       if (!REAL) {
         const page2 = await browser.newPage({ viewport: { width: 1440, height: 900 } });
         await page2.addInitScript(([b, key]) => { window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: b, apiKey: key })); }, [apiBase, apiKey]);
@@ -188,6 +235,7 @@ async function main() {
           await page2.goto(ui, { waitUntil: "domcontentloaded" });
           await page2.getByTestId("nav-asset").click();
           await page2.getByTestId("asset-registry").waitFor({ timeout: 20000 });
+          await page2.getByTestId("asset-center-tab-governance").click();
           await page2.getByTestId("asset-create-open").click();
           await page2.getByTestId("asset-create-drawer").waitFor({ timeout: 15000 });
           await page2.getByTestId("asset-create-title").fill("无归属也不应静默吞");

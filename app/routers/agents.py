@@ -4,6 +4,8 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, Depends
 
+from app.agent_testing.schedule import AgentTestScheduleService
+from app.agent_testing.store import AgentTestingStore
 from app.runtime.agent_governance_schemas import agent_summary_response as _summary
 from app.runtime.errors import ConflictError
 from app.runtime.schemas import (
@@ -18,7 +20,6 @@ from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.agent_governance import AgentGovernanceService
 from app.services.business_agent_deletion import purge_business_agent_storage
-from app.agent_testing.store import AgentTestingStore
 
 _IMPACT_COUNT_CAP = 1000
 
@@ -56,6 +57,7 @@ def _delete_agent_with_storage(
     improvement_store: ImprovementStore,
     agent_governance: AgentGovernanceService,
     agent_testing_store: AgentTestingStore,
+    agent_test_schedule_service: AgentTestScheduleService | None = None,
 ) -> AgentDeleteResponse:
     """删除注册身份并清理其运行态存储。
 
@@ -74,6 +76,8 @@ def _delete_agent_with_storage(
     # 就拒绝存在活跃 run 的 Agent，不会删掉正在被使用的 workspace。
     with agent_governance.version_maintenance.lease(agent_id=agent_id, kind="agent_delete", owner_id="api:agent-delete"):
         deleted = agent_registry_store.delete_business_agent(agent_id)  # 受保护→400，未知→404
+        if agent_test_schedule_service is not None:
+            agent_test_schedule_service.disable_agent_schedule(agent_id)
     cleanup = purge_business_agent_storage(data_dir=settings.data_dir, agent_id=agent_id)
     # 缓存的版本 store 持有已被 rmtree 的 repository_dir；不失效会让同 id 重建命中悬空 store。
     agent_governance.evict_agent_store(agent_id)
@@ -93,6 +97,7 @@ def create_agents_router(
     improvement_store: ImprovementStore,
     agent_governance: AgentGovernanceService,
     agent_testing_store: AgentTestingStore,
+    agent_test_schedule_service: AgentTestScheduleService | None = None,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agents"], dependencies=[Depends(require_api_key)])
@@ -121,7 +126,10 @@ def create_agents_router(
             current = agent_registry_store.get_agent(agent_id)
             if current is not None and current.status == "evaluating" and not _has_passed_test(agent_id):
                 raise ConflictError(f"Agent {agent_id} cannot enter active from evaluating without a passed platform test run")
-        return _summary(agent_registry_store.transition_business_agent(agent_id, status=req.status))
+        transitioned = agent_registry_store.transition_business_agent(agent_id, status=req.status)
+        if transitioned.status == "archived" and agent_test_schedule_service is not None:
+            agent_test_schedule_service.disable_agent_schedule(agent_id)
+        return _summary(transitioned)
 
     @router.delete(
         "/agent-registry/{agent_id}",
@@ -137,6 +145,7 @@ def create_agents_router(
             improvement_store=improvement_store,
             agent_governance=agent_governance,
             agent_testing_store=agent_testing_store,
+            agent_test_schedule_service=agent_test_schedule_service,
         )
 
     return router

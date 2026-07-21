@@ -47,6 +47,16 @@ const AGENT_TEST_SUITE = {
   suite_digest: "suite-demo-04",
   diagnostics: [],
 };
+const AGENT_TEST_SCHEDULE = {
+  schedule_id: "atsc-demo",
+  agent_id: "soc-ops",
+  enabled: true,
+  cron_expression: "0 2 * * *",
+  timezone: "UTC",
+  next_run_at: "2026-06-19T02:00:00Z",
+  created_at: ts,
+  updated_at: ts,
+};
 
 function agentTestRun({
   testRunId = "atr-demo",
@@ -80,7 +90,7 @@ function agentTestRun({
 function mockConversationItems(sessionId) {
   const densityMatch = sessionId.match(/^density-check-(\d+)$/);
   const turnCount = densityMatch ? Number(densityMatch[1]) : 36;
-  const repeatCount = turnCount <= 4 ? 18 : 2;
+  const repeatCount = turnCount <= 1 ? 64 : turnCount <= 4 ? 18 : 2;
   return Array.from({ length: turnCount }, (_, index) => {
     const n = index + 1;
     return [
@@ -119,13 +129,18 @@ function basePayload(path) {
   if (path === "/health") return { status: "ok", model: "parity-mock" };
   if (path === "/v1/conversations") return {
     object: "list",
-    data: ["mock-session", "density-check-4"].map((sessionId) => ({
+    data: ["mock-session", "density-check-0", "density-check-1", "density-check-4"].map((sessionId) => ({
       id: `conv_${sessionId}`,
       object: "conversation",
       created_at: Date.parse(ts) / 1000,
       title: "Playground 历史验证",
       metadata: {},
-      agentgov: { agent_id: "security-operations-expert", sdk_session_id: sessionId, updated_at: Date.parse(ts) / 1000, turns: sessionId === "mock-session" ? 36 : 4 },
+      agentgov: {
+        agent_id: "security-operations-expert",
+        sdk_session_id: sessionId,
+        updated_at: Date.parse(ts) / 1000,
+        turns: sessionId === "mock-session" ? 36 : Number(sessionId.match(/\d+$/)?.[0] || 0),
+      },
     })),
   };
   const conversationItems = path.match(/^\/v1\/conversations\/conv_(.+)\/items$/);
@@ -199,6 +214,50 @@ function changeSetPayload(path, request) {
 }
 
 function agentTestingPayload(path, request) {
+  if (path === "/api/agent-test-assets") return [{
+    agent_id: "soc-ops",
+    agent_name: "安全运营助手",
+    agent_status: "active",
+    suite: AGENT_TEST_SUITE,
+    latest_run: {
+      test_run_id: "atr-asset-latest",
+      agent_id: "soc-ops",
+      commit_sha: AGENT_TEST_SUITE.commit_sha,
+      change_set_id: null,
+      schedule_id: AGENT_TEST_SCHEDULE.schedule_id,
+      scheduled_for: "2026-06-18T02:00:00Z",
+      source: "scheduled",
+      status: "passed",
+      created_at: ts,
+      started_at: ts,
+      completed_at: ts,
+      duration_seconds: 0.1,
+      exit_code: 0,
+      suite_digest: AGENT_TEST_SUITE.suite_digest,
+    },
+    schedule: AGENT_TEST_SCHEDULE,
+  }];
+  if (/^\/api\/agent-registry\/[^/]+\/test-suite\/file$/.test(path)) return {
+    agent_id: "soc-ops",
+    commit_sha: AGENT_TEST_SUITE.commit_sha,
+    path: request.queryPath || GENERATED_TEST_FILES[0],
+    content: REGRESSION_TESTS[0].test_code,
+    line_count: 3,
+    symbols: [{ kind: "function", name: "test_time_consistency", line: 1 }],
+  };
+  if (/^\/api\/agent-registry\/[^/]+\/test-schedule\/events$/.test(path)) return [{
+    schedule_event_id: "atse-demo",
+    schedule_id: AGENT_TEST_SCHEDULE.schedule_id,
+    agent_id: "soc-ops",
+    scheduled_for: "2026-06-18T02:00:00Z",
+    status: "enqueued",
+    resolved_commit_sha: AGENT_TEST_SUITE.commit_sha,
+    test_run_id: "atr-asset-latest",
+    detail: {},
+    created_at: ts,
+    completed_at: ts,
+  }];
+  if (/^\/api\/agent-registry\/[^/]+\/test-schedule$/.test(path)) return AGENT_TEST_SCHEDULE;
   if (/^\/api\/agent-registry\/[^/]+\/test-suite$/.test(path)) return AGENT_TEST_SUITE;
   const changeSetRun = path.match(/^\/api\/agent-change-sets\/([^/]+)\/test-runs$/);
   if (changeSetRun) {
@@ -243,6 +302,25 @@ function agentTestingPayload(path, request) {
     const commitSha = changeSetId === "agc-target-b" || changeSetId === "agc-test-contract" ? "candidate-b" : "candidate-b";
     return [agentTestRun({ testRunId: `atr-${changeSetId}`, changeSetId, commitSha, status: "passed" })];
   }
+  if (path === "/api/agent-test-runs/history") return {
+    items: [{
+      test_run_id: "atr-asset-latest",
+      agent_id: "soc-ops",
+      commit_sha: AGENT_TEST_SUITE.commit_sha,
+      change_set_id: null,
+      schedule_id: AGENT_TEST_SCHEDULE.schedule_id,
+      scheduled_for: "2026-06-18T02:00:00Z",
+      source: "scheduled",
+      status: "passed",
+      created_at: ts,
+      started_at: ts,
+      completed_at: ts,
+      duration_seconds: 0.1,
+      exit_code: 0,
+      suite_digest: AGENT_TEST_SUITE.suite_digest,
+    }],
+    next_cursor: null,
+  };
   if (/^\/api\/agent-test-runs\/[^/]+\/cancel$/.test(path)) {
     const testRunId = path.split("/")[3];
     return agentTestRun({ testRunId, changeSetId: "agc-running", commitSha: "candidate-running", status: "cancelled" });
@@ -266,7 +344,30 @@ function assetPayload(path, request) {
     created_at: ts,
     updated_at: ts,
   }];
-  if (path === "/api/improvements") return IMPROVEMENTS;
+  if (path === "/api/improvements") {
+    if (request.method === "POST") {
+      const body = JSON.parse(request.postData || "{}");
+      if (body.title === "触发受控创建失败") {
+        return { __status: 422, detail: "受控创建失败：请检查改进事项标题" };
+      }
+      const created = {
+        improvement_id: `imp-created-${IMPROVEMENTS.length + 1}`,
+        agent_id: body.agent_id || "",
+        title: body.title || "未命名改进事项",
+        summary: body.summary || "",
+        source_feedback_refs: body.source_feedback_refs || [],
+        improvement_stage: "intake",
+        improvement_status: "active",
+        created_at: ts,
+        updated_at: ts,
+      };
+      IMPROVEMENTS.push(created);
+      return created;
+    }
+    return request.agentId
+      ? IMPROVEMENTS.filter((item) => item.agent_id === request.agentId)
+      : IMPROVEMENTS;
+  }
   return UNHANDLED;
 }
 

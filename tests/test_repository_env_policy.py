@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -379,6 +380,7 @@ def test_official_env_examples_do_not_ship_configured_model_provider_key() -> No
 
         assert "MODEL_PROVIDER_API_KEY=sk-" not in text
         assert "ANTHROPIC_API_KEY=sk-" not in text
+        assert re.search(r"^\s*LITELLM_MASTER_KEY\s*=", text, flags=re.MULTILINE) is None
 
 
 def test_official_env_and_settings_do_not_allow_manual_vllm_version_or_second_upstream_url() -> None:
@@ -487,14 +489,51 @@ def test_container_live_test_includes_litellm_sidecar_dependency() -> None:
 
 
 def test_litellm_sidecar_does_not_receive_full_runtime_env_file() -> None:
-    compose = (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
-    sidecar = compose.split("agent-gov-litellm-sidecar:", 1)[1].split("\n  claude-agent-api:", 1)[0]
+    compose_text = (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
+    sidecar_text = compose_text.split("agent-gov-litellm-sidecar:", 1)[1].split("\n  claude-agent-api:", 1)[0]
+    sidecar = yaml.safe_load(compose_text)["services"]["agent-gov-litellm-sidecar"]
+    environment = sidecar["environment"]
 
-    assert "env_file:" not in sidecar
-    assert "MODEL_PROVIDER_API_URL" in sidecar
-    assert "MODEL_PROVIDER_API_KEY" in sidecar
-    assert "LANGFUSE_SECRET_KEY" not in sidecar
-    assert "\n      API_KEY:" not in sidecar
+    assert "env_file:" not in sidecar_text
+    assert "MODEL_PROVIDER_API_URL" in environment
+    assert "MODEL_PROVIDER_API_KEY" in environment
+    assert "LITELLM_MASTER_KEY" not in environment
+    assert environment["DISABLE_ADMIN_UI"] == "True"
+    assert environment["NO_DOCS"] == "True"
+    assert environment["NO_REDOC"] == "True"
+    assert "ports" not in sidecar
+    assert "LANGFUSE_SECRET_KEY" not in sidecar_text
+    assert "\n      API_KEY:" not in sidecar_text
+
+
+def test_litellm_sidecar_keeps_provider_and_proxy_credentials_separate(tmp_path: Path) -> None:
+    from docker.litellm_sidecar_entrypoint import (
+        LITELLM_NO_MASTER_KEY_WARNING,
+        IntentionalNoMasterKeyFilter,
+        build_sidecar_config,
+        write_sidecar_config,
+    )
+
+    config = build_sidecar_config(
+        backend="vllm",
+        model_name="local-model",
+        provider_api_url="http://vllm.internal:8000",
+        provider_api_key="provider-secret",
+    )
+    params = config["model_list"][0]["litellm_params"]
+
+    assert params["api_key"] == "provider-secret"
+    assert params["api_base"] == "http://vllm.internal:8000/v1"
+    assert "master_key" not in config["general_settings"]
+    config_path = tmp_path / "sidecar.yaml"
+    write_sidecar_config(config, config_path)
+    assert config_path.stat().st_mode & 0o777 == 0o600
+
+    warning = logging.LogRecord("LiteLLM Proxy", logging.CRITICAL, __file__, 1, LITELLM_NO_MASTER_KEY_WARNING, (), None)
+    real_failure = logging.LogRecord("LiteLLM Proxy", logging.CRITICAL, __file__, 1, "provider initialization failed", (), None)
+    warning_filter = IntentionalNoMasterKeyFilter()
+    assert warning_filter.filter(warning) is False
+    assert warning_filter.filter(real_failure) is True
 
 
 def test_runtime_bootstrap_source_is_bound_read_only_for_api() -> None:

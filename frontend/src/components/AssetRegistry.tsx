@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createAsset, inheritAsset, listAssets, type Asset } from "../api/assets";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
+import { AgentTestAssets } from "./AgentTestAssets";
 import { DrawerShell } from "./DrawerShell";
 import "../improvement-workbench.css";
 
@@ -20,6 +21,7 @@ export function AssetRegistry({
   scopeAgentId: string;
   businessAgents: AgentSummary[];
 }) {
+  const [assetCenterTab, setAssetCenterTab] = useState<"tests" | "governance">("tests");
   const [assets, setAssets] = useState<Asset[]>([]);
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
@@ -63,8 +65,9 @@ export function AssetRegistry({
   }, [assetScopeAgentId, businessAgents, clientConfig]);
 
   useEffect(() => {
+    if (assetCenterTab !== "governance") return;
     void refresh();
-  }, [refresh]);
+  }, [assetCenterTab, refresh]);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -110,7 +113,21 @@ export function AssetRegistry({
   const totalCount = assets.length;
 
   return (
-    <div className="improvement-workbench" data-testid="asset-registry" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
+    <div className="asset-center-shell" data-testid="asset-registry">
+      <header className="asset-center-header">
+        <div>
+          <h2>资产复利中心</h2>
+          <p>统一查看业务 Agent 的可执行测试资产，以及可继承复用的治理资产。</p>
+        </div>
+        <div className="asset-center-tabs" role="tablist" aria-label="资产中心分类">
+          <button className={assetCenterTab === "tests" ? "is-active" : ""} data-testid="asset-center-tab-tests" role="tab" aria-selected={assetCenterTab === "tests"} type="button" onClick={() => setAssetCenterTab("tests")}>测试资产</button>
+          <button className={assetCenterTab === "governance" ? "is-active" : ""} data-testid="asset-center-tab-governance" role="tab" aria-selected={assetCenterTab === "governance"} type="button" onClick={() => setAssetCenterTab("governance")}>治理资产</button>
+        </div>
+      </header>
+      {assetCenterTab === "tests" ? (
+        <AgentTestAssets clientConfig={clientConfig} scopeAgentId={scopeAgentId} />
+      ) : (
+      <div className="improvement-workbench" data-testid="governance-asset-registry" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
       <section className="iw-detail-panel">
         <div className="iw-panel-head">
           <h3>资产 Registry 复利中心{assetScopeAgentId ? ` · ${agentName(assetScopeAgentId)}` : "（全部业务 Agent）"}</h3>
@@ -222,6 +239,8 @@ export function AssetRegistry({
           </div>
         </DrawerShell>
       ) : null}
+      </div>
+      )}
     </div>
   );
 }

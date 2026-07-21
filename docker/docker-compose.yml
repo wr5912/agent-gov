@@ -79,6 +79,10 @@ services:
       MODEL_PROVIDER_API_URL: ${MODEL_PROVIDER_API_URL:-}
       AGENT_MODEL: ${AGENT_MODEL:-agent-gov-model}
       LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
+      # sidecar 只承担 Compose 内网推理协议转换，不开放 LiteLLM 管理面，也不要求用户维护代理 master key。
+      DISABLE_ADMIN_UI: "True"
+      NO_DOCS: "True"
+      NO_REDOC: "True"
     restart: unless-stopped
     logging: *default-logging
 

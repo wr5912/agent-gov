@@ -8,6 +8,7 @@ from .agent_job_errors import (
     MODEL_AGENT_LOOP_CAPABILITY_FAILED,
     MODEL_PROVIDER_SIDECAR_UNAVAILABLE,
     MODEL_SCHEMA_EXACT_OUTPUT_FAILED,
+    VLLM_BASE_URL_INVALID,
     VLLM_CHAT_PROBE_FAILED,
     VLLM_DIRECT_CLAUDE_CODE_COMPAT_FAILED,
     VLLM_MODELS_PROBE_FAILED,
@@ -99,6 +100,19 @@ def _raise_if_vllm_route_unreachable(route: ModelProviderRoute) -> None:
         return
     probe = route.version_probe
     reason = probe.reason or "unknown"
+    if probe.error_code == VLLM_BASE_URL_INVALID:
+        raise ModelProviderCapabilityError(
+            error_code=VLLM_BASE_URL_INVALID,
+            message="MODEL_PROVIDER_API_URL is not a valid vLLM service base URL.",
+            route=route.route,
+            probe="vllm_version",
+            endpoint=probe.endpoint,
+            reason=reason,
+            status_code=probe.status_code,
+            duration_ms=probe.duration_ms,
+            retryable=False,
+            action="remove the trailing /v1 from MODEL_PROVIDER_API_URL, then restart the API",
+        )
     transport_failure = reason in {
         "timeout",
         "connection_error",

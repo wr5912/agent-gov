@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -13,13 +15,22 @@ from .async_iterators import close_async_iterator
 from .claude_runtime import RuntimeQueryState, _require_profile
 from .claude_sdk_interactive import query_with_interactive_client
 from .json_types import JsonObject
-from .message_utils import to_plain
+from .message_utils import (
+    extract_assistant_text_snapshot,
+    extract_stream_text_delta,
+    message_event_name,
+    reconcile_stream_snapshot,
+    to_plain,
+)
 from .runtime_db import utc_now
 from .schemas import ChatRequest
 from .session_turn_lease import SessionTurnLeaseHeartbeat
 
 if TYPE_CHECKING:
     from .claude_runtime import ClaudeRuntime, RuntimeRequestContext
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,6 +48,11 @@ class StreamRun:
     persistence_attempted: bool = False
     finalized: bool = False  # 幂等收尾标志：ResultMessage 处即收尾，其余路径由 finally 兜底
     turn_heartbeat: SessionTurnLeaseHeartbeat | None = None
+    started_at_monotonic: float = 0.0
+    provider_gate_ms: int | None = None
+    sdk_init_ms: int | None = None
+    first_text_delta_ms: int | None = None
+    partial_text_segment: str = ""
 
 
 async def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: AgentRuntimeProfile) -> StreamRun:
@@ -54,6 +70,7 @@ async def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: Age
         web_hitl_enabled=web_hitl_enabled,
         root_metadata=runtime._runtime_observation_metadata(context, "stream", profile=profile),
         propagation=runtime._langfuse_propagation_attributes(req, context, "stream", profile=profile),
+        started_at_monotonic=time.monotonic(),
     )
 
 
@@ -178,7 +195,9 @@ async def _emit_query_events(
     finalize: Callable[[], Awaitable[None]],
 ) -> None:
     runtime = stream_run.runtime
+    provider_gate_started = time.monotonic()
     await asyncio.to_thread(runtime.model_provider_router.ensure_agent_runtime_ready)
+    stream_run.provider_gate_ms = _elapsed_ms(provider_gate_started)
     native_ask_configured = await asyncio.to_thread(read_requires_web_hitl, stream_run.profile.workspace_dir)
     can_use_tool = _sdk_tool_callback(stream_run, event_queue) if native_ask_configured else None
     options = await asyncio.to_thread(
@@ -188,7 +207,9 @@ async def _emit_query_events(
         context=stream_run.request_context,
         profile=stream_run.profile,
         can_use_tool=can_use_tool,
+        include_partial_messages=runtime.settings.include_partial_messages,
     )
+    sdk_started = time.monotonic()
     messages = (
         query_with_interactive_client(
             prompt=stream_run.request_context.prompt,
@@ -203,43 +224,90 @@ async def _emit_query_events(
     )
     try:
         async for msg in messages:
-            if isinstance(msg, claude_prompt_suggestions.PromptSuggestionMessage):
-                # 原生 CLI 每帧只给一条,但必须与后端生成路径同形状(共用帧构造点),
-                # 否则两条 emitter 会漂成 schema 双轨。
-                await event_queue.put(_prompt_suggestion_frame(stream_run, [msg.suggestion]))
-                continue
-            event, text, plain, is_result, result_errors = runtime._track_query_message(
+            if stream_run.sdk_init_ms is None:
+                stream_run.sdk_init_ms = _elapsed_ms(sdk_started)
+            is_result, result_errors = await _emit_sdk_message_frame(
+                stream_run,
+                event_queue,
                 msg,
-                stream_run.query_state,
                 result_message_type,
             )
-            await event_queue.put({"event": "message", "data": {"event": event, "text": text, "raw": plain}})
-            if is_result:
-                if stream_run.query_state.mirror_errors:
-                    await asyncio.to_thread(
-                        _abort_stream_run,
-                        stream_run,
-                        terminal_status="failed",
-                        error=stream_run.query_state.mirror_errors[-1],
-                    )
-                    await event_queue.put(
-                        {
-                            "event": "error",
-                            "data": {"errors": list(stream_run.query_state.errors)},
-                        }
-                    )
-                    continue
-                # 落库先于 result 事件（-> response.completed），使 items/retrieve 在完成信号时刻即可查。
-                await asyncio.to_thread(_persist_stream_run, stream_run)
-                await _publish_result_event(stream_run, event_queue, result_errors)
-                # 答案已完成，立刻收尾：Prompt Suggestion 是可选增强，不得把终态扣在手里。
-                # done 提前发出后，建议作为迟到帧从仍打开的流送出（Responses 投影已放行 done 之后
-                # 的建议——见 _project_prompt_suggestion）。
-                await finalize()
-                # 后端派生建议（受控特例）：done 之后再花时间生成，对用户不可见。
-                await _emit_backend_prompt_suggestion(stream_run, event_queue)
+            if not is_result:
+                continue
+            if stream_run.query_state.mirror_errors:
+                await asyncio.to_thread(
+                    _abort_stream_run,
+                    stream_run,
+                    terminal_status="failed",
+                    error=stream_run.query_state.mirror_errors[-1],
+                )
+                await event_queue.put(
+                    {
+                        "event": "error",
+                        "data": {"errors": list(stream_run.query_state.errors)},
+                    }
+                )
+                continue
+            # 落库先于 result 事件（-> response.completed），使 items/retrieve 在完成信号时刻即可查。
+            await asyncio.to_thread(_persist_stream_run, stream_run)
+            await _publish_result_event(stream_run, event_queue, result_errors)
+            # 答案已完成，立刻收尾；可选建议在 done 后派生，不占用用户可见终态。
+            await finalize()
+            await _emit_backend_prompt_suggestion(stream_run, event_queue)
     finally:
         await close_async_iterator(messages)
+
+
+async def _emit_sdk_message_frame(
+    stream_run: StreamRun,
+    event_queue: asyncio.Queue[JsonObject | None],
+    message: Any,
+    result_message_type: type,
+) -> tuple[bool, list[str]]:
+    if isinstance(message, claude_prompt_suggestions.PromptSuggestionMessage):
+        # 原生 CLI 和后端生成路径共用唯一建议帧构造点，避免 schema 双轨。
+        await event_queue.put(_prompt_suggestion_frame(stream_run, [message.suggestion]))
+        return False, []
+    if message.__class__.__name__ == "StreamEvent":
+        delta = extract_stream_text_delta(message)
+        if delta is not None:
+            stream_run.partial_text_segment += delta
+            if stream_run.first_text_delta_ms is None:
+                stream_run.first_text_delta_ms = _elapsed_ms(stream_run.started_at_monotonic)
+            await event_queue.put(
+                {
+                    "event": "message",
+                    "data": {"event": "StreamEvent", "text": delta, "text_kind": "delta", "raw": {}},
+                }
+            )
+        # 包括 thinking/message_start 在内的 StreamEvent 都只是传输帧，不进入事实层。
+        return False, []
+
+    event_name = message_event_name(message)
+    snapshot = extract_assistant_text_snapshot(message)
+    if event_name.startswith("AssistantMessage"):
+        if stream_run.partial_text_segment:
+            reconcile_stream_snapshot(stream_run.partial_text_segment, snapshot)
+        stream_run.partial_text_segment = ""
+    elif isinstance(message, result_message_type) and stream_run.partial_text_segment:
+        reconcile_stream_snapshot(stream_run.partial_text_segment, None)
+    event, text, plain, is_result, result_errors = stream_run.runtime._track_query_message(
+        message,
+        stream_run.query_state,
+        result_message_type,
+    )
+    await event_queue.put(
+        {
+            "event": "message",
+            "data": {
+                "event": event,
+                "text": snapshot if snapshot is not None else text,
+                "text_kind": "snapshot",
+                "raw": plain,
+            },
+        }
+    )
+    return is_result, result_errors
 
 
 async def _emit_backend_prompt_suggestion(
@@ -486,6 +554,13 @@ def _complete_stream_run_sync(
             terminal_status="failed",
             error=(stream_run.query_state.mirror_errors[-1] if stream_run.query_state.mirror_errors else stream_run.query_state.errors[-1]),
         )
+    timing_metadata = _stream_timing_metadata(stream_run)
+    stream_run.root_metadata.update(timing_metadata)
+    propagation_metadata = stream_run.propagation.get("metadata")
+    if not isinstance(propagation_metadata, dict):
+        propagation_metadata = {}
+        stream_run.propagation["metadata"] = propagation_metadata
+    propagation_metadata.update(timing_metadata)
     runtime._update_runtime_observations(
         root_span,
         generation,
@@ -502,6 +577,28 @@ def _complete_stream_run_sync(
     )
     if runtime.user_input_service is not None:
         runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
+    logger.info(
+        "event=runtime.stream_timing run_id=%s provider_gate_ms=%s sdk_init_ms=%s first_text_delta_ms=%s complete_ms=%s",
+        stream_run.request_context.run_id,
+        timing_metadata.get("provider_gate_ms"),
+        timing_metadata.get("sdk_init_ms"),
+        timing_metadata.get("first_text_delta_ms"),
+        timing_metadata.get("complete_ms"),
+    )
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, round((time.monotonic() - started_at) * 1000))
+
+
+def _stream_timing_metadata(stream_run: StreamRun) -> JsonObject:
+    timings: JsonObject = {
+        "provider_gate_ms": stream_run.provider_gate_ms,
+        "sdk_init_ms": stream_run.sdk_init_ms,
+        "first_text_delta_ms": stream_run.first_text_delta_ms,
+        "complete_ms": _elapsed_ms(stream_run.started_at_monotonic),
+    }
+    return {key: value for key, value in timings.items() if value is not None}
 
 
 async def _drain_stream_queue(

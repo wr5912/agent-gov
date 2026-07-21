@@ -70,7 +70,7 @@ Docker 构建阶段已在 Dockerfile 中固定使用国内镜像源：Debian apt
 
 镜像构建阶段会安装 `a2ui-adk` 相关 Python 依赖，并从 `docker/vendor/A2UI/agent_sdks/python` 安装已 vendor 的 Google A2UI v0.9 Python SDK。PyPI 依赖在 build 阶段完成下载，容器运行时不会再为 `a2ui-adk` 访问互联网。
 
-`LITELLM_LOCAL_MODEL_COST_MAP=True` 会强制 LiteLLM 使用包内置模型价格表，避免启动或 import 时访问 GitHub 获取远程 cost map。Compose 会启动独立 `agent-gov-litellm-sidecar` 服务；当 `MODEL_PROVIDER_BACKEND=vllm` 时，Runtime 会在后台通过 `{MODEL_PROVIDER_API_URL}/version` 探测运行中 vLLM 版本，低版本、未知版本或非传输类探测失败默认走 sidecar；仅当显式 `MODEL_PROVIDER_VLLM_ALLOW_DIRECT=true` 且探测版本 >= `MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD` 时才直连 vLLM 原生 Anthropic 端点（仍受能力门验收，不兼容即 fail-closed）。外部 vLLM 超时或不可达不会拖死 API/UI 健康检查，但会阻断具体模型请求，并返回包含 `error_code`、`probe`、`reason`、脱敏 `endpoint`、`retryable` 和 `action` 的稳定错误。
+`LITELLM_LOCAL_MODEL_COST_MAP=True` 会强制 LiteLLM 使用包内置模型价格表，避免启动或 import 时访问 GitHub 获取远程 cost map。Compose 会启动独立 `agent-gov-litellm-sidecar` 服务；当 `MODEL_PROVIDER_BACKEND=vllm` 时，Runtime 会在后台通过 `{MODEL_PROVIDER_API_URL}/version` 探测运行中 vLLM 版本，低版本、未知版本或非传输类探测失败默认走 sidecar；仅当显式 `MODEL_PROVIDER_VLLM_ALLOW_DIRECT=true` 且探测版本 >= `MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD` 时才直连 vLLM 原生 Anthropic 端点（仍受能力门验收，不兼容即 fail-closed）。`MODEL_PROVIDER_API_URL` 必须是不带末尾 `/v1` 的 vLLM 服务基地址，错误配置会在网络探测前以 `VLLM_BASE_URL_INVALID` 拒绝。API 启动后在后台预热完整 provider 能力门，首个模型请求与预热共享 single-flight 和成功缓存；外部 vLLM 超时或不可达不会拖死 API/UI 健康检查，但会阻断具体模型请求，并返回包含 `error_code`、`probe`、`reason`、脱敏 `endpoint`、`retryable` 和 `action` 的稳定错误。
 
 `MODEL_PROVIDER_API_KEY` 只用于 sidecar 访问上游模型服务；LiteLLM 的 `LITELLM_MASTER_KEY` 则是 Proxy Admin / Virtual Key 管理面的根凭据，二者不是同一个信任边界，也不得复用。AgentGov 的 sidecar 不发布宿主机端口，只在 Compose 内网承担推理协议转换，并关闭 Admin UI、Swagger 与 Redoc，因此用户无需配置 `LITELLM_MASTER_KEY`。若未来把它改造成可被外部客户端访问的共享模型网关，必须另行设计独立的代理管理员密钥、应用 Virtual Key、网络暴露和轮换方案，不能沿用当前内部 sidecar 边界。参考 LiteLLM 官方的 [Virtual Keys](https://docs.litellm.ai/docs/proxy/virtual_keys)、[Admin UI](https://docs.litellm.ai/docs/proxy/ui) 与 [Production Best Practices](https://docs.litellm.ai/docs/proxy/prod)。
 
@@ -194,7 +194,7 @@ http://localhost:55173
 
 这个 UI 不接管 Claude Code CLI 进程，不编辑宿主机敏感文件，不提供 Terminal。聊天、反馈闭环、平台测试和版本管理都通过后端 Runtime API 完成。
 
-每条 Claude Agent 回复的“回复细节”会保留完整 SDK/流式事件，并汇总本次请求的 Skill / Tool 使用情况。详情窗口支持关键字查找事件内容，底层 JSON 会完整展开显示。Claude Code 若在本轮末尾生成 Prompt Suggestion，Playground 会在输入框上方显示“下一步建议”；点击只把文本填入输入框，不会自动发送。
+每条 Claude Agent 回复的“回复细节”会保留 canonical SDK 事件，并汇总本次请求的 Skill / Tool 使用情况。流式请求默认通过 `INCLUDE_PARTIAL_MESSAGES=true` 接收 SDK `StreamEvent` 文本增量；这些增量只用于 SSE 传输，不写入会话消息、SQLite run 或 Langfuse SDK message 事实。最终 `AssistantMessage` 是权威快照：前后缀一致时只补发未到达的后缀，不一致时以 `STREAM_TEXT_DIVERGED` fail-closed，避免重复字或伪成功。前端按 animation frame/最长 32ms 合并增量并在 `response.completed` 用 canonical 文本校准 DOM。详情窗口支持关键字查找事件内容，底层 JSON 会完整展开显示。Claude Code 若在本轮末尾生成 Prompt Suggestion，Playground 会在输入框上方显示“下一步建议”；点击只把文本填入输入框，不会自动发送。
 
 ## 反馈优化闭环
 
@@ -257,7 +257,7 @@ Claude Code 原生 OTEL 会导出 `claude_code.interaction`、`claude_code.llm_r
 - `sdk.tool.{tool_name}`：**每个工具一条 span**，`input` = `ToolUseBlock.input`（工具入参）、`output` = `ToolResultBlock.content`（工具结果），工具报错映射为 ERROR level。
 - `sdk.llm.{turn}`：**每个 LLM 轮次一条 generation**，`input` = 该轮增量 messages（报文）、`output` = 该轮 assistant 内容、`model` + 逐轮 token usage。
 
-Runtime 会把 Langfuse trace 的 Session 设为 Playground/API 层 `session_id`，并在 metadata 中同时保留 `api_session_id`、`run_id` 和运行上下文；Claude SDK 返回的 `sdk_session_id` 仍保存到 SQLite，用于后续会话 resume。
+Runtime 会把 Langfuse trace 的 Session 设为 Playground/API 层 `session_id`，并在 metadata 中同时保留 `api_session_id`、`run_id`、`provider_gate_ms`、`sdk_init_ms`、`first_text_delta_ms`、`complete_ms` 和运行上下文；Claude SDK 返回的 `sdk_session_id` 仍保存到 SQLite，用于后续会话 resume。总耗时当前只作观测：当业务 Agent 的 OpenAPI→MCP 工具集合仍很大时，不用总耗时阈值掩盖上游工具收缩问题。
 
 本项目把 Langfuse 定位为本地调测工具。`LANGFUSE_ENABLED=true` 时，Runtime 默认向 Claude Code 子进程开启 `OTEL_LOG_USER_PROMPTS`、`OTEL_LOG_TOOL_DETAILS`、`OTEL_LOG_TOOL_CONTENT` 和 `OTEL_LOG_RAW_API_BODIES`（`user_prompt` 经 traces 落为 span 属性）；逐工具入参/结果/报文以上述 `sdk.*` 观测在同一条 trace 中查看。`LANGFUSE_OTEL_SIGNALS` 默认 `traces,metrics`（不含被 Langfuse 丢弃的 `logs`）。Runtime 输出中的 `agent_activity` 字段会额外汇总 requested skills、实际 Skill 调用、tool calls 和 tool results。
 

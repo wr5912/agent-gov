@@ -274,6 +274,36 @@ async function main() {
   const requestedRuntimeUrls = [];
   await page.addInitScript(([a, k, real]) => {
     window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: a, apiKey: k }));
+    window.__agentgovLastStreamReceipt = null;
+    window.__agentgovAssistantDomLatencies = [];
+    const originalRead = ReadableStreamDefaultReader.prototype.read;
+    ReadableStreamDefaultReader.prototype.read = async function (...args) {
+      const result = await originalRead.apply(this, args);
+      if (result?.value instanceof Uint8Array) {
+        const chunk = new TextDecoder().decode(result.value);
+        if (chunk.includes("response.output_text.delta")) {
+          window.__agentgovLastStreamReceipt = performance.now();
+          window.setTimeout(() => { window.__agentgovLastStreamReceipt = null; }, 250);
+        }
+      }
+      return result;
+    };
+    window.addEventListener("DOMContentLoaded", () => {
+      new MutationObserver((mutations) => {
+        const receipt = window.__agentgovLastStreamReceipt;
+        if (typeof receipt !== "number") return;
+        const touchedAssistant = mutations.some((mutation) => {
+          const target = mutation.target.nodeType === Node.ELEMENT_NODE
+            ? mutation.target
+            : mutation.target.parentElement;
+          return target?.closest?.('[data-message-role="assistant"]');
+        });
+        if (touchedAssistant) {
+          window.__agentgovAssistantDomLatencies.push(performance.now() - receipt);
+          window.__agentgovLastStreamReceipt = null;
+        }
+      }).observe(document, { subtree: true, childList: true, characterData: true });
+    }, { once: true });
     if (!real) {
       window.localStorage.setItem("playground-active-session", JSON.stringify("mock-session"));
       window.localStorage.removeItem("playground-session-messages");
@@ -298,12 +328,16 @@ async function main() {
               { event: "agentgov.done", data: { ok: true } },
             ]);
           }
+          const canonicalText = "我是 AgentGov 测试助手。";
           return sse(route, [
             { event: "agentgov.session", data: { session_id: sessionId } },
-            { event: "response.output_text.delta", data: { delta: "我是 AgentGov 测试助手。" } },
+            ...Array.from(`${canonicalText}不会进入最终文本`).map((delta) => ({
+              event: "response.output_text.delta",
+              data: { delta },
+            })),
             { event: "agentgov.result", data: { run_id: "mock-run", session_id: sessionId, agent_version_id: "v-mock", agent_activity: { tool_calls: [], tool_results: [], tool_names: [] } } },
             { event: "agentgov.prompt_suggestion", data: { v: 1, type: "agentgov.prompt_suggestion", run_id: "mock-run", ts: Date.now() / 1000, seq: 4, payload: { suggestion: "继续检查失败路径。", suggestions: ["继续检查失败路径。", "看一下日志", "换个角度分析"], session_id: sessionId } } },
-            { event: "response.completed", data: { response: { status: "completed" } } },
+            { event: "response.completed", data: { response: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: canonicalText }] }] } } },
             { event: "agentgov.done", data: { ok: true } },
           ]);
         }
@@ -312,6 +346,34 @@ async function main() {
     }
     await page.goto(ui, { waitUntil: "domcontentloaded" });
     await page.getByTestId("playground").waitFor({ timeout: 20000 });
+    const streamBatchChecks = REAL ? { skipped: true } : await page.evaluate(async () => {
+      const { createResponseDeltaBatcher, completedResponseText } = await import("/src/api/responsesStream.ts");
+      const dispatched = [];
+      const started = performance.now();
+      const batcher = createResponseDeltaBatcher((envelope) => {
+        dispatched.push({ envelope, at: performance.now() });
+      });
+      for (const delta of Array.from("流式增量批处理".repeat(20))) {
+        batcher.enqueue({ event: "response.output_text.delta", data: { delta } });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const firstBatch = dispatched[0];
+      batcher.enqueue({ event: "response.output_text.delta", data: { delta: "尾" } });
+      batcher.enqueue({ event: "agentgov.result", data: { ok: true } });
+      const canonical = completedResponseText({
+        response: { output: [{ content: [{ type: "output_text", text: "权威最终文本" }] }] },
+      });
+      return {
+        skipped: false,
+        scheduledDispatchCount: firstBatch ? 1 : 0,
+        mergedTextExact: firstBatch?.envelope?.data?.delta === "流式增量批处理".repeat(20),
+        receiptToDispatchMs: firstBatch ? firstBatch.at - started : Number.POSITIVE_INFINITY,
+        nonDeltaFlushOrder:
+          dispatched.at(-2)?.envelope?.data?.delta === "尾"
+          && dispatched.at(-1)?.envelope?.event === "agentgov.result",
+        canonicalTextExact: canonical === "权威最终文本",
+      };
+    });
     const maxAttempts = REAL ? RETRIES : 1;
     for (let attempt = 1; attempt <= maxAttempts && !ok; attempt += 1) {
       try {
@@ -435,6 +497,14 @@ async function main() {
           // (下面的 first() 点击对单条同样成立)。
           const suggestionChipCount = await suggestionChips.count();
           const suggestionChipTexts = await suggestionChips.allInnerTexts();
+          const latestAssistantText = (
+            await page.locator('[data-message-role="assistant"] [data-testid="message-markdown"]').last().innerText()
+          ).trim();
+          const domLatencies = await page.evaluate(() => window.__agentgovAssistantDomLatencies || []);
+          const sortedDomLatencies = [...domLatencies].sort((left, right) => left - right);
+          const domLatencyP95 = sortedDomLatencies.length
+            ? sortedDomLatencies[Math.max(0, Math.ceil(sortedDomLatencies.length * 0.95) - 1)]
+            : Number.POSITIVE_INFINITY;
           // 多候选下容器内有多个 button,必须按 per-chip testid 取,否则 strict-mode violation
           await suggestionChips.first().click();
           await page.waitForTimeout(100);
@@ -450,6 +520,9 @@ async function main() {
             suggestionFilledInput: await page.getByTestId("chat-composer-input").inputValue() === "继续检查失败路径。",
             suggestionDidNotAutoSend: responsesRequestCount === requestsBeforeSuggestionClick,
             suggestionClearedAfterUse: await page.getByTestId("prompt-suggestion").count() === 0,
+            canonicalAssistantTextExact: latestAssistantText === "我是 AgentGov 测试助手。",
+            sseReceiptToDomSamples: domLatencies.length,
+            sseReceiptToDomP95Ms: domLatencyP95,
           };
           await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
           await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
@@ -475,6 +548,7 @@ async function main() {
           markdownChecks,
           scrollChecks,
           autoPanelChecks,
+          streamBatchChecks,
           historySourceChecks: {
             conversationItemsRequested: requestedRuntimeUrls.some((value) => value.startsWith("/v1/conversations/conv_mock-session/items?")),
             conversationItemsPaginated: requestedRuntimeUrls.some((value) => value.startsWith("/v1/conversations/conv_mock-session/items?") && value.includes("after=msg_13")),
@@ -502,6 +576,14 @@ async function main() {
           && drawerChecks.settingsNoSessionHistory
           && debugClosed
           && !legacyModalVisible
+          && (REAL || (
+            !streamBatchChecks.skipped
+            && streamBatchChecks.scheduledDispatchCount === 1
+            && streamBatchChecks.mergedTextExact
+            && streamBatchChecks.receiptToDispatchMs <= 100
+            && streamBatchChecks.nonDeltaFlushOrder
+            && streamBatchChecks.canonicalTextExact
+          ))
           && (REAL || (
             drawerChecks.historySourceChecks.conversationItemsRequested
             && drawerChecks.historySourceChecks.conversationItemsPaginated
@@ -550,6 +632,9 @@ async function main() {
             && autoPanelChecks.suggestionFilledInput
             && autoPanelChecks.suggestionDidNotAutoSend
             && autoPanelChecks.suggestionClearedAfterUse
+            && autoPanelChecks.canonicalAssistantTextExact
+            && autoPanelChecks.sseReceiptToDomSamples > 0
+            && autoPanelChecks.sseReceiptToDomP95Ms <= 100
           ));
         detail = JSON.stringify({ counts, drawerChecks });
         if (ok) await page.screenshot({ path: join(screenshotDir, "agentgov-improvement-ui-after-message-actions.png") });

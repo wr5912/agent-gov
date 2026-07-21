@@ -3,6 +3,22 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
+STREAM_TEXT_DIVERGED = "STREAM_TEXT_DIVERGED"
+
+
+class StreamTextDivergedError(RuntimeError):
+    """流式 delta 与 SDK 最终 AssistantMessage 快照不一致。"""
+
+    error_code = STREAM_TEXT_DIVERGED
+
+    def __init__(self, *, partial: str, snapshot: str | None) -> None:
+        self.error_details = {
+            "reason": "missing_final_snapshot" if snapshot is None else "final_snapshot_mismatch",
+            "partial_length": len(partial),
+            "snapshot_length": len(snapshot) if snapshot is not None else None,
+        }
+        super().__init__("SDK text deltas diverged from the final AssistantMessage snapshot")
+
 
 def to_plain(obj: Any) -> Any:
     """Best-effort conversion of SDK message dataclasses to JSON-safe dicts."""
@@ -41,6 +57,46 @@ def extract_text(message: Any) -> str:
                     pieces.append(value)
 
     return "\n".join(pieces).strip()
+
+
+def extract_stream_text_delta(message: Any) -> str | None:
+    """只读取 SDK ``StreamEvent.content_block_delta.text_delta``，保留原始空白。"""
+    if message.__class__.__name__ != "StreamEvent":
+        return None
+    event = getattr(message, "event", None)
+    if not isinstance(event, dict) or event.get("type") != "content_block_delta":
+        return None
+    delta = event.get("delta")
+    if not isinstance(delta, dict) or delta.get("type") != "text_delta":
+        return None
+    text = delta.get("text")
+    return text if isinstance(text, str) and text else None
+
+
+def extract_assistant_text_snapshot(message: Any) -> str | None:
+    """读取最终 AssistantMessage 的原始文本快照，不裁剪空白或注入分隔符。"""
+    if not message.__class__.__name__.startswith("AssistantMessage"):
+        return None
+    content = getattr(message, "content", None)
+    if not isinstance(content, list):
+        return None
+    pieces: list[str] = []
+    for block in content:
+        text = getattr(block, "text", None)
+        if isinstance(text, str):
+            pieces.append(text)
+        elif isinstance(block, dict) and isinstance(block.get("text"), str):
+            pieces.append(block["text"])
+    return "".join(pieces) if pieces else None
+
+
+def reconcile_stream_snapshot(partial: str, snapshot: str | None) -> str:
+    """返回最终快照尚未发送的后缀；不一致时 fail-closed。"""
+    if not partial:
+        return snapshot or ""
+    if snapshot is None or not snapshot.startswith(partial):
+        raise StreamTextDivergedError(partial=partial, snapshot=snapshot)
+    return snapshot[len(partial) :]
 
 
 def message_event_name(message: Any) -> str:

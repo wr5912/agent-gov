@@ -216,7 +216,7 @@ async def _runtime_orphan_recovery_loop() -> None:
 
 
 async def _refresh_model_provider_readiness() -> None:
-    summary = await asyncio.to_thread(runtime.model_provider_router.refresh_readiness)
+    summary = await asyncio.to_thread(runtime.model_provider_router.warm_agent_runtime_readiness)
     log = logger.info if summary.get("status") == "ready" else logger.warning
     log(
         "event=model_provider.readiness status=%s error_code=%s reason=%s probe=%s duration_ms=%s action=%s",

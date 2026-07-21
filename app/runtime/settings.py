@@ -212,7 +212,9 @@ class AppSettings(BaseSettings):
     # 思考预算,否则思考吃光配额、正文为空(finish_reason=length)。
     backend_prompt_suggestion_max_tokens: int = Field(default=1024, alias="BACKEND_PROMPT_SUGGESTION_MAX_TOKENS")
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
-    include_partial_messages: bool = Field(default=False, alias="INCLUDE_PARTIAL_MESSAGES")
+    # 仅流式 Playground/Responses 请求使用；非流式调用仍由 runtime 显式关闭，避免把
+    # StreamEvent 写入会话事实、反馈证据或治理任务输入。
+    include_partial_messages: bool = Field(default=True, alias="INCLUDE_PARTIAL_MESSAGES")
     max_turns: int = Field(default=16, alias="MAX_TURNS")
     max_budget_usd: Optional[float] = Field(default=None, alias="MAX_BUDGET_USD")
     max_buffer_size: Optional[int] = Field(default=None, alias="MAX_BUFFER_SIZE")

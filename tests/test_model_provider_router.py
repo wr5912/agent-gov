@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -10,6 +12,7 @@ from app.runtime.agent_job_errors import (
     MODEL_AGENT_LOOP_CAPABILITY_FAILED,
     MODEL_PROVIDER_SIDECAR_UNAVAILABLE,
     MODEL_SCHEMA_EXACT_OUTPUT_FAILED,
+    VLLM_BASE_URL_INVALID,
     VLLM_CHAT_PROBE_FAILED,
     VLLM_DIRECT_CLAUDE_CODE_COMPAT_FAILED,
     VLLM_TOOL_CALLING_UNSUPPORTED,
@@ -65,7 +68,9 @@ def _fake_capability_response(request) -> _FakeResponse:
         if any(isinstance(item, dict) and item.get("role") == "tool" for item in payload.get("messages", [])):
             return _FakeResponse(b'{"choices":[{"message":{"content":"DONE"}}]}')
         if payload.get("tools"):
-            return _FakeResponse(b'{"choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"agent_gov_probe","arguments":"{\\"value\\":\\"ok\\"}"}}]}}]}')
+            return _FakeResponse(
+                b'{"choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"agent_gov_probe","arguments":"{\\"value\\":\\"ok\\"}"}}]}}]}'
+            )
         if payload.get("response_format"):
             return _FakeResponse(b'{"choices":[{"message":{"content":"{\\"ok\\": true}"}}]}')
         return _FakeResponse(b'{"choices":[{"message":{"content":"OK"}}]}')
@@ -205,6 +210,69 @@ def test_provider_url_derivatives_do_not_use_second_upstream_url() -> None:
     assert provider_v1_api_base("http://vllm:8000") == "http://vllm:8000/v1"
 
 
+def test_vllm_base_url_with_v1_suffix_fails_before_network(monkeypatch) -> None:
+    monkeypatch.setattr(
+        model_provider,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("invalid configuration must not probe /v1/version")),
+    )
+    router = ModelProviderRouter(_settings(MODEL_PROVIDER_BACKEND="vllm", MODEL_PROVIDER_API_URL="http://user:secret@vllm:8000/v1"))
+
+    with pytest.raises(ModelProviderCapabilityError) as exc_info:
+        router.ensure_agent_runtime_ready()
+
+    assert exc_info.value.error_code == VLLM_BASE_URL_INVALID
+    assert exc_info.value.raw_output_json is not None
+    assert exc_info.value.raw_output_json["reason"] == "vllm_base_url_must_not_end_in_v1"
+    assert exc_info.value.raw_output_json["retryable"] is False
+    assert exc_info.value.raw_output_json["endpoint"] == "http://vllm:8000"
+    assert "secret" not in str(exc_info.value)
+
+
+def test_provider_warmup_and_first_requests_share_single_flight(monkeypatch) -> None:
+    from app.runtime import model_provider_capabilities
+
+    monkeypatch.setattr(model_provider, "urlopen", lambda *_args, **_kwargs: _FakeResponse(b'{"version":"0.14.0"}'))
+    router = ModelProviderRouter(_settings(MODEL_PROVIDER_BACKEND="vllm", MODEL_PROVIDER_API_URL="http://vllm:8000"))
+    router.route()
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def capability_probe(*_args, **_kwargs) -> None:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        assert release.wait(timeout=2)
+
+    monkeypatch.setattr(model_provider_capabilities, "ensure_model_provider_capabilities", capability_probe)
+    errors: list[BaseException] = []
+
+    def run(callable_) -> None:
+        try:
+            callable_()
+        except BaseException as exc:  # pragma: no cover - assertion reports worker failure
+            errors.append(exc)
+
+    warmup = threading.Thread(target=run, args=(router.warm_agent_runtime_readiness,))
+    warmup.start()
+    assert entered.wait(timeout=1)
+    requests = [threading.Thread(target=run, args=(router.ensure_agent_runtime_ready,)) for _ in range(8)]
+    for request in requests:
+        request.start()
+    release.set()
+    warmup.join(timeout=2)
+    for request in requests:
+        request.join(timeout=2)
+
+    assert not errors
+    assert calls == 1
+    started = time.monotonic()
+    for _ in range(100):
+        router.ensure_agent_runtime_ready()
+    assert (time.monotonic() - started) * 1000 < 100
+
+
 def test_vllm_capability_gate_checks_sidecar_and_models(monkeypatch) -> None:
     seen: list[str] = []
 
@@ -273,9 +341,7 @@ def test_vllm_capability_gate_reports_specific_probe_failures(monkeypatch, broke
                 return _FakeResponse(b'{"choices":[]}')
             if broken_probe == "tool_calling" and payload.get("tools"):
                 return _FakeResponse(b'{"choices":[{"message":{"content":"I cannot call tools."}}]}')
-            if broken_probe == "agent_tool_loop" and any(
-                isinstance(item, dict) and item.get("role") == "tool" for item in payload.get("messages", [])
-            ):
+            if broken_probe == "agent_tool_loop" and any(isinstance(item, dict) and item.get("role") == "tool" for item in payload.get("messages", [])):
                 return _FakeResponse(b'{"choices":[{"message":{"content":""}}]}')
             if broken_probe == "schema_exact_json" and payload.get("response_format"):
                 return _FakeResponse(b'{"choices":[{"message":{"content":"not json"}}]}')

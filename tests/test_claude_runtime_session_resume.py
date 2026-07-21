@@ -496,6 +496,7 @@ def test_build_options_does_not_reuse_api_session_id_after_resume_is_cleared(tmp
     first_options = runtime._build_options(ChatRequest(message="first", session_id=session_id), session, profile=default_profile)
     assert getattr(first_options, "session_id", None) == session_id
     assert getattr(first_options, "resume", None) is None
+    assert first_options.include_partial_messages is False
 
     with store.Session.begin() as db:
         row = db.get(SessionRecordModel, session_id)
@@ -512,6 +513,7 @@ def test_build_options_does_not_reuse_api_session_id_after_resume_is_cleared(tmp
 
     assert getattr(second_options, "session_id", None) is None
     assert getattr(second_options, "resume", None) is None
+    assert second_options.include_partial_messages is False
 
 
 def test_run_retries_once_when_saved_sdk_session_is_missing(tmp_path, monkeypatch):

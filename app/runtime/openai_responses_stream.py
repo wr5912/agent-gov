@@ -22,6 +22,7 @@ from typing import Optional
 
 from app.runtime.async_iterators import close_async_iterator
 from app.runtime.json_types import JsonObject
+from app.runtime.message_utils import reconcile_stream_snapshot
 from app.runtime.openai_responses_adapter import (
     conversation_id_from_session,
     response_from_chat_response,
@@ -164,6 +165,7 @@ class _ResponsesSseProjector:
     item_id: Optional[str] = None
     created_at: Optional[int] = None
     answer_parts: list[str] = field(default_factory=list)
+    partial_text_segment: str = ""
     terminal_status: Optional[str] = None
     pending_completed_response: JsonObject | None = None
     done_emitted: bool = False
@@ -248,14 +250,28 @@ class _ResponsesSseProjector:
     def _project_message(self, data: JsonObject) -> list[str]:
         event_name = str(data.get("event") or "")
         text = data.get("text") or ""
-        if event_name.startswith("AssistantMessage") and text:
-            self.answer_parts.append(text)
+        if data.get("text_kind") == "delta" or event_name == "StreamEvent":
+            if not isinstance(text, str) or not text:
+                return []
+            self.partial_text_segment += text
             return [
                 self._std(
                     "response.output_text.delta",
                     {"item_id": self.item_id, "output_index": 0, "content_index": 0, "delta": text},
                 )
             ]
+        if event_name.startswith("AssistantMessage") and text:
+            suffix = reconcile_stream_snapshot(self.partial_text_segment, str(text))
+            self.partial_text_segment = ""
+            self.answer_parts.append(text)
+            if suffix:
+                return [
+                    self._std(
+                        "response.output_text.delta",
+                        {"item_id": self.item_id, "output_index": 0, "content_index": 0, "delta": suffix},
+                    )
+                ]
+            return []
         if not self.control:
             return []
         chunks: list[str] = []
@@ -267,6 +283,8 @@ class _ResponsesSseProjector:
         return chunks
 
     def _project_result(self, data: JsonObject) -> list[str]:
+        if self.partial_text_segment:
+            reconcile_stream_snapshot(self.partial_text_segment, None)
         response = _response_from_result(
             data,
             model=self.model,
@@ -346,7 +364,15 @@ async def iter_responses_sse(
                 for chunk in projector._project_session({}):
                     yield chunk
             detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
-            for chunk in projector._project_error({"error_code": "STREAM_SOURCE_ERROR", "errors": [detail]}):
+            error_code = getattr(exc, "error_code", None)
+            error_data: JsonObject = {
+                "error_code": error_code if isinstance(error_code, str) and error_code else "STREAM_SOURCE_ERROR",
+                "errors": [detail],
+            }
+            error_details = getattr(exc, "error_details", None)
+            if isinstance(error_details, dict):
+                error_data.update(error_details)
+            for chunk in projector._project_error(error_data):
                 yield chunk
     finally:
         await close_async_iterator(source)

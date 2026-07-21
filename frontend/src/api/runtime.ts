@@ -1,4 +1,5 @@
 import { authHeaders, makeUrl, readError, requestBlob, requestJson } from "./request";
+import { completedResponseText, createResponseDeltaBatcher } from "./responsesStream";
 import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
 export { defaultRuntimeConfig, isLegacyDockerApiBase } from "./request";
 export * from "./agentTesting";
@@ -424,6 +425,7 @@ export interface StreamChatHandlers {
   onEnvelope?: (envelope: StreamEnvelope) => void;
   onSession?: (sessionId: string, sdkSessionId?: string | null) => void;
   onText?: (text: string, raw: unknown) => void;
+  onFinalText?: (text: string) => void;
   onPromptSuggestion?: (suggestions: string[], sessionId: string) => void;
   onResult?: (result: unknown) => void;
   onError?: (message: string, raw?: unknown) => void;
@@ -437,20 +439,26 @@ export async function streamChat(
   signal?: AbortSignal,
 ): Promise<void> {
   const controller = new AbortController();
+  let flushPendingDeltas = () => {};
   let timedOut = false;
   let idleMs = STREAM_IDLE_TIMEOUT_MS;  // 默认 180s；agentgov.session 到达后据后端下发 heartbeat_interval_s 派生
   let timeoutId = window.setTimeout(() => {
     timedOut = true;
+    flushPendingDeltas();
     controller.abort("timeout");
   }, idleMs);
   const resetIdleTimeout = () => {
     window.clearTimeout(timeoutId);
     timeoutId = window.setTimeout(() => {
       timedOut = true;
+      flushPendingDeltas();
       controller.abort("timeout");
     }, idleMs);
   };
-  const abortFromCaller = () => controller.abort(signal?.reason || "aborted");
+  const abortFromCaller = () => {
+    flushPendingDeltas();
+    controller.abort(signal?.reason || "aborted");
+  };
   if (signal?.aborted) {
     window.clearTimeout(timeoutId);
     throw new Error("Stream request was aborted");
@@ -485,6 +493,10 @@ export async function streamChat(
       if (parsed.event === "response.completed" || parsed.event === "response.failed") {
         terminalReceived = true;
       }
+      if (parsed.event === "response.completed") {
+        const finalText = completedResponseText(parsed.data);
+        if (finalText !== undefined) handlers.onFinalText?.(finalText);
+      }
       if (parsed.event === "response.failed") {
         standardFailure = isRecord(parsed.data) && "error" in parsed.data ? parsed.data.error : parsed.data;
       }
@@ -502,6 +514,8 @@ export async function streamChat(
       }
       dispatchEnvelope(envelope, handlers);
     };
+    const deltaBatcher = createResponseDeltaBatcher(consumeEvent);
+    flushPendingDeltas = deltaBatcher.flush;
 
     try {
       while (true) {
@@ -514,14 +528,15 @@ export async function streamChat(
         for (const rawEvent of events) {
           const parsed = parseSse(rawEvent);
           if (!parsed) continue;
-          consumeEvent(parsed);
+          deltaBatcher.enqueue(parsed);
         }
       }
 
       if (buffer.trim()) {
         const parsed = parseSse(buffer);
-        if (parsed) consumeEvent(parsed);
+        if (parsed) deltaBatcher.enqueue(parsed);
       }
+      deltaBatcher.flush();
       if (standardFailure !== undefined && !controlFailureReceived) {
         dispatchEnvelope({ event: "error", data: standardFailure }, handlers);
       }
@@ -529,6 +544,7 @@ export async function streamChat(
       // done 已在到达时派发过；这里只校验它确实来过，不再重复派发（否则 onDone 触发两次）。
       if (!doneReceived) throw new Error("Stream ended before agentgov.done");
     } finally {
+      deltaBatcher.flush();
       reader.releaseLock();
     }
   } catch (error) {
@@ -540,6 +556,7 @@ export async function streamChat(
     }
     throw error;
   } finally {
+    flushPendingDeltas();
     window.clearTimeout(timeoutId);
     signal?.removeEventListener("abort", abortFromCaller);
   }

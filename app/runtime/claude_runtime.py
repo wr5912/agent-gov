@@ -375,6 +375,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
         context: RuntimeRequestContext | None = None,
         profile: AgentRuntimeProfile | None = None,
         can_use_tool: Any = None,
+        include_partial_messages: bool = False,
     ) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
@@ -396,7 +397,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
             "system_prompt": system_prompt,
             "env": env,
             "include_hook_events": self.settings.include_hook_events,
-            "include_partial_messages": self.settings.include_partial_messages,
+            "include_partial_messages": include_partial_messages,
             "cli_path": self.settings.claude_cli_path,
             "betas": self.settings.claude_betas,
             "max_buffer_size": self.settings.max_buffer_size,

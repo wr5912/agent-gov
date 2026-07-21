@@ -16,6 +16,7 @@ MODEL_PROVIDER_NOT_CHECKED = "MODEL_PROVIDER_NOT_CHECKED"
 MODEL_PROVIDER_PROBE_IN_PROGRESS = "MODEL_PROVIDER_PROBE_IN_PROGRESS"
 MODEL_PROVIDER_CONFIGURATION_MISSING = "MODEL_PROVIDER_CONFIGURATION_MISSING"
 MODEL_PROVIDER_READINESS_PROBE_FAILED = "MODEL_PROVIDER_READINESS_PROBE_FAILED"
+VLLM_BASE_URL_INVALID = "VLLM_BASE_URL_INVALID"
 _PLACEHOLDER_PROVIDER_API_KEYS = {"", "sk-ant-xxxx", "change-me", "change-me-model-provider-key"}
 
 
@@ -87,10 +88,7 @@ class ModelProviderCapabilityError(AgentJobRuntimeError):
             "retryable": retryable,
             "action": action,
         }
-        diagnostic = (
-            f"{message} code={error_code} probe={probe}"
-            f" reason={reason or 'unknown'} endpoint={endpoint or 'unconfigured'} action={action}"
-        )
+        diagnostic = f"{message} code={error_code} probe={probe} reason={reason or 'unknown'} endpoint={endpoint or 'unconfigured'} action={action}"
         super().__init__(
             error_code=error_code,
             message=diagnostic,

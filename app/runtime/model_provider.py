@@ -17,6 +17,7 @@ from .agent_job_errors import (
     MODEL_PROVIDER_NOT_CHECKED,
     MODEL_PROVIDER_PROBE_IN_PROGRESS,
     MODEL_PROVIDER_READINESS_PROBE_FAILED,
+    VLLM_BASE_URL_INVALID,
     ModelProviderCapabilityError,
     provider_api_key_configured,
 )
@@ -191,7 +192,15 @@ class ModelProviderRouter:
             self._record_route_readiness(self._route)
             return self._route
 
-        version_probe = self._probe_vllm_version(provider_endpoint) if backend == "vllm" else VersionProbeResult(status="skipped")
+        if backend == "vllm" and vllm_base_url_has_api_suffix(provider_endpoint):
+            version_probe = failed_version_probe(
+                endpoint=sanitize_endpoint(provider_endpoint),
+                reason="vllm_base_url_must_not_end_in_v1",
+                duration_ms=0,
+                error_code=VLLM_BASE_URL_INVALID,
+            )
+        else:
+            version_probe = self._probe_vllm_version(provider_endpoint) if backend == "vllm" else VersionProbeResult(status="skipped")
         if version_probe.status == "failed":
             self._warn_version_probe_failed(version_probe)
 
@@ -370,6 +379,29 @@ class ModelProviderRouter:
             )
         return self.readiness_summary()
 
+    def warm_agent_runtime_readiness(self) -> JsonObject:
+        """启动期预热完整能力门；与首个请求共享同一把锁和同一份成功缓存。"""
+        self.mark_readiness_checking()
+        try:
+            self.ensure_agent_runtime_ready()
+        except ModelProviderCapabilityError:
+            # ensure_agent_runtime_ready 已把精确错误写入 readiness；API 控制面继续启动。
+            pass
+        except Exception as exc:
+            self._set_readiness(
+                ProviderReadinessSnapshot(
+                    status="degraded",
+                    error_code=MODEL_PROVIDER_READINESS_PROBE_FAILED,
+                    message="Unexpected model provider capability warmup failure; the API control plane remains live.",
+                    reason=exc.__class__.__name__,
+                    probe="agent_runtime_capabilities",
+                    retryable=True,
+                    action="inspect API logs and verify model provider settings before retrying",
+                    checked_at=_utc_now(),
+                )
+            )
+        return self.readiness_summary()
+
     def ensure_agent_runtime_ready(self) -> None:
         try:
             with self._probe_lock:
@@ -400,18 +432,27 @@ class ModelProviderRouter:
     def _record_route_readiness(self, route: ModelProviderRoute) -> None:
         probe = route.version_probe
         if probe.status == "failed":
+            invalid_base_url = probe.error_code == VLLM_BASE_URL_INVALID
             self._set_readiness(
                 ProviderReadinessSnapshot(
                     status="degraded",
                     error_code=probe.error_code or VLLM_VERSION_PROBE_FAILED,
-                    message="vLLM version probe failed; the API control plane remains live while model routing is degraded.",
+                    message=(
+                        "MODEL_PROVIDER_API_URL must be the vLLM service base URL without a trailing /v1."
+                        if invalid_base_url
+                        else "vLLM version probe failed; the API control plane remains live while model routing is degraded."
+                    ),
                     reason=probe.reason,
                     route=route.route,
                     probe="vllm_version",
                     status_code=probe.status_code,
                     duration_ms=probe.duration_ms,
-                    retryable=True,
-                    action="verify external vLLM is reachable and MODEL_PROVIDER_API_URL points to its base URL",
+                    retryable=not invalid_base_url,
+                    action=(
+                        "remove the trailing /v1 from MODEL_PROVIDER_API_URL"
+                        if invalid_base_url
+                        else "verify external vLLM is reachable and MODEL_PROVIDER_API_URL points to its base URL"
+                    ),
                     checked_at=_utc_now(),
                 )
             )
@@ -546,13 +587,15 @@ class ModelProviderRouter:
         if last is not None and now - last < ttl_seconds:
             return
         _WARNING_LAST_EMITTED_AT[key] = now
+        action = "reject_invalid_vllm_base_url" if result.error_code == VLLM_BASE_URL_INVALID else "fallback_to_litellm_sidecar"
         logger.warning(
-            "event=%s provider_endpoint=%s reason=%s status_code=%s duration_ms=%s action=fallback_to_litellm_sidecar route_threshold=%s",
-            VLLM_VERSION_PROBE_FAILED,
+            "event=%s provider_endpoint=%s reason=%s status_code=%s duration_ms=%s action=%s route_threshold=%s",
+            result.error_code or VLLM_VERSION_PROBE_FAILED,
             endpoint,
             reason,
             result.status_code,
             result.duration_ms,
+            action,
             getattr(self.settings, "model_provider_vllm_sidecar_threshold", "0.23.0"),
         )
 
@@ -564,6 +607,7 @@ def failed_version_probe(
     status_code: int | None = None,
     duration_ms: int | None = None,
     version: str | None = None,
+    error_code: str = VLLM_VERSION_PROBE_FAILED,
 ) -> VersionProbeResult:
     return VersionProbeResult(
         status="failed",
@@ -572,7 +616,7 @@ def failed_version_probe(
         reason=reason,
         status_code=status_code,
         duration_ms=duration_ms,
-        error_code=VLLM_VERSION_PROBE_FAILED,
+        error_code=error_code,
     )
 
 
@@ -617,6 +661,13 @@ def version_probe_url(provider_endpoint: str | None) -> str | None:
     if not endpoint:
         return None
     return endpoint + "/version"
+
+
+def vllm_base_url_has_api_suffix(provider_endpoint: str | None) -> bool:
+    endpoint = normalize_url(provider_endpoint)
+    if not endpoint:
+        return False
+    return urlsplit(endpoint).path.rstrip("/").endswith("/v1")
 
 
 def provider_v1_api_base(provider_endpoint: str | None) -> str | None:

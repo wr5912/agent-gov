@@ -56,7 +56,12 @@ def load_test_app(
     monkeypatch.setenv("DATA_DIR", str(data))
     monkeypatch.setenv("GOVERNOR_CLAUDE_ROOT", str(governor_root))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
-    monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "")
+    # app-level tests must not inherit a developer's private vLLM route or make startup
+    # capability probes. Anthropic-compatible routing is hermetic and fake SDK calls use
+    # only this non-secret test credential.
+    monkeypatch.setenv("MODEL_PROVIDER_BACKEND", "anthropic_compatible")
+    monkeypatch.setenv("MODEL_PROVIDER_API_URL", "http://model-provider.test")
+    monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "test-provider-key")
     monkeypatch.setenv("API_KEY", api_key)
     monkeypatch.delenv("RESPONSE_ORCHESTRATOR_API_KEY", raising=False)
     monkeypatch.setenv("AGENT_GIT_REPOSITORY_DIR", str(default_workspace))

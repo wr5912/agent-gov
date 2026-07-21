@@ -30,7 +30,9 @@ def _load_app(monkeypatch, tmp_path):
     monkeypatch.setenv("GOVERNOR_CLAUDE_ROOT", str(governor_root))
     monkeypatch.setenv("CLAUDE_HOME", str(claude_root / ".claude"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
-    monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "")
+    monkeypatch.setenv("MODEL_PROVIDER_BACKEND", "anthropic_compatible")
+    monkeypatch.setenv("MODEL_PROVIDER_API_URL", "http://model-provider.test")
+    monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "test-provider-key")
     monkeypatch.setenv("API_KEY", "")
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 

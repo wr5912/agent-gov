@@ -841,11 +841,13 @@
       "scenarios": [
         {
           "id": "vllm_route_and_sidecar_gate",
-          "description": "vLLM route 探测 /version 与 /v1/models，使用 LiteLLM sidecar 并在 sidecar 不可用时报告能力错误。",
+          "description": "vLLM route 从不带 /v1 的服务基地址派生 /version 与 /v1/models，错误 base URL 在网络前 fail-closed；启动 warmup 与首请求共享 single-flight 和成功缓存，sidecar 不可用时报告能力错误。",
           "pytest": [
             "tests/test_model_provider_router.py::test_vllm_route_probes_version_and_derives_litellm_sidecar",
             "tests/test_model_provider_router.py::test_vllm_capability_gate_checks_sidecar_and_models",
             "tests/test_model_provider_router.py::test_vllm_capability_gate_reports_sidecar_unavailable",
+            "tests/test_model_provider_router.py::test_vllm_base_url_with_v1_suffix_fails_before_network",
+            "tests/test_model_provider_router.py::test_provider_warmup_and_first_requests_share_single_flight",
             "tests/test_claude_runtime.py::test_vllm_feedback_job_options_use_derived_litellm_sidecar"
           ]
         },
@@ -1035,7 +1037,7 @@
         },
         {
           "id": "responses_streaming_sse",
-          "description": "stream=true 的 Responses-style SSE 投影：response.* 标准通道两模式都发、agentgov.* 控制信封仅 control、Prompt Suggestion 使用后端权威 ID 且 strict 隔离、heartbeat 转 SSE comment、SDK Result/运行错误只产生一个 failed 终态并投影 UI 错误、tool_step 投影、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
+          "description": "stream=true 的 Responses-style SSE 投影：SDK StreamEvent 文本增量只作传输、最终 AssistantMessage 快照为唯一事实源且偏差 fail-closed；response.* 标准通道两模式都发、agentgov.* 控制信封仅 control、前端按 RAF/32ms 批处理并以 response.completed 校准最终文本、Prompt Suggestion 使用后端权威 ID 且 strict 隔离、heartbeat 转 SSE comment、SDK Result/运行错误只产生一个 failed 终态并投影 UI 错误、tool_step 投影、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
           "pytest": [
             "tests/test_responses_stream.py::test_control_stream_maps_core_events",
             "tests/test_responses_stream.py::test_strict_stream_emits_no_agentgov",
@@ -1065,8 +1067,15 @@
             "tests/test_responses_stream.py::test_stream_run_write_failure_rolls_back_session_completion",
             "tests/test_responses_stream.py::test_stream_persists_exactly_once",
             "tests/test_responses_stream.py::test_stream_error_path_persists_once_in_finally",
-            "tests/test_responses_stream.py::test_endpoint_sdk_result_error_is_failed_terminal_for_playground"
-          ]
+            "tests/test_responses_stream.py::test_endpoint_sdk_result_error_is_failed_terminal_for_playground",
+            "tests/test_stream_text_projection.py::test_stream_event_text_delta_preserves_whitespace_and_rejects_other_events",
+            "tests/test_stream_text_projection.py::test_delta_and_matching_snapshot_emit_exact_text_without_duplicate",
+            "tests/test_stream_text_projection.py::test_snapshot_suffix_is_emitted_when_last_delta_was_not_observed",
+            "tests/test_stream_text_projection.py::test_divergent_snapshot_fails_closed_with_stable_error_code",
+            "tests/test_stream_text_projection.py::test_runtime_partial_events_are_transport_only_and_timings_reach_trace",
+            "tests/test_stream_text_projection.py::test_runtime_divergence_never_emits_result_or_completes_turn"
+          ],
+          "ui_scripts": ["verify:message-actions-browser"]
         },
         {
           "id": "conversations_surface",

@@ -16,8 +16,9 @@ import { cancelWaitingUserInputRequests, claudeUserInputRequestFromData, mergeUs
 import { messagesFromConversationItems } from "./playgroundHistory";
 import { usePromptSuggestion } from "./hooks/usePromptSuggestion";
 import { newId, newSessionId } from "./utils/ids";
-import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
+import type { AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
+import { agentActivityFromResult, messageTextFromEnvelope } from "./api/responsesStream";
 import "./styles.css";
 
 function makeApiDocsUrl(apiBase: string): string {
@@ -47,19 +48,6 @@ function defaultLangfuseUrl(): string {
     return `${protocol}://${window.location.hostname}${port ? `:${port}` : ""}`;
   }
   return configured;
-}
-
-function messageTextFromEnvelope(envelope: StreamEnvelope): string | undefined {
-  if (envelope.event !== "message" || !isRecord(envelope.data)) return undefined;
-  const text = envelope.data.text;
-  return typeof text === "string" ? text : undefined;
-}
-
-function agentActivityFromResult(value: unknown): AgentActivity | undefined {
-  if (!isRecord(value) || !isRecord(value.agent_activity)) return undefined;
-  const activity = value.agent_activity;
-  if (!Array.isArray(activity.tool_calls) || !Array.isArray(activity.tool_results)) return undefined;
-  return activity as unknown as AgentActivity;
 }
 
 export default function App() {
@@ -505,6 +493,14 @@ export default function App() {
                   content: `${last.content}${text}`,
                 };
               }
+              return next;
+            });
+          },
+          onFinalText: (text) => {
+            updateSessionMessages(sessionId, (prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "assistant") next[next.length - 1] = { ...last, content: text };
               return next;
             });
           },

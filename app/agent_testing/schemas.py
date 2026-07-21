@@ -110,6 +110,7 @@ class AgentTestFileSymbol(BaseModel):
 
     kind: Literal["function", "async_function", "class"]
     name: str
+    qualified_name: str
     line: int
 
 

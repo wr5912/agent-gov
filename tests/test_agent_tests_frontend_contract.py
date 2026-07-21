@@ -30,6 +30,9 @@ def test_workspace_tests_are_the_only_active_business_agent_test_asset() -> None
 def test_asset_center_projects_workspace_tests_runs_and_per_agent_schedule() -> None:
     registry = _read("frontend/src/components/AssetRegistry.tsx")
     test_assets = _read("frontend/src/components/AgentTestAssets.tsx")
+    source_viewer = _read("frontend/src/components/TestSourceViewer.tsx")
+    app = _read("frontend/src/App.tsx")
+    topbar = _read("frontend/src/components/Topbar.tsx")
     runtime_api = _read("frontend/src/api/runtime.ts") + _read("frontend/src/api/agentTesting.ts")
     scheduler = _read("app/agent_testing/schedule.py")
 
@@ -42,9 +45,13 @@ def test_asset_center_projects_workspace_tests_runs_and_per_agent_schedule() -> 
     assert 'data-testid="test-asset-agent-item"' in test_assets
     assert 'data-testid="test-asset-card-grid"' not in test_assets
     assert 'data-testid="test-file-browser"' in test_assets
-    assert 'data-testid="test-file-select"' in test_assets
-    assert 'data-testid="test-source-code"' in test_assets
-    assert 'height="clamp(520px, 68vh, 780px)"' in test_assets
+    assert 'data-testid="test-file-select"' in source_viewer
+    assert 'data-testid="test-source-code"' in source_viewer
+    assert 'data-testid="test-source-symbol-rail"' in source_viewer
+    assert 'data-testid="test-source-symbol-mark"' in source_viewer
+    assert "EditorView.scrollIntoView" in source_viewer
+    assert "qualified_name" in source_viewer
+    assert 'const SOURCE_EDITOR_HEIGHT = "clamp(520px, 68vh, 780px)"' in source_viewer
     assert "getAgentTestSuiteFile" in test_assets
     assert 'data-testid="test-run-history"' in test_assets
     assert 'data-testid="test-schedule-panel"' in test_assets
@@ -55,6 +62,13 @@ def test_asset_center_projects_workspace_tests_runs_and_per_agent_schedule() -> 
     assert "/test-schedule" in runtime_api
     assert 'source="scheduled"' in scheduler
     assert "change_set_id=None" in scheduler
+    assert "test-assets-toolbar" not in test_assets
+    assert "refreshCurrent" not in test_assets
+    assert "源码只读投影自各 Agent 当前 Workspace Git" not in test_assets
+    assert 'data-testid="topbar-refresh"' in topbar
+    assert "refreshRevision={assetRefreshRevision}" in app
+    assert "refreshRevision={refreshRevision}" in registry
+    assert ">刷新</button>" not in registry
 
 
 def test_asset_center_keeps_many_agents_in_a_scrollable_master_detail_layout() -> None:
@@ -71,6 +85,11 @@ def test_asset_center_keeps_many_agents_in_a_scrollable_master_detail_layout() -
     assert "element.scrollHeight > element.clientHeight" in e2e
     assert "sourceBox.width < detailBox.width * 0.9" in e2e
     assert "test_source_persists_after_history_filter" in e2e
+    assert ".test-source-symbol-rail" in styles
+    assert ".test-source-symbols" not in styles
+    assert "test_topbar_refresh_current_asset_tab" in e2e
+    assert "test_source_symbol_inactive_visibility" in e2e
+    assert "test_source_symbol_scroll_tracking" in e2e
 
 
 def test_release_workbench_runs_fixed_commit_bound_platform_tests() -> None:

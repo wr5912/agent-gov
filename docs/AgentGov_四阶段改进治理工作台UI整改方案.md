@@ -752,7 +752,8 @@ running --服务关闭或重启--> interrupted
 固定分为：
 
 1. **测试文件**：只允许读取当前 suite 中的 `tests/test_*.py`，以只读 Python 代码视图展示行号、搜索、
-   复制、折叠和顶层符号；正文仍只存在于 Workspace Git。
+   复制和折叠；右侧符号轨道投影顶层 class/function 与 `Test*` 类的直接 `test_*` 方法，可预览并定位
+   精确行号。正文仍只存在于 Workspace Git。
 2. **运行历史**：轻量摘要分页并支持状态/来源筛选；点击后再加载 stdout、stderr、pytest item、
    invocation 和结构化错误。
 3. **定时策略**：每 Agent 唯一，支持常用频率和自定义五字段 Cron、IANA 时区，最短间隔 15 分钟；
@@ -762,6 +763,8 @@ running --服务关闭或重启--> interrupted
 待发布 worktree，也不推进待发布变更或 release。错过多个窗口时只补一次，同 Agent/commit 已有活跃
 运行时合并并记录触发事件。测试与改进事项、待发布变更或 release 的 provenance 只有在持久化关联存在时
 才展示，不从文件名猜测来源。
+
+资产复利中心两个页签不再各自提供刷新按钮；Topbar“刷新”只刷新当前激活页签，隐藏页签不得产生请求。
 
 ### 13.11 已删除设计
 

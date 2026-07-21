@@ -169,6 +169,9 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
     assert "langfuse_trace_id" in agent_run["properties"]
     assert "langfuse_trace_url" in agent_run["properties"]
 
+    test_file_symbol = schema["components"]["schemas"]["AgentTestFileSymbol"]
+    assert set(test_file_symbol["required"]) == {"kind", "name", "qualified_name", "line"}
+
     agent_config_file = schema["paths"]["/api/agent-config-file"]
     assert {"get", "put"} <= set(agent_config_file)
     agent_config_update = schema["components"]["schemas"]["AgentConfigFileUpdateResponse"]

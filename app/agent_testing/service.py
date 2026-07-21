@@ -27,6 +27,32 @@ _MAX_TEST_SOURCE_BYTES = 512 * 1024
 logger = logging.getLogger(__name__)
 
 
+def _test_file_symbols(tree: ast.Module) -> list[JsonObject]:
+    symbols: list[JsonObject] = []
+    for node in tree.body:
+        if isinstance(node, ast.AsyncFunctionDef):
+            symbols.append({"kind": "async_function", "name": node.name, "qualified_name": node.name, "line": node.lineno})
+        elif isinstance(node, ast.FunctionDef):
+            symbols.append({"kind": "function", "name": node.name, "qualified_name": node.name, "line": node.lineno})
+        elif isinstance(node, ast.ClassDef):
+            symbols.append({"kind": "class", "name": node.name, "qualified_name": node.name, "line": node.lineno})
+            if not node.name.startswith("Test"):
+                continue
+            for member in node.body:
+                if not isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) or not member.name.startswith("test_"):
+                    continue
+                kind = "async_function" if isinstance(member, ast.AsyncFunctionDef) else "function"
+                symbols.append(
+                    {
+                        "kind": kind,
+                        "name": member.name,
+                        "qualified_name": f"{node.name}.{member.name}",
+                        "line": member.lineno,
+                    }
+                )
+    return symbols
+
+
 class AgentTestingError(FeedbackStoreError):
     def __init__(self, status_code: int, error_code: str, detail: str) -> None:
         super().__init__(detail)
@@ -192,21 +218,13 @@ class AgentTestingService:
             tree = ast.parse(source, filename=safe_path)
         except SyntaxError as exc:  # suite inspection normally catches this; retain a stable read-boundary error
             raise AgentTestingError(409, "AGENT_TEST_FILE_INVALID", f"Test file is not parseable at the selected commit: {exc}") from exc
-        symbols: list[JsonObject] = []
-        for node in tree.body:
-            if isinstance(node, ast.AsyncFunctionDef):
-                symbols.append({"kind": "async_function", "name": node.name, "line": node.lineno})
-            elif isinstance(node, ast.FunctionDef):
-                symbols.append({"kind": "function", "name": node.name, "line": node.lineno})
-            elif isinstance(node, ast.ClassDef):
-                symbols.append({"kind": "class", "name": node.name, "line": node.lineno})
         return {
             "agent_id": suite.agent_id,
             "commit_sha": suite.commit_sha,
             "path": safe_path,
             "content": source,
             "line_count": len(source.splitlines()),
-            "symbols": symbols,
+            "symbols": _test_file_symbols(tree),
         }
 
     def list_run_history(

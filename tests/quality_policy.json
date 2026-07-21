@@ -669,7 +669,7 @@
         },
         {
           "id": "workspace_pytest_assets_and_exact_commit_release_gate",
-          "description": "所有注册业务 Agent 的 tests/ 是版本化测试资产唯一真相；资产复利中心只读投影源码、运行历史与每 Agent 唯一定时策略，不复制测试代码。平台只执行固定 pytest 命令，不接受客户端 command/result。省略 commit 时创建请求只钉住一次当前版本；定时触发也只读取触发时当前有效 commit、不得绑定或推进待发布变更，错过多个窗口合并为一次且同 Agent/commit 活跃运行复用。待发布变更测试必须精确绑定待发布 commit、Agent、suite digest 与不可变运行记录；同一目标只允许一个活跃运行，运行支持超时、取消，服务重启把 running 标为 interrupted 并重新排队 queued。反馈优化确认回归测试设计后仅在同一待发布变更中新增扁平 tests/test_*.py、推进待发布 commit 且不覆盖既有测试。平台每次运行完整 tests/，已有失败和新增失败都必须修复；反馈闭环待发布版本只接受当前待发布 commit 的 passed 记录且不能强制绕过。未关联反馈的手工变更集强制发布仍必须给出原因并持久化警告和审计。导入包缺少 tests/ 只告警，包身份始终由 URL agent_id 指定。",
+          "description": "所有注册业务 Agent 的 tests/ 是版本化测试资产唯一真相；资产复利中心只读投影源码、运行历史与每 Agent 唯一定时策略，不复制测试代码。资产页刷新统一由 Topbar 驱动当前页签，源码符号轨道按后端 AST 纲要定位顶层符号和测试类方法。平台只执行固定 pytest 命令，不接受客户端 command/result。省略 commit 时创建请求只钉住一次当前版本；定时触发也只读取触发时当前有效 commit、不得绑定或推进待发布变更，错过多个窗口合并为一次且同 Agent/commit 活跃运行复用。待发布变更测试必须精确绑定待发布 commit、Agent、suite digest 与不可变运行记录；同一目标只允许一个活跃运行，运行支持超时、取消，服务重启把 running 标为 interrupted 并重新排队 queued。反馈优化确认回归测试设计后仅在同一待发布变更中新增扁平 tests/test_*.py、推进待发布 commit 且不覆盖既有测试。平台每次运行完整 tests/，已有失败和新增失败都必须修复；反馈闭环待发布版本只接受当前待发布 commit 的 passed 记录且不能强制绕过。未关联反馈的手工变更集强制发布仍必须给出原因并持久化警告和审计。导入包缺少 tests/ 只告警，包身份始终由 URL agent_id 指定。",
           "pytest": [
             "tests/test_agentgov_testkit.py::test_invoke_agent_uses_explicit_session_and_preserves_typed_response",
             "tests/test_agentgov_testkit.py::test_invoke_agent_rejects_missing_context_and_wraps_http_errors",
@@ -710,6 +710,7 @@
             "tests/test_agent_governance_publish.py::test_feedback_publication_cannot_force_bypass_complete_agent_test_suite",
             "tests/test_agent_tests_frontend_contract.py::test_workspace_tests_are_the_only_active_business_agent_test_asset",
             "tests/test_agent_tests_frontend_contract.py::test_asset_center_projects_workspace_tests_runs_and_per_agent_schedule",
+            "tests/test_agent_tests_frontend_contract.py::test_asset_center_keeps_many_agents_in_a_scrollable_master_detail_layout",
             "tests/test_agent_tests_frontend_contract.py::test_release_workbench_runs_fixed_commit_bound_platform_tests",
             "tests/test_agent_tests_frontend_contract.py::test_feedback_release_hides_force_publish_and_keeps_historical_audit",
             "tests/test_release_workbench_contract.py::test_release_workbench_uses_exact_commit_test_gate_and_separate_publish_actions",

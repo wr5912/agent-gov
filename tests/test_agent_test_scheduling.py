@@ -25,7 +25,18 @@ def _service(tmp_path: Path) -> tuple[AgentTestingService, AgentTestScheduleServ
     tests_dir.mkdir()
     tests_dir.joinpath("README.md").write_text("# tests\n", encoding="utf-8")
     tests_dir.joinpath("test_agent.py").write_text(
-        "class TestAgent:\n    def test_answer(self):\n        assert True\n\nasync def test_async_answer():\n    assert True\n",
+        "class TestAgent:\n"
+        "    def helper(self):\n"
+        "        return True\n\n"
+        "    def test_answer(self):\n"
+        "        assert self.helper()\n\n"
+        "    async def test_async_answer_method(self):\n"
+        "        assert True\n\n"
+        "class Helper:\n"
+        "    def test_not_collected(self):\n"
+        "        assert True\n\n"
+        "async def test_async_answer():\n"
+        "    assert True\n",
         encoding="utf-8",
     )
     git_store = GitAgentVersionStore(
@@ -265,12 +276,15 @@ def test_test_asset_file_and_paginated_history_are_read_only_projections(tmp_pat
     try:
         source = service.get_suite_file("agent-a", path="tests/test_agent.py")
         assert source["commit_sha"] == git_store.current_commit_sha()
-        assert source["line_count"] == 6
+        assert source["line_count"] == 16
         symbols = source["symbols"]
         assert isinstance(symbols, list)
-        assert [(item["kind"], item["name"]) for item in symbols if isinstance(item, dict)] == [
-            ("class", "TestAgent"),
-            ("async_function", "test_async_answer"),
+        assert [(item["kind"], item["name"], item["qualified_name"], item["line"]) for item in symbols if isinstance(item, dict)] == [
+            ("class", "TestAgent", "TestAgent", 1),
+            ("function", "test_answer", "TestAgent.test_answer", 5),
+            ("async_function", "test_async_answer_method", "TestAgent.test_async_answer_method", 8),
+            ("class", "Helper", "Helper", 11),
+            ("async_function", "test_async_answer", "test_async_answer", 15),
         ]
         with pytest.raises(AgentTestingError) as traversal:
             service.get_suite_file("agent-a", path="tests/../.env")

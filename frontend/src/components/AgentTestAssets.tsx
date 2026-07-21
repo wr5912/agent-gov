@@ -1,7 +1,4 @@
-import { python } from "@codemirror/lang-python";
-import { EditorView } from "@codemirror/view";
-import CodeMirror from "@uiw/react-codemirror";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createAgentTestRun,
   getAgentTestRun,
@@ -20,6 +17,7 @@ import type {
   RuntimeClientConfig,
 } from "../types/runtime";
 import { DrawerShell } from "./DrawerShell";
+import { TestSourceViewer } from "./TestSourceViewer";
 import "../agent-test-assets.css";
 
 type DetailTab = "files" | "history" | "schedule";
@@ -51,9 +49,11 @@ const EVENT_STATUS_LABEL: Record<string, string> = {
 export function AgentTestAssets({
   clientConfig,
   scopeAgentId,
+  refreshRevision,
 }: {
   clientConfig: RuntimeClientConfig;
   scopeAgentId: string;
+  refreshRevision: number;
 }) {
   const [assets, setAssets] = useState<AgentTestAssetSummary[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
@@ -72,6 +72,7 @@ export function AgentTestAssets({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const handledRefreshRevision = useRef(refreshRevision);
 
   const selected = useMemo(
     () => assets.find((asset) => asset.agent_id === selectedAgentId),
@@ -136,6 +137,12 @@ export function AgentTestAssets({
       setError(errorMessage(reason));
     }
   }, [clientConfig, selectedAgentId]);
+
+  useEffect(() => {
+    if (handledRefreshRevision.current === refreshRevision) return;
+    handledRefreshRevision.current = refreshRevision;
+    void Promise.all([refreshAssets(), loadHistory(), loadScheduleEvents()]);
+  }, [loadHistory, loadScheduleEvents, refreshAssets, refreshRevision]);
 
   const loadSource = useCallback(async (path: string) => {
     if (!sourceAgentId || !sourceCommitSha) return;
@@ -232,20 +239,8 @@ export function AgentTestAssets({
     }
   };
 
-  const refreshCurrent = () => {
-    void Promise.all([refreshAssets(), loadHistory(), loadScheduleEvents()]);
-  };
-
   return (
     <div className="test-assets" data-testid="agent-test-assets">
-      <div className="test-assets-toolbar">
-        <div>
-          <h3>业务 Agent 测试资产</h3>
-          <p>源码只读投影自各 Agent 当前 Workspace Git；运行证据和定时策略由平台持久化。</p>
-        </div>
-        <button className="iw-secondary-button" type="button" disabled={busy} onClick={refreshCurrent}>刷新</button>
-      </div>
-
       {error ? <div className="iw-error" data-testid="test-assets-error">{error}</div> : null}
       {notice ? <div className="test-assets-notice" data-testid="test-assets-notice">{notice}</div> : null}
 
@@ -326,48 +321,18 @@ export function AgentTestAssets({
 
           {tab === "files" ? (
             <div className="test-file-browser" data-testid="test-file-browser">
-              <div className="test-source-panel">
-                {sourceFile ? (
-                  <>
-                    <div className="test-source-head">
-                      <label className="test-file-picker">
-                        <span>测试文件</span>
-                        <select
-                          className="iw-select"
-                          data-testid="test-file-select"
-                          value={sourceFile.path}
-                          onChange={(event) => void loadSource(event.target.value)}
-                        >
-                          {(selected.suite.test_files ?? []).map((path) => <option key={path} value={path}>{path}</option>)}
-                        </select>
-                      </label>
-                      <div className="test-source-actions">
-                        <span>{sourceFile.line_count} 行</span>
-                        <button className="iw-secondary-button" type="button" onClick={copySource}>复制源码</button>
-                      </div>
-                    </div>
-                    {(sourceFile.symbols?.length ?? 0) > 0 ? (
-                      <div className="test-source-symbols">
-                        {(sourceFile.symbols ?? []).map((symbol) => <span key={`${symbol.kind}-${symbol.line}`}>{symbol.name} · L{symbol.line}</span>)}
-                      </div>
-                    ) : null}
-                    <div className="test-source-code" data-testid="test-source-code">
-                      <CodeMirror
-                        value={sourceFile.content}
-                        height="clamp(520px, 68vh, 780px)"
-                        basicSetup={{ lineNumbers: true, foldGutter: true, highlightSelectionMatches: true }}
-                        extensions={[python(), EditorView.lineWrapping]}
-                        editable={false}
-                        readOnly
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <div className="iw-empty">
-                    {(selected.suite.test_files?.length ?? 0) > 0 ? "正在加载只读源码…" : "当前 commit 没有 `tests/test_*.py`。"}
-                  </div>
-                )}
-              </div>
+              {sourceFile ? (
+                <TestSourceViewer
+                  sourceFile={sourceFile}
+                  testFiles={selected.suite.test_files ?? []}
+                  onCopySource={copySource}
+                  onSelectFile={(path) => void loadSource(path)}
+                />
+              ) : (
+                <div className="iw-empty">
+                  {(selected.suite.test_files?.length ?? 0) > 0 ? "正在加载只读源码…" : "当前 commit 没有 `tests/test_*.py`。"}
+                </div>
+              )}
             </div>
           ) : null}
 

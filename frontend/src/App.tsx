@@ -78,6 +78,7 @@ export default function App() {
   const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeWindow, setActiveWindow] = useState<"chat" | "improvement" | "asset">("chat");
+  const [assetRefreshRevision, setAssetRefreshRevision] = useState(0);
   const [playgroundDrawer, setPlaygroundDrawer] = useState<"runtime-settings" | null>(null);
   const [sessionSidebarOpen, setSessionSidebarOpen] = useState(false);
   const [evidencePanelOpen, setEvidencePanelOpen] = useState(false);
@@ -188,9 +189,7 @@ export default function App() {
     }
   }, [activeSessionId, effectiveClientConfig, setActiveSessionId]);
 
-  const refreshAll = useCallback(async () => {
-    await refresh();
-  }, [refresh]);
+  const refreshAll = useCallback(() => { setAssetRefreshRevision((value) => value + 1); return refresh(); }, [refresh]);
 
   const refreshVersions = useCallback(async () => {
     setVersionLoading(true);
@@ -687,6 +686,7 @@ export default function App() {
           clientConfig={effectiveClientConfig}
           scopeAgentId={selectedBusinessAgentId}
           businessAgents={businessAgents}
+          refreshRevision={assetRefreshRevision}
         />
       ) : activeWindow === "improvement" ? (
         <ImprovementWorkbench

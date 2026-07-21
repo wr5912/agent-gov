@@ -146,10 +146,12 @@ Agent 展示当前有效 commit 的 suite、文件数、诊断、最近运行和
 和“定时策略”。源码查看满足以下约束：
 
 - 只接受当前 suite 已声明的 `tests/test_*.py` 路径，拒绝绝对路径和目录穿越；
-- 通过 Workspace Git 在指定 commit 读取 UTF-8 正文，提供行号、Python 语法高亮、搜索、复制和顶层符号；
+- 通过 Workspace Git 在指定 commit 读取 UTF-8 正文，提供行号、Python 语法高亮、搜索和复制；后端 AST
+  投影顶层 class/function 与 `Test*` 类的直接 `test_*` 方法，前端右侧符号轨道负责预览并定位精确行号；
 - 不把源码复制到 `governance_assets`、运行记录或新的数据库测试集；
 - 历史列表只返回轻量摘要并分页，点击单次运行后再读取 stdout、stderr、pytest item、invocation 和错误详情；
 - 测试资产不提供跨 Agent“继承测试代码”动作；需要复用时仍通过 Workspace Git 评审和提交。
+- 资产中心页内不重复放置刷新入口；Topbar“刷新”按当前激活页签请求测试资产或治理资产，隐藏页签不请求。
 
 ### 5.2 每 Agent 定时策略
 

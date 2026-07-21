@@ -16,10 +16,12 @@ export function AssetRegistry({
   clientConfig,
   scopeAgentId,
   businessAgents,
+  refreshRevision,
 }: {
   clientConfig: RuntimeClientConfig;
   scopeAgentId: string;
   businessAgents: AgentSummary[];
+  refreshRevision: number;
 }) {
   const [assetCenterTab, setAssetCenterTab] = useState<"tests" | "governance">("tests");
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -67,7 +69,7 @@ export function AssetRegistry({
   useEffect(() => {
     if (assetCenterTab !== "governance") return;
     void refresh();
-  }, [assetCenterTab, refresh]);
+  }, [assetCenterTab, refresh, refreshRevision]);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -125,16 +127,13 @@ export function AssetRegistry({
         </div>
       </header>
       {assetCenterTab === "tests" ? (
-        <AgentTestAssets clientConfig={clientConfig} scopeAgentId={scopeAgentId} />
+        <AgentTestAssets clientConfig={clientConfig} scopeAgentId={scopeAgentId} refreshRevision={refreshRevision} />
       ) : (
       <div className="improvement-workbench" data-testid="governance-asset-registry" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
       <section className="iw-detail-panel">
         <div className="iw-panel-head">
           <h3>资产 Registry 复利中心{assetScopeAgentId ? ` · ${agentName(assetScopeAgentId)}` : "（全部业务 Agent）"}</h3>
-          <div className="iw-action-row">
-            <button className="iw-secondary-button" type="button" disabled={busy} onClick={() => void refresh()}>刷新</button>
-            <button className="iw-primary-button" type="button" data-testid="asset-create-open" onClick={() => setCreateOpen(true)}>沉淀新资产</button>
-          </div>
+          <button className="iw-primary-button" type="button" data-testid="asset-create-open" onClick={() => setCreateOpen(true)}>沉淀新资产</button>
         </div>
         <div className="iw-panel-body">
           {error ? <div className="iw-error" data-testid="asset-error">{error}</div> : null}

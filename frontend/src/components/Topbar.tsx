@@ -98,7 +98,7 @@ export function Topbar({
       </nav>
 
       <div className="topbar-actions">
-        <button className="ghost-button" onClick={onRefresh} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /> 刷新</button>
+        <button className="ghost-button" data-testid="topbar-refresh" onClick={onRefresh} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /> 刷新</button>
         <button className="ghost-button" data-testid="open-settings" onClick={onOpenSettings}><Settings size={15} /> 设置</button>
       </div>
     </header>

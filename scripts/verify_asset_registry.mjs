@@ -82,12 +82,28 @@ const testAssets = Array.from({ length: 24 }, (_, index) => {
     schedule: { schedule_id: null, agent_id: agentId, enabled: false, cron_expression: "0 2 * * *", timezone: "UTC", next_run_at: null, created_at: null, updated_at: null },
   };
 });
+const testSourceLines = [
+  "class TestAlert:",
+  "    def test_open(self):",
+  "        assert True",
+  "",
+  ...Array.from({ length: 90 }, (_, index) => `# source filler ${index + 1}`),
+  "",
+  "async def test_async_tail():",
+  "    assert True",
+];
+const testSourceTailLine = testSourceLines.indexOf("async def test_async_tail():") + 1;
+const testSourceSymbols = [
+  { kind: "class", name: "TestAlert", qualified_name: "TestAlert", line: 1 },
+  { kind: "function", name: "test_open", qualified_name: "TestAlert.test_open", line: 2 },
+  { kind: "async_function", name: "test_async_tail", qualified_name: "test_async_tail", line: testSourceTailLine },
+];
 function defaultPayload(path) {
   if (path === "/health") return { status: "ok", model: "governance-mock" };
   if (path === "/api/agent-registry") return agents;
   if (path === "/api/agent-test-assets") return testAssets;
   if (path === "/api/agent-test-runs/history") return { items: [], next_cursor: null };
-  if (path === "/api/agent-registry/soc-ops/test-suite/file") return { agent_id: "soc-ops", commit_sha: "a".repeat(40), path: "tests/test_alert.py", content: "def test_alert():\n    assert True\n", line_count: 2, symbols: [{ kind: "function", name: "test_alert", line: 1 }] };
+  if (path === "/api/agent-registry/soc-ops/test-suite/file") return { agent_id: "soc-ops", commit_sha: testAssets[0].suite.commit_sha, path: "tests/test_alert.py", content: testSourceLines.join("\n"), line_count: testSourceLines.length, symbols: testSourceSymbols };
   if (path === "/api/agent-registry/soc-ops/test-schedule/events") return [];
   if (path === "/api/sessions" || path === "/api/agents" || path === "/api/skills" || path === "/api/improvements" || path === "/api/agent-change-sets" || path === "/api/agent-releases" || path === "/api/agent-test-runs") return [];
   if (path === "/api/config") return { mappings: [] };
@@ -108,6 +124,7 @@ async function main() {
     page.on("pageerror", (e) => console.error("PAGE_ERR:", e.message));
     await page.addInitScript(([b, key]) => { window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: b, apiKey: key })); }, [apiBase, apiKey]);
     const stateRef = { assets: [], count: 0 };
+    const requestCounts = { testAssets: 0, history: 0, scheduleEvents: 0, governance: 0 };
     if (!REAL) {
       await page.route("**/*", async (route) => {
         const req = route.request();
@@ -117,7 +134,11 @@ async function main() {
         const method = req.method();
         const json = (r, body, status = 200) => r.fulfill({ status, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(body) });
         if (method === "OPTIONS") return route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" } });
+        if (path === "/api/agent-test-assets" && method === "GET") requestCounts.testAssets += 1;
+        if (path === "/api/agent-test-runs/history" && method === "GET") requestCounts.history += 1;
+        if (path === "/api/agent-registry/soc-ops/test-schedule/events" && method === "GET") requestCounts.scheduleEvents += 1;
         if (path === "/api/assets" && method === "GET") {
+          requestCounts.governance += 1;
           const a = url.searchParams.get("agent_id");
           return json(route, a ? stateRef.assets.filter((x) => x.agent_id === a) : stateRef.assets);
         }
@@ -163,10 +184,53 @@ async function main() {
         await page.getByTestId("test-asset-agent-item").first().click();
         await page.getByTestId("test-file-browser").waitFor({ timeout: 15000 });
         await page.getByTestId("test-file-select").waitFor({ timeout: 15000 });
+        if (await page.locator(".test-assets-toolbar").count()) throw new Error("测试资产页不应保留重复标题和局部刷新工具栏");
+        if ((await page.getByRole("button", { name: "刷新", exact: true }).count()) !== 1) throw new Error("测试资产页只应保留 Topbar 刷新入口");
         const sourceBox = await page.getByTestId("test-source-code").boundingBox();
         if (!sourceBox || sourceBox.width < detailBox.width * 0.9 || sourceBox.height < 500) {
           throw new Error(`源码区未充分占用右栏: source=${JSON.stringify(sourceBox)} detail=${JSON.stringify(detailBox)}`);
         }
+        await page.getByTestId("test-source-symbol-rail").waitFor({ timeout: 15000 });
+        const symbolMarks = page.getByTestId("test-source-symbol-mark");
+        if ((await symbolMarks.count()) !== testSourceSymbols.length) throw new Error("符号轨道未完整投影 pytest 源码纲要");
+        if (await page.locator(".test-source-symbols").count()) throw new Error("旧静态符号标签行不应继续存在");
+        const inactiveMark = page.locator('[data-testid="test-source-symbol-mark"]:not(.is-active)').first();
+        await inactiveMark.waitFor({ timeout: 5000 });
+        const inactiveMarkStyle = await inactiveMark.locator("span").evaluate((element) => {
+          const color = getComputedStyle(element).backgroundColor;
+          const channels = color.match(/[\d.]+/g)?.map(Number) ?? [];
+          return { color, red: channels[0] ?? 0, green: channels[1] ?? 0, blue: channels[2] ?? 0, alpha: channels[3] ?? 1 };
+        });
+        const inactiveChannels = [inactiveMarkStyle.red, inactiveMarkStyle.green, inactiveMarkStyle.blue];
+        if (inactiveMarkStyle.alpha < 0.7 || Math.min(...inactiveChannels) < 120 || Math.max(...inactiveChannels) - Math.min(...inactiveChannels) > 50) {
+          throw new Error(`非 active 符号刻度应保持可见浅灰色: ${JSON.stringify(inactiveMarkStyle)}`);
+        }
+        await symbolMarks.nth(1).hover();
+        const symbolPreview = page.getByTestId("test-source-symbol-preview");
+        await symbolPreview.waitFor({ timeout: 5000 });
+        if (!(await symbolPreview.textContent())?.includes("TestAlert.test_open")) throw new Error("符号预览未展示类方法全限定名");
+        const codeScroller = page.getByTestId("test-source-code").locator(".cm-scroller");
+        await symbolMarks.last().click();
+        await page.waitForFunction(() => (document.querySelector('[data-testid="test-source-code"] .cm-scroller')?.scrollTop || 0) > 100);
+        if (!(await symbolMarks.last().evaluate((element) => element.classList.contains("is-active")))) throw new Error("点击符号后目标标记未激活");
+        await symbolMarks.first().focus();
+        await symbolMarks.first().press("Enter");
+        await page.waitForFunction(() => (document.querySelector('[data-testid="test-source-code"] .cm-scroller')?.scrollTop || 0) < 100);
+        await codeScroller.evaluate((element) => element.scrollTo({ top: element.scrollHeight, behavior: "auto" }));
+        await page.waitForFunction(() => document.querySelectorAll('[data-testid="test-source-symbol-mark"]')[2]?.classList.contains("is-active"));
+
+        const beforeRefresh = { ...requestCounts };
+        const refreshedCurrentTab = Promise.all([
+          page.waitForResponse((response) => new URL(response.url()).pathname === "/api/agent-test-assets"),
+          page.waitForResponse((response) => new URL(response.url()).pathname === "/api/agent-test-runs/history"),
+          page.waitForResponse((response) => new URL(response.url()).pathname === "/api/agent-registry/soc-ops/test-schedule/events"),
+        ]);
+        await page.getByTestId("topbar-refresh").click();
+        await refreshedCurrentTab;
+        if (requestCounts.testAssets <= beforeRefresh.testAssets || requestCounts.history <= beforeRefresh.history || requestCounts.scheduleEvents <= beforeRefresh.scheduleEvents) {
+          throw new Error(`Topbar 未刷新测试资产当前页签: before=${JSON.stringify(beforeRefresh)} after=${JSON.stringify(requestCounts)}`);
+        }
+        if (requestCounts.governance !== beforeRefresh.governance) throw new Error("刷新测试资产时不应请求隐藏的治理资产页签");
         await page.getByTestId("test-assets-tab-history").click();
         await page.getByTestId("test-run-history").waitFor({ timeout: 15000 });
         await page.locator(".test-history-filters select").first().selectOption("passed");
@@ -174,9 +238,27 @@ async function main() {
         await page.getByTestId("test-source-code").waitFor({ timeout: 15000 });
         await page.getByTestId("test-assets-tab-schedule").click();
         await page.getByTestId("test-schedule-panel").waitFor({ timeout: 15000 });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.getByTestId("test-assets-tab-files").click();
+        await page.getByTestId("test-source-symbol-mark").nth(1).focus();
+        const mobilePreviewBox = await page.getByTestId("test-source-symbol-preview").boundingBox();
+        const mobileOverflows = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+        if (mobileOverflows || !mobilePreviewBox || mobilePreviewBox.x < 0 || mobilePreviewBox.x + mobilePreviewBox.width > 390) {
+          throw new Error(`移动端符号轨道或预览越界: preview=${JSON.stringify(mobilePreviewBox)} overflow=${mobileOverflows}`);
+        }
+        await page.setViewportSize({ width: 1440, height: 900 });
       }
       await page.getByTestId("asset-center-tab-governance").click();
       await page.getByTestId("governance-asset-registry").waitFor({ timeout: 15000 });
+      if (!REAL) {
+        const beforeGovernanceRefresh = { ...requestCounts };
+        const governanceRefresh = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/assets" && response.request().method() === "GET");
+        await page.getByTestId("topbar-refresh").click();
+        await governanceRefresh;
+        if (requestCounts.governance <= beforeGovernanceRefresh.governance) throw new Error("Topbar 未刷新治理资产当前页签");
+        if (requestCounts.testAssets !== beforeGovernanceRefresh.testAssets) throw new Error("刷新治理资产时不应请求隐藏的测试资产页签");
+        if ((await page.getByRole("button", { name: "刷新", exact: true }).count()) !== 1) throw new Error("治理资产页只应保留 Topbar 刷新入口");
+      }
       // Playground 的顶栏运行 Agent 必须是具体对象；资产页用自己的范围筛选查看跨 Agent 资产。
       await page.getByTestId("asset-scope-filter").selectOption("");
       await page.getByTestId("asset-browser-toolbar").waitFor({ timeout: 15000 });
@@ -213,7 +295,7 @@ async function main() {
       if ((await page.getByTestId("asset-provenance").count()) < afterInheritCount) throw new Error("expected provenance for every visible asset");
 
       // 负路径（仅 mock）：业务 Agent 列表为空时，「沉淀」按钮应禁用 + 给空态提示 + 不发 POST /api/assets（不静默吞）。
-      const scenarios = ["test_asset_projection", "test_asset_master_detail_layout", "test_asset_many_agent_scroll", "test_source_full_width", "test_source_view", "test_source_persists_after_history_filter", "test_run_history", "test_schedule_view", "asset_create", "asset_inherit", "asset_provenance"];
+      const scenarios = ["test_asset_projection", "test_asset_master_detail_layout", "test_asset_many_agent_scroll", "test_source_full_width", "test_source_view", "test_source_symbol_rail", "test_source_symbol_inactive_visibility", "test_source_symbol_keyboard_navigation", "test_source_symbol_scroll_tracking", "test_source_symbol_mobile_bounds", "test_topbar_refresh_current_asset_tab", "test_local_refresh_removed", "test_source_persists_after_history_filter", "test_run_history", "test_schedule_view", "asset_create", "asset_inherit", "asset_provenance"];
       if (!REAL) {
         const page2 = await browser.newPage({ viewport: { width: 1440, height: 900 } });
         await page2.addInitScript(([b, key]) => { window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: b, apiKey: key })); }, [apiBase, apiKey]);

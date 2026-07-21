@@ -2724,6 +2724,8 @@ export interface components {
             line: number;
             /** Name */
             name: string;
+            /** Qualified Name */
+            qualified_name: string;
         };
         /** AgentTestMessageRequest */
         AgentTestMessageRequest: {

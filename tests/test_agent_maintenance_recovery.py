@@ -97,7 +97,7 @@ def test_restore_reconciles_crash_after_git_before_operation_persistence(monkeyp
         assert operations[0].claim_token is None
 
 
-def test_restore_expected_head_cas_rejects_intervening_git_change(monkeypatch, tmp_path) -> None:
+def test_restore_expected_head_rejects_intervening_git_change(monkeypatch, tmp_path) -> None:
     governance, git_store = _governance(tmp_path)
     first = _publish(governance, git_store, "v1\n")
     second = _publish(governance, git_store, "v2\n")

@@ -69,7 +69,9 @@ workspace/
 1. `tests/test_*.py` 必须是可解析 Python 文件，首版不递归发现子目录。
 2. 每个测试文件、fixture 和辅助资产都随 Workspace Git 提交。
 3. 包导入缺少 `tests/` 或 `tests/README.md` 时成功但返回结构化 warning；没有测试文件时不能满足普通发布条件。
-4. 导入目标身份只取 URL 中的 `agent_id`。包文件名、压缩包名和 `agent.yaml` 中的 ID 都不是平台身份。
+4. 导入目标由 URL 中的 `agent_id` 指定，但包根目录 `agent.yaml.agent.id` 必须有效且与其逐字
+   一致；缺失、无效、格式错误或来源 ID 不一致均在目标 Workspace、注册表、Git 和会话状态
+   变更前拒绝，同时保留失败审计。
 5. `security-operations-expert` 初始化源和 governor Workspace 均提供自有 `tests/`；普通业务 Agent 只存在于运行卷和其导出包中。
 
 ## 4. agentgov_testkit
@@ -275,19 +277,20 @@ python -m pytest -q -p agentgov_testkit.pytest_plugin tests
   `scheduled_for` 触发来源字段；测试正文仍只存在于 Workspace Git；
 - `make runtime-migrate-workspace-tests-scan` 只读扫描运行卷，确认后使用
   `make runtime-migrate-workspace-tests` 将旧 `evals/` 归档到 Workspace 外，并为缺测试的内置安全运营
-  Agent 提交产品自带测试；已有普通业务 Agent 缺测试时仍只告警；迁移同时删除内置或运行态
-  `agent.yaml.agent.id`，身份始终由 Agent Registry 决定；能够精确识别的历史平台弱断言测试会按内容
+  Agent 提交产品自带测试；已有普通业务 Agent 缺测试时仍只告警；迁移保留现有
+  `agent.yaml.agent.id`，不代替所有者补写、删除或改写身份；能够精确识别的历史平台弱断言测试会按内容
   摘要归档到 Workspace 外的 `data/archived-legacy-test-assets/`，并从活跃 `tests/` 删除。迁移不把
   `agent.invoke(...)` 机械改名为 `agent.run(...)`，不猜测业务断言；开发者编写的测试保持原样，带旧标记
   但结构不明的文件失败关闭并要求人工处理；
-- 外部导入包若仍声明 `agent.yaml.agent.id`，平台保留包内容但返回
-  `AGENT_MANIFEST_ID_IGNORED` 警告，明确该字段不参与身份解析；
+- 外部导入包必须声明有效的 `agent.yaml.agent.id`，且与 URL 目标 ID 逐字一致；平台保留包内容但
+  不自动修正身份，缺失、无效或不一致时返回明确错误和修复建议；
 - 旧 API、service、store、前端 hook、生命周期控件和 E2E 路径从活跃代码删除；
 - 历史迁移文件和归档文档可保留旧名，用于升级与审计，不构成兼容层。
 
 ## 11. 验收
 
-- 新建或导入 Agent：URL ID 生效；缺少测试只告警；包含测试时 suite 可按 commit 检查。
+- 新建或导入 Agent：URL ID 与包内 `agent.yaml.agent.id` 必须逐字一致；缺少测试只告警；包含测试时
+  suite 可按 commit 检查。
 - testkit：显式/环境变量调用、commit 一次固定、每用例会话隔离、错误透传和 pytest 报告均有单测。
 - 平台运行：固定命令、精确 commit、取消、输出限制、失败详情和服务重启恢复有专项测试。
 - 反馈闭环：生成只形成代码 Diff；确认只新增扁平测试文件并形成配置与测试同一 commit；运行由独立动作排队。

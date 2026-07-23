@@ -152,7 +152,10 @@ def test_new_agent_import_compensates_git_and_registry_when_finalize_fails(monke
         "finalize_business_agent",
         lambda _reservation: (_ for _ in ()).throw(RuntimeError("injected finalize failure")),
     )
-    package = _workspace_package({"CLAUDE.md": b"# imported\n", ".mcp.json": b'{"mcpServers": {}}\n'})
+    package = _workspace_package(
+        {"CLAUDE.md": b"# imported\n", ".mcp.json": b'{"mcpServers": {}}\n'},
+        agent_id="finalize-failure",
+    )
     with TestClient(module.app, raise_server_exceptions=False) as client:
         response = client.post(
             "/api/agent-registry/finalize-failure/workspace/import",
@@ -202,12 +205,24 @@ def test_workspace_import_rejects_invalid_configs_and_size_limits_before_mutatio
             at_member_limit = client.post(
                 "/api/agent-registry/at-member-limit/workspace/import",
                 data={"name": "at limit"},
-                files={"package": ("at-limit.tar.gz", _workspace_package({"a": b"1", "b": b"2"}), "application/gzip")},
+                files={
+                    "package": (
+                        "at-limit.tar.gz",
+                        _workspace_package({"a": b"1"}, agent_id="at-member-limit"),
+                        "application/gzip",
+                    )
+                },
             )
             over_member_limit = client.post(
                 "/api/agent-registry/over-member-limit/workspace/import",
                 data={"name": "over limit"},
-                files={"package": ("over-limit.tar.gz", _workspace_package({"a": b"1", "b": b"2", "c": b"3"}), "application/gzip")},
+                files={
+                    "package": (
+                        "over-limit.tar.gz",
+                        _workspace_package({"a": b"1", "b": b"2"}, agent_id="over-member-limit"),
+                        "application/gzip",
+                    )
+                },
             )
         with monkeypatch.context() as scoped:
             scoped.setattr(workspace_codec, "MAX_TAR_METADATA_BYTES", 1024)
@@ -403,7 +418,7 @@ def test_workspace_export_unstages_original_dirty_state_when_snapshot_commit_fai
 
 def test_workspace_import_rechecks_lease_immediately_before_activation(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    package = _workspace_package({"CLAUDE.md": b"# replacement\n"})
+    package = _workspace_package({"CLAUDE.md": b"# replacement\n"}, agent_id="lease-target")
     calls = 0
     original_assert = agent_version_maintenance.AgentVersionMaintenanceLease.assert_active
 
@@ -435,7 +450,10 @@ def test_workspace_import_rechecks_lease_immediately_before_activation(monkeypat
 
 def test_workspace_import_reports_success_after_merge_even_if_lease_release_is_lost(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    package = _workspace_package({"CLAUDE.md": b"# applied despite late release loss\n"})
+    package = _workspace_package(
+        {"CLAUDE.md": b"# applied despite late release loss\n"},
+        agent_id="late-loss",
+    )
     with TestClient(module.app) as client:
         created = _import_new_agent(client, agent_id="late-loss", name="late loss")
         workspace = Path(created.json()["agent"]["workspace_dir"])
@@ -454,7 +472,7 @@ def test_workspace_import_reports_success_after_merge_even_if_lease_release_is_l
 
 def test_workspace_import_does_not_activate_when_sdk_session_invalidation_fails(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    package = _workspace_package({"CLAUDE.md": b"# must not activate\n"})
+    package = _workspace_package({"CLAUDE.md": b"# must not activate\n"}, agent_id="invalidate-failure")
     with TestClient(module.app) as client:
         created = _import_new_agent(client, agent_id="invalidate-failure", name="invalidate failure")
         workspace = Path(created.json()["agent"]["workspace_dir"])
@@ -480,7 +498,10 @@ def test_workspace_import_does_not_activate_when_sdk_session_invalidation_fails(
 
 def test_workspace_import_rejects_file_created_during_session_invalidation(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    package = _workspace_package({"CLAUDE.md": b"# must not activate across a dirty race\n"})
+    package = _workspace_package(
+        {"CLAUDE.md": b"# must not activate across a dirty race\n"},
+        agent_id="dirty-race",
+    )
     original_invalidation = module.session_store.clear_inactive_sdk_sessions_for_agent_in_transaction
     with TestClient(module.app) as client:
         created = _import_new_agent(client, agent_id="dirty-race", name="dirty race")
@@ -521,7 +542,8 @@ def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(monke
             ".gitignore": b"*.secret\n",
             "CLAUDE.md": b"# candidate must not overwrite the concurrent file\n",
             "collision.secret": b"candidate bytes\n",
-        }
+        },
+        agent_id="merge-race",
     )
     original_git = workspace_git_operations.run_git
     injected = False
@@ -574,7 +596,8 @@ def test_workspace_import_compensates_git_and_session_mapping_when_activation_co
         {
             ".gitignore": b"*.secret\n",
             "CLAUDE.md": b"# candidate whose DB commit will fail\n",
-        }
+        },
+        agent_id="commit-race",
     )
     commit_failed = False
     with TestClient(module.app, raise_server_exceptions=False) as client:

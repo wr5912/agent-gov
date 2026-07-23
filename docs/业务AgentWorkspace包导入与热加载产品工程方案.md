@@ -13,7 +13,7 @@
 | 只保留一个内置业务 Agent | 仓库只需提供一个可运行、可导出、可修改的起点 | `templates/business-agent/general` 和多个普通业务 Agent 出生副本 | 初始化源中的业务 Agent 集合严格等于声明的内置集合 |
 | 内置、默认、受保护分开表达 | 三者分别回答“是否随版本提供”“兼容入口默认选谁”“是否可在线删除” | `origin=seed/user` 及由来源推导全部行为 | API 分别返回 `builtin`、`default`、`protected` |
 | 初始化源不参与持续同步 | 运行态 Workspace 及其 per-Agent Git 才是当前行为事实 | 运行态 `data/seed-catalog`、删除标记、逐文件回灌 | 已存在 Workspace 整体跳过；重启不复活已删普通 Agent |
-| Workspace 普通文件按字节交换 | 平台改写会让上传包、tree digest 和 Git commit 不一致 | 身份文本渲染、endpoint renderer、权限覆盖 | 导出后跨 ID 导入，普通文件字节与 executable bit 一致 |
+| Workspace 文件由包所有者明确维护，平台不改写 | 平台改写会让上传包、tree digest 和 Git commit 不一致；静默忽略来源 ID 又会把错误身份激活到目标 Agent | 身份文本渲染、endpoint renderer、权限覆盖、ID 忽略告警 | 包内 `agent.yaml.agent.id` 与目标 ID 完全一致时，普通文件字节与 executable bit 保持不变 |
 | 导入同步完成，下一 turn 生效 | 单个 Workspace 有明确资源上限；无需持久化第二套 operation 状态机 | 异步导入 job、导入历史表、多阶段激活状态 | 一次请求完整成功或完整失败；成功回执绑定 Git commit |
 
 当前唯一内置、默认且受保护的业务 Agent 是 `security-operations-expert`。这些是三个独立属性，
@@ -49,6 +49,7 @@ ${HOST_RUNTIME_VOLUME_ROOT}/
 
 ```text
 workspace/
+  agent.yaml
   CLAUDE.md
   .mcp.json
   .claude/
@@ -64,7 +65,8 @@ workspace/
 
 - 允许文本、二进制、executable bit、`.env`、真实 endpoint、本机路径和 MCP header；
 - 不改写 `agent.yaml`、`CLAUDE.md`、settings、MCP、hook、skill 或 subagent；
-- 包内 ID、profile、name、status 或说明文字不成为平台身份事实；
+- `agent.yaml.agent.id` 是导入身份确认字段，必须有效且与 URL 中的目标 `agent_id` 逐字一致；
+- 包内 profile、name、status 或说明文字不成为平台注册表身份事实；
 - 空目录不进入 Git，不承诺导出后保留；
 - conversation、SDK session、run、feedback、平台测试运行、Langfuse、数据库和 `claude-root` 不进入包。
 
@@ -73,9 +75,28 @@ workspace/
 `tests/test_*.py` 的版本不能通过发布测试门禁。测试文件的详细契约见
 [业务 Agent Workspace 原生 pytest 测试资产实现方案](./engineering/业务AgentWorkspace原生pytest测试资产实现方案.md)。
 
-平台身份只来自目标路由 `agent_id` 和注册表。导出 `security-operations-expert` 后，可将该包作为
-新 Agent 的修改起点；这不是“模板实例化”，也不会替换包内身份文本。调用方应在新 ID 上完成修改、
-测试和回归，再决定是否覆盖目标 Agent。
+平台最终身份由目标路由 `agent_id` 和注册表持有，但导入前必须用 `agent.yaml.agent.id` 明确证明
+包所有者选择的来源身份与目标一致。导出 `security-operations-expert` 后，可将该包作为新 Agent 的
+人工修改起点；调用方必须先把包内 `agent.id` 明确改为新目标 ID，再重新打包和导入。这不是“模板
+实例化”，平台也不会代替调用方改写身份。
+
+### 3.1 导入身份裁决
+
+本期要解决的问题是：旧实现允许包内来源 ID 与请求目标 ID 不一致，并把冲突降级为 warning，导致
+操作者可能在未察觉时把一个 Agent 的行为资产激活到另一个 Agent。
+
+本期统一执行以下规则：
+
+- 新建和覆盖导入都必须在包根目录提供 UTF-8、安全且结构明确的 `agent.yaml`；
+- `agent.yaml` 顶层必须是对象，且只允许一个对象类型的 `agent` 和一个字符串类型的 `agent.id`；
+- `agent.id` 必须符合 Agent ID 字符规则，不允许首尾空白，并与 URL 中的目标 `agent_id` 大小写、
+  字符和长度完全一致；
+- 缺失、格式错误、ID 无效或 ID 不一致，都必须在 Workspace、注册表、Git 和会话状态发生变化前拒绝；
+- 平台不 trim、不纠正、不推断也不改写包内 ID。
+
+本期不采用“继续导入并告警”，因为告警不能阻止错误资产激活；也不采用“平台自动改写 ID”，因为这会
+掩盖包的真实来源并破坏按字节交换契约。后续若要支持显式克隆，应设计独立动作、来源审计和目标路径
+检查，不能重新放宽当前导入接口。
 
 ## 4. 公开 API
 
@@ -111,8 +132,31 @@ Content-Type: multipart/form-data
 | --- | --- |
 | `package` | 必填 `.tar.gz` |
 | `name` | 目标 Agent 不存在时必填；存在时不得借此改名 |
-| `expected_current_commit_sha` | 覆盖已有 Agent 时必填；执行 CAS |
+| `expected_current_commit_sha` | 覆盖已有 Agent 时必填；用于确认目标仍处于操作者看到的当前提交版本 |
 | `reason` | 可选提交说明，不进入 Workspace |
+
+身份和并发错误必须返回稳定 `error_code`、明确 `detail`、失败字段、导入动作、预期目标和可执行的
+`remediation`。其中：
+
+- 缺少 `agent.yaml` / `agent.id`、YAML 无效或 ID 字符无效返回 `422`；
+- 包内来源 ID 与 URL 目标 ID 不一致返回 `409`，并同时返回 `actual_agent_id` 和
+  `expected_agent_id`；
+- 已有目标未携带 `expected_current_commit_sha` 返回 `422`；携带的版本已经过期返回 `409`；
+- 错误详情不得回显无效 ID 中可能携带的路径或其他恶意原文。
+
+来源 ID 不一致的错误示例：
+
+```json
+{
+  "error_code": "WORKSPACE_MANIFEST_AGENT_ID_MISMATCH",
+  "detail": "导入被拒绝：包内来源 Agent ID “source-agent”与请求目标 Agent ID “target-agent”不一致；系统不会改写包内身份。请确认导入目标，并将 agent.yaml.agent.id 改为与 URL 中的 agent_id 完全一致后重新打包。",
+  "field": "agent.yaml.agent.id",
+  "import_action": "overwrite",
+  "expected_agent_id": "target-agent",
+  "actual_agent_id": "source-agent",
+  "remediation": "确认导入目标，使 agent.yaml.agent.id 与 URL 中的 agent_id 完全一致后重新打包。"
+}
+```
 
 成功响应中的 `action` 只有 `created`、`overwritten`、`unchanged`。新建响应示例：
 
@@ -188,7 +232,7 @@ API 启动协调器读取 `docker/runtime-bootstrap/`：
 2. 拒绝活跃 turn、未终结 change set 和 SDK session 失效冲突；
 3. dirty Workspace 先形成包含普通文件的快照；
 4. 在临时 worktree 形成候选 commit；
-5. 校验 `expected_current_commit_sha` 后 CAS 激活；
+5. 确认 `expected_current_commit_sha` 仍等于目标当前提交版本后激活；
 6. 同一数据库事务清除 inactive SDK resume 映射；
 7. 失败时补偿 Git、session mapping、注册表与自有文件。
 
@@ -234,8 +278,11 @@ API；已有 API session ID 保留，新 turn 建立新的 SDK session 并读取
 - OpenAPI、前端类型和 UI 中不存在旧直接创建、模板 catalog、`origin`、`template_id`、
   `source_seed_id`、`seed_removed`。
 - 空运行卷只得到 governor 和 `security-operations-expert`；已有运行卷中的普通 Agent 保持原样。
-- 导出内置 Agent 后以新 ID 导入，普通文件字节和 executable bit 一致，registry ID 为目标 ID。
-- 导入身份只取 URL `agent_id`，不从包名或 `agent.yaml` 推断；缺少测试目录只告警。
+- 导出内置 Agent 后，先由包所有者把 `agent.yaml.agent.id` 设置为新目标 ID，再导入；平台不改写
+  普通文件，字节和 executable bit 一致，registry ID 为目标 ID。
+- 新建和覆盖导入都要求 `agent.yaml.agent.id` 有效且与 URL `agent_id` 逐字一致；缺失、无效、
+  格式错误或不一致均在目标 Workspace、注册表、Git 和会话状态变更前拒绝，同时保留失败审计；
+  缺少测试目录仍只告警。
 - 所有业务 Agent Workspace 可携带 `tests/`，平台可按精确 commit 检查 suite 并运行固定 pytest 命令。
 - 新建、覆盖、unchanged、恢复都绑定实际 Git commit；下一 turn 使用应用后的 commit。
 - 设置页只渲染一份业务 Agent 行，Workspace 测试状态和生命周期属于同一行；创建与覆盖导入模式

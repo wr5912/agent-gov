@@ -736,8 +736,9 @@ running --服务关闭或重启--> interrupted
 
 ### 13.9 导入、导出与远程开发
 
-- 导入身份只取 URL 路径中的 `agent_id`；压缩包名和 `agent.yaml` 中的 ID 不参与解析；
-- 导入此前不存在的 ID 会创建新业务 Agent；已有 ID 按当前 commit 做覆盖 CAS；
+- 新建和覆盖导入都要求包根目录 `agent.yaml.agent.id` 有效，并与 URL 路径中的目标 `agent_id`
+  逐字一致；缺失、无效、格式错误或来源 ID 冲突时明确拒绝，平台不改写身份；
+- 导入此前不存在的 ID 会创建新业务 Agent；已有 ID 必须携带预期当前提交版本才能覆盖；
 - 缺少 `tests/`、README 或测试文件时允许导入并返回结构化 warning；
 - 开发者可在本地运行 pytest，通过 testkit 连接已导入 Agent；
 - 平台远程接口负责调用精确版本的被测 Agent，不上传或反向执行开发者本地任意测试代码。

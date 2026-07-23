@@ -437,7 +437,7 @@
         "test_selectors": [
           "tests/test_agent_profiles_category.py",
           "tests/test_agent_provisioning_saga.py",
-          "tests/test_agent_workspace_packages.py::test_builtin_workspace_package_can_create_a_new_agent_without_identity_rewrite",
+          "tests/test_agent_workspace_manifest_identity.py::test_create_accepts_exact_manifest_identity_without_rewriting_package",
           "tests/test_bootstrap_business_agent_protection.py",
           "tests/test_managed_agent_policy.py",
           "tests/test_runtime_coordination.py",
@@ -669,7 +669,7 @@
         },
         {
           "id": "workspace_pytest_assets_and_exact_commit_release_gate",
-          "description": "所有注册业务 Agent 的 tests/ 是版本化测试资产唯一真相；资产复利中心只读投影源码、运行历史与每 Agent 唯一定时策略，不复制测试代码。资产页刷新统一由 Topbar 驱动当前页签，源码符号轨道按后端 AST 纲要定位顶层符号和测试类方法。平台只执行固定 pytest 命令，不接受客户端 command/result。省略 commit 时创建请求只钉住一次当前版本；定时触发也只读取触发时当前有效 commit、不得绑定或推进待发布变更，错过多个窗口合并为一次且同 Agent/commit 活跃运行复用。待发布变更测试必须精确绑定待发布 commit、Agent、suite digest 与不可变运行记录；同一目标只允许一个活跃运行，运行支持超时、取消，服务重启把 running 标为 interrupted 并重新排队 queued。反馈优化确认回归测试设计后仅在同一待发布变更中新增扁平 tests/test_*.py、推进待发布 commit 且不覆盖既有测试。平台每次运行完整 tests/，已有失败和新增失败都必须修复；反馈闭环待发布版本只接受当前待发布 commit 的 passed 记录且不能强制绕过。未关联反馈的手工变更集强制发布仍必须给出原因并持久化警告和审计。导入包缺少 tests/ 只告警，包身份始终由 URL agent_id 指定。",
+          "description": "所有注册业务 Agent 的 tests/ 是版本化测试资产唯一真相；资产复利中心只读投影源码、运行历史与每 Agent 唯一定时策略，不复制测试代码。资产页刷新统一由 Topbar 驱动当前页签，源码符号轨道按后端 AST 纲要定位顶层符号和测试类方法。平台只执行固定 pytest 命令，不接受客户端 command/result。省略 commit 时创建请求只钉住一次当前版本；定时触发也只读取触发时当前有效 commit、不得绑定或推进待发布变更，错过多个窗口合并为一次且同 Agent/commit 活跃运行复用。待发布变更测试必须精确绑定待发布 commit、Agent、suite digest 与不可变运行记录；同一目标只允许一个活跃运行，运行支持超时、取消，服务重启把 running 标为 interrupted 并重新排队 queued。反馈优化确认回归测试设计后仅在同一待发布变更中新增扁平 tests/test_*.py、推进待发布 commit 且不覆盖既有测试。平台每次运行完整 tests/，已有失败和新增失败都必须修复；反馈闭环待发布版本只接受当前待发布 commit 的 passed 记录且不能强制绕过。未关联反馈的手工变更集强制发布仍必须给出原因并持久化警告和审计。导入包缺少 tests/ 只告警；根目录 agent.yaml.agent.id 必须有效，并与 URL agent_id 逐字一致。",
           "pytest": [
             "tests/test_agentgov_testkit.py::test_invoke_agent_uses_explicit_session_and_preserves_typed_response",
             "tests/test_agentgov_testkit.py::test_invoke_agent_rejects_missing_context_and_wraps_http_errors",
@@ -788,7 +788,7 @@
         },
         {
           "id": "agent_version_maintenance_is_durable_and_recoverable",
-          "description": "同一 Agent 的 runtime turn 与发布、回滚、恢复、配置更新和 worktree 清理通过 SQLite lease/token/generation 原子互斥；跨 Agent 不互阻，Git expected HEAD CAS 拒绝旧 owner，崩溃后依据 durable operation/task 幂等补写。",
+          "description": "同一 Agent 的 runtime turn 与发布、回滚、恢复、配置更新和 worktree 清理通过 SQLite lease/token/generation 原子互斥；跨 Agent 不互阻，Git 预期当前提交版本校验拒绝旧 owner，崩溃后依据 durable operation/task 幂等补写。",
           "pytest": [
             "tests/test_agent_version_maintenance.py::test_durable_maintenance_blocks_runtime_for_only_its_agent",
             "tests/test_agent_version_maintenance.py::test_active_runtime_turn_blocks_maintenance_but_not_another_agent",
@@ -800,7 +800,7 @@
             "tests/test_agent_maintenance_recovery.py::test_reconciler_completes_expired_git_applied_without_repeating_reset",
             "tests/test_agent_maintenance_recovery.py::test_reconciler_completes_expired_restore_after_git_without_repeating_reset",
             "tests/test_agent_maintenance_recovery.py::test_release_reconciler_isolates_unexpected_operation_failure",
-            "tests/test_agent_maintenance_recovery.py::test_restore_expected_head_cas_rejects_intervening_git_change",
+            "tests/test_agent_maintenance_recovery.py::test_restore_expected_head_rejects_intervening_git_change",
             "tests/test_agent_maintenance_recovery.py::test_worktree_cleanup_reconciles_crash_after_idempotent_git_delete",
             "tests/test_agent_maintenance_recovery.py::test_rollback_rejects_non_current_release_without_resetting_newer_head",
             "tests/test_agent_maintenance_recovery.py::test_completed_rollback_cache_cannot_report_success_after_restore",
@@ -874,9 +874,9 @@
       "scenarios": [
         {
           "id": "security_operations_flagship_native_hitl",
-          "description": "security-operations-expert 是可按字节导出、跨 ID 导入迭代的内置网络安全业务 Agent；其 Workspace 可作为新 Agent 起点，精确 create/manual 由 Claude 原生权限逐次确认。",
+          "description": "security-operations-expert 是可按字节导出的内置网络安全业务 Agent；其 Workspace 可作为新 Agent 的人工修改起点，但重新打包前必须把 agent.yaml.agent.id 明确设置为新目标 ID；精确 create/manual 由 Claude 原生权限逐次确认。",
           "pytest": [
-            "tests/test_agent_workspace_packages.py::test_builtin_workspace_package_can_create_a_new_agent_without_identity_rewrite",
+            "tests/test_agent_workspace_manifest_identity.py::test_create_accepts_exact_manifest_identity_without_rewriting_package",
             "tests/test_managed_agent_policy.py::test_security_operations_workspace_uses_generic_structural_managed_policy",
             "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_not_rewritten_or_recommitted",
             "tests/test_runtime_coordination.py::test_dirty_workspace_does_not_block_receipt_refresh_or_get_committed",
@@ -906,7 +906,7 @@
           "id": "runtime_bootstrap_and_workspace_package_creation",
           "description": "运行卷初始化源只提供唯一内置业务 Agent；普通 Agent 通过完整 Workspace 包创建，初始化与导入均保留文件字节和权限配置。",
           "pytest": [
-            "tests/test_agent_workspace_packages.py::test_builtin_workspace_package_can_create_a_new_agent_without_identity_rewrite",
+            "tests/test_agent_workspace_manifest_identity.py::test_create_accepts_exact_manifest_identity_without_rewriting_package",
             "tests/test_runtime_bootstrap_tools.py::test_bootstrap_initializes_only_governor_and_declared_builtin_agent",
             "tests/test_runtime_bootstrap_tools.py::test_runtime_bootstrap_safety_scan_is_read_only",
             "tests/test_bootstrap_business_agent_protection.py::test_bootstrap_preserves_existing_workspace_and_initializes_missing_builtin",
@@ -916,14 +916,19 @@
         },
         {
           "id": "business_agent_workspace_package_round_trip",
-          "description": "live 业务 Agent workspace 可按当前 Git tree 原样导出、导入、CAS 覆盖并以新 commit 恢复；二进制、真实 endpoint 与 workspace 自有 .env 不被改写，危险 tar member 和并发维护被明确拒绝。",
+          "description": "live 业务 Agent workspace 可按当前 Git tree 原样导出、在包内 ID 与目标 ID 完全一致时导入、携带预期当前提交版本覆盖，并以新 commit 恢复；二进制、真实 endpoint 与 workspace 自有 .env 不被改写，身份缺失、无效、冲突、危险 tar member 和并发维护被明确拒绝。",
           "pytest": [
             "tests/test_agent_workspace_packages.py::test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env",
             "tests/test_agent_workspace_packages.py::test_workspace_export_restores_exec_tracking_when_existing_git_disabled_filemode",
             "tests/test_agent_workspace_packages.py::test_workspace_commit_reader_scales_to_ten_thousand_paths_with_one_batch_process",
             "tests/test_agent_workspace_packages.py::test_workspace_batch_reader_spools_stderr_without_exposing_repository_path",
             "tests/test_agent_workspace_packages.py::test_workspace_commit_reader_rejects_empty_raw_tree_path_before_blob_read",
-            "tests/test_agent_workspace_packages.py::test_workspace_overwrite_requires_cas_and_restore_creates_new_commit",
+            "tests/test_agent_workspace_packages.py::test_workspace_overwrite_requires_expected_commit_and_restore_creates_new_commit",
+            "tests/test_agent_workspace_manifest_identity.py::test_create_rejects_missing_or_invalid_manifest_identity_before_mutation",
+            "tests/test_agent_workspace_manifest_identity.py::test_create_rejects_source_identity_mismatch_with_actionable_error_and_audit",
+            "tests/test_agent_workspace_manifest_identity.py::test_create_rejects_case_only_manifest_identity_mismatch",
+            "tests/test_agent_workspace_manifest_identity.py::test_create_rejects_url_agent_id_with_surrounding_whitespace_before_package_processing",
+            "tests/test_agent_workspace_manifest_identity.py::test_overwrite_rejects_manifest_mismatch_before_workspace_or_session_changes",
             "tests/test_agent_workspace_packages.py::test_workspace_import_invalidates_sdk_resume_and_next_turn_reads_applied_commit",
             "tests/test_agent_workspace_packages.py::test_workspace_import_rejects_active_first_turn_without_changing_head",
             "tests/test_agent_workspace_packages.py::test_workspace_restore_rejects_historical_non_regular_tree_without_changing_head",

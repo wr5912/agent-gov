@@ -14,6 +14,7 @@ def test_settings_workspace_flow_uses_package_only_creation_and_exposes_receipts
     action_menu = _read("frontend/src/components/AgentActionMenu.tsx")
     drawer = _read("frontend/src/components/AgentWorkspaceImportDrawer.tsx")
     request = _read("frontend/src/api/request.ts")
+    browser_verification = _read("scripts/verify_agent_workspace_settings.mjs")
 
     assert "<BusinessAgentManagementPanel" in settings
     assert "AgentCreateForm" not in settings
@@ -52,5 +53,9 @@ def test_settings_workspace_flow_uses_package_only_creation_and_exposes_receipts
     assert 'data-testid="settings-agent-import"' not in management + table + action_menu + drawer + settings
     assert 'data-testid="settings-error"' in settings
     assert "`[${errorCode}] ${detail}`" in request
+    assert "WORKSPACE_MANIFEST_AGENT_ID_MISMATCH" in browser_verification
+    assert "source-agent" in browser_verification
+    assert "workspace-agent" in browser_verification
+    assert "完全一致后重新打包" in browser_verification
     assert len(settings.splitlines()) < 800
     assert len(management.splitlines()) < 800

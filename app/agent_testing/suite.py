@@ -4,8 +4,6 @@ import ast
 import hashlib
 from pathlib import Path
 
-import yaml
-
 from .legacy_generated_tests import classify_legacy_generated_test
 from .schemas import AgentTestDiagnostic, AgentTestSuiteSummary
 
@@ -17,7 +15,6 @@ def inspect_agent_test_suite(
     commit_sha: str,
 ) -> AgentTestSuiteSummary:
     diagnostics: list[AgentTestDiagnostic] = []
-    _inspect_declared_agent_id(workspace, diagnostics)
     tests_dir = workspace / "tests"
     if not tests_dir.is_dir() or tests_dir.is_symlink():
         diagnostics.append(
@@ -111,26 +108,6 @@ def _validate_python(path: Path, relative: Path, diagnostics: list[AgentTestDiag
                     "检测到旧平台生成测试标记；该文件可能只验证非空响应或静态检查点，不能作为发布证据。"
                     "请运行 Workspace 测试资产迁移；结构不明时必须人工审查并移除旧标记。"
                 ),
-            )
-        )
-
-
-def _inspect_declared_agent_id(workspace: Path, diagnostics: list[AgentTestDiagnostic]) -> None:
-    manifest = workspace / "agent.yaml"
-    if not manifest.is_file():
-        return
-    try:
-        payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError):
-        return
-    agent = payload.get("agent") if isinstance(payload, dict) else None
-    if isinstance(agent, dict) and agent.get("id"):
-        diagnostics.append(
-            AgentTestDiagnostic(
-                level="warning",
-                code="AGENT_MANIFEST_ID_IGNORED",
-                path="agent.yaml",
-                message="agent.yaml 中的 agent.id 不参与身份解析；权威 agent_id 来自导入 API 路径。",
             )
         )
 

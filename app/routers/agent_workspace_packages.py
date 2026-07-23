@@ -35,7 +35,10 @@ _IMPORT_MULTIPART_SCHEMA = {
                         "package": {
                             "type": "string",
                             "format": "binary",
-                            "description": "A .tar.gz archive with exactly one workspace/ root.",
+                            "description": (
+                                "A .tar.gz archive with exactly one workspace/ root. "
+                                "workspace/agent.yaml must declare an agent.id that exactly matches the URL agent_id."
+                            ),
                         },
                         "name": {"type": "string", "description": "Required only for a new Agent."},
                         "expected_current_commit_sha": {

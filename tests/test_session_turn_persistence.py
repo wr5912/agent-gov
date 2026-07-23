@@ -325,7 +325,7 @@ def test_exhausted_finalization_recovery_interrupts_owned_turn(tmp_path):
         run_record=_run_record(),
         terminal_status="succeeded",
         completed_at="2026-07-13T00:01:00+00:00",
-        cause="SessionConflictError: injected CAS failure",
+        cause="SessionConflictError: injected version conflict",
     )
 
     assert outcome == "interrupted"

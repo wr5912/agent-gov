@@ -126,7 +126,7 @@ def _commit_finalization(
         except PublicationSourceConflict as exc:
             raise _error(409, str(exc)) from exc
         except ConflictError as exc:
-            # Git publish/tag/archive 已是不可逆外部副作用。来源事项 CAS 失败时不能让 intent
+            # Git publish/tag/archive 已是不可逆外部副作用。来源事项条件更新失败时不能让 intent
             # 永久卡在 publishing，也不能覆盖并发产生的新内容；完成发布元数据并显式保留冲突。
             source_conflict = {
                 "detail": str(exc),

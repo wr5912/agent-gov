@@ -16,6 +16,7 @@ from typing import BinaryIO
 
 from app.runtime.business_agent_workspace import WorkspaceProvisionEntry
 from app.runtime.errors import FeedbackStoreError
+from app.runtime.json_types import JsonObject
 
 MAX_COMPRESSED_PACKAGE_BYTES = 64 * 1024 * 1024
 MAX_MULTIPART_REQUEST_BYTES = MAX_COMPRESSED_PACKAGE_BYTES + 1024 * 1024
@@ -34,8 +35,15 @@ _MAX_GIT_STDERR_BYTES = 4 * 1024
 
 
 class WorkspacePackageError(FeedbackStoreError):
-    def __init__(self, status_code: int, error_code: str, message: str) -> None:
-        super().__init__(message)
+    def __init__(
+        self,
+        status_code: int,
+        error_code: str,
+        message: str,
+        *,
+        error_details: JsonObject | None = None,
+    ) -> None:
+        super().__init__(message, error_details=error_details)
         self.status_code = status_code
         self.error_code = error_code
 

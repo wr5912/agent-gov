@@ -74,7 +74,7 @@ def test_suite_inspection_treats_workspace_tests_as_versioned_source_of_truth(tm
     assert valid.runnable is True
     assert valid.test_files == ["tests/test_agent.py"]
     assert valid.suite_digest
-    assert "AGENT_MANIFEST_ID_IGNORED" in {item.code for item in valid.diagnostics}
+    assert valid.diagnostics == []
 
     workspace.joinpath("tests", "test_agent.py").write_text("def test_agent():\n    assert 2 == 2\n", encoding="utf-8")
     changed = inspect_agent_test_suite(workspace, agent_id="agent-a", commit_sha="b" * 40)
@@ -546,11 +546,11 @@ def _run_response(*, agent_id: str, commit_sha: str, change_set_id: str | None) 
     }
 
 
-def test_import_receipt_warns_for_missing_tests_and_persists_url_agent_identity(tmp_path: Path) -> None:
+def test_import_receipt_warns_for_missing_tests_and_persists_target_agent_identity(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     workspace.joinpath("CLAUDE.md").write_text("# imported Agent\n", encoding="utf-8")
-    workspace.joinpath("agent.yaml").write_text("agent:\n  id: manifest-id-is-not-authoritative\n", encoding="utf-8")
+    workspace.joinpath("agent.yaml").write_text("agent:\n  id: url-agent-id\n", encoding="utf-8")
     git_store = GitAgentVersionStore(
         repository_dir=workspace,
         worktrees_dir=tmp_path / "worktrees",
@@ -583,18 +583,12 @@ def test_import_receipt_warns_for_missing_tests_and_persists_url_agent_identity(
             commit_sha=commit_sha,
         )
         assert suite.runnable is False
-        assert {item.code for item in suite.diagnostics} == {
-            "AGENT_MANIFEST_ID_IGNORED",
-            "AGENT_TESTS_DIRECTORY_MISSING",
-        }
+        assert {item.code for item in suite.diagnostics} == {"AGENT_TESTS_DIRECTORY_MISSING"}
         with store.Session() as db:
             record = db.get(AgentWorkspaceImportRecordModel, import_id)
             assert record is not None
             assert record.agent_id == "url-agent-id"
             assert record.commit_sha == commit_sha
-            assert {item["code"] for item in record.warnings_json} == {
-                "AGENT_MANIFEST_ID_IGNORED",
-                "AGENT_TESTS_DIRECTORY_MISSING",
-            }
+            assert {item["code"] for item in record.warnings_json} == {"AGENT_TESTS_DIRECTORY_MISSING"}
     finally:
         service.close()

@@ -219,10 +219,18 @@ async function installMockRoutes(page, state) {
         return delayedJson(
           route,
           {
-            error_code: "WORKSPACE_PACKAGE_PATH_CONFLICT",
-            detail: "Package file conflicts with descendant path: workspace/a",
+            error_code: "WORKSPACE_MANIFEST_AGENT_ID_MISMATCH",
+            detail:
+              "导入被拒绝：包内来源 Agent ID “source-agent”与请求目标 Agent ID “workspace-agent”不一致；" +
+              "系统不会改写包内身份。请确认导入目标，并将 agent.yaml.agent.id 改为与 URL 中的 agent_id 完全一致后重新打包。",
+            field: "agent.yaml.agent.id",
+            import_action: "overwrite",
+            expected_agent_id: "workspace-agent",
+            actual_agent_id: "source-agent",
+            remediation:
+              "确认导入目标，使 agent.yaml.agent.id 与 URL 中的 agent_id 完全一致后重新打包。",
           },
-          422,
+          409,
         );
       }
       return delayedJson(route, {
@@ -461,7 +469,12 @@ async function main() {
       const localError = page.getByTestId("settings-workspace-operation-feedback");
       await localError.waitFor();
       const errorText = await localError.textContent();
-      if (!errorText?.includes("[WORKSPACE_PACKAGE_PATH_CONFLICT]")) {
+      if (
+        !errorText?.includes("[WORKSPACE_MANIFEST_AGENT_ID_MISMATCH]") ||
+        !errorText.includes("source-agent") ||
+        !errorText.includes("workspace-agent") ||
+        !errorText.includes("完全一致后重新打包")
+      ) {
         throw new Error(`structured workspace failure code is not visible: ${errorText}`);
       }
       if (await error.count()) {

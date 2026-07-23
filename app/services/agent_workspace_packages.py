@@ -28,6 +28,7 @@ from app.runtime.errors import SessionConflictError
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
+from app.services import agent_workspace_manifest_identity as manifest_identity
 from app.services import agent_workspace_package_codec as package_codec
 from app.services.agent_version_maintenance import AgentVersionMaintenanceCoordinator
 from app.services.agent_workspace_git_operations import (
@@ -151,19 +152,31 @@ class AgentWorkspacePackageService:
         import_action = "overwrite" if existing is not None else "create"
         package: package_codec.ValidatedWorkspacePackage | None = None
         try:
+            if existing is None:
+                clean_name = _required_new_agent_name(name, expected_current_commit_sha)
+                expected_commit = None
+                commit_message = None
+            else:
+                clean_name = None
+                expected_commit = _required_overwrite_commit(expected_current_commit_sha, agent_id=safe_agent_id)
+                commit_message = _commit_message(reason, default="Import workspace package")
             package = self._read_package(package_file, filename=filename)
+            manifest_identity.validate_workspace_manifest_identity(
+                package.entries,
+                expected_agent_id=safe_agent_id,
+                import_action=import_action,
+            )
             if existing is None:
                 return self._create_from_package(
                     agent_id=safe_agent_id,
-                    name=name,
-                    expected_current_commit_sha=expected_current_commit_sha,
+                    name=clean_name,
                     package=package,
                 )
             return self._overwrite_from_package(
                 record=existing,
-                expected_current_commit_sha=expected_current_commit_sha,
+                expected_current_commit_sha=expected_commit,
                 package=package,
-                reason=reason,
+                commit_message=commit_message,
             )
         except AgentAdmissionError as exc:
             error = _workspace_admission_error(exc)
@@ -253,21 +266,9 @@ class AgentWorkspacePackageService:
         self,
         *,
         agent_id: str,
-        name: str | None,
-        expected_current_commit_sha: str | None,
+        name: str,
         package: package_codec.ValidatedWorkspacePackage,
     ) -> WorkspaceImportResponse:
-        clean_name = (name or "").strip()
-        if not clean_name:
-            raise WorkspacePackageError(422, "WORKSPACE_IMPORT_NAME_REQUIRED", "name is required when importing a new Agent")
-        if len(clean_name) > 120:
-            raise WorkspacePackageError(422, "WORKSPACE_IMPORT_NAME_INVALID", "name must not exceed 120 characters")
-        if expected_current_commit_sha:
-            raise WorkspacePackageError(
-                422,
-                "WORKSPACE_IMPORT_UNEXPECTED_CURRENT_REF",
-                "expected_current_commit_sha is only valid when overwriting an existing Agent",
-            )
         if shutil.which("git") is None:
             raise WorkspacePackageError(503, "WORKSPACE_GIT_UNAVAILABLE", "git executable is not available")
         layout = business_agent_layout(self._settings.data_dir, agent_id)
@@ -299,7 +300,7 @@ class AgentWorkspacePackageService:
         record = provision_business_agent(
             store=self._registry,
             agent_id=agent_id,
-            name=clean_name,
+            name=name,
             workspace_dir=layout.workspace,
             plan=plan,
             finalize_workspace=finalize_workspace,
@@ -322,17 +323,10 @@ class AgentWorkspacePackageService:
         self,
         *,
         record: AgentRegistryRecord,
-        expected_current_commit_sha: str | None,
+        expected_current_commit_sha: str,
         package: package_codec.ValidatedWorkspacePackage,
-        reason: str | None,
+        commit_message: str,
     ) -> WorkspaceImportResponse:
-        if not expected_current_commit_sha:
-            raise WorkspacePackageError(
-                422,
-                "WORKSPACE_IMPORT_CURRENT_REF_REQUIRED",
-                "expected_current_commit_sha is required when overwriting an existing Agent",
-            )
-        expected = _full_commit(expected_current_commit_sha, field="expected_current_commit_sha")
         self._require_no_open_change_set(record.agent_id)
         self._require_no_active_session_turn(record.agent_id)
         lease = self._version_maintenance.lease(
@@ -349,14 +343,14 @@ class AgentWorkspacePackageService:
             self._require_no_open_change_set(record.agent_id)
             with store.mutation_guard():
                 _configure_raw_git_storage(store.repository_dir)
-                snapshot = _snapshot_live_workspace(store, expected_head=expected)
+                snapshot = _snapshot_live_workspace(store, expected_head=expected_current_commit_sha)
                 try:
                     lease.assert_active()
                     replacement = _replace_tree_from_entries(
                         store,
                         base_commit=snapshot.current_head,
                         entries=package.entries,
-                        message=_commit_message(reason, default="Import workspace package"),
+                        message=commit_message,
                         before_activate=lease.assert_active,
                         invalidate_sessions=lambda db: self._invalidate_sessions_for_activation(db, record.agent_id),
                         activation_guard=lease.run_activation_guard,
@@ -543,9 +537,89 @@ class AgentWorkspacePackageService:
 
 def _safe_agent_id(agent_id: str) -> str:
     try:
-        return validate_agent_id(agent_id)
+        normalized = validate_agent_id(agent_id)
     except InvalidAgentId as exc:
-        raise WorkspacePackageError(422, "WORKSPACE_AGENT_ID_INVALID", str(exc)) from exc
+        raise WorkspacePackageError(
+            422,
+            "WORKSPACE_AGENT_ID_INVALID",
+            (
+                "Workspace 请求被拒绝：URL 中的 agent_id 无效；它必须是非空值，只能包含英文字母、"
+                "数字、点、下划线或连字符，且不能是 “.” 或 “..”。请修正 URL 中的目标 ID 后重试。"
+            ),
+            error_details={
+                "field": "url.agent_id",
+                "remediation": "使用有效且不含首尾空白的目标 Agent ID 后重试。",
+            },
+        ) from exc
+    if normalized != agent_id:
+        raise WorkspacePackageError(
+            422,
+            "WORKSPACE_AGENT_ID_INVALID",
+            ("Workspace 请求被拒绝：URL 中的 agent_id 不能包含首尾空白；系统不会自动修正目标身份。请移除首尾空白后重试。"),
+            error_details={
+                "field": "url.agent_id",
+                "remediation": "移除 URL 目标 Agent ID 的首尾空白后重试。",
+            },
+        )
+    return normalized
+
+
+def _required_new_agent_name(name: str | None, expected_current_commit_sha: str | None) -> str:
+    clean_name = (name or "").strip()
+    if not clean_name:
+        raise WorkspacePackageError(
+            422,
+            "WORKSPACE_IMPORT_NAME_REQUIRED",
+            "导入被拒绝：创建新业务 Agent 时必须提供非空 name。请填写业务 Agent 名称后重新导入。",
+            error_details={
+                "field": "name",
+                "import_action": "create",
+                "remediation": "填写业务 Agent 名称后重新导入。",
+            },
+        )
+    if len(clean_name) > 120:
+        raise WorkspacePackageError(
+            422,
+            "WORKSPACE_IMPORT_NAME_INVALID",
+            "导入被拒绝：name 不能超过 120 个字符。请缩短名称后重新导入。",
+            error_details={
+                "field": "name",
+                "import_action": "create",
+                "remediation": "将业务 Agent 名称缩短到 120 个字符以内后重新导入。",
+            },
+        )
+    if expected_current_commit_sha:
+        raise WorkspacePackageError(
+            422,
+            "WORKSPACE_IMPORT_UNEXPECTED_CURRENT_REF",
+            ("导入被拒绝：目标 Agent 尚不存在，本请求属于新建导入，不应携带 expected_current_commit_sha。请移除该字段后重新导入。"),
+            error_details={
+                "field": "expected_current_commit_sha",
+                "import_action": "create",
+                "remediation": "移除 expected_current_commit_sha 后重新导入。",
+            },
+        )
+    return clean_name
+
+
+def _required_overwrite_commit(value: str | None, *, agent_id: str) -> str:
+    if not value:
+        raise WorkspacePackageError(
+            422,
+            "WORKSPACE_IMPORT_CURRENT_REF_REQUIRED",
+            (
+                f"导入被拒绝：业务 Agent “{agent_id}”已经存在，本请求属于覆盖导入，但缺少 "
+                "expected_current_commit_sha。请先获取该 Agent 当前提交版本，再通过覆盖导入入口"
+                "携带该版本重试。"
+            ),
+            error_details={
+                "field": "expected_current_commit_sha",
+                "import_action": "overwrite",
+                "expected_agent_id": agent_id,
+                "remediation": "先获取该 Agent 当前提交版本，再通过覆盖导入入口携带该版本重试。",
+            },
+        )
+    return _full_commit(value, field="expected_current_commit_sha")
 
 
 def _full_commit(value: str, *, field: str) -> str:

@@ -730,7 +730,7 @@ def test_stream_finalization_exhaustion_interrupts_and_allows_immediate_retry(mo
     def fail_finalize(**kwargs):
         nonlocal calls
         calls += 1
-        raise SessionConflictError("injected finalization CAS failure")
+        raise SessionConflictError("injected finalization version conflict")
 
     monkeypatch.setattr(module.session_store, "finalize_persisted_turn", fail_finalize)
     events = _drive_stream(module, ChatRequest(message="first", session_id="sess-finalize-exhausted"))

@@ -13,9 +13,6 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import yaml
-from yaml.nodes import MappingNode, Node, ScalarNode
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -36,7 +33,6 @@ class WorkspaceMigrationResult:
     previous_commit_sha: str
     current_commit_sha: str
     tests_added: bool
-    legacy_agent_id_removed: bool
     legacy_generated_test_files_archived: tuple[str, ...]
     archived_evals_path: str | None
     changed: bool
@@ -102,17 +98,14 @@ def _migrate_workspace(
     previous_commit = _git(workspace, "rev-parse", "HEAD").stdout.strip()
     evals_dir = workspace / "evals"
     tests_dir = workspace / "tests"
-    manifest = workspace / "agent.yaml"
     if agent_id == BUILTIN_TEST_AGENT_ID and tests_dir.exists() and (tests_dir.is_symlink() or not tests_dir.is_dir()):
         raise RuntimeError(f"Built-in business Agent tests path is unsafe: {tests_dir}")
     add_tests = agent_id == BUILTIN_TEST_AGENT_ID and not tests_dir.exists()
-    legacy_agent_id_line = _legacy_agent_id_line(manifest) if agent_id == BUILTIN_TEST_AGENT_ID else None
-    remove_legacy_agent_id = legacy_agent_id_line is not None
     legacy_generated_tests = _legacy_generated_test_files(workspace)
     legacy_generated_test_paths = tuple(path.relative_to(workspace).as_posix() for path in legacy_generated_tests)
     archive_path = _archive_path(runtime_root, agent_id, evals_dir) if evals_dir.is_dir() and not evals_dir.is_symlink() else None
     generated_tests_archive = _generated_tests_archive_path(runtime_root, agent_id, workspace, legacy_generated_tests)
-    changed = add_tests or remove_legacy_agent_id or bool(legacy_generated_tests) or archive_path is not None
+    changed = add_tests or bool(legacy_generated_tests) or archive_path is not None
     if require_writable and changed and not os.access(workspace, os.W_OK | os.X_OK):
         raise RuntimeError(f"Refusing to migrate non-writable business Agent Workspace: {agent_id}")
     if not apply or not changed:
@@ -121,7 +114,6 @@ def _migrate_workspace(
             previous_commit_sha=previous_commit,
             current_commit_sha=previous_commit,
             tests_added=add_tests,
-            legacy_agent_id_removed=remove_legacy_agent_id,
             legacy_generated_test_files_archived=legacy_generated_test_paths,
             archived_evals_path=archive_path.as_posix() if archive_path else None,
             changed=changed,
@@ -130,8 +122,6 @@ def _migrate_workspace(
         workspace=workspace,
         source_tests=source_tests,
         add_tests=add_tests,
-        manifest=manifest,
-        legacy_agent_id_line=legacy_agent_id_line,
         legacy_generated_tests=legacy_generated_tests,
         generated_tests_archive=generated_tests_archive,
         evals_dir=evals_dir if archive_path else None,
@@ -144,7 +134,6 @@ def _migrate_workspace(
         previous_commit_sha=previous_commit,
         current_commit_sha=current_commit,
         tests_added=add_tests,
-        legacy_agent_id_removed=remove_legacy_agent_id,
         legacy_generated_test_files_archived=legacy_generated_test_paths,
         archived_evals_path=archive_path.as_posix() if archive_path else None,
         changed=True,
@@ -156,8 +145,6 @@ def _apply_workspace_migration(
     workspace: Path,
     source_tests: Path,
     add_tests: bool,
-    manifest: Path,
-    legacy_agent_id_line: int | None,
     legacy_generated_tests: tuple[Path, ...],
     generated_tests_archive: Path | None,
     evals_dir: Path | None,
@@ -172,8 +159,6 @@ def _apply_workspace_migration(
         if add_tests:
             shutil.copytree(source_tests, workspace / "tests", copy_function=shutil.copy2)
             tests_added = True
-        if legacy_agent_id_line is not None:
-            _remove_legacy_agent_id(manifest, expected_line=legacy_agent_id_line)
         if legacy_generated_tests and generated_tests_archive is not None:
             _archive_files(workspace, legacy_generated_tests, generated_tests_archive)
             for path in legacy_generated_tests:
@@ -183,7 +168,6 @@ def _apply_workspace_migration(
             for name, enabled in (
                 ("evals", evals_dir is not None),
                 ("tests", add_tests or bool(legacy_generated_tests)),
-                ("agent.yaml", legacy_agent_id_line is not None),
             )
             if enabled
         ]
@@ -227,49 +211,6 @@ def _legacy_generated_test_files(workspace: Path) -> tuple[Path, ...]:
             raise RuntimeError(f"Marked legacy generated test has an unknown structure; refusing automatic removal: {path}")
         legacy.append(path)
     return tuple(legacy)
-
-
-def _legacy_agent_id_line(manifest: Path) -> int | None:
-    if not manifest.is_file() or manifest.is_symlink():
-        return None
-    text = manifest.read_text(encoding="utf-8")
-    try:
-        root = yaml.compose(text)
-    except yaml.YAMLError as exc:
-        raise RuntimeError(f"Cannot parse built-in business Agent manifest: {manifest}") from exc
-    if not isinstance(root, MappingNode):
-        raise RuntimeError(f"Built-in business Agent manifest must be a YAML mapping: {manifest}")
-    agent_node = _mapping_value(root, "agent")
-    if agent_node is None:
-        return None
-    if not isinstance(agent_node, MappingNode):
-        raise RuntimeError(f"Built-in business Agent manifest agent field must be a mapping: {manifest}")
-    identity_nodes = [(key, value) for key, value in agent_node.value if isinstance(key, ScalarNode) and key.value == "id"]
-    if not identity_nodes:
-        return None
-    if len(identity_nodes) != 1:
-        raise RuntimeError(f"Built-in business Agent manifest contains duplicate agent.id fields: {manifest}")
-    key, value = identity_nodes[0]
-    if not isinstance(value, ScalarNode) or key.start_mark.line != value.start_mark.line:
-        raise RuntimeError(f"Built-in business Agent manifest agent.id must be one scalar line: {manifest}")
-    return key.start_mark.line
-
-
-def _mapping_value(node: MappingNode, key_name: str) -> Node | None:
-    for key, value in node.value:
-        if isinstance(key, ScalarNode) and key.value == key_name:
-            return value
-    return None
-
-
-def _remove_legacy_agent_id(manifest: Path, *, expected_line: int) -> None:
-    lines = manifest.read_text(encoding="utf-8").splitlines(keepends=True)
-    if expected_line >= len(lines):
-        raise RuntimeError(f"Built-in business Agent manifest changed during migration: {manifest}")
-    del lines[expected_line]
-    manifest.write_text("".join(lines), encoding="utf-8")
-    if _legacy_agent_id_line(manifest) is not None:
-        raise RuntimeError(f"Built-in business Agent manifest identity removal failed: {manifest}")
 
 
 def _archive_path(runtime_root: Path, agent_id: str, source: Path) -> Path:

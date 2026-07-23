@@ -77,9 +77,8 @@ def test_workspace_test_asset_migration_archives_evals_and_commits_builtin_tests
     assert archived.joinpath("legacy.json").read_bytes() == b'{"legacy": true}\n'
     assert not evals.exists()
     assert (security / "tests" / "test_native.py").is_file()
-    assert "  id:" not in (security / "agent.yaml").read_text(encoding="utf-8")
+    assert "  id: security-operations-expert" in (security / "agent.yaml").read_text(encoding="utf-8")
     assert "profile: security-operations-expert" in (security / "agent.yaml").read_text(encoding="utf-8")
-    assert by_agent["security-operations-expert"].legacy_agent_id_removed is True
     assert by_agent["main-agent"].current_commit_sha != main_before
     assert by_agent["security-operations-expert"].current_commit_sha != security_before
     assert _git(main, "status", "--porcelain=v1") == ""
@@ -154,9 +153,7 @@ def test_workspace_test_asset_migration_archives_only_legacy_generated_weak_test
     )
     developer_test = tests_dir / "test_developer.py"
     developer_test.write_text(
-        "def test_developer(agent):\n"
-        "    result = agent.invoke('outside generated template')\n"
-        "    assert 'specific' in result.text\n",
+        "def test_developer(agent):\n    result = agent.invoke('outside generated template')\n    assert 'specific' in result.text\n",
         encoding="utf-8",
     )
     _git(workspace, "add", "-A")

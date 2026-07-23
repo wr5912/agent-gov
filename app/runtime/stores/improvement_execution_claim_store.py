@@ -32,7 +32,7 @@ class ExecutionClaim:
 
 
 class ImprovementExecutionClaimStore:
-    """CAS/fencing boundary for automatic improvement execution intents."""
+    """Version-check and fencing boundary for automatic improvement execution intents."""
 
     def __init__(self, session_factory: sessionmaker, *, mutable_guard: MutableImprovementGuard) -> None:
         self._session_factory = session_factory

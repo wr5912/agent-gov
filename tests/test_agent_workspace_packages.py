@@ -18,16 +18,25 @@ from app.services import agent_workspace_package_codec as workspace_codec
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app as _load_app
+from workspace_package_test_utils import package_with_agent_id as _package_with_agent_id
 
 
-def _workspace_package(files: dict[str, bytes], *, executable: frozenset[str] = frozenset()) -> bytes:
+def _workspace_package(
+    files: dict[str, bytes],
+    *,
+    executable: frozenset[str] = frozenset(),
+    agent_id: str | None = None,
+) -> bytes:
+    package_files = dict(files)
+    if agent_id is not None and "agent.yaml" not in package_files:
+        package_files["agent.yaml"] = f"agent:\n  id: {agent_id}\n".encode()
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
         root = tarfile.TarInfo("workspace/")
         root.type = tarfile.DIRTYPE
         root.mode = 0o755
         archive.addfile(root)
-        for path, content in sorted(files.items()):
+        for path, content in sorted(package_files.items()):
             member = tarfile.TarInfo(f"workspace/{path}")
             member.size = len(content)
             member.mode = 0o755 if path in executable else 0o644
@@ -47,7 +56,8 @@ def _import_new_agent(
             "CLAUDE.md": f"# {name}\n".encode(),
             ".mcp.json": b'{"mcpServers": {}}\n',
             ".claude/settings.json": b'{"permissions":{"ask":["Bash(*)"]}}\n',
-        }
+        },
+        agent_id=agent_id,
     )
     return client.post(
         f"/api/agent-registry/{agent_id}/workspace/import",
@@ -222,36 +232,6 @@ def _package_with_sparse_pax() -> bytes:
     return buffer.getvalue()
 
 
-def test_builtin_workspace_package_can_create_a_new_agent_without_identity_rewrite(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
-    source = Path(__file__).resolve().parents[1] / "docker" / "runtime-bootstrap" / "business-agents" / "security-operations-expert" / "workspace"
-    package = _package_from_workspace(source, overrides={})
-    with TestClient(module.app) as client:
-        created = _import_new_agent(
-            client,
-            agent_id="security-operations-derived",
-            name="SOC derived agent",
-            package=package,
-        )
-
-    assert created.status_code == 200
-    assert created.json()["action"] == "created"
-    assert created.json()["agent"]["agent_id"] == "security-operations-derived"
-    assert created.json()["agent"]["status"] == "active"
-    assert created.json()["test_suite_status"] == "warning"
-    assert created.json()["test_file_count"] == 2
-    assert {item["code"] for item in created.json()["test_suite_warnings"]} == {"AGENT_MANIFEST_ID_IGNORED"}
-    assert created.json()["import_record_id"].startswith("awi-")
-    target = Path(created.json()["agent"]["workspace_dir"])
-    source_files = {path.relative_to(source).as_posix(): path for path in source.rglob("*") if path.is_file()}
-    target_files = {path.relative_to(target).as_posix(): path for path in target.rglob("*") if path.is_file() and ".git" not in path.relative_to(target).parts}
-    assert set(target_files) == set(source_files)
-    for relative, source_path in source_files.items():
-        target_path = target_files[relative]
-        assert target_path.read_bytes() == source_path.read_bytes()
-        assert stat.S_IMODE(target_path.stat().st_mode) & 0o111 == stat.S_IMODE(source_path.stat().st_mode) & 0o111
-
-
 def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
@@ -282,10 +262,11 @@ def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(mo
             "/api/agent-registry/source/workspace/export",
             headers={"Origin": "http://localhost:55173"},
         )
+        import_package = _package_with_agent_id(exported.content, "imported")
         imported = client.post(
             "/api/agent-registry/imported/workspace/import",
             data={"name": "imported"},
-            files={"package": ("source-workspace.tar.gz", exported.content, "application/gzip")},
+            files={"package": ("source-workspace.tar.gz", import_package, "application/gzip")},
         )
 
     assert exported.status_code == 200
@@ -316,7 +297,7 @@ def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(mo
     assert (target / "crlf.txt").read_bytes() == b"first\r\nsecond\r\n"
     assert (target / "hooks" / "raw-tool").read_bytes() == b"#!/bin/sh\nexit 0\n"
     assert stat.S_IMODE((target / "hooks" / "raw-tool").stat().st_mode) & 0o111
-    assert body["tree_sha256"] == exported.headers["x-workspace-tree-sha256"]
+    assert (target / "agent.yaml").read_bytes() == b"agent:\n  id: imported\n"
 
 
 def test_workspace_export_restores_exec_tracking_when_existing_git_disabled_filemode(monkeypatch, tmp_path: Path) -> None:
@@ -336,10 +317,11 @@ def test_workspace_export_restores_exec_tracking_when_existing_git_disabled_file
         script.chmod(0o755)
 
         exported = client.post("/api/agent-registry/filemode/workspace/export")
+        import_package = _package_with_agent_id(exported.content, "filemode-copy")
         imported = client.post(
             "/api/agent-registry/filemode-copy/workspace/import",
             data={"name": "filemode copy"},
-            files={"package": ("filemode.tar.gz", exported.content, "application/gzip")},
+            files={"package": ("filemode.tar.gz", import_package, "application/gzip")},
         )
 
     assert exported.status_code == 200
@@ -443,9 +425,12 @@ def test_workspace_commit_reader_rejects_empty_raw_tree_path_before_blob_read(tm
     assert exc_info.value.error_code == "WORKSPACE_EXPORT_PATH_INVALID"
 
 
-def test_workspace_overwrite_requires_cas_and_restore_creates_new_commit(monkeypatch, tmp_path: Path) -> None:
+def test_workspace_overwrite_requires_expected_commit_and_restore_creates_new_commit(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    package = _workspace_package({"CLAUDE.md": b"# replacement\n", "binary.bin": b"\x00raw"})
+    package = _workspace_package(
+        {"CLAUDE.md": b"# replacement\n", "binary.bin": b"\x00raw"},
+        agent_id="target",
+    )
     with TestClient(module.app) as client:
         created = _import_new_agent(client, agent_id="target", name="target")
         workspace = Path(created.json()["agent"]["workspace_dir"])
@@ -454,11 +439,11 @@ def test_workspace_overwrite_requires_cas_and_restore_creates_new_commit(monkeyp
         (workspace / "stale.secret").write_bytes(b"must-be-deleted-by-replacement\n")
         baseline = client.get("/api/agent-repository/current?agent_id=target").json()["commit_sha"]
 
-        missing_cas = client.post(
+        missing_current = client.post(
             "/api/agent-registry/target/workspace/import",
             files={"package": ("replacement.tar.gz", package, "application/gzip")},
         )
-        wrong_cas = client.post(
+        stale_current = client.post(
             "/api/agent-registry/target/workspace/import",
             data={"expected_current_commit_sha": "0" * 40},
             files={"package": ("replacement.tar.gz", package, "application/gzip")},
@@ -479,10 +464,10 @@ def test_workspace_overwrite_requires_cas_and_restore_creates_new_commit(monkeyp
             },
         )
 
-    assert missing_cas.status_code == 422
-    assert missing_cas.json()["error_code"] == "WORKSPACE_IMPORT_CURRENT_REF_REQUIRED"
-    assert wrong_cas.status_code == 409
-    assert wrong_cas.json()["error_code"] == "WORKSPACE_HEAD_CONFLICT"
+    assert missing_current.status_code == 422
+    assert missing_current.json()["error_code"] == "WORKSPACE_IMPORT_CURRENT_REF_REQUIRED"
+    assert stale_current.status_code == 409
+    assert stale_current.json()["error_code"] == "WORKSPACE_HEAD_CONFLICT"
     assert overwritten.status_code == 200
     assert overwrite_body["action"] == "overwritten"
     assert overwrite_body["rollback_target_commit_sha"]

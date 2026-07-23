@@ -90,7 +90,7 @@ make logs
 
 治理类 Agent job、改进事项生成动作和前端治理请求默认使用 `GOVERNANCE_AGENT_TIMEOUT_SECONDS=300`。`DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS` 只是高级覆盖项，未配置时跟随治理超时；业务 Playground 的流式 idle timeout、模型探测超时和 Docker healthcheck 不共用该值。Web HITL 人工确认等待使用独立的 `HITL_TIMEOUT_SECONDS=300`，只影响流式业务 Agent 运行。Web HITL 的 SDK callback 等待态保存在 API 进程内存中，开启 `ENABLE_CLAUDE_WEB_HITL=true` 时必须保持单 API 进程；`WEB_CONCURRENCY`、`API_WORKERS` 或 `UVICORN_WORKERS` 大于 1 会在启动时失败。非流式运行始终对权限询问 fail-closed，不再使用 `bypassPermissions`。
 
-`security-operations-expert` 是当前唯一内置、默认且受保护的业务 Agent，这三个属性由平台分别派生。具体 Agent 的角色、工具、权限和业务流程只由其 Workspace 定义，不构成平台默认行为。Workspace 可以按字节导出、以任意新 Agent ID 导入并继续开发；初始化源不回灌现有实例，现有实例升级走“导出候选 → 跨 ID 导入测试 → 导出验证包 → CAS 覆盖目标 → 回归/发布”流程。
+`security-operations-expert` 是当前唯一内置、默认且受保护的业务 Agent，这三个属性由平台分别派生。具体 Agent 的角色、工具、权限和业务流程只由其 Workspace 定义，不构成平台默认行为。Workspace 可以按字节导出，但任何新建或覆盖导入都要求包根目录 `agent.yaml.agent.id` 有效，并与 URL 中的目标 `agent_id` 逐字一致；平台不会代为改写身份。初始化源不回灌现有实例，现有实例升级走“导出候选 → 人工把候选包 ID 设置为测试 ID → 新 ID 导入测试 → 导出验证包 → 人工把包 ID 设置回目标 ID → 携带目标预期当前提交版本覆盖 → 回归/发布”流程。
 
 健康检查：
 
@@ -208,7 +208,7 @@ Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 
 pnpm --dir frontend generate:api-types
 ```
 
-- 业务 Agent 与 Workspace：`GET /api/agent-registry`、`POST /api/agent-registry/{agent_id}/workspace/export`、`POST /api/agent-registry/{agent_id}/workspace/import`、`POST /api/agent-registry/{agent_id}/workspace/restore`。Workspace 包导入是创建普通业务 Agent 的唯一入口；新 ID 必须提供 `name`，已有 ID 覆盖必须携带当前 commit 做 CAS。live Workspace 包可包含真实 endpoint 和私有运行配置，导出包应按敏感运行资产保管；导入、恢复和导出快照都绑定 per-Agent Git commit，并在下一 turn 生效。live Workspace 纳入仓库内置初始化源前必须在仓库外形成候选，并通过 `make runtime-bootstrap-scan` 准入检查。
+- 业务 Agent 与 Workspace：`GET /api/agent-registry`、`POST /api/agent-registry/{agent_id}/workspace/export`、`POST /api/agent-registry/{agent_id}/workspace/import`、`POST /api/agent-registry/{agent_id}/workspace/restore`。Workspace 包导入是创建普通业务 Agent 的唯一入口；新 ID 必须提供 `name`，已有 ID 覆盖必须携带预期当前提交版本。两种导入都要求包根目录 `agent.yaml.agent.id` 有效，并与 URL 中的目标 ID 完全一致；缺失、无效或来源 ID 不一致会在任何 Workspace、注册表、Git 或会话变更前被明确拒绝。live Workspace 包可包含真实 endpoint 和私有运行配置，导出包应按敏感运行资产保管；导入、恢复和导出快照都绑定 per-Agent Git commit，并在下一 turn 生效。live Workspace 纳入仓库内置初始化源前必须在仓库外形成候选，并通过 `make runtime-bootstrap-scan` 准入检查。
 - 反馈采集与处置单：`GET /api/agent-runs`、`POST/GET /api/feedback-signals`、`GET /api/feedback-signals/{signal_id}`、`POST/GET /api/soc-events`、`GET /api/soc-events/{event_id}`、`GET /api/pending-correlations`、`POST /api/pending-correlations/{pending_id}/resolve`、`POST/GET /api/feedback-cases`、`GET /api/feedback-cases/{feedback_case_id}`。`AgentRunResponse` 会返回 `langfuse_trace_id` / `langfuse_trace_url`，用于运行证据面板定位具体 Langfuse Trace。
 - Agent job 历史：`GET /api/agent-jobs`、`GET /api/agent-jobs/{job_id}` 仅查询升级前保留的历史记录；没有创建、领取或重试队列入口。
 - 证据包与分析任务：`POST /api/feedback-cases/{feedback_case_id}/evidence-packages`、`GET /api/evidence-packages/{evidence_package_id}`、`GET /api/evidence-packages/{evidence_package_id}/files/{file_name}`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate`。

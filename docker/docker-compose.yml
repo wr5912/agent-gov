@@ -171,7 +171,7 @@ services:
       VITE_GOVERNANCE_AGENT_TIMEOUT_SECONDS: ${GOVERNANCE_AGENT_TIMEOUT_SECONDS:-300}
       VITE_DEV_PROXY_TARGET: http://claude-agent-api:${API_PORT:-8080}
       COREPACK_NPM_REGISTRY: https://registry.npmmirror.com
-      PNPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     depends_on:
       claude-agent-api:
         condition: service_healthy

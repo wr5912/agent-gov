@@ -6,7 +6,7 @@ WORKDIR /ui
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 # 构建阶段 pnpm 源固定使用 npmmirror，避免 docker/.env 或宿主环境覆盖。
 ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
-ENV PNPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 RUN corepack enable \
     && corepack prepare pnpm@10.30.3 --activate \
     && pnpm install --frozen-lockfile

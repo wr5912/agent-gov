@@ -570,6 +570,17 @@ def test_compose_healthcheck_uses_local_liveness_without_provider_dependency() -
     assert "claude-agent-worker" not in services
 
 
+def test_frontend_pnpm_registry_uses_npm_compatible_environment_key() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
+    dockerfile = (REPO_ROOT / "docker/frontend.Dockerfile").read_text(encoding="utf-8")
+    environment = compose["services"]["claude-agent-ui"]["environment"]
+
+    assert "ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com" in dockerfile
+    assert "PNPM_CONFIG_REGISTRY" not in dockerfile
+    assert environment["NPM_CONFIG_REGISTRY"] == "https://registry.npmmirror.com"
+    assert "PNPM_CONFIG_REGISTRY" not in environment
+
+
 def test_make_up_waits_removes_orphans_and_prints_sanitized_diagnostics() -> None:
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     up_target = makefile.split("\nup:", 1)[1].split("\n\ndown:", 1)[0]

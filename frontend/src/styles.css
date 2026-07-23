@@ -51,6 +51,7 @@ button:disabled {
 }
 
 .topbar {
+  flex: 0 0 56px;
   height: 56px;
   display: flex;
   align-items: center;

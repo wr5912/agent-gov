@@ -6,8 +6,6 @@ import type { AgentTestSuiteFile } from "../types/runtime";
 
 type TestFileSymbol = NonNullable<AgentTestSuiteFile["symbols"]>[number];
 
-const SOURCE_EDITOR_HEIGHT = "clamp(520px, 68vh, 780px)";
-
 function symbolKey(symbol: TestFileSymbol) {
   return `${symbol.kind}:${symbol.qualified_name}:${symbol.line}`;
 }
@@ -197,7 +195,7 @@ export function TestSourceViewer({
           basicSetup={{ lineNumbers: true, foldGutter: true, highlightSelectionMatches: true }}
           editable={false}
           extensions={[python(), EditorView.lineWrapping]}
-          height={SOURCE_EDITOR_HEIGHT}
+          height="100%"
           key={`${sourceFile.commit_sha}:${sourceFile.path}`}
           readOnly
           ref={editorRef}

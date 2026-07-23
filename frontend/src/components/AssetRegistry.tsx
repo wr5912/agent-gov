@@ -115,12 +115,8 @@ export function AssetRegistry({
   const totalCount = assets.length;
 
   return (
-    <div className="asset-center-shell" data-testid="asset-registry">
+    <div className={`asset-center-shell is-${assetCenterTab}`} data-testid="asset-registry">
       <header className="asset-center-header">
-        <div>
-          <h2>资产复利中心</h2>
-          <p>统一查看业务 Agent 的可执行测试资产，以及可继承复用的治理资产。</p>
-        </div>
         <div className="asset-center-tabs" role="tablist" aria-label="资产中心分类">
           <button className={assetCenterTab === "tests" ? "is-active" : ""} data-testid="asset-center-tab-tests" role="tab" aria-selected={assetCenterTab === "tests"} type="button" onClick={() => setAssetCenterTab("tests")}>测试资产</button>
           <button className={assetCenterTab === "governance" ? "is-active" : ""} data-testid="asset-center-tab-governance" role="tab" aria-selected={assetCenterTab === "governance"} type="button" onClick={() => setAssetCenterTab("governance")}>治理资产</button>

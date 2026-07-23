@@ -39,19 +39,25 @@ def test_asset_center_projects_workspace_tests_runs_and_per_agent_schedule() -> 
     assert 'useState<"tests" | "governance">("tests")' in registry
     assert 'data-testid="asset-center-tab-tests"' in registry
     assert 'data-testid="asset-center-tab-governance"' in registry
+    assert "<h2>资产复利中心</h2>" not in registry
+    assert "统一查看业务 Agent 的可执行测试资产" not in registry
     assert 'data-testid="test-asset-workspace"' in test_assets
     assert 'data-testid="test-agent-navigator"' in test_assets
     assert 'data-testid="test-agent-search"' in test_assets
     assert 'data-testid="test-asset-agent-item"' in test_assets
     assert 'data-testid="test-asset-card-grid"' not in test_assets
     assert 'data-testid="test-file-browser"' in test_assets
+    assert 'className="test-asset-detail-title"' in test_assets
+    assert 'className="test-asset-detail-commit"' in test_assets
+    assert "生效 commit：" in test_assets
+    assert "当前有效 commit：" not in test_assets
     assert 'data-testid="test-file-select"' in source_viewer
     assert 'data-testid="test-source-code"' in source_viewer
     assert 'data-testid="test-source-symbol-rail"' in source_viewer
     assert 'data-testid="test-source-symbol-mark"' in source_viewer
     assert "EditorView.scrollIntoView" in source_viewer
     assert "qualified_name" in source_viewer
-    assert 'const SOURCE_EDITOR_HEIGHT = "clamp(520px, 68vh, 780px)"' in source_viewer
+    assert 'height="100%"' in source_viewer
     assert "getAgentTestSuiteFile" in test_assets
     assert 'data-testid="test-run-history"' in test_assets
     assert 'data-testid="test-schedule-panel"' in test_assets
@@ -84,12 +90,19 @@ def test_asset_center_keeps_many_agents_in_a_scrollable_master_detail_layout() -
     assert "detailBox.width <= navigatorBox.width * 2.4" in e2e
     assert "element.scrollHeight > element.clientHeight" in e2e
     assert "sourceBox.width < detailBox.width * 0.9" in e2e
+    assert "test_asset_detail_compact_commit" in e2e
     assert "test_source_persists_after_history_filter" in e2e
     assert ".test-source-symbol-rail" in styles
     assert ".test-source-symbols" not in styles
     assert "test_topbar_refresh_current_asset_tab" in e2e
     assert "test_source_symbol_inactive_visibility" in e2e
     assert "test_source_symbol_scroll_tracking" in e2e
+    assert "test_asset_desktop_contained" in e2e
+    assert "test_asset_compact_desktop_contained" in e2e
+    assert "test_asset_column_bottom_alignment" in e2e
+    assert "test_source_internal_scroll" in e2e
+    assert "test_asset_mobile_vertical_reachability" in e2e
+    assert "test_topbar_fixed_height" in e2e
 
 
 def test_release_workbench_runs_fixed_commit_bound_platform_tests() -> None:

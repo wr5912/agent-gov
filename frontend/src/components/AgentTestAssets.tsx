@@ -288,11 +288,13 @@ export function AgentTestAssets({
           </aside>
 
           {selected ? (
-            <section className="test-asset-detail" data-testid="test-asset-detail">
+            <section className={`test-asset-detail is-${tab}`} data-testid="test-asset-detail">
           <header className="test-asset-detail-head">
-            <div>
-              <h3>{selected.agent_name}</h3>
-              <p>当前有效 commit：<code>{selected.suite.commit_sha}</code></p>
+            <div className="test-asset-detail-title">
+              <h3 title={selected.agent_name}>{selected.agent_name}</h3>
+              <span className="test-asset-detail-commit" title={`生效 commit：${selected.suite.commit_sha}`}>
+                生效 commit：<code>{selected.suite.commit_sha}</code>
+              </span>
             </div>
             <button
               className="iw-primary-button"

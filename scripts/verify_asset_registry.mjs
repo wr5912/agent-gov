@@ -37,6 +37,87 @@ function killTree(c, s) { try { process.kill(-c.pid, s); } catch { try { c.kill(
 async function stopChild(c) { if (!c || c.exitCode !== null) return; killTree(c, "SIGTERM"); await new Promise((r) => { const t = setTimeout(() => { killTree(c, "SIGKILL"); r(); }, 2000); c.once("exit", () => { clearTimeout(t); r(); }); }); }
 async function waitForUi() { const d = Date.now() + 30000; while (Date.now() < d) { try { const r = await fetch(ui); if (r.ok) return; } catch { await new Promise((r) => setTimeout(r, 250)); } } throw new Error(`ui not ready: ${ui}`); }
 
+async function assertAssetDesktopContained(page, label, maximumSourceHeight = Number.POSITIVE_INFINITY) {
+  const shell = page.getByTestId("asset-registry");
+  await shell.evaluate((element) => { element.scrollTop = 0; });
+  const layout = await page.evaluate(() => {
+    const shell = document.querySelector('[data-testid="asset-registry"]');
+    const agentList = document.querySelector('[data-testid="test-agent-list"]');
+    const source = document.querySelector('[data-testid="test-source-code"]');
+    const scroller = document.querySelector('[data-testid="test-source-code"] .cm-scroller');
+    if (!shell || !agentList || !source || !scroller) return null;
+    const shellRect = shell.getBoundingClientRect();
+    const agentListRect = agentList.getBoundingClientRect();
+    const sourceRect = source.getBoundingClientRect();
+    const topbar = document.querySelector(".topbar")?.getBoundingClientRect();
+    return {
+      shellClientHeight: shell.clientHeight,
+      shellScrollHeight: shell.scrollHeight,
+      shellOverflowY: getComputedStyle(shell).overflowY,
+      shellBottom: shellRect.bottom,
+      agentListBottom: agentListRect.bottom,
+      sourceBottom: sourceRect.bottom,
+      sourceHeight: sourceRect.height,
+      scrollerClientHeight: scroller.clientHeight,
+      scrollerScrollHeight: scroller.scrollHeight,
+      topbarHeight: topbar?.height ?? 0,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  if (!layout) throw new Error(`${label}资产工作区关键元素缺失`);
+  if (layout.shellOverflowY !== "hidden" || layout.shellScrollHeight > layout.shellClientHeight + 1) {
+    throw new Error(`${label}资产中心不应产生纵向滚动: ${JSON.stringify(layout)}`);
+  }
+  if (layout.shellBottom > layout.viewportHeight + 1 || layout.topbarHeight < 55) {
+    throw new Error(`${label}资产中心或 Topbar 超出视口约束: ${JSON.stringify(layout)}`);
+  }
+  if (Math.abs(layout.agentListBottom - layout.sourceBottom) > 2) {
+    throw new Error(`${label}Agent 列表与源码区底边未对齐: ${JSON.stringify(layout)}`);
+  }
+  if (layout.sourceBottom > layout.shellBottom + 1 || layout.sourceHeight > maximumSourceHeight) {
+    throw new Error(`${label}源码区高度未收敛到资产中心: ${JSON.stringify(layout)}`);
+  }
+  if (layout.scrollerScrollHeight <= layout.scrollerClientHeight) {
+    throw new Error(`${label}源码应由 CodeMirror 内部滚动: ${JSON.stringify(layout)}`);
+  }
+}
+
+async function assertAssetMobileReachable(page, label) {
+  const shell = page.getByTestId("asset-registry");
+  await shell.evaluate((element) => { element.scrollTop = 0; });
+  const before = await shell.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      overflowY: getComputedStyle(element).overflowY,
+      shellBottom: rect.bottom,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  if (before.overflowY !== "auto" || before.scrollHeight <= before.clientHeight) {
+    throw new Error(`${label}资产中心应在固定可视高度内独立滚动: ${JSON.stringify(before)}`);
+  }
+  if (before.shellBottom > before.viewportHeight + 1) {
+    throw new Error(`${label}资产中心超出视口约束: ${JSON.stringify(before)}`);
+  }
+
+  await shell.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await page.waitForFunction(() => {
+    const element = document.querySelector('[data-testid="asset-registry"]');
+    return !!element && element.scrollTop > 0 && element.scrollTop + element.clientHeight >= element.scrollHeight - 1;
+  });
+  const bottom = await page.evaluate(() => {
+    const shellRect = document.querySelector('[data-testid="asset-registry"]')?.getBoundingClientRect();
+    const detailRect = document.querySelector('[data-testid="test-asset-detail"]')?.getBoundingClientRect();
+    return { shellBottom: shellRect?.bottom ?? 0, detailBottom: detailRect?.bottom ?? Number.POSITIVE_INFINITY };
+  });
+  if (bottom.detailBottom > bottom.shellBottom + 1) {
+    throw new Error(`${label}滚动到底后测试资产详情仍不可达: ${JSON.stringify(bottom)}`);
+  }
+  await shell.evaluate((element) => { element.scrollTop = 0; });
+}
+
 function authHeaders(extra = {}) {
   return {
     Accept: "application/json",
@@ -184,12 +265,36 @@ async function main() {
         await page.getByTestId("test-asset-agent-item").first().click();
         await page.getByTestId("test-file-browser").waitFor({ timeout: 15000 });
         await page.getByTestId("test-file-select").waitFor({ timeout: 15000 });
+        const compactTitle = await page.evaluate(() => {
+          const title = document.querySelector(".test-asset-detail-title h3");
+          const commit = document.querySelector(".test-asset-detail-commit");
+          if (!title || !commit) return null;
+          const titleRect = title.getBoundingClientRect();
+          const commitRect = commit.getBoundingClientRect();
+          const titleStyle = getComputedStyle(title);
+          const commitStyle = getComputedStyle(commit);
+          return {
+            titleBottom: titleRect.bottom,
+            commitBottom: commitRect.bottom,
+            titleFontSize: Number.parseFloat(titleStyle.fontSize),
+            commitFontSize: Number.parseFloat(commitStyle.fontSize),
+            titleColor: titleStyle.color,
+            commitColor: commitStyle.color,
+          };
+        });
+        if (!compactTitle || Math.abs(compactTitle.titleBottom - compactTitle.commitBottom) > 3 || compactTitle.commitFontSize >= compactTitle.titleFontSize || compactTitle.commitColor === compactTitle.titleColor) {
+          throw new Error(`Agent 名称与生效 commit 应同排且弱化 commit: ${JSON.stringify(compactTitle)}`);
+        }
         if (await page.locator(".test-assets-toolbar").count()) throw new Error("测试资产页不应保留重复标题和局部刷新工具栏");
         if ((await page.getByRole("button", { name: "刷新", exact: true }).count()) !== 1) throw new Error("测试资产页只应保留 Topbar 刷新入口");
         const sourceBox = await page.getByTestId("test-source-code").boundingBox();
         if (!sourceBox || sourceBox.width < detailBox.width * 0.9 || sourceBox.height < 500) {
           throw new Error(`源码区未充分占用右栏: source=${JSON.stringify(sourceBox)} detail=${JSON.stringify(detailBox)}`);
         }
+        await assertAssetDesktopContained(page, "桌面端");
+        await page.setViewportSize({ width: 1280, height: 720 });
+        await assertAssetDesktopContained(page, "紧凑桌面端", 500);
+        await page.setViewportSize({ width: 1440, height: 900 });
         await page.getByTestId("test-source-symbol-rail").waitFor({ timeout: 15000 });
         const symbolMarks = page.getByTestId("test-source-symbol-mark");
         if ((await symbolMarks.count()) !== testSourceSymbols.length) throw new Error("符号轨道未完整投影 pytest 源码纲要");
@@ -246,6 +351,7 @@ async function main() {
         if (mobileOverflows || !mobilePreviewBox || mobilePreviewBox.x < 0 || mobilePreviewBox.x + mobilePreviewBox.width > 390) {
           throw new Error(`移动端符号轨道或预览越界: preview=${JSON.stringify(mobilePreviewBox)} overflow=${mobileOverflows}`);
         }
+        await assertAssetMobileReachable(page, "移动端");
         await page.setViewportSize({ width: 1440, height: 900 });
       }
       await page.getByTestId("asset-center-tab-governance").click();
@@ -295,7 +401,7 @@ async function main() {
       if ((await page.getByTestId("asset-provenance").count()) < afterInheritCount) throw new Error("expected provenance for every visible asset");
 
       // 负路径（仅 mock）：业务 Agent 列表为空时，「沉淀」按钮应禁用 + 给空态提示 + 不发 POST /api/assets（不静默吞）。
-      const scenarios = ["test_asset_projection", "test_asset_master_detail_layout", "test_asset_many_agent_scroll", "test_source_full_width", "test_source_view", "test_source_symbol_rail", "test_source_symbol_inactive_visibility", "test_source_symbol_keyboard_navigation", "test_source_symbol_scroll_tracking", "test_source_symbol_mobile_bounds", "test_topbar_refresh_current_asset_tab", "test_local_refresh_removed", "test_source_persists_after_history_filter", "test_run_history", "test_schedule_view", "asset_create", "asset_inherit", "asset_provenance"];
+      const scenarios = ["test_asset_projection", "test_asset_master_detail_layout", "test_asset_many_agent_scroll", "test_asset_detail_compact_commit", "test_asset_desktop_contained", "test_asset_compact_desktop_contained", "test_asset_column_bottom_alignment", "test_source_internal_scroll", "test_asset_mobile_vertical_reachability", "test_topbar_fixed_height", "test_source_full_width", "test_source_view", "test_source_symbol_rail", "test_source_symbol_inactive_visibility", "test_source_symbol_keyboard_navigation", "test_source_symbol_scroll_tracking", "test_source_symbol_mobile_bounds", "test_topbar_refresh_current_asset_tab", "test_local_refresh_removed", "test_source_persists_after_history_filter", "test_run_history", "test_schedule_view", "asset_create", "asset_inherit", "asset_provenance"];
       if (!REAL) {
         const page2 = await browser.newPage({ viewport: { width: 1440, height: 900 } });
         await page2.addInitScript(([b, key]) => { window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: b, apiKey: key })); }, [apiBase, apiKey]);

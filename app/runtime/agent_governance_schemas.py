@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,32 @@ class AgentSummaryResponse(BaseModel):
     requires_web_hitl: bool = Field(
         default=False,
         description="从 workspace project settings 的 permissions.ask 派生；为 true 时交互审批依赖 ENABLE_CLAUDE_WEB_HITL。",
+    )
+
+
+class AgentStarterPromptResponse(BaseModel):
+    label: str = Field(description="Welcome Card 建议任务的可见标签。")
+    prompt: str = Field(description="点击建议任务后填入输入框的完整内容；前端不得自动发送。")
+
+
+class AgentPresentationResponse(BaseModel):
+    """业务 Agent Welcome Card 的结构化只读投影。"""
+
+    agent_id: str = Field(description="平台注册表中的业务 Agent 身份。")
+    name: str = Field(description="平台注册表中的业务 Agent 展示名称。")
+    version: Optional[str] = Field(default=None, description="agent.yaml 中声明的 Agent 版本。")
+    language: Optional[str] = Field(default=None, description="agent.yaml 中声明的主要语言。")
+    runtime: Optional[str] = Field(default=None, description="agent.yaml 中声明的 Agent Runtime。")
+    capabilities: list[str] = Field(default_factory=list, description="agent.yaml 中的机器可读能力标识。")
+    summary: Optional[str] = Field(default=None, description="Welcome Card 的一句话角色摘要。")
+    welcome_message: Optional[str] = Field(default=None, description="会话开始前展示的静态 Markdown 开场内容。")
+    composer_placeholder: Optional[str] = Field(default=None, description="当前 Agent 的输入框占位文字。")
+    starter_prompts: list[AgentStarterPromptResponse] = Field(
+        default_factory=list,
+        description="会话开始前可填入输入框的建议任务。",
+    )
+    source: Literal["agent_yaml", "registry_fallback"] = Field(
+        description="补充展示信息来自 agent.yaml，或只使用平台注册表回退。",
     )
 
 

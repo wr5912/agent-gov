@@ -9,6 +9,7 @@ interface TopbarProps {
   loading: boolean;
   businessAgents: AgentSummary[];
   selectedBusinessAgentId: string;
+  agentSwitchDisabled: boolean;
   onSelectBusinessAgent: (agentId: string) => void;
   onRefresh: () => void;
   onOpenPlayground: () => void;
@@ -24,6 +25,7 @@ export function Topbar({
   loading,
   businessAgents,
   selectedBusinessAgentId,
+  agentSwitchDisabled,
   onSelectBusinessAgent,
   onRefresh,
   onOpenPlayground,
@@ -36,8 +38,15 @@ export function Topbar({
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <span className={`status-dot ${health?.status === "ok" ? "ok" : "warn"}`} />
-        <span>{health?.status === "ok" ? "Runtime online" : "Runtime unknown"}</span>
+        <div className="runtime-status">
+          <span className={`status-dot ${health?.status === "ok" ? "ok" : "warn"}`} />
+          <span className="runtime-status-copy">
+            <span>{health?.status === "ok" ? "Runtime online" : "Runtime unknown"}</span>
+            <span className="runtime-version" data-testid="runtime-version">
+              {health?.runtime_version ? `v${health.runtime_version}` : "v--"}
+            </span>
+          </span>
+        </div>
         <span className="topbar-sep" />
         <label className="topbar-agent">
           <span>业务 Agent</span>
@@ -46,7 +55,8 @@ export function Topbar({
             data-testid="topbar-agent-switcher"
             value={selectedBusinessAgentId}
             onChange={(e) => onSelectBusinessAgent(e.target.value)}
-            title="切换当前运行业务 Agent"
+            disabled={agentSwitchDisabled}
+            title={agentSwitchDisabled ? "当前任务运行中，停止或完成后才能切换业务 Agent" : "切换当前运行业务 Agent"}
           >
             <option value="" disabled>请选择业务 Agent</option>
             {businessAgents.map((agent) => (

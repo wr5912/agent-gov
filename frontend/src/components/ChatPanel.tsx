@@ -1,7 +1,8 @@
 import { Loader2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Send, Settings2, Square } from "lucide-react";
 import { PlaygroundMessageScrollNavigator } from "./PlaygroundMessageScrollNavigator";
 import { useMessageScrollNavigation } from "../hooks/useMessageScrollNavigation";
-import type { ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest } from "../types/runtime";
+import type { AgentPresentation, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest } from "../types/runtime";
+import { MarkdownContent } from "./MarkdownContent";
 import { MessageBubble } from "./MessageBubble";
 import { PromptSuggestion } from "./PromptSuggestion";
 
@@ -14,6 +15,7 @@ interface ChatPanelProps {
   activeSessionId?: string;
   sessionSidebarOpen: boolean;
   agentName: string;
+  agentPresentation: AgentPresentation | null;
   promptSuggestions?: string[];
   onInputChange: (value: string) => void;
   onUsePromptSuggestion: (suggestion: string) => void;
@@ -38,6 +40,7 @@ export function ChatPanel({
   activeSessionId,
   sessionSidebarOpen,
   agentName,
+  agentPresentation,
   promptSuggestions,
   onInputChange,
   onUsePromptSuggestion,
@@ -53,6 +56,12 @@ export function ChatPanel({
   submittingUserInputRequests,
   onSubmitUserInput,
 }: ChatPanelProps) {
+  const presentationMetadata = [
+    agentPresentation?.version ? `v${agentPresentation.version}` : null,
+    agentPresentation?.language,
+    agentPresentation?.runtime,
+  ].filter((value): value is string => Boolean(value));
+  const starterPrompts = agentPresentation?.starter_prompts || [];
   const {
     containerRef,
     handleScroll,
@@ -97,15 +106,41 @@ export function ChatPanel({
       <div className="message-scroll-region" data-testid="playground-message-scroll-region">
         <section id="playground-messages" className="messages" data-testid="playground-messages" ref={containerRef} onScroll={handleScroll}>
           {messages.length === 0 ? (
-            <div className="welcome-card">
+            <div className="welcome-card" data-testid="welcome-card">
               <div className="welcome-mark">⌘</div>
-              <h3>开始测试 {agentName}</h3>
-              <p>在下方输入任务即可对话；左上会话按钮展开或折叠历史导航，右上「运行设置」调整 subagent / skills / 工具权限。回复下可创建反馈、查看 Trace、获取上下文。</p>
-              <div className="prompt-examples">
-                <button onClick={() => onInputChange("请说明当前 workspace 中有哪些 subagents 和 skills。")}>查看 agents / skills</button>
-                <button onClick={() => onInputChange("请基于 CLAUDE.md 简要介绍你的角色和能力边界。")}>介绍 Agent 能力</button>
-                <button onClick={() => onInputChange("请使用只读工具检查当前 workspace 的配置结构，并给出摘要。")}>检查配置结构</button>
-              </div>
+              <h3>{agentName}</h3>
+              {presentationMetadata.length ? (
+                <div className="welcome-metadata" data-testid="welcome-metadata">
+                  {presentationMetadata.join(" · ")}
+                </div>
+              ) : null}
+              {agentPresentation?.summary ? (
+                <p className="welcome-summary" data-testid="welcome-summary">{agentPresentation.summary}</p>
+              ) : null}
+              {agentPresentation?.welcome_message ? (
+                <MarkdownContent
+                  text={agentPresentation.welcome_message}
+                  className="welcome-message message-markdown"
+                  testId="welcome-message"
+                  allowedElements={["p", "ul", "ol", "li", "strong", "em", "a", "code", "br"]}
+                />
+              ) : (
+                <p className="welcome-fallback">新会话已准备好。</p>
+              )}
+              {starterPrompts.length ? (
+                <div className="prompt-examples" data-testid="starter-prompts">
+                  {starterPrompts.map((starter) => (
+                    <button
+                      key={`${starter.label}:${starter.prompt}`}
+                      type="button"
+                      data-testid="starter-prompt"
+                      onClick={() => onInputChange(starter.prompt)}
+                    >
+                      {starter.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : (
             messages.map((message) => (
@@ -147,7 +182,7 @@ export function ChatPanel({
                 onSend();
               }
             }}
-            placeholder="输入任务或问题，Ctrl/⌘ + Enter 发送..."
+            placeholder={agentPresentation?.composer_placeholder || "输入任务或问题，Ctrl/⌘ + Enter 发送..."}
           />
         </div>
         <div className="composer-actions">

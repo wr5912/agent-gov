@@ -5,7 +5,6 @@ from pydantic.types import JsonValue
 
 from app.runtime.json_types import JsonObject
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
-from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 
 
 class ExtensibleResponse(BaseModel):
@@ -179,6 +178,7 @@ class RuntimeReadinessResponse(BaseModel):
 
 class RuntimeHealthResponse(ExtensibleResponse):
     status: str
+    runtime_version: str
     api_host: str
     api_port: int
     host_port: int

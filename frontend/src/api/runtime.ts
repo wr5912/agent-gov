@@ -6,6 +6,7 @@ export * from "./agentTesting";
 export * from "./feedback";
 import type {
   AgentInfo,
+  AgentPresentation,
   AgentSummary,
   AgentDeleteResponse,
   AgentChangeSet,
@@ -129,6 +130,18 @@ export function getAgents(config: RuntimeClientConfig, agentId?: string) {
 // 业务 Agent（治理对象，/api/agent-registry），用于顶栏全局 Agent 切换器与 scoping。
 export function listBusinessAgents(config: RuntimeClientConfig) {
   return requestJson<AgentSummary[]>(config, "/api/agent-registry");
+}
+
+export function getBusinessAgentPresentation(
+  config: RuntimeClientConfig,
+  agentId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson<AgentPresentation>(
+    config,
+    `/api/agent-registry/${encodeURIComponent(agentId)}/presentation`,
+    { signal },
+  );
 }
 
 export interface WorkspaceImportPayload {

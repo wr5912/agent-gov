@@ -98,6 +98,7 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/improvements/{improvement_id}/regression-test-design/generate",
         "/api/agent-registry/{agent_id}/test-suite",
         "/api/agent-registry/{agent_id}/test-suite/file",
+        "/api/agent-registry/{agent_id}/presentation",
         "/api/agent-registry/{agent_id}/test-schedule",
         "/api/agent-registry/{agent_id}/test-schedule/events",
         "/api/agent-test-assets",

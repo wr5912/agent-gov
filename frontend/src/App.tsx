@@ -10,8 +10,10 @@ import { FeedbackDrawer, type FeedbackContext } from "./components/FeedbackDrawe
 import { SettingsModal } from "./components/SettingsModal";
 import { Topbar } from "./components/Topbar";
 import { useAgentCatalog } from "./hooks/useAgentCatalog";
+import { useAgentPresentation } from "./hooks/useAgentPresentation";
 import { useConfigMapping } from "./hooks/useConfigMapping";
 import { useLocalStorage } from "./hooks/useLocalStorage";
+import { usePlaygroundSessionScope } from "./hooks/usePlaygroundSessionScope";
 import { cancelWaitingUserInputRequests, claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, sanitizedEnvelopeData, stringValue } from "./claudeUserInputState";
 import { messagesFromConversationItems } from "./playgroundHistory";
 import { usePromptSuggestion } from "./hooks/usePromptSuggestion";
@@ -19,42 +21,13 @@ import { newId, newSessionId } from "./utils/ids";
 import type { AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
 import { agentActivityFromResult, messageTextFromEnvelope } from "./api/responsesStream";
+import { defaultLangfuseUrl, makeApiDocsUrl } from "./runtimeUrls";
 import "./styles.css";
-
-function makeApiDocsUrl(apiBase: string): string {
-  const base = apiBase.trim().replace(/\/$/, "");
-  if (!base) return "/docs";
-  return `${base}/docs`;
-}
-
-function isLoopbackHost(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1";
-}
-
-function defaultLangfuseUrl(): string {
-  const configured = (import.meta.env.VITE_LANGFUSE_URL || "http://localhost:53000").trim();
-  let parsed: URL | null = null;
-  try {
-    parsed = new URL(configured);
-  } catch {
-    parsed = null;
-  }
-  // 运维已把 Langfuse 地址显式指向非本机的可达地址时，直接采用该配置。
-  if (parsed && !isLoopbackHost(parsed.hostname)) return configured;
-  // 配置仍是本机/缺省地址：按当前浏览器访问的 host 派生，使远端用户跳转到可达的 Langfuse 地址（端口沿用配置值）。
-  if (typeof window !== "undefined" && window.location?.hostname) {
-    const protocol = window.location.protocol === "https:" ? "https" : "http";
-    const port = parsed?.port || "53000";
-    return `${protocol}://${window.location.hostname}${port ? `:${port}` : ""}`;
-  }
-  return configured;
-}
 
 export default function App() {
   const runtimeDefaults = useMemo(() => defaultRuntimeConfig(), []);
   const [clientConfig, setClientConfig] = useLocalStorage<RuntimeClientConfig>("runtime-client-config", runtimeDefaults);
   const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>({});
-  const [activeSessionId, setActiveSessionId] = useLocalStorage<string | undefined>("playground-active-session", undefined);
 
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -63,7 +36,17 @@ export default function App() {
   const [agentChangeSets, setAgentChangeSets] = useState<AgentChangeSet[]>([]);
   const [agentReleases, setAgentReleases] = useState<AgentRelease[]>([]);
   const [businessAgents, setBusinessAgents] = useState<AgentSummary[]>([]);
-  const [selectedBusinessAgentId, setSelectedBusinessAgentId] = useState("");
+  const {
+    activeSessionId,
+    selectedBusinessAgentId,
+    scopedSessions,
+    reconcile: reconcilePlaygroundScope,
+    switchBusinessAgent,
+    startNewSession,
+    selectSession: selectScopedSession,
+    claimLocalSession,
+    forgetSession,
+  } = usePlaygroundSessionScope({ sessions, messagesBySession });
   const [alertId, setAlertId] = useState("");
   const [caseId, setCaseId] = useState("");
   const [maxTurns, setMaxTurns] = useState(16);
@@ -104,7 +87,26 @@ export default function App() {
   }), [migratedClientConfig, runtimeDefaults]);
   const configMapping = useConfigMapping(effectiveClientConfig, selectedBusinessAgentId, setLastError);
   const { agents, skills } = useAgentCatalog(effectiveClientConfig, selectedBusinessAgentId, setLastError);
+  const agentPresentation = useAgentPresentation(effectiveClientConfig, selectedBusinessAgentId);
   const promptSuggestion = usePromptSuggestion(activeSessionId, setInput);
+
+  const resetPlaygroundTransientState = useCallback(() => {
+    setAlertId("");
+    setCaseId("");
+    setInput("");
+    setStreamingAssistantMessageId(undefined);
+    setStreamEvents([]);
+    decisionTokensRef.current = {};
+    setUserInputErrors({});
+    setSubmittingUserInputRequests(new Set());
+    setLastError(undefined);
+    setPlaygroundDrawer(null);
+    setSessionSidebarOpen(false);
+    setEvidencePanelOpen(false);
+    setActiveTraceMessageId(undefined);
+    setFeedbackDrawerOpen(false);
+    setFeedbackContext(null);
+  }, []);
 
   useEffect(() => {
     if (!shouldMigrateLegacyApiBase) return;
@@ -135,20 +137,6 @@ export default function App() {
   }, [activeMessages, activeTraceMessageId, streamingAssistantMessageId]);
   const activeTraceEvents = activeTraceMessage?.events || [];
 
-  const mergedSessions = useMemo(() => {
-    const localOnly = Object.keys(messagesBySession)
-      .filter((sessionId) => !sessions.some((session) => session.session_id === sessionId))
-      .map<SessionInfo>((sessionId) => ({
-        session_id: sessionId,
-        created_at: messagesBySession[sessionId]?.[0]?.createdAt || new Date().toISOString(),
-        updated_at: messagesBySession[sessionId]?.at(-1)?.createdAt || new Date().toISOString(),
-        title: messagesBySession[sessionId]?.find((message) => message.role === "user")?.content.slice(0, 80) || "本地新会话",
-        turns: Math.max(0, Math.floor((messagesBySession[sessionId]?.length || 0) / 2)),
-        metadata: { localOnly: true },
-      }));
-    return [...sessions, ...localOnly];
-  }, [messagesBySession, sessions]);
-
   const refresh = useCallback(async () => {
     setLoading(true);
     setLastError(undefined);
@@ -164,14 +152,7 @@ export default function App() {
       ]);
       setSessions(sessionsRes);
       setBusinessAgents(businessAgentsRes);
-      // 全局运行 Agent 必须是具体对象；跨 Agent 聚合视图由各治理页面自己的范围筛选负责。
-      setSelectedBusinessAgentId((current) => {
-        if (current && businessAgentsRes.some((agent) => agent.agent_id === current)) return current;
-        return businessAgentsRes.find((agent) => agent.default)?.agent_id || businessAgentsRes[0]?.agent_id || "";
-      });
-      if (!activeSessionId && sessionsRes[0]?.session_id) {
-        setActiveSessionId(sessionsRes[0].session_id);
-      }
+      if (reconcilePlaygroundScope(businessAgentsRes, sessionsRes)) resetPlaygroundTransientState();
       const [repositoryRes, currentRefRes, changeSetsRes, releasesRes] = await Promise.all([
         getAgentRepositoryStatus(effectiveClientConfig),
         getCurrentAgentRef(effectiveClientConfig),
@@ -187,7 +168,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [activeSessionId, effectiveClientConfig, setActiveSessionId]);
+  }, [effectiveClientConfig, reconcilePlaygroundScope, resetPlaygroundTransientState]);
 
   const refreshAll = useCallback(() => { setAssetRefreshRevision((value) => value + 1); return refresh(); }, [refresh]);
 
@@ -321,21 +302,14 @@ export default function App() {
   }
 
   function createSession() {
-    const sessionId = newSessionId();
-    setActiveSessionId(sessionId);
-    setMessagesBySession((prev) => ({ ...prev, [sessionId]: [] }));
-    setStreamEvents([]);
-    setActiveTraceMessageId(undefined);
-    setEvidencePanelOpen(false);
-    setSessionSidebarOpen(false);
+    if (streaming) return;
+    startNewSession();
+    resetPlaygroundTransientState();
   }
 
   function selectSession(sessionId: string) {
-    setActiveSessionId(sessionId);
-    setStreamEvents([]);
-    setActiveTraceMessageId(undefined);
-    setEvidencePanelOpen(false);
-    setSessionSidebarOpen(false);
+    if (streaming) return;
+    if (selectScopedSession(sessionId)) resetPlaygroundTransientState();
   }
 
   async function removeSession(sessionId: string) {
@@ -352,7 +326,7 @@ export default function App() {
         delete next[sessionId];
         return next;
       });
-      if (activeSessionId === sessionId) setActiveSessionId(undefined);
+      forgetSession(sessionId);
       if (activeSessionId === sessionId) {
         setActiveTraceMessageId(undefined);
         setEvidencePanelOpen(false);
@@ -366,10 +340,14 @@ export default function App() {
   async function sendMessage() {
     const message = input.trim();
     if (!message || streaming) return;
+    if (!selectedBusinessAgentId) {
+      setLastError("请选择业务 Agent 后再发送消息。");
+      return;
+    }
 
     const sessionId = activeSessionId || newSessionId();
+    if (!activeSessionId) claimLocalSession(sessionId, selectedBusinessAgentId);
     promptSuggestion.clear(sessionId);
-    setActiveSessionId(sessionId);
     setInput("");
     setStreaming(true);
     setStreamingAssistantMessageId(undefined);
@@ -435,7 +413,7 @@ export default function App() {
         {
           onSession: (runtimeSessionId) => {
             if (runtimeSessionId && runtimeSessionId !== sessionId) {
-              setActiveSessionId(runtimeSessionId);
+              claimLocalSession(runtimeSessionId, selectedBusinessAgentId);
             }
           },
           onEnvelope: (envelope) => {
@@ -617,6 +595,11 @@ export default function App() {
     setActiveWindow("asset");
   }
 
+  function selectBusinessAgent(agentId: string) {
+    if (streaming) return;
+    if (switchBusinessAgent(agentId)) resetPlaygroundTransientState();
+  }
+
   const currentAgentName = businessAgents.find((a) => a.agent_id === selectedBusinessAgentId)?.name || (selectedBusinessAgentId || "默认业务 Agent");
 
   function openFeedbackDrawer(message?: ChatMessage) {
@@ -674,7 +657,8 @@ export default function App() {
         loading={loading}
         businessAgents={businessAgents}
         selectedBusinessAgentId={selectedBusinessAgentId}
-        onSelectBusinessAgent={setSelectedBusinessAgentId}
+        agentSwitchDisabled={streaming}
+        onSelectBusinessAgent={selectBusinessAgent}
         onRefresh={refreshAll}
         onOpenPlayground={showPlaygroundWindow}
         onOpenImprovement={showImprovementWindow}
@@ -701,7 +685,7 @@ export default function App() {
         <div className="playground-shell" data-testid="playground-shell">
           {sessionSidebarOpen ? (
             <PlaygroundSessionSidebar
-              sessions={mergedSessions}
+              sessions={scopedSessions}
               activeSessionId={activeSessionId}
               onSelectSession={selectSession}
               onNewSession={createSession}
@@ -718,6 +702,7 @@ export default function App() {
             activeSessionId={activeSessionId}
             sessionSidebarOpen={sessionSidebarOpen}
             agentName={currentAgentName}
+            agentPresentation={agentPresentation}
             promptSuggestions={promptSuggestion.suggestions}
             onInputChange={promptSuggestion.handleInputChange}
             onUsePromptSuggestion={promptSuggestion.apply}
@@ -786,7 +771,7 @@ export default function App() {
           setTimeout(refresh, 0);
         }}
         onAgentsChanged={() => setTimeout(refresh, 0)}
-        onOpenAgentTestAssets={(agentId) => { setSelectedBusinessAgentId(agentId); setSettingsOpen(false); setActiveWindow("asset"); }}
+        onOpenAgentTestAssets={(agentId) => { selectBusinessAgent(agentId); setSettingsOpen(false); setActiveWindow("asset"); }}
       />
     </div>
   );

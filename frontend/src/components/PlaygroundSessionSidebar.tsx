@@ -32,7 +32,7 @@ export function PlaygroundSessionSidebar({
         <button className="secondary-button" type="button" onClick={onRefresh}>
           <RefreshCw size={14} /> 刷新
         </button>
-        <button className="primary-button" type="button" onClick={onNewSession}>
+        <button className="primary-button" type="button" onClick={onNewSession} disabled={streaming}>
           <MessageSquarePlus size={14} /> 新会话
         </button>
       </div>
@@ -51,6 +51,7 @@ export function PlaygroundSessionSidebar({
               <button
                 className="session-sidebar-main"
                 type="button"
+                disabled={streaming}
                 onClick={() => onSelectSession(session.session_id)}
               >
                 <strong>{session.title || session.session_id}</strong>

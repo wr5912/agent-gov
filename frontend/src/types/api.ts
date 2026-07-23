@@ -295,6 +295,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-registry/{agent_id}/presentation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read structured Welcome Card content for a registered business agent */
+        get: operations["get_agent_presentation_api_agent_registry__agent_id__presentation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-registry/{agent_id}/test-schedule": {
         parameters: {
             query?: never;
@@ -2440,6 +2457,68 @@ export interface components {
              */
             status: string;
         };
+        /**
+         * AgentPresentationResponse
+         * @description 业务 Agent Welcome Card 的结构化只读投影。
+         */
+        AgentPresentationResponse: {
+            /**
+             * Agent Id
+             * @description 平台注册表中的业务 Agent 身份。
+             */
+            agent_id: string;
+            /**
+             * Capabilities
+             * @description agent.yaml 中的机器可读能力标识。
+             */
+            capabilities?: string[];
+            /**
+             * Composer Placeholder
+             * @description 当前 Agent 的输入框占位文字。
+             */
+            composer_placeholder?: string | null;
+            /**
+             * Language
+             * @description agent.yaml 中声明的主要语言。
+             */
+            language?: string | null;
+            /**
+             * Name
+             * @description 平台注册表中的业务 Agent 展示名称。
+             */
+            name: string;
+            /**
+             * Runtime
+             * @description agent.yaml 中声明的 Agent Runtime。
+             */
+            runtime?: string | null;
+            /**
+             * Source
+             * @description 补充展示信息来自 agent.yaml，或只使用平台注册表回退。
+             * @enum {string}
+             */
+            source: "agent_yaml" | "registry_fallback";
+            /**
+             * Starter Prompts
+             * @description 会话开始前可填入输入框的建议任务。
+             */
+            starter_prompts?: components["schemas"]["AgentStarterPromptResponse"][];
+            /**
+             * Summary
+             * @description Welcome Card 的一句话角色摘要。
+             */
+            summary?: string | null;
+            /**
+             * Version
+             * @description agent.yaml 中声明的 Agent 版本。
+             */
+            version?: string | null;
+            /**
+             * Welcome Message
+             * @description 会话开始前展示的静态 Markdown 开场内容。
+             */
+            welcome_message?: string | null;
+        };
         /** AgentPublicationErrorResponse */
         AgentPublicationErrorResponse: {
             /** Detail */
@@ -2643,6 +2722,19 @@ export interface components {
             sdk_session_id?: string | null;
             /** Session Id */
             session_id?: string | null;
+        };
+        /** AgentStarterPromptResponse */
+        AgentStarterPromptResponse: {
+            /**
+             * Label
+             * @description Welcome Card 建议任务的可见标签。
+             */
+            label: string;
+            /**
+             * Prompt
+             * @description 点击建议任务后填入输入框的完整内容；前端不得自动发送。
+             */
+            prompt: string;
         };
         /** AgentSummaryResponse */
         AgentSummaryResponse: {
@@ -4926,6 +5018,8 @@ export interface components {
             /** Runtime Db Path */
             runtime_db_path: string;
             runtime_dependency_versions?: components["schemas"]["RuntimeDependencyVersions"];
+            /** Runtime Version */
+            runtime_version: string;
             /** Setting Sources Effective */
             setting_sources_effective: string[];
             /** Status */
@@ -6415,6 +6509,55 @@ export interface operations {
             };
             /** @description Request conflicts with the current resource state. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    get_agent_presentation_api_agent_registry__agent_id__presentation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentPresentationResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

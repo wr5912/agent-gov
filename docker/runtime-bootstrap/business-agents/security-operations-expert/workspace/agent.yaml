@@ -24,6 +24,23 @@ capabilities:
   - playbook_resolution
   - playbook_dry_run
 
+presentation:
+  summary: 聚焦安全运营事实分析、事件调查、威胁狩猎和响应剧本建议。
+  welcome_message: |
+    我可以基于告警、事件、资产、账号和现有响应剧本开展只读分析，并给出调查结论或处置建议。
+
+    请提供需要分析的对象、时间范围和期望产出；涉及保存或执行的动作仍由平台确认流程负责。
+  composer_placeholder: 输入告警、事件、资产或响应剧本相关任务
+  starter_prompts:
+    - label: 分析当前告警
+      prompt: 请分析我接下来提供的告警，区分已知事实、合理推断和建议动作，并说明还需要哪些证据。
+    - label: 调查安全事件
+      prompt: 请基于我接下来提供的事件信息建立调查时间线，识别受影响对象、关键证据和优先处置建议。
+    - label: 审查响应剧本
+      prompt: 请审查我接下来提供的响应剧本，说明适用条件、缺失步骤、风险和建议修改。
+    - label: 说明能力边界
+      prompt: 请说明你的主要能力、需要的输入、输出形式，以及不会直接执行的操作。
+
 paths:
   workspace: /data/business-agents/security-operations-expert/workspace
   claude_home: /data/business-agents/security-operations-expert/claude-root/.claude

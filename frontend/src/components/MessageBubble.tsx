@@ -1,10 +1,7 @@
 import { ListTree, Loader2, MessageSquare, Search } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
 import type { ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest } from "../types/runtime";
 import { ClaudeUserInputCard } from "./ClaudeUserInputCard";
+import { MarkdownContent } from "./MarkdownContent";
 
 interface Props {
   message: ChatMessage;
@@ -100,23 +97,7 @@ export function MessageBubble({
 }
 
 function FormattedText({ text }: { text: string }) {
-  return (
-    <div className="message-content message-markdown" data-testid="message-markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeSanitize]}
-        components={{
-          a: ({ children, ...props }) => (
-            <a {...props} target="_blank" rel="noreferrer">
-              {children}
-            </a>
-          ),
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
-  );
+  return <MarkdownContent text={text} />;
 }
 
 function formatTime(value: string) {

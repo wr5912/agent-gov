@@ -80,6 +80,8 @@ description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 W
 - 可复用流程：`.claude/skills/<skill>/SKILL.md`。
 - 子角色：`.claude/agents/*.md`。
 - 工具接入：`.mcp.json`，同时核对 `.claude/settings.json` 权限。
+- Playground 静态 Welcome Card：`agent.yaml.presentation`；只配置摘要、开场内容、输入框提示和建议任务，
+  不创建会话、不伪装 assistant 消息，也不替代 Claude 原生 `AskUserQuestion`。
 - 硬拒绝或审计：`.claude/rules/*` 或 hooks。
 - 行为验收：Workspace `tests/test_*.py`、专项测试或可重复验证命令。
 
@@ -100,6 +102,8 @@ description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 W
 - 工具、权限、确认和业务流程契约只从目标 Workspace 的 `README.md`、`CLAUDE.md`、`agent.yaml`、
   `.mcp.json` 与 `.claude/settings.json` 读取；本通用 skill 不硬编码具体工具名或领域流程，后端不得
   按 Agent ID 添加第二套授权。
+- `agent.yaml.presentation` 若存在，必须保持静态展示语义；Agent 身份和名称仍以平台注册表为准，
+  建议任务只能填入输入框，不能自动发送。
 - 仓库初始化源改动运行 `make runtime-bootstrap-scan`。唯一扫描实现是
   `scripts/runtime_bootstrap_safety.py` 的 `scan_path`；不得新建并行扫描器。只有用户明确要求
   替换敏感值时才使用其 `sanitize`，并复核 diff。

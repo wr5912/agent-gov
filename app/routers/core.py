@@ -92,6 +92,7 @@ def build_health_payload(
     provider_router = model_provider_router or ModelProviderRouter(settings)
     return RuntimeHealthResponse(
         status="ok",
+        runtime_version=APP_VERSION,
         api_host=settings.api_host,
         api_port=settings.api_port,
         host_port=settings.host_port,

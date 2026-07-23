@@ -108,6 +108,10 @@ async function main() {
   const diagnostic = await api("/health");
   assert(live.status === 200 && live.durationMs < 2000, `liveness was blocked by provider: ${JSON.stringify(live)}`);
   assert(diagnostic.status === 200 && diagnostic.durationMs < 2000, `health snapshot was blocked by provider: ${JSON.stringify(diagnostic)}`);
+  assert(
+    diagnostic.payload.runtime_version === live.payload.runtime_version,
+    `health endpoints disagree on Runtime version: live=${live.payload.runtime_version} health=${diagnostic.payload.runtime_version}`,
+  );
   const readiness = await waitForDegradedReadiness();
   const provider = readiness.payload.model_provider;
   assert(readiness.status === 503, `degraded readiness must return 503: ${readiness.status}`);
@@ -138,6 +142,8 @@ async function main() {
         if (viewport.name !== "mobile") {
           const runtimeText = await page.locator(".topbar-left").innerText();
           assert(runtimeText.includes("Runtime online"), `${viewport.name} did not show Runtime online: ${runtimeText}`);
+          const runtimeVersion = await page.getByTestId("runtime-version").innerText();
+          assert(runtimeVersion === `v${live.payload.runtime_version}`, `${viewport.name} showed the wrong Runtime version: ${runtimeVersion}`);
         }
         if (viewport.name === "desktop") {
           const providerText = await page.getByTestId("model-provider-status").innerText();

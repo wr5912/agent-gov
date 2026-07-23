@@ -14,7 +14,7 @@
 | 资产 | 职责 |
 | --- | --- |
 | `CLAUDE.md` | 角色、工作方式、输出和业务边界 |
-| `agent.yaml` | Agent 能力、运行说明和审批责任声明 |
+| `agent.yaml` | Agent 能力、运行说明、Welcome Card 展示和审批责任声明 |
 | `.mcp.json` | MCP 服务接入 |
 | `.claude/settings.json` | Claude 原生权限、hooks 和 sandbox |
 | `.claude/agents/` | 专属 subagents |

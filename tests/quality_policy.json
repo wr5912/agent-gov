@@ -810,7 +810,7 @@
         },
         {
           "id": "improvement_design_parity_and_message_actions",
-          "description": "Playground 从 SDK transcript 恢复历史、Prompt Suggestion 填入但不自动发送、单轮长回复与多轮会话滚动导航、Trace、HITL、四阶段改进事项工作台标题栏新建抽屉与范围对齐、非法返回动作清零、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
+          "description": "Playground 从 SDK transcript 恢复所属 Agent 历史、切换业务 Agent 后进入结构化 Welcome Card 新会话、Runtime 版本展示、Prompt Suggestion 填入但不自动发送、单轮长回复与多轮会话滚动导航、Trace、HITL、四阶段改进事项工作台标题栏新建抽屉与范围对齐、非法返回动作清零、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
           "pytest": [
             "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
             "tests/test_claude_runtime_hitl.py::test_stream_hitl_consumes_prompt_eof_then_resumes_sdk_after_allow",
@@ -818,6 +818,8 @@
             "tests/test_claude_runtime_hitl.py::test_stream_fail_loud_when_hitl_required_but_disabled",
             "tests/test_claude_runtime_hitl.py::test_run_fail_loud_when_hitl_required",
             "tests/test_prompt_suggestions.py::test_runtime_emits_backend_owned_suggestion_without_persisting_it",
+            "tests/test_agent_presentation.py::test_presentation_projects_only_whitelisted_manifest_fields_and_registry_identity",
+            "tests/test_agent_presentation.py::test_presentation_missing_or_invalid_manifest_returns_registry_fallback",
             "tests/test_claude_user_input.py::test_tool_permission_allow_for_run_is_scoped_to_current_low_risk_category",
             "tests/test_claude_user_input.py::test_mutating_or_private_bash_cannot_receive_run_allow",
             "tests/test_claude_user_input.py::test_decision_api_rejects_unknown_request_and_wrong_token",
@@ -830,6 +832,7 @@
             "verify:asset-registry",
             "verify:claude-user-input",
             "verify:remote-api-base",
+            "verify:playground-agent-scope",
             "verify:message-actions-browser"
           ],
           "real_container_ui_target": "ui-feedback-smoke"

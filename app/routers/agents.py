@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends
 
 from app.agent_testing.schedule import AgentTestScheduleService
 from app.agent_testing.store import AgentTestingStore
+from app.runtime.agent_governance_schemas import AgentPresentationResponse
 from app.runtime.agent_governance_schemas import agent_summary_response as _summary
-from app.runtime.errors import ConflictError
+from app.runtime.errors import ConflictError, NotFoundError
 from app.runtime.schemas import (
     AgentDeleteResponse,
     AgentDeletionImpact,
@@ -20,6 +21,7 @@ from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.agent_governance import AgentGovernanceService
 from app.services.business_agent_deletion import purge_business_agent_storage
+from app.services.business_agent_presentation import business_agent_presentation
 
 _IMPACT_COUNT_CAP = 1000
 
@@ -112,6 +114,17 @@ def create_agents_router(
     )
     async def list_agents() -> list[AgentSummaryResponse]:
         return [_summary(record) for record in agent_registry_store.list_agents()]
+
+    @router.get(
+        "/agent-registry/{agent_id}/presentation",
+        response_model=AgentPresentationResponse,
+        summary="Read structured Welcome Card content for a registered business agent",
+    )
+    async def get_agent_presentation(agent_id: str) -> AgentPresentationResponse:
+        record = agent_registry_store.get_agent(agent_id)
+        if record is None:
+            raise NotFoundError(f"Business agent not found: {agent_id}")
+        return business_agent_presentation(record)
 
     @router.post(
         "/agent-registry/{agent_id}/lifecycle",

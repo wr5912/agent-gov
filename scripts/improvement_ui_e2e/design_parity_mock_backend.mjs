@@ -136,7 +136,7 @@ function basePayload(path) {
       title: "Playground 历史验证",
       metadata: {},
       agentgov: {
-        agent_id: "security-operations-expert",
+        agent_id: "soc-ops",
         sdk_session_id: sessionId,
         updated_at: Date.parse(ts) / 1000,
         turns: sessionId === "mock-session" ? 36 : Number(sessionId.match(/\d+$/)?.[0] || 0),

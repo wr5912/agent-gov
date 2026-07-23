@@ -69,6 +69,23 @@ button:disabled {
 
 .topbar-left { gap: 10px; min-width: 0; font-size: 13px; }
 .topbar-actions { gap: 8px; }
+.runtime-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.runtime-status-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+.runtime-version {
+  color: var(--muted);
+  font-size: 10px;
+}
 .topbar-sep { width: 1px; height: 18px; background: var(--line); }
 .topbar-provider-status { flex: 0 0 auto; white-space: nowrap; font-size: 12px; }
 .muted { color: var(--muted); }
@@ -110,6 +127,10 @@ button:disabled {
   padding: 0 8px;
   font-size: 13px;
   max-width: 200px;
+}
+.topbar-agent-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 .status-dot {
   width: 9px;
@@ -423,10 +444,37 @@ button:disabled {
 }
 .welcome-card h3 { margin: 0; font-size: 24px; letter-spacing: -0.03em; }
 .welcome-card p { color: var(--muted); line-height: 1.7; }
+.welcome-metadata {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.welcome-summary {
+  margin: 18px auto 0;
+  max-width: 560px;
+  color: var(--text) !important;
+  font-size: 15px;
+  font-weight: 600;
+}
+.welcome-message {
+  max-width: 580px;
+  margin: 16px auto 0;
+  color: var(--muted);
+  line-height: 1.65;
+  text-align: left;
+}
+.welcome-message > :first-child { margin-top: 0; }
+.welcome-message > :last-child { margin-bottom: 0; }
+.welcome-message code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--panel-3);
+}
+.welcome-fallback { margin: 18px 0 0; }
 .prompt-examples { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 20px; }
 .prompt-examples button {
   padding: 9px 12px;
-  border-radius: 999px;
+  border-radius: 8px;
   color: var(--text);
   background: var(--panel-3);
   border: 1px solid var(--line);
@@ -6485,11 +6533,11 @@ body.is-resizing-evidence-panel {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .topbar-left > span:nth-child(2),
   .topbar-left > .topbar-sep,
   .topbar-left > .muted,
   .topbar-provider-status,
   .topbar-agent > span { display: none; }
+  .runtime-status-copy { display: none; }
   .topbar-agent { flex: 1 1 auto; min-width: 0; }
   .topbar-agent-select { width: 100%; max-width: none; }
   .topbar-nav-button { min-width: 0; justify-content: center; padding: 0 4px; font-size: 12px; }

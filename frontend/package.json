@@ -19,6 +19,7 @@
     "verify:remote-api-base": "cd .. && node scripts/verify_remote_api_base.mjs",
     "verify:openai-responses-container": "cd .. && node scripts/verify_openai_responses_container.mjs",
     "verify:provider-health-container": "cd .. && node scripts/verify_provider_health_container.mjs",
+    "verify:playground-agent-scope": "cd .. && node scripts/verify_playground_agent_scope.mjs",
     "verify:message-actions-browser": "cd .. && node scripts/verify_message_actions_browser.mjs"
   },
   "dependencies": {

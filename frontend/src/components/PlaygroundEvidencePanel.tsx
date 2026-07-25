@@ -1,7 +1,7 @@
-import { ExternalLink, ListTree, PanelRightClose } from "lucide-react";
+import { ListTree, PanelRightClose } from "lucide-react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { concreteLangfuseTraceUrl } from "../langfuseTraceUrl";
 import type { ChatMessage, StreamLogEvent } from "../types/runtime";
+import { LangfuseTraceAction } from "./LangfuseTraceAction";
 import { TraceContextChips, TraceTimelineView, traceActivityFromEvents } from "./TraceDrawer";
 
 export const EVIDENCE_PANEL_DEFAULT_WIDTH = 560;
@@ -33,11 +33,6 @@ export function PlaygroundEvidencePanel({
 }: PlaygroundEvidencePanelProps) {
   const activity = traceActivityFromEvents(events);
   const panelWidth = clampEvidencePanelWidth(width);
-  const traceHref = concreteLangfuseTraceUrl({
-    langfuseBaseUrl: langfuseUrl,
-    traceId: message?.langfuseTraceId,
-    traceUrl: message?.langfuseTraceUrl,
-  });
 
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -101,11 +96,12 @@ export function PlaygroundEvidencePanel({
           {message ? <TraceContextChips message={message} activity={activity} /> : null}
         </div>
         <div className="evidence-panel-actions">
-          {traceHref ? (
-            <a className="secondary-button evidence-langfuse-link" data-testid="trace-open-langfuse" href={traceHref} target="_blank" rel="noreferrer">
-              <ExternalLink size={14} /> Langfuse 完整 Trace
-            </a>
-          ) : null}
+          <LangfuseTraceAction
+            message={message}
+            langfuseUrl={langfuseUrl}
+            className="secondary-button evidence-langfuse-link"
+            streaming={streaming}
+          />
           <button className="icon-button" type="button" onClick={onClose} aria-label="折叠运行证据栏">
             <PanelRightClose size={16} />
           </button>

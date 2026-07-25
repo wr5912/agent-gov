@@ -8,7 +8,7 @@ from pathlib import Path
 import app.routers.conversations as conv_module
 from app.runtime.agent_paths import business_agent_layout
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
-from app.runtime.runtime_db import SessionRecordModel
+from app.runtime.runtime_db import AgentRunModel, SdkSessionEntryModel, SessionRecordModel
 from app.runtime.session_store import LocalSession
 from fastapi.testclient import TestClient
 
@@ -158,6 +158,104 @@ def test_items_project_transcript_via_owning_agent(monkeypatch, tmp_path: Path) 
     assert items[0]["role"] == "user" and items[0]["content"] == [{"text": "hi"}]
     assert items[1]["role"] == "assistant"
     assert body["first_id"] == "msg_0" and body["last_id"] == "msg_1"
+
+
+def test_items_project_run_and_trace_context_by_transcript_uuid(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    _skip_migration(monkeypatch)
+
+    async def history(*, sdk_store, sdk_session_id, workspace_dir, scrub, limit, offset):
+        del sdk_store, workspace_dir, scrub, limit, offset
+        messages = []
+        for turn in ("traced", "untraced", "legacy", "cross-session"):
+            messages.extend(
+                [
+                    {"uuid": f"{turn}-user", "role": "user", "blocks": [{"type": "text", "text": turn}]},
+                    {"uuid": f"{turn}-assistant", "role": "assistant", "blocks": [{"type": "text", "text": f"{turn}-answer"}]},
+                ]
+            )
+        return {"sdk_session_id": sdk_session_id, "title": "T", "messages": messages, "subagents": []}
+
+    monkeypatch.setattr(conv_module, "read_session_history", history)
+    module.session_store.save(
+        LocalSession(
+            session_id="sess-context",
+            agent_id="soc-ops",
+            sdk_session_id="sdk-context",
+            sdk_project_key="project-context",
+            sdk_store_ready_at="2026-07-25T00:00:00+00:00",
+        )
+    )
+    with module.session_store.Session.begin() as db:
+        db.add_all(
+            [
+                AgentRunModel(
+                    run_id="run-traced",
+                    session_id="sess-context",
+                    sdk_session_id="sdk-context",
+                    agent_version_id="version-traced",
+                    created_at="2026-07-25T00:00:00+00:00",
+                    langfuse_trace_id="trace-history",
+                    langfuse_trace_url="http://langfuse-web:3000/project/agent-gov/traces/trace-history",
+                    payload_json={},
+                ),
+                AgentRunModel(
+                    run_id="run-untraced",
+                    session_id="sess-context",
+                    sdk_session_id="sdk-context",
+                    agent_version_id="version-untraced",
+                    created_at="2026-07-25T00:01:00+00:00",
+                    payload_json={},
+                ),
+                AgentRunModel(
+                    run_id="run-cross-session",
+                    session_id="other-session",
+                    sdk_session_id="other-sdk-session",
+                    agent_version_id="version-cross-session",
+                    created_at="2026-07-25T00:01:30+00:00",
+                    langfuse_trace_id="trace-must-not-leak",
+                    langfuse_trace_url="http://langfuse-web:3000/project/agent-gov/traces/trace-must-not-leak",
+                    payload_json={},
+                ),
+            ]
+        )
+        for prefix, run_id in (
+            ("traced", "run-traced"),
+            ("untraced", "run-untraced"),
+            ("cross-session", "run-cross-session"),
+        ):
+            for role in ("user", "assistant"):
+                entry_uuid = f"{prefix}-{role}"
+                db.add(
+                    SdkSessionEntryModel(
+                        project_key="project-context",
+                        sdk_session_id="sdk-context",
+                        subpath="",
+                        entry_uuid=entry_uuid,
+                        entry_json={"type": role, "uuid": entry_uuid},
+                        origin_run_id=run_id,
+                        committed_at="2026-07-25T00:02:00+00:00",
+                    )
+                )
+
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        items = client.get("/v1/conversations/conv_sess-context/items").json()["data"]
+
+    traced = items[0]["agentgov"]
+    assert traced == {
+        "run_id": "run-traced",
+        "sdk_session_id": "sdk-context",
+        "agent_version_id": "version-traced",
+        "langfuse_trace_id": "trace-history",
+        "langfuse_trace_url": "http://langfuse-web:3000/project/agent-gov/traces/trace-history",
+    }
+    assert items[1]["agentgov"] == traced
+    assert items[2]["agentgov"]["run_id"] == "run-untraced"
+    assert items[2]["agentgov"]["langfuse_trace_id"] is None
+    assert items[3]["agentgov"]["langfuse_trace_url"] is None
+    assert items[4]["agentgov"] is None and items[5]["agentgov"] is None
+    assert items[6]["agentgov"] is None and items[7]["agentgov"] is None
 
 
 def test_items_use_persisted_candidate_project_binding_after_worktree_cleanup(monkeypatch, tmp_path: Path) -> None:

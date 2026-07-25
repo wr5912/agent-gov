@@ -15,6 +15,7 @@ import { useConfigMapping } from "./hooks/useConfigMapping";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { usePlaygroundSessionScope } from "./hooks/usePlaygroundSessionScope";
 import { cancelWaitingUserInputRequests, claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, sanitizedEnvelopeData, stringValue } from "./claudeUserInputState";
+import { mergeChatMessageRunContext } from "./chatMessageRunContext";
 import { messagesFromConversationItems } from "./playgroundHistory";
 import { usePromptSuggestion } from "./hooks/usePromptSuggestion";
 import { newId, newSessionId } from "./utils/ids";
@@ -380,16 +381,17 @@ export default function App() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const appendAssistantEvent = (event: StreamLogEvent) => {
+    const appendAssistantEvent = (event: StreamLogEvent, runContext?: unknown) => {
       setStreamEvents((prev) => [...prev.slice(-199), event]);
       updateSessionMessages(sessionId, (prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
         if (last?.role === "assistant") {
-          next[next.length - 1] = {
-            ...last,
+          const updated = {
+            ...(runContext ? mergeChatMessageRunContext(last, runContext) : last),
             events: [...(last.events || []), event],
           };
+          next[next.length - 1] = updated;
         }
         return next;
       });
@@ -424,7 +426,7 @@ export default function App() {
               data: sanitizedEnvelopeData(envelope),
               createdAt: new Date().toISOString(),
             };
-            appendAssistantEvent(event);
+            appendAssistantEvent(event, envelope.event === "session" ? envelope.data : undefined);
             if (envelope.event === "claude_user_input_required") {
               const request = claudeUserInputRequestFromData(envelope.data);
               if (request) {
@@ -484,29 +486,13 @@ export default function App() {
           onPromptSuggestion: (suggestions, runtimeSessionId) => promptSuggestion.receive(runtimeSessionId, suggestions),
           onResult: (result) => {
             if (!isRecord(result)) return;
-            const runId = typeof result.run_id === "string" ? result.run_id : undefined;
-            const resultSdkSessionId = typeof result.sdk_session_id === "string" ? result.sdk_session_id : undefined;
-            const resultAgentVersionId = typeof result.agent_version_id === "string" ? result.agent_version_id : undefined;
-            const resultLangfuseTraceId = typeof result.langfuse_trace_id === "string" ? result.langfuse_trace_id : undefined;
-            const resultLangfuseTraceUrl = typeof result.langfuse_trace_url === "string" ? result.langfuse_trace_url : undefined;
-            const resultSessionId = typeof result.session_id === "string" ? result.session_id : sessionId;
-            const resultAlertId = typeof result.alert_id === "string" ? result.alert_id : alertId.trim() || undefined;
-            const resultCaseId = typeof result.case_id === "string" ? result.case_id : caseId.trim() || undefined;
             const agentActivity = agentActivityFromResult(result);
             updateSessionMessages(sessionId, (prev) => {
               const next = [...prev];
               const last = next[next.length - 1];
               if (last?.role === "assistant") {
                 next[next.length - 1] = {
-                  ...last,
-                  runId,
-                  sdkSessionId: resultSdkSessionId,
-                  agentVersionId: resultAgentVersionId,
-                  langfuseTraceId: resultLangfuseTraceId,
-                  langfuseTraceUrl: resultLangfuseTraceUrl,
-                  sessionId: resultSessionId,
-                  alertId: resultAlertId,
-                  caseId: resultCaseId,
+                  ...mergeChatMessageRunContext(last, result),
                   agentActivity,
                 };
               }

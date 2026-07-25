@@ -1561,6 +1561,9 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     events = asyncio.run(collect(runtime))
 
     assert [event["event"] for event in events] == ["session", "message", "message", "message", "result", "done"]
+    session_event = next(event for event in events if event["event"] == "session")
+    assert session_event["data"]["langfuse_trace_id"] == "trace-test"
+    assert session_event["data"]["langfuse_trace_url"] == "http://langfuse.local/traces/trace-test"
     result_event = next(event for event in events if event["event"] == "result")
     assert result_event["data"]["agent_activity"]["tool_names"] == ["Read"]
     assert fake_langfuse.flushed is True

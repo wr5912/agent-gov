@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Literal, Optional
+from typing import Literal, Optional, TypeAlias
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 
 from app.routers.sessions import _resolve_owning_profile
 from app.runtime.errors import NotFoundError
@@ -17,6 +18,7 @@ from app.runtime.openai_responses_adapter import (
 )
 from app.runtime.openai_responses_schemas import (
     AgentGovConversationExtension,
+    AgentGovConversationItemExtension,
     Conversation,
     ConversationCreateRequest,
     ConversationDeleted,
@@ -24,11 +26,14 @@ from app.runtime.openai_responses_schemas import (
     ConversationItemList,
     ConversationList,
 )
+from app.runtime.runtime_db import AgentRunModel, SdkSessionEntryModel
 from app.runtime.sdk_session_migration import committed_sdk_history_store
 from app.runtime.session_history import read_session_history
 from app.runtime.session_store import LocalSession, LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
+
+ConversationItemRunContexts: TypeAlias = dict[str, AgentGovConversationItemExtension]
 
 
 def _conversation(session: LocalSession) -> Conversation:
@@ -48,16 +53,78 @@ def _conversation(session: LocalSession) -> Conversation:
     )
 
 
-def _item(message: JsonObject, index: int) -> ConversationItem:
+def _item(
+    message: JsonObject,
+    index: int,
+    run_contexts: ConversationItemRunContexts,
+) -> ConversationItem:
     role = message.get("role")
     blocks = message.get("blocks")
     parent = message.get("parent_tool_use_id")
+    message_uuid = message.get("uuid")
     return ConversationItem(
         id=f"msg_{index}",
         role=role if isinstance(role, str) else None,
         content=blocks if isinstance(blocks, list) else [],
         parent_tool_use_id=parent if isinstance(parent, str) else None,
+        agentgov=run_contexts.get(message_uuid) if isinstance(message_uuid, str) else None,
     )
+
+
+def _item_run_contexts(
+    session_store: LocalSessionStore,
+    session: LocalSession,
+    messages: list[JsonObject],
+) -> ConversationItemRunContexts:
+    message_uuids = {
+        message_uuid
+        for message in messages
+        if isinstance((message_uuid := message.get("uuid")), str) and message_uuid
+    }
+    if not message_uuids or not session.sdk_project_key or not session.sdk_session_id:
+        return {}
+
+    with session_store.Session() as db:
+        entry_rows = db.execute(
+            select(SdkSessionEntryModel.entry_uuid, SdkSessionEntryModel.origin_run_id).where(
+                SdkSessionEntryModel.project_key == session.sdk_project_key,
+                SdkSessionEntryModel.sdk_session_id == session.sdk_session_id,
+                SdkSessionEntryModel.subpath == "",
+                SdkSessionEntryModel.entry_uuid.in_(message_uuids),
+                SdkSessionEntryModel.origin_run_id.is_not(None),
+                SdkSessionEntryModel.committed_at.is_not(None),
+                SdkSessionEntryModel.discarded_at.is_(None),
+            )
+        ).all()
+        run_ids = {run_id for _, run_id in entry_rows if isinstance(run_id, str)}
+        if not run_ids:
+            return {}
+        run_rows = {
+            row.run_id: row
+            for row in db.scalars(
+                select(AgentRunModel).where(
+                    AgentRunModel.run_id.in_(run_ids),
+                    AgentRunModel.session_id == session.session_id,
+                    AgentRunModel.sdk_session_id == session.sdk_session_id,
+                )
+            ).all()
+        }
+
+    contexts: ConversationItemRunContexts = {}
+    for entry_uuid, run_id in entry_rows:
+        if not isinstance(entry_uuid, str) or not isinstance(run_id, str):
+            continue
+        run = run_rows.get(run_id)
+        if run is None:
+            continue
+        contexts[entry_uuid] = AgentGovConversationItemExtension(
+            run_id=run.run_id,
+            sdk_session_id=run.sdk_session_id,
+            agent_version_id=run.agent_version_id,
+            langfuse_trace_id=run.langfuse_trace_id,
+            langfuse_trace_url=run.langfuse_trace_url,
+        )
+    return contexts
 
 
 def _offset_from_cursor(after: Optional[str]) -> int:
@@ -103,7 +170,9 @@ async def _list_items_impl(
     )
     messages = [m for m in (history.get("messages") or []) if isinstance(m, dict)]
     has_more = len(messages) > limit
-    items = [_item(message, offset + i) for i, message in enumerate(messages[:limit])]
+    page_messages = messages[:limit]
+    run_contexts = _item_run_contexts(session_store, session, page_messages)
+    items = [_item(message, offset + i, run_contexts) for i, message in enumerate(page_messages)]
     return ConversationItemList(
         data=items,
         first_id=items[0].id if items else None,

@@ -126,7 +126,15 @@ def _parse(sse_text: str):
 
 _SESSION = {
     "event": "session",
-    "data": {"run_id": "run-9", "session_id": "sess-9", "sdk_session_id": "sdk-9", "agent_version_id": "ver-9", "agent_id": "soc-ops"},
+    "data": {
+        "run_id": "run-9",
+        "session_id": "sess-9",
+        "sdk_session_id": "sdk-9",
+        "agent_version_id": "ver-9",
+        "agent_id": "soc-ops",
+        "langfuse_trace_id": "trace-9",
+        "langfuse_trace_url": "http://langfuse-web:3000/project/agent-gov/traces/trace-9",
+    },
 }
 _ASSISTANT = {"event": "message", "data": {"event": "AssistantMessage", "text": "日报正文", "raw": {}}}
 _SUGGESTION = {
@@ -167,6 +175,8 @@ def test_control_stream_maps_core_events() -> None:
     assert by["response.created"]["response"]["id"] == "resp_run-9"
     assert by["agentgov.session"]["payload"]["heartbeat_interval_s"] == 15
     assert by["agentgov.session"]["v"] == 1 and by["agentgov.session"]["run_id"] == "run-9"
+    assert by["agentgov.session"]["payload"]["langfuse_trace_id"] == "trace-9"
+    assert by["agentgov.session"]["payload"]["langfuse_trace_url"].endswith("/project/agent-gov/traces/trace-9")
     assert by["response.output_text.delta"]["delta"] == "日报正文"
     # completed 复用非流式投影：权威 output 在 output[]
     assert by["response.completed"]["response"]["output"][0]["content"][0]["text"] == "日报正文"
@@ -222,6 +232,7 @@ def test_done_without_result_emits_one_failed_terminal() -> None:
     assert names.count("agentgov.error") == 1
     assert names.count("agentgov.done") == 1
     assert dict(events)["response.failed"]["error"]["error_code"] == "STREAM_TERMINATED_WITHOUT_RESULT"
+    assert dict(events)["agentgov.session"]["payload"]["langfuse_trace_id"] == "trace-9"
 
 
 def test_frames_after_done_are_ignored() -> None:

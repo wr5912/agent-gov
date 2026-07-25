@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatRole, ConversationItem, StreamLogEvent } from "./types/runtime";
+import { mergeConversationItemRunContext } from "./chatMessageRunContext";
 import { isRecord } from "./utils/records";
 
 function itemRole(item: ConversationItem): ChatRole | null {
@@ -41,20 +42,23 @@ export function messagesFromConversationItems(items: ConversationItem[], session
   let turnId = "orphan";
   let assistantText: string[] = [];
   let assistantEvents: StreamLogEvent[] = [];
+  let assistantContextItem: ConversationItem | undefined;
 
   const flushAssistant = () => {
     if (assistantText.length) {
-      messages.push({
+      const message: ChatMessage = {
         id: `history_${turnId}_assistant`,
         role: "assistant",
         content: assistantText.join("\n\n"),
         createdAt: "",
         sessionId,
         events: assistantEvents,
-      });
+      };
+      messages.push(mergeConversationItemRunContext(message, assistantContextItem));
     }
     assistantText = [];
     assistantEvents = [];
+    assistantContextItem = undefined;
   };
 
   for (const item of items) {
@@ -66,6 +70,7 @@ export function messagesFromConversationItems(items: ConversationItem[], session
     if (isHumanMessage || role === "system") {
       flushAssistant();
       turnId = item.id;
+      assistantContextItem = isRecord(item.agentgov) ? item : undefined;
       if (visibleText.length) {
         messages.push({
           id: `history_${item.id}_${role}`,
@@ -78,6 +83,7 @@ export function messagesFromConversationItems(items: ConversationItem[], session
       continue;
     }
 
+    if (isRecord(item.agentgov)) assistantContextItem = item;
     assistantEvents.push(...itemEvents(item));
     if (role === "assistant") assistantText.push(...visibleText);
   }

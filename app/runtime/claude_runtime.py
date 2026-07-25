@@ -679,6 +679,8 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
             "agent_version_id": context.agent_version_id,
             "session_id": context.session.session_id,
             "sdk_session_id": context.session.sdk_session_id,
+            "langfuse_trace_id": context.langfuse_trace_id,
+            "langfuse_trace_url": context.langfuse_trace_url,
             "alert_id": req.alert_id,
             "case_id": req.case_id,
         }

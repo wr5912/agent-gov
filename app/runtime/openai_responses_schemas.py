@@ -171,6 +171,16 @@ class ConversationDeleted(BaseModel):
     deleted: bool
 
 
+class AgentGovConversationItemExtension(BaseModel):
+    """AgentGov-owned run context associated with one SDK transcript message."""
+
+    run_id: str
+    sdk_session_id: Optional[str] = None
+    agent_version_id: Optional[str] = None
+    langfuse_trace_id: Optional[str] = None
+    langfuse_trace_url: Optional[str] = None
+
+
 class ConversationItem(BaseModel):
     """会话 item：投影自 SDK transcript 的一条 message（blocks 原样透传：thinking/text/tool_use/tool_result）。"""
 
@@ -180,6 +190,7 @@ class ConversationItem(BaseModel):
     role: Optional[str] = None
     content: list[JsonObject] = Field(default_factory=list)
     parent_tool_use_id: Optional[str] = None
+    agentgov: Optional[AgentGovConversationItemExtension] = None
 
 
 class ConversationItemList(BaseModel):

@@ -72,7 +72,7 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 ```
 
 - `stream=false` 返回 Responses 对象；权威文本位于 `output[].content[].text`，运行关联位于 `agentgov.run_id`、`agentgov.conversation_id`、`agentgov.session_id`、`agentgov.trace_id` 等扩展字段。默认 `store=true` 时可通过 `GET /v1/responses/{response_id}` 取回已完成响应；`store=false` 只关闭公开取回，不关闭内部治理审计。
-- `stream=true` 返回 Responses-style SSE：标准事件包括 `response.created`、`response.output_text.delta`、`response.completed`、`response.failed`；control mode 另有 `agentgov.session`、`agentgov.tool_step`、`agentgov.confirmation.*`、`agentgov.result`、`agentgov.error`、`agentgov.done`。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
+- `stream=true` 返回 Responses-style SSE：标准事件包括 `response.created`、`response.output_text.delta`、`response.completed`、`response.failed`；control mode 另有 `agentgov.session`、`agentgov.tool_step`、`agentgov.confirmation.*`、`agentgov.result`、`agentgov.error`、`agentgov.done`。`agentgov.session.payload` 在运行开始时下发 `run_id`、会话/版本关联以及可用的 `langfuse_trace_id`、`langfuse_trace_url`，因此即使后续运行失败、取消或没有 `agentgov.result`，客户端仍可保留本次 Trace 入口。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
 - 边界：工具权限、MCP、skills、subagents、hooks 和 sandbox 以业务 Agent workspace 的 Claude Code 项目配置为准；Runtime 只选择 project discovery，`can_use_tool` 只桥接原生 `ask`。旧 Chat 字段 `agent`、`skills`、`skills_mode`、`allowed_tools`、`disallowed_tools`、`permission_mode` 已删除，传入返回 `422`。续聊复用同一 `conversation_id`，或使用 `previous_response_id` 让底座解析其所属会话；两种方式都会校验所选业务 Agent 与既有会话 owner 一致，不允许把 Agent A 的 SDK transcript 交给 Agent B 续接。若 `previous_response_id` 对应 run 没有 `session_id`，或其 conversation mapping 已被删除，底座返回 `409`，不会把“续接”静默降级成新会话。
 
 流式 Prompt Suggestion 是可选的下一轮输入辅助：
@@ -139,8 +139,8 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 ### 4.3 创建与回放会话 — OpenAPI tag `openai-conversations`
 - 目标：刷新/重开旧会话时重建对话气泡。
 - 最短路径：`POST /v1/conversations` 可预创建会话；`GET /v1/conversations` 列出会话；`GET /v1/conversations/{conversation_id}` 读取元数据；`DELETE /v1/conversations/{conversation_id}` 删除会话映射；`GET /v1/conversations/{conversation_id}/items` 从 SDK transcript 投影历史。
-- items 返回 `data[]`，每项包含 `id`、`role`、`parent_tool_use_id`、`content`；内容块保留 `thinking`、`text`、`tool_use`、`tool_result` 等 SDK 事实。分页使用 cursor 风格 `after`、`limit`、`order`、`include`，不使用 offset。
-- 边界：只传 `conversation_id`，不传 `agent_id`；归属由底座解析。会话尚无 transcript 时 `data` 为空；读取未知会话或其 items 返回 `404`，删除未知映射返回 `deleted=false`。历史数据若 `agent_id` 为空但已经存在 `turns` 或 `sdk_session_id`，底座无法从该映射唯一证明 owner，会 fail-closed 返回 `409`；集成方应新建会话，不得指定 Agent 抢占，也不得依赖底座猜测或静默迁移。会话正文继续来自 SDK transcript，后端不另建消息副本。
+- items 返回 `data[]`，每项包含 `id`、`role`、`parent_tool_use_id`、`content`；内容块保留 `thinking`、`text`、`tool_use`、`tool_result` 等 SDK 事实。若 transcript message UUID 能通过已提交的 SessionStore entry 确定性关联 `AgentRun`，该 item 还包含可选的 `agentgov` 扩展：`run_id`、`sdk_session_id`、`agent_version_id`、`langfuse_trace_id`、`langfuse_trace_url`。分页使用 cursor 风格 `after`、`limit`、`order`、`include`，不使用 offset。
+- 边界：只传 `conversation_id`，不传 `agent_id`；归属由底座解析。会话尚无 transcript 时 `data` 为空；读取未知会话或其 items 返回 `404`，删除未知映射返回 `deleted=false`。历史数据若 `agent_id` 为空但已经存在 `turns` 或 `sdk_session_id`，底座无法从该映射唯一证明 owner，会 fail-closed 返回 `409`；集成方应新建会话，不得指定 Agent 抢占，也不得依赖底座猜测或静默迁移。item 无 `agentgov` 表示旧 transcript 无法确定性关联 run；扩展存在但 Trace 字段为空表示该 run 未记录 Langfuse Trace。底座不按文本或时间猜测，也不伪造 Trace URL。会话正文继续来自 SDK transcript，后端不另建消息副本。
 
 ### 4.4 提交反馈并驱动闭环 — OpenAPI tag `feedback` / `improvements`
 - 目标：把用户/系统反馈喂回闭环，产出归因、优化、执行改动和回归测试设计。

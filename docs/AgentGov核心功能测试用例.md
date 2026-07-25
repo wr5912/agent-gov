@@ -390,9 +390,10 @@
 证据要求：UI 详情截图或 API JSON。
 
 自动验收（部分）：`tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent`、
+`tests/test_conversations_api.py::test_items_project_run_and_trace_context_by_transcript_uuid`、
 `tests/test_session_history.py::test_endpoint_projects_history` 和
 `tests/test_session_history.py::test_normalize_message_hostile_inputs_do_not_crash_or_pollute_role`
-证明前端会话历史的 API 真相来自 SDK transcript，并覆盖 owning Agent 和 hostile 消息投影。
+证明前端会话历史的 API 真相来自 SDK transcript，运行/Trace 上下文按 UUID 确定性关联，并覆盖 owning Agent 和 hostile 消息投影。
 仍缺真实运行下 UI 回复细节对 input/output、tool/skill、错误与 Trace 的联合展示证据。
 
 ### AGV-015 Feedback Loop 形成标准化归因链路

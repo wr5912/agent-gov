@@ -139,27 +139,44 @@ function mockAgentRuns(includeMessages) {
 }
 
 function mockConversationItems() {
-  return mockAgentRuns(false).flatMap((run, index) => [
-    {
-      id: `msg_${index * 2}`,
-      object: "conversation.item",
-      type: "message",
-      role: "user",
-      content: [{ type: "text", text: run.message }],
-      parent_tool_use_id: null,
-    },
-    {
-      id: `msg_${index * 2 + 1}`,
-      object: "conversation.item",
-      type: "message",
-      role: "assistant",
-      content: [
-        { type: "text", text: run.answer_summary },
-        { type: "tool_use", id: `tool-${index + 1}`, name: "Read", input: { file_path: "CLAUDE.md" } },
-      ],
-      parent_tool_use_id: null,
-    },
-  ]);
+  return mockAgentRuns(false).flatMap((run, index) => {
+    const agentgov = index === 2
+      ? undefined
+      : {
+          run_id: run.run_id,
+          sdk_session_id: run.sdk_session_id,
+          agent_version_id: run.agent_version_id,
+          ...(index === 1
+            ? {}
+            : {
+                langfuse_trace_id: `mock-trace-${index + 1}`,
+                langfuse_trace_url: `http://langfuse-web:3000/project/agent-gov/traces/mock-trace-${index + 1}`,
+              }),
+        };
+    return [
+      {
+        id: `msg_${index * 2}`,
+        object: "conversation.item",
+        type: "message",
+        role: "user",
+        content: [{ type: "text", text: run.message }],
+        parent_tool_use_id: null,
+        agentgov,
+      },
+      {
+        id: `msg_${index * 2 + 1}`,
+        object: "conversation.item",
+        type: "message",
+        role: "assistant",
+        content: [
+          { type: "text", text: run.answer_summary },
+          { type: "tool_use", id: `tool-${index + 1}`, name: "Read", input: { file_path: "CLAUDE.md" } },
+        ],
+        parent_tool_use_id: null,
+        agentgov,
+      },
+    ];
+  });
 }
 
 function mockPayload(urlOrPath) {
@@ -312,6 +329,12 @@ async function main() {
   let ok = false, detail = "";
   let responsesRequestCount = 0;
   try {
+    if (REAL) {
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (request.url().startsWith(api)) requestedRuntimeUrls.push(`${url.pathname}${url.search}`);
+      });
+    }
     if (!REAL) {
       await page.route("**/*", async (route) => {
         const url = new URL(route.request().url());
@@ -323,20 +346,40 @@ async function main() {
           const sessionId = sessionIdFromResponsesBody(body);
           if (body?.input === "触发截断流负测") {
             return sse(route, [
-              { event: "agentgov.session", data: { session_id: sessionId } },
+              {
+                event: "agentgov.session",
+                data: {
+                  session_id: sessionId,
+                  run_id: "mock-run-failure",
+                  sdk_session_id: "mock-session",
+                  agent_version_id: "v-mock",
+                  langfuse_trace_id: "mock-trace-failure",
+                  langfuse_trace_url: "http://langfuse-web:3000/project/agent-gov/traces/mock-trace-failure",
+                },
+              },
               { event: "response.output_text.delta", data: { delta: "半截响应" } },
               { event: "agentgov.done", data: { ok: true } },
             ]);
           }
           const canonicalText = "我是 AgentGov 测试助手。";
           return sse(route, [
-            { event: "agentgov.session", data: { session_id: sessionId } },
+            {
+              event: "agentgov.session",
+              data: {
+                session_id: sessionId,
+                run_id: "mock-run-live",
+                sdk_session_id: "mock-session",
+                agent_version_id: "v-mock",
+                langfuse_trace_id: "mock-trace-live",
+                langfuse_trace_url: "http://langfuse-web:3000/project/agent-gov/traces/mock-trace-live",
+              },
+            },
             ...Array.from(`${canonicalText}不会进入最终文本`).map((delta) => ({
               event: "response.output_text.delta",
               data: { delta },
             })),
-            { event: "agentgov.result", data: { run_id: "mock-run", session_id: sessionId, agent_version_id: "v-mock", agent_activity: { tool_calls: [], tool_results: [], tool_names: [] } } },
-            { event: "agentgov.prompt_suggestion", data: { v: 1, type: "agentgov.prompt_suggestion", run_id: "mock-run", ts: Date.now() / 1000, seq: 4, payload: { suggestion: "继续检查失败路径。", suggestions: ["继续检查失败路径。", "看一下日志", "换个角度分析"], session_id: sessionId } } },
+            { event: "agentgov.result", data: { run_id: "mock-run-live", session_id: sessionId, agent_version_id: "v-mock", agent_activity: { tool_calls: [], tool_results: [], tool_names: [] } } },
+            { event: "agentgov.prompt_suggestion", data: { v: 1, type: "agentgov.prompt_suggestion", run_id: "mock-run-live", ts: Date.now() / 1000, seq: 4, payload: { suggestion: "继续检查失败路径。", suggestions: ["继续检查失败路径。", "看一下日志", "换个角度分析"], session_id: sessionId } } },
             { event: "response.completed", data: { response: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: canonicalText }] }] } } },
             { event: "agentgov.done", data: { ok: true } },
           ]);
@@ -446,8 +489,51 @@ async function main() {
         const traceTabVisible = await page.getByTestId("evidence-tab-trace").isVisible().catch(() => false);
         const traceDrawerCount = await page.getByTestId("trace-drawer").count();
         const legacyModalVisible = await page.locator(".detail-modal-card").isVisible().catch(() => false);
+        const historyTraceHref = await page.getByTestId("playground-evidence-panel")
+          .getByTestId("trace-open-langfuse")
+          .getAttribute("href")
+          .catch(() => "");
         await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
         await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+
+        let restoredTraceHref = "";
+        if (REAL) {
+          await page.reload({ waitUntil: "domcontentloaded" });
+          await page.getByTestId("message-actions").first().waitFor({ timeout: 30000 });
+          await page.getByTestId("message-action-view-trace").first().click();
+          await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
+          restoredTraceHref = await page.getByTestId("playground-evidence-panel")
+            .getByTestId("trace-open-langfuse")
+            .getAttribute("href")
+            .catch(() => "");
+          await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
+          await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+        }
+
+        let historyTraceStatusChecks = { skipped: REAL };
+        if (!REAL) {
+          await page.locator('[data-message-id="history_msg_2_assistant"]').getByTestId("message-action-view-trace").click();
+          await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 5000 });
+          const untracedLabel = await page.getByTestId("trace-langfuse-unavailable").innerText();
+          const untracedLinkCount = await page.getByTestId("playground-evidence-panel").getByTestId("trace-open-langfuse").count();
+          await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
+          await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 });
+
+          await page.locator('[data-message-id="history_msg_4_assistant"]').getByTestId("message-action-view-trace").click();
+          await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 5000 });
+          const unlinkedLabel = await page.getByTestId("trace-langfuse-unavailable").innerText();
+          const unlinkedLinkCount = await page.getByTestId("playground-evidence-panel").getByTestId("trace-open-langfuse").count();
+          historyTraceStatusChecks = {
+            skipped: false,
+            tracedHref: historyTraceHref,
+            untracedLabel,
+            untracedLinkCount,
+            unlinkedLabel,
+            unlinkedLinkCount,
+          };
+          await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
+          await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 });
+        }
 
         await page.getByTestId("message-action-create-feedback").first().click();
         await page.getByTestId("feedback-drawer").waitFor({ timeout: 8000 });
@@ -505,6 +591,10 @@ async function main() {
           const domLatencyP95 = sortedDomLatencies.length
             ? sortedDomLatencies[Math.max(0, Math.ceil(sortedDomLatencies.length * 0.95) - 1)]
             : Number.POSITIVE_INFINITY;
+          const liveTraceHref = await page.getByTestId("playground-evidence-panel")
+            .getByTestId("trace-open-langfuse")
+            .getAttribute("href")
+            .catch(() => "");
           // 多候选下容器内有多个 button,必须按 per-chip testid 取,否则 strict-mode violation
           await suggestionChips.first().click();
           await page.waitForTimeout(100);
@@ -523,6 +613,7 @@ async function main() {
             canonicalAssistantTextExact: latestAssistantText === "我是 AgentGov 测试助手。",
             sseReceiptToDomSamples: domLatencies.length,
             sseReceiptToDomP95Ms: domLatencyP95,
+            traceFromSessionSurvivesResult: liveTraceHref.includes("/project/agent-gov/traces/mock-trace-live"),
           };
           await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
           await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
@@ -541,6 +632,8 @@ async function main() {
           settingsSize,
           settingsWidth: Math.round(settingsBox?.width || 0),
           legacyModalVisible,
+          currentTraceHref: historyTraceHref,
+          restoredTraceHref,
           sessionNoRuntimeSettings: !sessionText.includes("Subagent") && !sessionText.includes("Skills Mode") && !sessionText.includes("Allowed Tools"),
           activeSessionDeleteDisabled,
           settingsNoSessionHistory: !settingsText.includes("新会话") && !settingsText.includes("删除会话映射") && !settingsText.includes("Sessions"),
@@ -552,9 +645,11 @@ async function main() {
           historySourceChecks: {
             conversationItemsRequested: requestedRuntimeUrls.some((value) => value.startsWith("/v1/conversations/conv_mock-session/items?")),
             conversationItemsPaginated: requestedRuntimeUrls.some((value) => value.startsWith("/v1/conversations/conv_mock-session/items?") && value.includes("after=msg_13")),
+            realConversationItemsRequested: requestedRuntimeUrls.some((value) => /^\/v1\/conversations\/[^/]+\/items\?/.test(value)),
             sqliteMessageRestoreAbsent: !requestedRuntimeUrls.some((value) => value.startsWith("/api/agent-runs?") && value.includes("include_messages=true")),
             localMessageCacheAbsent: await page.evaluate(() => window.localStorage.getItem("playground-session-messages") === null),
           },
+          historyTraceStatusChecks,
         };
         ok = Object.values(counts).every((c) => c > 0)
           && (traceBox?.width || 0) >= 520
@@ -576,6 +671,9 @@ async function main() {
           && drawerChecks.settingsNoSessionHistory
           && debugClosed
           && !legacyModalVisible
+          && (!REAL || historyTraceHref.includes("/traces/"))
+          && (!REAL || restoredTraceHref.includes("/traces/"))
+          && (!REAL || drawerChecks.historySourceChecks.realConversationItemsRequested)
           && (REAL || (
             !streamBatchChecks.skipped
             && streamBatchChecks.scheduledDispatchCount === 1
@@ -589,6 +687,14 @@ async function main() {
             && drawerChecks.historySourceChecks.conversationItemsPaginated
             && drawerChecks.historySourceChecks.sqliteMessageRestoreAbsent
             && drawerChecks.historySourceChecks.localMessageCacheAbsent
+          ))
+          && (REAL || (
+            !historyTraceStatusChecks.skipped
+            && historyTraceStatusChecks.tracedHref.includes("/project/agent-gov/traces/mock-trace-1")
+            && historyTraceStatusChecks.untracedLabel === "无 Langfuse Trace"
+            && historyTraceStatusChecks.untracedLinkCount === 0
+            && historyTraceStatusChecks.unlinkedLabel === "历史 Trace 未关联"
+            && historyTraceStatusChecks.unlinkedLinkCount === 0
           ))
           && (REAL || (
             !markdownChecks.skipped
@@ -635,10 +741,11 @@ async function main() {
             && autoPanelChecks.canonicalAssistantTextExact
             && autoPanelChecks.sseReceiptToDomSamples > 0
             && autoPanelChecks.sseReceiptToDomP95Ms <= 100
+            && autoPanelChecks.traceFromSessionSurvivesResult
           ));
         detail = JSON.stringify({ counts, drawerChecks });
         if (ok) await page.screenshot({ path: join(screenshotDir, "agentgov-improvement-ui-after-message-actions.png") });
-        if (ok && !REAL) {
+        if (!REAL) {
           await page.locator(".composer textarea").fill("触发截断流负测");
           await page.getByRole("button", { name: "发送" }).click();
           await page.waitForFunction(() => {
@@ -646,12 +753,20 @@ async function main() {
             return messages[messages.length - 1]?.textContent?.includes("Stream ended before terminal event");
           }, undefined, { timeout: 8000 });
           const terminalFailureText = await page.locator('[data-message-role="assistant"]').last().innerText();
+          const failureTraceHref = await page.getByTestId("playground-evidence-panel")
+            .getByTestId("trace-open-langfuse")
+            .getAttribute("href")
+            .catch(() => "");
           const terminalFailureCheck = {
             partialTextPreserved: terminalFailureText.includes("半截响应"),
             interruptionVisible: terminalFailureText.includes("运行失败")
               && terminalFailureText.includes("Stream ended before terminal event"),
+            traceAvailableWithoutResult: failureTraceHref.includes("/project/agent-gov/traces/mock-trace-failure"),
           };
-          ok = ok && terminalFailureCheck.partialTextPreserved && terminalFailureCheck.interruptionVisible;
+          ok = ok
+            && terminalFailureCheck.partialTextPreserved
+            && terminalFailureCheck.interruptionVisible
+            && terminalFailureCheck.traceAvailableWithoutResult;
           detail = JSON.stringify({ counts, drawerChecks, terminalFailureCheck });
         }
       } catch (e) {

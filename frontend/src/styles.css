@@ -6118,6 +6118,12 @@ body.is-resizing-evidence-panel {
   flex: 0 0 auto;
 }
 .evidence-langfuse-link { height: 30px; padding: 0 9px; }
+.langfuse-trace-unavailable {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
 .evidence-tabs {
   display: flex;
   gap: 6px;

@@ -165,7 +165,7 @@
 | `response.output_text.delta` | assistant 文本增量 |
 | `response.completed` | 最终完成 |
 | `response.failed` | 结构化失败 |
-| `agentgov.session` | 下发 `run_id/session_id/sdk_session_id/agent_id/agent_version_id` |
+| `agentgov.session` | 在运行开始时下发 `run_id/session_id/sdk_session_id/agent_id/agent_version_id` 及可用的 `langfuse_trace_id/langfuse_trace_url`，失败或取消路径不依赖最终 result 才获得 Trace 引用 |
 | `agentgov.tool_step` | 工具调用/工具结果的规整时间线 |
 | `agentgov.confirmation.requested` | HITL 人工确认卡 |
 | `agentgov.confirmation.resolved` | HITL 决策结果 |
@@ -192,7 +192,7 @@ HITL 的本质不是 OpenAI `tool_calls`。OpenAI `tool_calls` 是模型建议�
 - `GET /v1/conversations`：作为 AgentGov 扩展列表接口，支撑前端会话侧栏。
 - `GET /v1/conversations/{conversation_id}`：读取会话元数据。
 - `DELETE /v1/conversations/{conversation_id}`：删除会话映射。
-- `GET /v1/conversations/{conversation_id}/items`：从 SDK transcript 投影 messages、tool calls、tool outputs、thinking/text blocks 等 items，查询参数采用 OpenAI 风格 `after`、`limit`、`order`、`include`。
+- `GET /v1/conversations/{conversation_id}/items`：从 SDK transcript 投影 messages、tool calls、tool outputs、thinking/text blocks 等 items；message UUID 能确定性关联已持久化 run 时，返回可选 `agentgov` 运行/Trace 扩展。查询参数采用 OpenAI 风格 `after`、`limit`、`order`、`include`。
 
 实现原则：
 
@@ -201,6 +201,7 @@ HITL 的本质不是 OpenAI `tool_calls`。OpenAI `tool_calls` 是模型建议�
 - 优先复用 claude-agent-sdk session API 与当前 `read_session_history`（`app/runtime/session_history.py`）投影能力。
 - `conversation_id` 是对外 ID，内部继续保留现有 `session_id` 与 `sdk_session_id` 的边界。
 - **投影前先解析 owning agent**：`conversation_id`→`session_id` 后，须按 `session.agent_id` 经 agent registry 解析 owning agent 的 `workspace_dir`/`claude_config_dir`（复用 `app/routers/sessions.py:_resolve_owning_profile`，backend-owned、无静默 fallback）再定位 SDK transcript，否则取不到历史或误取他 Agent transcript。
+- **运行上下文只做确定性富化**：按 `message.uuid -> sdk_session_entries.origin_run_id -> agent_runs` 批量关联；无 entry、无 run 或旧导入历史均不按文本/时间猜测，也不伪造 Langfuse URL。扩展存在但 Trace 字段为空表示该 run 没有 Trace，扩展缺失表示历史 run 未关联。
 - **不暴露旧 offset 契约**：旧 `/api/sessions/{id}/messages?offset=&limit=` 继续作为兼容面；新 `/v1/conversations/{id}/items` 使用 cursor 风格 `after`，避免只是换路径的旧 sessions API。
 
 ### `/v1/chat/completions`

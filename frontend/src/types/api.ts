@@ -2294,6 +2294,22 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * AgentGovConversationItemExtension
+         * @description AgentGov-owned run context associated with one SDK transcript message.
+         */
+        AgentGovConversationItemExtension: {
+            /** Agent Version Id */
+            agent_version_id?: string | null;
+            /** Langfuse Trace Id */
+            langfuse_trace_id?: string | null;
+            /** Langfuse Trace Url */
+            langfuse_trace_url?: string | null;
+            /** Run Id */
+            run_id: string;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+        };
         /** AgentGovDebug */
         AgentGovDebug: {
             /**
@@ -3616,6 +3632,7 @@ export interface components {
          * @description 会话 item：投影自 SDK transcript 的一条 message（blocks 原样透传：thinking/text/tool_use/tool_result）。
          */
         ConversationItem: {
+            agentgov?: components["schemas"]["AgentGovConversationItemExtension"] | null;
             /** Content */
             content?: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -6970,7 +6987,7 @@ export interface operations {
                     name?: string;
                     /**
                      * Format: binary
-                     * @description A .tar.gz archive with exactly one workspace/ root.
+                     * @description A .tar.gz archive with exactly one workspace/ root. workspace/agent.yaml must declare an agent.id that exactly matches the URL agent_id.
                      */
                     package: string;
                     /** @description Optional overwrite commit message. */

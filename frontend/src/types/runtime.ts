@@ -127,6 +127,7 @@ export interface AgentActivity {
 }
 
 export type ChatRole = "user" | "assistant" | "system";
+export type LangfuseTraceStatus = "available" | "not_recorded" | "history_unlinked";
 
 export interface ChatMessage {
   id: string;
@@ -139,6 +140,7 @@ export interface ChatMessage {
   agentVersionId?: string;
   langfuseTraceId?: string;
   langfuseTraceUrl?: string;
+  langfuseTraceStatus?: LangfuseTraceStatus;
   alertId?: string;
   caseId?: string;
   agentActivity?: AgentActivity;

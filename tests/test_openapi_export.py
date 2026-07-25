@@ -169,6 +169,17 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
     agent_run = schema["components"]["schemas"]["AgentRunResponse"]
     assert "langfuse_trace_id" in agent_run["properties"]
     assert "langfuse_trace_url" in agent_run["properties"]
+    conversation_item = schema["components"]["schemas"]["ConversationItem"]
+    assert "agentgov" in conversation_item["properties"]
+    item_extension = schema["components"]["schemas"]["AgentGovConversationItemExtension"]
+    assert set(item_extension["properties"]) == {
+        "run_id",
+        "sdk_session_id",
+        "agent_version_id",
+        "langfuse_trace_id",
+        "langfuse_trace_url",
+    }
+    assert item_extension["required"] == ["run_id"]
 
     test_file_symbol = schema["components"]["schemas"]["AgentTestFileSymbol"]
     assert set(test_file_symbol["required"]) == {"kind", "name", "qualified_name", "line"}

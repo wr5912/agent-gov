@@ -36,6 +36,9 @@
 - [网络安全智能体测评工程需求](./网络安全智能体测评工程需求文档.md)：
   `docs/网络安全智能体测评工程需求文档.md`，定义网络安全垂域业务 Agent 的分层测评、事实图、
   工具轨迹、安全门槛、回归闭环、MVP 范围和实施决策门；领域概念不构成当前 API 或存储 schema
+- [Governor 自研究与受控自学习能力需求](./Governor自研究与受控自学习能力需求.md)：
+  `docs/Governor自研究与受控自学习能力需求.md`，定义 Governor 以内生证据为主、联网研究为辅，
+  通过独立评估和人工启用持续提升反馈分析优化闭环能力的产品需求、治理边界、成功指标和验收场景
 - [多 Runtime 适配、外部 CLI 旁路与 Multica 协作边界方案](./engineering/多Runtime适配与外部CLI旁路及Multica协作边界方案.md)：
   `docs/engineering/多Runtime适配与外部CLI旁路及Multica协作边界方案.md`，定义当前 Claude 原生受管实现、
   未来多 Runtime 小端口适配、外部 CLI 只读观测、配置改进闭环以及 Multica 上层协作边界

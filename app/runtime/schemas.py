@@ -409,6 +409,10 @@ class AgentRunResponse(BaseModel):
         description="Full SDK message timeline, returned only when include_messages=true.",
     )
     agent_activity: JsonObject = Field(default_factory=dict)
+    turn_status: Optional[Literal["running", "succeeded", "failed", "cancelled", "interrupted"]] = None
+    turn_index: Optional[int] = Field(default=None, ge=0)
+    turn_error: Optional[JsonObject] = None
+    errors: list[str] = Field(default_factory=list)
     created_at: Optional[str] = None
     completed_at: Optional[str] = None
 

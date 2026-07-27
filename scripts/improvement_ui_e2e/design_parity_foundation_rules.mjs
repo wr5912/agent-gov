@@ -308,10 +308,12 @@ const RULES = [
       && noPanelMix;
     return { ok, detail: `initial=${initialDistance} jump=${jump} large=${previewItems}/${markCount}/${largeMetrics.railHeight}px gap=${largeMetrics.minGap}-${largeMetrics.maxGap} userOnly=${anchorRolesOk} singleFallback=${singlePreviewRoles.join("+")}/${singleMarkRoles.join("+")} few=${fewPreviewItems}/${fewMarkCount}/${fewMetrics.railHeight}px avgGap=${fewMetrics.avgGap} fewUserOnly=${fewRolesOk} noOverflow=${noOverflowNavigator} center=${largeMetrics.centerDelta}/${fewMetrics.centerDelta} nearTop=${nearTop} final=${finalDistance} noPanelMix=${noPanelMix}` };
   } },
-  { id: "trace-evidence-panel", phase: "P0", desc: "SDK transcript 历史的查看 Trace 打开右侧 block 证据面板，不伪造 Langfuse run 元数据", async fn(page) {
+  { id: "trace-evidence-panel", phase: "P0", desc: "有 run_id 的历史消息从 AgentRun 重放稳定语义 Trace，不从 transcript 伪造事件或 Langfuse 元数据", async fn(page) {
     await page.getByTestId("nav-playground").click();
     if (!(await has(page, "message-action-view-trace"))) return { ok: false, detail: "无 Trace 入口" };
-    await page.getByTestId("message-action-view-trace").first().click();
+    const traceAction = page.locator('[data-testid="message-action-view-trace"]:not([disabled])').first();
+    if (!(await traceAction.count())) return { ok: false, detail: "无关联 run_id 的可重放 Trace" };
+    await traceAction.click();
     await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
     const panel = await visible(page, "playground-evidence-panel");
     const traceTab = await visible(page, "evidence-tab-trace");
@@ -329,7 +331,7 @@ const RULES = [
   } },
   { id: "panel-size-policy", phase: "P0", desc: "侧栏、tab 面板与抽屉按职责分档且打开后稳定", async fn(page) {
     await page.getByTestId("nav-playground").click();
-    await page.getByTestId("message-action-view-trace").first().click();
+    await page.locator('[data-testid="message-action-view-trace"]:not([disabled])').first().click();
     await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
     const traceWidth = (await page.getByTestId("playground-evidence-panel").boundingBox())?.width || 0;
     const resizeHandle = page.getByTestId("evidence-panel-resize-handle");

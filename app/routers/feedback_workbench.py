@@ -5,6 +5,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found
+from app.runtime.agent_trace import AgentRunTraceResponse, project_agent_trace
 from app.runtime.json_types import JsonObject
 from app.runtime.message_utils import extract_answer_from_messages
 from app.runtime.schemas import (
@@ -66,6 +67,44 @@ def _register_agent_run_routes(router: APIRouter, feedback_store: FeedbackStore)
         runs = feedback_store.list_runs(run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, agent_id=agent_id, limit=limit)
         return [_agent_run_response_payload(run, include_messages=include_messages) for run in runs]
 
+    @router.get(
+        "/agent-runs/{run_id}/trace",
+        response_model=AgentRunTraceResponse,
+        response_model_exclude_none=True,
+        summary="Get the refresh-safe semantic Trace for one Agent run",
+    )
+    async def get_agent_run_trace(run_id: str) -> AgentRunTraceResponse:
+        run = ensure_found(feedback_store.find_run(run_id=run_id), "Agent run not found")
+        raw_messages = run.get("messages")
+        messages = [message for message in raw_messages if isinstance(message, dict)] if isinstance(raw_messages, list) else []
+        raw_errors = run.get("errors")
+        errors = [str(error) for error in raw_errors] if isinstance(raw_errors, list) else []
+        turn_status = run.get("turn_status")
+        if turn_status not in {"running", "succeeded", "failed", "cancelled", "interrupted"}:
+            turn_status = None
+        turn_index = run.get("turn_index")
+        if not isinstance(turn_index, int) or isinstance(turn_index, bool) or turn_index < 0:
+            turn_index = None
+        return AgentRunTraceResponse(
+            run_id=run_id,
+            session_id=_optional_string(run.get("session_id")),
+            sdk_session_id=_optional_string(run.get("sdk_session_id")),
+            agent_version_id=_optional_string(run.get("agent_version_id")),
+            langfuse_trace_id=_optional_string(run.get("langfuse_trace_id")),
+            langfuse_trace_url=_optional_string(run.get("langfuse_trace_url")),
+            alert_id=_optional_string(run.get("alert_id")),
+            case_id=_optional_string(run.get("case_id")),
+            turn_status=turn_status,
+            turn_index=turn_index,
+            turn_error=run.get("turn_error") if isinstance(run.get("turn_error"), dict) else None,
+            errors=errors,
+            completeness="complete" if isinstance(raw_messages, list) else "unavailable",
+            events=project_agent_trace(run_id, messages),
+            agent_activity=run.get("agent_activity") if isinstance(run.get("agent_activity"), dict) else {},
+            created_at=_optional_string(run.get("created_at")),
+            completed_at=_optional_string(run.get("completed_at")),
+        )
+
 
 def _agent_run_response_payload(run: JsonObject, *, include_messages: bool) -> JsonObject:
     payload = dict(run)
@@ -81,6 +120,10 @@ def _agent_run_response_payload(run: JsonObject, *, include_messages: bool) -> J
         if answer:
             payload["answer"] = answer
     return payload
+
+
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _register_feedback_signal_routes(
@@ -138,6 +181,7 @@ def _register_feedback_signal_routes(
         # 管理员修正反馈归属；改写 agent_id 并保留 from/to/operator/reason 审计记录（AGV-025）。
         return feedback_store.reassign_signal_agent(signal_id, agent_id=req.agent_id, operator=req.operator, reason=req.reason).to_payload()
 
+
 def _asset_provenance_improvement(
     improvement_store: ImprovementStore,
     item: object,
@@ -174,11 +218,7 @@ def _register_feedback_provenance_route(
                 agent_ids.append(agent_id)
         assigned_id = improvement_store.improvement_id_for_feedback_case(feedback_case_id)
         assigned_item = improvement_store.get_improvement(assigned_id) if assigned_id else None
-        improvements = (
-            [_asset_provenance_improvement(improvement_store, assigned_item)]
-            if assigned_item is not None
-            else []
-        )
+        improvements = [_asset_provenance_improvement(improvement_store, assigned_item)] if assigned_item is not None else []
         return AssetProvenanceResponse(
             feedback_case_id=feedback_case_id,
             agent_ids=agent_ids,

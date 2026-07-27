@@ -42,6 +42,10 @@ class AgentGovRequestExtension(BaseModel):
     alert_id: Optional[str] = Field(default=None, description="Feedback-loop routing input (backend-owned).")
     case_id: Optional[str] = Field(default=None, description="Feedback-loop routing input (backend-owned).")
     max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Claude Code turn cap.")
+    include_trace: bool = Field(
+        default=False,
+        description="Emit complete semantic SDK facts as agentgov.trace_event envelopes.",
+    )
     debug: Optional[AgentGovDebug] = None
 
 

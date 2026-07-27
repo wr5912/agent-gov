@@ -78,7 +78,14 @@ def complete_persisted_turn(
     promoted = promote_staged_entries(db, run_id=run_id, committed_at=now)
     if promoted <= 0:
         raise SessionConflictError("SDK turn produced no staged transcript entries")
-    upsert_agent_run_record(db, run_record)
+    upsert_agent_run_record(
+        db,
+        _run_record_with_turn_outcome(
+            run_record,
+            intent=intent,
+            terminal_status=terminal_status,
+        ),
+    )
     session.sdk_session_id = intent.attempted_sdk_session_id
     session.sdk_project_key = intent.sdk_project_key
     session.sdk_store_ready_at = now
@@ -121,7 +128,12 @@ def assert_completed_persisted_turn(
         and intent.attempted_sdk_session_id == sdk_session_id
         and intent.completed_at == completed_at
         and persisted_run is not None
-        and AgentRunRecord.from_row(persisted_run).to_payload() == run_record.to_payload()
+        and AgentRunRecord.from_row(persisted_run).to_payload()
+        == _run_record_with_turn_outcome(
+            run_record,
+            intent=intent,
+            terminal_status=terminal_status,
+        ).to_payload()
         and committed_entry is not None
     )
     if not matches:
@@ -150,7 +162,13 @@ def assert_aborted_persisted_turn(
         and intent.completed_at == completed_at
         and dict(intent.error_json or {}) == dict(error)
         and persisted_run is not None
-        and AgentRunRecord.from_row(persisted_run).to_payload() == run_record.to_payload()
+        and AgentRunRecord.from_row(persisted_run).to_payload()
+        == _run_record_with_turn_outcome(
+            run_record,
+            intent=intent,
+            terminal_status=terminal_status,
+            error=error,
+        ).to_payload()
         and all(entry.committed_at is None and entry.discarded_at == completed_at for entry in entries)
     )
     if not matches:
@@ -182,7 +200,15 @@ def abort_persisted_turn(
         raise ValueError("Agent run identity must match the aborted turn")
 
     discard_staged_entries(db, run_id=run_id, discarded_at=now)
-    upsert_agent_run_record(db, run_record)
+    upsert_agent_run_record(
+        db,
+        _run_record_with_turn_outcome(
+            run_record,
+            intent=intent,
+            terminal_status=terminal_status,
+            error=error,
+        ),
+    )
     session.active_run_id = None
     session.active_run_expires_at = None
     session.active_run_generation = 0
@@ -245,6 +271,8 @@ def recover_persisted_turn_finalization(
             "completed_at": now,
             "errors": errors,
             "turn_status": "interrupted",
+            "turn_index": intent.base_turns + 1,
+            "turn_error": error,
         }
     )
     upsert_agent_run_record(db, AgentRunRecord.from_payload(interrupted_payload))
@@ -400,7 +428,27 @@ def _interrupted_run_record(
         "sdk_session_id": intent.source_sdk_session_id,
         "errors": [f"{error['type']}: {error['message']}"],
         "turn_status": "interrupted",
+        "turn_index": intent.base_turns + 1,
+        "turn_error": error,
         "created_at": intent.created_at,
         "completed_at": completed_at,
     }
     return AgentRunRecord.from_payload(interrupted_record)
+
+
+def _run_record_with_turn_outcome(
+    run_record: AgentRunRecord,
+    *,
+    intent: SessionTurnIntentModel,
+    terminal_status: TurnTerminalStatus,
+    error: JsonObject | None = None,
+) -> AgentRunRecord:
+    payload = run_record.to_payload()
+    payload.update(
+        {
+            "turn_status": terminal_status,
+            "turn_index": intent.base_turns + 1,
+            "turn_error": dict(error) if error else None,
+        }
+    )
+    return AgentRunRecord.from_payload(payload)

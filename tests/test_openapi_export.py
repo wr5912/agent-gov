@@ -169,6 +169,23 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
     agent_run = schema["components"]["schemas"]["AgentRunResponse"]
     assert "langfuse_trace_id" in agent_run["properties"]
     assert "langfuse_trace_url" in agent_run["properties"]
+    assert {"turn_status", "turn_index", "turn_error", "errors"} <= set(agent_run["properties"])
+    assert "/api/agent-runs/{run_id}/trace" in schema["paths"]
+    trace_response = schema["components"]["schemas"]["AgentRunTraceResponse"]
+    assert {"run_id", "completeness", "events", "turn_status", "turn_error"} <= set(trace_response["properties"])
+    assert "schema_version" not in trace_response["properties"]
+    trace_event = schema["components"]["schemas"]["AgentTraceEvent"]
+    assert {
+        "event_id",
+        "run_id",
+        "sequence",
+        "message_index",
+        "kind",
+        "source_event",
+        "scope",
+        "payload",
+    } <= set(trace_event["properties"])
+    assert schema["components"]["schemas"]["AgentGovRequestExtension"]["properties"]["include_trace"]["default"] is False
     conversation_item = schema["components"]["schemas"]["ConversationItem"]
     assert "agentgov" in conversation_item["properties"]
     item_extension = schema["components"]["schemas"]["AgentGovConversationItemExtension"]

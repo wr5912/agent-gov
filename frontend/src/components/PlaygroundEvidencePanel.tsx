@@ -15,6 +15,7 @@ interface PlaygroundEvidencePanelProps {
   langfuseUrl: string;
   width: number;
   onWidthChange: (width: number) => void;
+  onRetryTrace: () => void;
   onClose: () => void;
 }
 
@@ -29,6 +30,7 @@ export function PlaygroundEvidencePanel({
   langfuseUrl,
   width,
   onWidthChange,
+  onRetryTrace,
   onClose,
 }: PlaygroundEvidencePanelProps) {
   const activity = traceActivityFromEvents(events);
@@ -92,7 +94,7 @@ export function PlaygroundEvidencePanel({
       <header className="playground-side-panel-head evidence-panel-head">
         <div>
           <h3>运行证据</h3>
-          <p>{streaming ? "实时 Trace 更新中" : message ? "当前消息 Trace" : "选择消息查看 Trace"}</p>
+          <p>{traceStatusText(message, streaming)}</p>
           {message ? <TraceContextChips message={message} activity={activity} /> : null}
         </div>
         <div className="evidence-panel-actions">
@@ -116,6 +118,15 @@ export function PlaygroundEvidencePanel({
       </div>
 
       <section className="evidence-tab-panel trace-drawer-body" role="tabpanel" data-testid="evidence-panel-trace">
+        {message?.traceState === "error" ? (
+          <div className="trace-load-status error" role="alert">
+            Trace 加载失败：{message.traceError || "未知错误"}
+            <button className="secondary-button" type="button" onClick={onRetryTrace}>重试</button>
+          </div>
+        ) : null}
+        {message?.traceState === "unavailable" ? (
+          <div className="trace-load-status unavailable" role="status">{message.traceError || "该历史运行没有可用的完整 Trace。"}</div>
+        ) : null}
         {message || events.length ? (
           <TraceTimelineView events={events} activity={activity} />
         ) : (
@@ -124,4 +135,13 @@ export function PlaygroundEvidencePanel({
       </section>
     </aside>
   );
+}
+
+function traceStatusText(message: ChatMessage | undefined, streaming: boolean) {
+  if (streaming || message?.traceState === "live") return "实时 Trace 更新中";
+  if (message?.traceState === "calibrating") return "正在按持久化运行记录校准 Trace";
+  if (message?.traceState === "ready") return "已按持久化运行记录校准";
+  if (message?.traceState === "error") return "Trace 加载失败，可重试";
+  if (message?.traceState === "unavailable") return "历史 Trace 不可用";
+  return message ? "当前消息 Trace" : "选择消息查看 Trace";
 }

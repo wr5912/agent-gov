@@ -76,3 +76,54 @@ def test_chat_stream_projects_prompt_suggestion_event(monkeypatch, tmp_path: Pat
     assert response.status_code == 200
     assert "event: prompt_suggestion" in response.text
     assert '"suggestion": "继续检查边界条件"' in response.text
+
+
+def test_chat_stream_semantic_mode_suppresses_thinking_counter_and_keeps_tools(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+
+    async def fake_stream(req, *, profile=None):
+        yield {"event": "session", "data": {"run_id": "run-semantic", "session_id": "session-1"}}
+        yield {
+            "event": "message",
+            "data": {
+                "event": "SystemMessage:thinking_tokens",
+                "text": "",
+                "text_kind": "snapshot",
+                "raw": {"event": "SystemMessage:thinking_tokens", "subtype": "thinking_tokens"},
+            },
+        }
+        yield {
+            "event": "message",
+            "data": {
+                "event": "AssistantMessage",
+                "text": "answer",
+                "text_kind": "snapshot",
+                "raw": {
+                    "event": "AssistantMessage",
+                    "content": [
+                        {"thinking": "full"},
+                        {"name": "Read", "id": "tool-1", "input": {"file_path": "README.md"}},
+                        {"text": "answer"},
+                    ],
+                },
+            },
+        }
+        yield {"event": "done", "data": "[DONE]"}
+
+    monkeypatch.setattr(module.runtime, "stream", fake_stream)
+    with TestClient(module.app) as client:
+        semantic = client.post(
+            "/api/chat/stream?event_mode=semantic",
+            json={"message": "hi", "agent_id": DEFAULT_BUSINESS_AGENT_ID},
+        )
+        raw = client.post(
+            "/api/chat/stream",
+            json={"message": "hi", "agent_id": DEFAULT_BUSINESS_AGENT_ID},
+        )
+
+    assert semantic.status_code == 200
+    assert semantic.text.count("event: trace_event") == 3
+    assert '"kind": "thinking"' in semantic.text
+    assert '"kind": "tool_use"' in semantic.text
+    assert "SystemMessage:thinking_tokens" not in semantic.text
+    assert "SystemMessage:thinking_tokens" in raw.text

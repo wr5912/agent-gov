@@ -30,6 +30,8 @@ type OpenApiAgentReleaseRollbackRequest = components["schemas"]["AgentReleaseRol
 type OpenApiAgentReleaseRestoreRequest = components["schemas"]["AgentReleaseRestoreRequest"];
 type OpenApiAgentReleaseRestoreResponse = components["schemas"]["AgentReleaseRestoreResponse"];
 type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
+type OpenApiAgentRunTraceResponse = components["schemas"]["AgentRunTraceResponse"];
+type OpenApiAgentTraceEvent = components["schemas"]["AgentTraceEvent"];
 type OpenApiAgentConfigFileResponse = components["schemas"]["AgentConfigFileResponse"];
 type OpenApiAgentConfigFileUpdateRequest = components["schemas"]["AgentConfigFileUpdateRequest"];
 type OpenApiAgentConfigFileUpdateResponse = components["schemas"]["AgentConfigFileUpdateResponse"];
@@ -110,6 +112,8 @@ export type AgentChangeSetPublishRequest = OpenApiAgentChangeSetPublishRequest;
 export type AgentReleaseRollbackRequest = OpenApiAgentReleaseRollbackRequest;
 export type AgentReleaseRestoreRequest = OpenApiAgentReleaseRestoreRequest;
 export type AgentRunRecord = OpenApiAgentRunResponse;
+export type AgentRunTrace = OpenApiAgentRunTraceResponse;
+export type AgentTraceEvent = OpenApiAgentTraceEvent;
 export type AgentConfigFileResponse = OpenApiAgentConfigFileResponse;
 export type AgentConfigFileUpdateRequest = OpenApiAgentConfigFileUpdateRequest;
 export type AgentConfigFileUpdateResponse = OpenApiAgentConfigFileUpdateResponse;
@@ -145,17 +149,20 @@ export interface ChatMessage {
   caseId?: string;
   agentActivity?: AgentActivity;
   userInputRequests?: ClaudeUserInputRequest[];
-  /** 当前 assistant 回复捕获到的完整 SSE 时间线。 */
+  traceState?: "live" | "calibrating" | "ready" | "unavailable" | "error";
+  traceError?: string;
+  /** Complete semantic SDK facts for this run, reconciled from AgentRun after completion. */
   events?: StreamLogEvent[];
 }
 
 export interface StreamLogEvent {
   id: string;
-  /** 原始 SSE 事件名，例如 session、message、result、error 或 done。 */
+  /** Semantic event kind, for example thinking, tool_use, hook, task, or result. */
   event: string;
   text?: string;
   data?: unknown;
   createdAt: string;
+  sequence?: number;
 }
 
 export interface StreamEnvelope {

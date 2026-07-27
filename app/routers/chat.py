@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.native_chat_stream import NativeChatSemanticProjector
 from app.runtime.schemas import ChatRequest, ChatResponse
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
@@ -47,15 +49,24 @@ def create_chat_router(
         summary="Run a Claude Agent task as server-sent events",
         description="Streams session, message, prompt_suggestion, result, error, and done events as text/event-stream. Requires a registered business agent_id.",
     )
-    async def chat_stream(req: ChatRequest) -> StreamingResponse:
+    async def chat_stream(
+        req: ChatRequest,
+        event_mode: Literal["raw", "semantic"] = Query(
+            default="raw",
+            description="raw preserves the legacy SDK-message stream; semantic adds complete trace_event facts and suppresses transport noise.",
+        ),
+    ) -> StreamingResponse:
         _require_agent_id(req)
         profile = resolve_business_profile(settings, agent_registry_store, req.agent_id)
 
         async def event_stream():
+            projector = NativeChatSemanticProjector() if event_mode == "semantic" else None
             async for item in runtime.stream(req, profile=profile):
-                event = item.get("event", "message")
-                data = json.dumps(item.get("data"), ensure_ascii=False)
-                yield f"event: {event}\ndata: {data}\n\n"
+                projected = projector.project(item) if projector is not None else [item]
+                for frame in projected:
+                    event = frame.get("event", "message")
+                    data = json.dumps(frame.get("data"), ensure_ascii=False)
+                    yield f"event: {event}\ndata: {data}\n\n"
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 

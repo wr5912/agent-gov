@@ -112,6 +112,12 @@ function mockConversationItems(sessionId) {
           { type: "tool_use", id: `tool-${n}`, name: "Read", input: { file_path: "CLAUDE.md" } },
         ],
         parent_tool_use_id: null,
+        agentgov: {
+          run_id: `run-${sessionId}-${n}`,
+          session_id: sessionId,
+          sdk_session_id: sessionId,
+          agent_version_id: "v-parity",
+        },
       },
     ];
   }).flat();
@@ -147,6 +153,48 @@ function basePayload(path) {
   if (conversationItems) {
     const items = mockConversationItems(decodeURIComponent(conversationItems[1]));
     return { object: "list", data: items, first_id: items[0]?.id || null, last_id: items.at(-1)?.id || null, has_more: false };
+  }
+  const agentRunTrace = path.match(/^\/api\/agent-runs\/([^/]+)\/trace$/);
+  if (agentRunTrace) {
+    const runId = decodeURIComponent(agentRunTrace[1]);
+    return {
+      run_id: runId,
+      session_id: "mock-session",
+      sdk_session_id: "mock-session",
+      agent_version_id: "v-parity",
+      turn_status: "succeeded",
+      turn_index: 1,
+      turn_error: null,
+      errors: [],
+      completeness: "complete",
+      events: [
+        {
+          event_id: `${runId}-event-1`,
+          run_id: runId,
+          sequence: 1,
+          message_index: 0,
+          block_index: 0,
+          kind: "thinking",
+          source_event: "AssistantMessage",
+          scope: "main",
+          payload: { thinking: "先核验 Workspace 中的事实。" },
+        },
+        {
+          event_id: `${runId}-event-2`,
+          run_id: runId,
+          sequence: 2,
+          message_index: 0,
+          block_index: 1,
+          kind: "tool_use",
+          source_event: "AssistantMessage",
+          scope: "main",
+          payload: { tool_name: "Read", tool_use_id: "tool-1", input: { file_path: "CLAUDE.md" } },
+        },
+      ],
+      agent_activity: {},
+      created_at: ts,
+      completed_at: ts,
+    };
   }
   if (path === "/api/agent-registry") return AGENTS;
   if (path === "/api/agents" || path === "/api/skills" || path === "/api/sessions" || path === "/api/agent-releases") return [];

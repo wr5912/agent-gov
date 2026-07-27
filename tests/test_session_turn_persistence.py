@@ -110,15 +110,18 @@ def test_complete_publishes_transcript_session_run_and_intent_atomically(tmp_pat
     with factory() as db:
         session = db.get(SessionRecordModel, "api-session")
         intent = db.get(SessionTurnIntentModel, "run-1")
+        run = db.get(AgentRunModel, "run-1")
         entry = db.query(SdkSessionEntryModel).one()
-        assert session is not None and intent is not None
+        assert session is not None and intent is not None and run is not None
         assert session.sdk_session_id == "sdk-session"
         assert session.sdk_project_key == "project-key"
         assert session.turns == 1
         assert session.active_run_id is None
         assert intent.status == "succeeded"
         assert entry.committed_at == "2026-07-13T00:01:00+00:00"
-        assert db.get(AgentRunModel, "run-1") is not None
+        assert run.payload_json["turn_status"] == "succeeded"
+        assert run.payload_json["turn_index"] == 1
+        assert run.payload_json["turn_error"] is None
 
 
 def test_complete_rejects_result_without_staged_sdk_transcript(tmp_path):
@@ -206,14 +209,17 @@ def test_abort_discards_stage_without_advancing_session(tmp_path, terminal):
     with factory() as db:
         session = db.get(SessionRecordModel, "api-session")
         intent = db.get(SessionTurnIntentModel, "run-1")
+        run = db.get(AgentRunModel, "run-1")
         entry = db.query(SdkSessionEntryModel).one()
-        assert session is not None and intent is not None
+        assert session is not None and intent is not None and run is not None
         assert session.turns == 0 and session.sdk_session_id is None
         assert session.active_run_id is None
         assert intent.status == terminal
         assert entry.committed_at is None
         assert entry.discarded_at == "2026-07-13T00:01:00+00:00"
-        assert db.get(AgentRunModel, "run-1") is not None
+        assert run.payload_json["turn_status"] == terminal
+        assert run.payload_json["turn_index"] == 1
+        assert run.payload_json["turn_error"] == {"type": terminal, "message": terminal}
 
 
 def test_expired_reconcile_is_idempotent_and_fences_late_completion(tmp_path):
@@ -231,6 +237,8 @@ def test_expired_reconcile_is_idempotent_and_fences_late_completion(tmp_path):
         assert session.turns == 0 and session.active_run_id is None
         assert intent.status == "interrupted"
         assert run.payload_json["turn_status"] == "interrupted"
+        assert run.payload_json["turn_index"] == 1
+        assert run.payload_json["turn_error"]["type"] == "RuntimeInterruptedBeforeCommit"
         assert entry.discarded_at == "2026-07-13T00:01:00+00:00"
 
     with pytest.raises(SessionConflictError, match="already finalized"):
@@ -338,6 +346,8 @@ def test_exhausted_finalization_recovery_interrupts_owned_turn(tmp_path):
         assert intent is not None and intent.status == "interrupted"
         assert intent.error_json["type"] == "RuntimeFinalizationFailed"
         assert run is not None and run.payload_json["turn_status"] == "interrupted"
+        assert run.payload_json["turn_index"] == 1
+        assert run.payload_json["turn_error"]["type"] == "RuntimeFinalizationFailed"
         assert entry.committed_at is None and entry.discarded_at is not None
 
 

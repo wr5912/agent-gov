@@ -25,7 +25,7 @@ export function TraceDrawer({
   return (
     <DrawerShell
       title="Trace 细节"
-      description={`${events.length} 个 SDK/流式事件，创建于 ${formatFullTime(message.createdAt)}`}
+      description={`${events.length} 个完整 SDK 语义事件，创建于 ${formatFullTime(message.createdAt)}`}
       size={drawerSize}
       testId="trace-drawer"
       className="trace-drawer"
@@ -113,12 +113,12 @@ export function TraceTimelineView({
       <div className="detail-timeline">
         {visibleRows.length ? visibleRows.map(({ event, eventName, eventTone, summary, json }) => {
           return (
-            <article className={`detail-event ${eventTone}`} key={event.id}>
+            <article className={`detail-event ${eventTone}`} key={event.id} data-event-id={event.id}>
               <div className="detail-event-marker" aria-hidden="true" />
               <div className="detail-event-body">
                 <div className="detail-event-head">
                   <strong className="detail-event-name"><HighlightedText text={eventName} query={query} /></strong>
-                  <time>{formatFullTime(event.createdAt)}</time>
+                  <time>{event.sequence ? `#${event.sequence}` : formatFullTime(event.createdAt)}</time>
                 </div>
                 {summary ? <p className="detail-event-summary"><HighlightedText text={summary} query={query} /></p> : null}
                 <pre className="detail-json"><code><HighlightedText text={json} query={query} /></code></pre>

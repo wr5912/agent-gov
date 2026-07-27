@@ -205,7 +205,13 @@ async function installMockRoutes(page, state) {
         { event: "agentgov.done", data: { ok: true } },
       ]);
     }
-    if (path === "/api/agents" || path === "/api/skills" || path === "/api/agent-change-sets" || path === "/api/agent-releases") {
+    if (
+      path === "/api/agents"
+      || path === "/api/skills"
+      || path === "/api/agent-runs"
+      || path === "/api/agent-change-sets"
+      || path === "/api/agent-releases"
+    ) {
       return json(route, []);
     }
     if (path === "/api/config") return json(route, { mappings: [] });

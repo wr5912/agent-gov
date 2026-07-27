@@ -38,6 +38,7 @@ class _RunPlan(NamedTuple):
     effective_agent_id: str
     control: bool
     sdk_raw: bool
+    include_trace: bool
 
 
 def _resolve_session_id(
@@ -167,7 +168,8 @@ def _prepare_run(
         session_id=session_id,
     )
     sdk_raw = bool(control and req.agentgov and req.agentgov.debug and req.agentgov.debug.sdk_raw)
-    return _RunPlan(chat_req, profile, effective_agent_id, control, sdk_raw)
+    include_trace = bool(control and req.agentgov and req.agentgov.include_trace)
+    return _RunPlan(chat_req, profile, effective_agent_id, control, sdk_raw, include_trace)
 
 
 async def _create_response_impl(
@@ -196,6 +198,7 @@ async def _create_response_impl(
                 effective_agent_id=plan.effective_agent_id,
                 control=plan.control,
                 sdk_raw=plan.sdk_raw,
+                include_trace=plan.include_trace,
             ),
             media_type="text/event-stream",
         )

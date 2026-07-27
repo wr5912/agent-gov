@@ -14,14 +14,17 @@ import { useAgentPresentation } from "./hooks/useAgentPresentation";
 import { useConfigMapping } from "./hooks/useConfigMapping";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { usePlaygroundSessionScope } from "./hooks/usePlaygroundSessionScope";
-import { cancelWaitingUserInputRequests, claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, sanitizedEnvelopeData, stringValue } from "./claudeUserInputState";
+import { usePlaygroundTrace } from "./hooks/usePlaygroundTrace";
+import { cancelWaitingUserInputRequests, claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, stringValue } from "./claudeUserInputState";
 import { mergeChatMessageRunContext } from "./chatMessageRunContext";
 import { messagesFromConversationItems } from "./playgroundHistory";
+import { traceLogEvent, upsertTraceEvent } from "./playgroundTrace";
 import { usePromptSuggestion } from "./hooks/usePromptSuggestion";
 import { newId, newSessionId } from "./utils/ids";
 import type { AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
-import { agentActivityFromResult, messageTextFromEnvelope } from "./api/responsesStream";
+import { agentActivityFromResult } from "./api/responsesStream";
+import { getAgentRuns } from "./api/feedback";
 import { defaultLangfuseUrl, makeApiDocsUrl } from "./runtimeUrls";
 import "./styles.css";
 
@@ -54,7 +57,6 @@ export default function App() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamingAssistantMessageId, setStreamingAssistantMessageId] = useState<string | undefined>();
-  const [streamEvents, setStreamEvents] = useState<StreamLogEvent[]>([]);
   const [userInputErrors, setUserInputErrors] = useState<Record<string, string>>({});
   const [submittingUserInputRequests, setSubmittingUserInputRequests] = useState<Set<string>>(() => new Set());
   const [lastError, setLastError] = useState<string | undefined>();
@@ -90,13 +92,13 @@ export default function App() {
   const { agents, skills } = useAgentCatalog(effectiveClientConfig, selectedBusinessAgentId, setLastError);
   const agentPresentation = useAgentPresentation(effectiveClientConfig, selectedBusinessAgentId);
   const promptSuggestion = usePromptSuggestion(activeSessionId, setInput);
+  const calibrateTrace = usePlaygroundTrace(effectiveClientConfig, setMessagesBySession);
 
   const resetPlaygroundTransientState = useCallback(() => {
     setAlertId("");
     setCaseId("");
     setInput("");
     setStreamingAssistantMessageId(undefined);
-    setStreamEvents([]);
     decisionTokensRef.current = {};
     setUserInputErrors({});
     setSubmittingUserInputRequests(new Set());
@@ -203,10 +205,13 @@ export default function App() {
     if (!activeSessionId || activeMessageCount > 0 || streaming || activeBackendSessionTurns <= 0) return;
 
     const controller = new AbortController();
-    void getConversationItems(effectiveClientConfig, activeSessionId, controller.signal)
-      .then((items) => {
+    void Promise.all([
+      getConversationItems(effectiveClientConfig, activeSessionId, controller.signal),
+      getAgentRuns(effectiveClientConfig, { session_id: activeSessionId, limit: 500 }),
+    ])
+      .then(([items, runs]) => {
         if (controller.signal.aborted) return;
-        const restoredMessages = messagesFromConversationItems(items, activeSessionId);
+        const restoredMessages = messagesFromConversationItems(items, activeSessionId, runs);
         if (!restoredMessages.length) return;
         setMessagesBySession((prev) => {
           if ((prev[activeSessionId] || []).length > 0) return prev;
@@ -353,7 +358,6 @@ export default function App() {
     setStreaming(true);
     setStreamingAssistantMessageId(undefined);
     setLastError(undefined);
-    setStreamEvents([]);
     setSessionSidebarOpen(false);
     setEvidencePanelOpen(true);
 
@@ -382,14 +386,15 @@ export default function App() {
     abortRef.current = controller;
 
     const appendAssistantEvent = (event: StreamLogEvent, runContext?: unknown) => {
-      setStreamEvents((prev) => [...prev.slice(-199), event]);
       updateSessionMessages(sessionId, (prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
         if (last?.role === "assistant") {
           const updated = {
             ...(runContext ? mergeChatMessageRunContext(last, runContext) : last),
-            events: [...(last.events || []), event],
+            events: upsertTraceEvent(last.events || [], event),
+            traceState: "live" as const,
+            traceError: undefined,
           };
           next[next.length - 1] = updated;
         }
@@ -398,6 +403,7 @@ export default function App() {
     };
 
     let streamCompleted = false;
+    let runtimeRunId: string | undefined;
     try {
       await streamChat(
         effectiveClientConfig,
@@ -419,14 +425,15 @@ export default function App() {
             }
           },
           onEnvelope: (envelope) => {
-            const event: StreamLogEvent = {
-              id: newId("evt"),
-              event: envelope.event,
-              text: messageTextFromEnvelope(envelope),
-              data: sanitizedEnvelopeData(envelope),
-              createdAt: new Date().toISOString(),
-            };
-            appendAssistantEvent(event, envelope.event === "session" ? envelope.data : undefined);
+            if (envelope.event === "session" && isRecord(envelope.data)) {
+              runtimeRunId = stringValue(envelope.data.run_id);
+              updateSessionMessages(sessionId, (prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") next[next.length - 1] = mergeChatMessageRunContext(last, envelope.data);
+                return next;
+              });
+            }
             if (envelope.event === "claude_user_input_required") {
               const request = claudeUserInputRequestFromData(envelope.data);
               if (request) {
@@ -461,6 +468,10 @@ export default function App() {
                 });
               }
             }
+          },
+          onTraceEvent: (event) => {
+            runtimeRunId = event.run_id || runtimeRunId;
+            appendAssistantEvent(traceLogEvent(event));
           },
           onText: (text) => {
             updateSessionMessages(sessionId, (prev) => {
@@ -519,6 +530,7 @@ export default function App() {
             setStreaming(false);
             abortRef.current = null;
             setSubmittingUserInputRequests(new Set());
+            if (runtimeRunId) void calibrateTrace(sessionId, assistantMessage.id, runtimeRunId);
             refresh();
           },
         },
@@ -527,12 +539,6 @@ export default function App() {
     } catch (error) {
       if (!controller.signal.aborted && (error as Error).name !== "AbortError") {
         const messageText = error instanceof Error ? error.message : String(error);
-        appendAssistantEvent({
-          id: newId("evt"),
-          event: "error",
-          data: { message: messageText },
-          createdAt: new Date().toISOString(),
-        });
         setLastError(messageText);
         updateSessionMessages(sessionId, (prev) => {
           const next = [...prev];
@@ -554,6 +560,9 @@ export default function App() {
           assistantMessage.id,
           controller.signal.aborted ? "client_cancelled" : "runtime_interrupted",
         );
+        if (runtimeRunId) {
+          window.setTimeout(() => void calibrateTrace(sessionId, assistantMessage.id, runtimeRunId as string), 500);
+        }
       }
       setStreaming(false);
       setStreamingAssistantMessageId(undefined);
@@ -626,6 +635,10 @@ export default function App() {
   function openTracePanel(message: ChatMessage) {
     setActiveTraceMessageId(message.id);
     setEvidencePanelOpen(true);
+    const sessionId = message.sessionId || activeSessionId;
+    if (sessionId && message.runId && message.id !== streamingAssistantMessageId) {
+      void calibrateTrace(sessionId, message.id, message.runId);
+    }
   }
 
   function rerunMessage(message: ChatMessage) {
@@ -712,6 +725,7 @@ export default function App() {
               langfuseUrl={langfuseUrl}
               width={evidencePanelWidth}
               onWidthChange={setEvidencePanelWidth}
+              onRetryTrace={() => { if (activeTraceMessage) openTracePanel(activeTraceMessage); }}
               onClose={() => setEvidencePanelOpen(false)}
             />
           ) : null}

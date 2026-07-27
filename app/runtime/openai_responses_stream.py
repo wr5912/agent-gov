@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.runtime.agent_trace import AgentTraceEvent, AgentTraceProjector
 from app.runtime.async_iterators import close_async_iterator
 from app.runtime.json_types import JsonObject
 from app.runtime.message_utils import reconcile_stream_snapshot
@@ -64,20 +65,21 @@ def _suggestion_list(data: JsonObject) -> list[str]:
     return out
 
 
-def _tool_step_from_raw(raw: object) -> Optional[JsonObject]:
-    """从 message.raw 的 content blocks 投影一个工具时间线步（best-effort，dev/观测层）。"""
-    if not isinstance(raw, dict):
-        return None
-    content = raw.get("content")
-    if not isinstance(content, list):
-        return None
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        if "name" in block and "input" in block:  # tool_use
-            return {"kind": "tool_use", "tool_name": block.get("name"), "tool_use_id": block.get("id"), "input": block.get("input")}
-        if "tool_use_id" in block:  # tool_result
-            return {"kind": "tool_result", "tool_use_id": block.get("tool_use_id"), "result": block.get("content")}
+def _tool_step_from_trace(event: AgentTraceEvent) -> Optional[JsonObject]:
+    if event.kind == "tool_use":
+        return {
+            "kind": "tool_use",
+            "tool_name": event.payload.get("tool_name"),
+            "tool_use_id": event.payload.get("tool_use_id"),
+            "input": event.payload.get("input"),
+        }
+    if event.kind == "tool_result":
+        return {
+            "kind": "tool_result",
+            "tool_use_id": event.payload.get("tool_use_id"),
+            "result": event.payload.get("content"),
+            "is_error": event.payload.get("is_error"),
+        }
     return None
 
 
@@ -159,6 +161,7 @@ class _ResponsesSseProjector:
     effective_agent_id: Optional[str]
     control: bool
     sdk_raw: bool
+    include_trace: bool
     seq: int = 0
     run_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -169,6 +172,7 @@ class _ResponsesSseProjector:
     terminal_status: Optional[str] = None
     pending_completed_response: JsonObject | None = None
     done_emitted: bool = False
+    trace_projector: AgentTraceProjector | None = None
 
     def _next(self) -> int:
         self.seq += 1
@@ -214,6 +218,8 @@ class _ResponsesSseProjector:
         self.session_id = _str(data.get("session_id"))
         self.item_id = f"msg_{self.run_id}" if self.run_id else None
         self.created_at = int(time.time())
+        if self.control and self.run_id:
+            self.trace_projector = AgentTraceProjector(self.run_id)
         chunks = [
             self._std(
                 "response.created",
@@ -260,26 +266,34 @@ class _ResponsesSseProjector:
                     {"item_id": self.item_id, "output_index": 0, "content_index": 0, "delta": text},
                 )
             ]
-        if event_name.startswith("AssistantMessage") and text:
+        chunks: list[str] = []
+        if event_name.startswith("AssistantMessage") and isinstance(text, str) and text:
             suffix = reconcile_stream_snapshot(self.partial_text_segment, str(text))
             self.partial_text_segment = ""
             self.answer_parts.append(text)
             if suffix:
-                return [
+                chunks.append(
                     self._std(
                         "response.output_text.delta",
                         {"item_id": self.item_id, "output_index": 0, "content_index": 0, "delta": suffix},
                     )
-                ]
-            return []
+                )
         if not self.control:
-            return []
-        chunks: list[str] = []
-        step = _tool_step_from_raw(data.get("raw"))
-        if step:
-            chunks.append(self._envelope("agentgov.tool_step", step))
+            return chunks
+        raw = data.get("raw")
+        trace_events: list[AgentTraceEvent] = []
+        if isinstance(raw, dict) and self.trace_projector is not None:
+            projection_input = raw if isinstance(raw.get("event"), str) else {**raw, "event": event_name}
+            trace_events = self.trace_projector.project_message(projection_input)
+        if self.include_trace:
+            for trace_event in trace_events:
+                chunks.append(self._envelope("agentgov.trace_event", trace_event.model_dump(mode="json")))
+        for trace_event in trace_events:
+            step = _tool_step_from_trace(trace_event)
+            if step:
+                chunks.append(self._envelope("agentgov.tool_step", step))
         if self.sdk_raw:
-            chunks.append(self._envelope("agentgov.sdk_raw", {"raw": data.get("raw")}))
+            chunks.append(self._envelope("agentgov.sdk_raw", {"raw": raw}))
         return chunks
 
     def _project_result(self, data: JsonObject) -> list[str]:
@@ -346,6 +360,7 @@ async def iter_responses_sse(
     effective_agent_id: Optional[str],
     control: bool,
     sdk_raw: bool = False,
+    include_trace: bool = False,
 ) -> AsyncIterator[str]:
     """消费 ``runtime.stream`` 帧，产出 Responses-style SSE 字符串。"""
     projector = _ResponsesSseProjector(
@@ -353,6 +368,7 @@ async def iter_responses_sse(
         effective_agent_id=effective_agent_id,
         control=control,
         sdk_raw=sdk_raw,
+        include_trace=include_trace,
     )
     try:
         try:

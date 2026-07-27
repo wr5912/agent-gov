@@ -80,7 +80,7 @@ export function MessageBubble({
               className="message-detail-button"
               type="button"
               data-testid="message-action-view-trace"
-              disabled={detailEvents.length === 0}
+              disabled={detailEvents.length === 0 && !message.runId}
               onClick={() => onOpenTrace?.(message)}
             >
               <ListTree size={14} /> 查看 Trace{detailEvents.length > 0 ? <span>{detailEvents.length}</span> : null}

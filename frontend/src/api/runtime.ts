@@ -8,6 +8,7 @@ import type {
   AgentInfo,
   AgentPresentation,
   AgentSummary,
+  AgentTraceEvent,
   AgentDeleteResponse,
   AgentChangeSet,
   AgentChangeSetActionRequest,
@@ -436,6 +437,7 @@ export function submitClaudeUserInputDecision(config: RuntimeClientConfig, reque
 
 export interface StreamChatHandlers {
   onEnvelope?: (envelope: StreamEnvelope) => void;
+  onTraceEvent?: (event: AgentTraceEvent) => void;
   onSession?: (sessionId: string, sdkSessionId?: string | null) => void;
   onText?: (text: string, raw: unknown) => void;
   onFinalText?: (text: string) => void;
@@ -577,7 +579,10 @@ export async function streamChat(
 
 // Playground 走 canonical /v1/responses（control 模式）；ChatRequest -> Responses 请求体。
 function toResponsesRequest(payload: ChatRequest): Record<string, unknown> {
-  const agentgov: Record<string, unknown> = { agent_id: payload.agent_id };
+  const agentgov: Record<string, unknown> = {
+    agent_id: payload.agent_id,
+    include_trace: true,
+  };
   if (payload.alert_id) agentgov.alert_id = payload.alert_id;
   if (payload.case_id) agentgov.case_id = payload.case_id;
   if (payload.max_turns != null) agentgov.max_turns = payload.max_turns;
@@ -597,8 +602,10 @@ function translateResponsesEnvelope(env: StreamEnvelope): StreamEnvelope | null 
       return { event: "session", data: payload };
     case "response.output_text.delta":
       return { event: "message", data: { event: "AssistantMessage", text: isRecord(data) ? (data.delta ?? "") : "", raw: {} } };
+    case "agentgov.trace_event":
+      return { event: "trace_event", data: payload };
     case "agentgov.tool_step":
-      return { event: "message", data: { event: "AgentGovToolStep", text: "", raw: payload } };
+      return null; // include_trace=true already carries every tool block with stable identity.
     case "agentgov.sdk_raw":
       return { event: "message", data: { event: "AgentGovSdkRaw", text: "", raw: payload } };
     case "agentgov.result":
@@ -668,6 +675,11 @@ function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers
     return;
   }
 
+  if (envelope.event === "trace_event" && isAgentTraceEvent(envelope.data)) {
+    handlers.onTraceEvent?.(envelope.data);
+    return;
+  }
+
   if (envelope.event === "prompt_suggestion" && isRecord(envelope.data)) {
     const suggestions = suggestionList(envelope.data);
     const sessionId = stringOrUndefined(envelope.data.session_id);
@@ -689,6 +701,16 @@ function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers
   if (envelope.event === "done") {
     handlers.onDone?.();
   }
+}
+
+function isAgentTraceEvent(value: unknown): value is AgentTraceEvent {
+  return isRecord(value)
+    && typeof value.event_id === "string"
+    && typeof value.run_id === "string"
+    && typeof value.sequence === "number"
+    && typeof value.kind === "string"
+    && typeof value.source_event === "string"
+    && isRecord(value.payload);
 }
 
 function formatStreamError(data: unknown): string {

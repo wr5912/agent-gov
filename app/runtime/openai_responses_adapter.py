@@ -125,12 +125,12 @@ def build_chat_request(
     )
 
 
-def derive_status(errors: object, stop_reason: object = None) -> ResponseStatus:
-    """单一 status 派生（agent_runs 无 status 列、run 仅完成时落库 -> 只有终态）。
-
-    有 errors -> ``failed``；否则 ``completed``。``incomplete`` 保留给未来（如 max_turns 截断，
-    当前不承诺）。stop_reason 作为将来细分的入参占位。
-    """
+def derive_status(errors: object, stop_reason: object = None, turn_status: object = None) -> ResponseStatus:
+    """Derive the Responses status from the persisted turn state first, then legacy evidence."""
+    if turn_status in {"cancelled", "interrupted", "running"}:
+        return "incomplete"
+    if turn_status == "failed":
+        return "failed"
     if isinstance(errors, list) and len(errors) > 0:
         return "failed"
     return "completed"
@@ -227,7 +227,7 @@ def response_from_run_payload(run: JsonObject) -> ResponseObject:
     return ResponseObject(
         id=response_id_from_run(run_id) or run_id,
         created_at=iso_to_epoch(run.get("created_at")),
-        status=derive_status(errors, run.get("stop_reason")),
+        status=derive_status(errors, run.get("stop_reason"), run.get("turn_status")),
         model=_str_or_none(run.get("model")),
         output=_output_from_text(answer or None),
         usage=map_usage(usage),

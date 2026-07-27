@@ -10,6 +10,7 @@ import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { scrollNavigationMetrics } from "./playground_scroll_test_helpers.mjs";
+import { mockAgentRunTrace, semanticTracePanelChecks } from "./playground_trace_test_helpers.mjs";
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
@@ -215,6 +216,7 @@ function mockPayload(urlOrPath) {
     const includeMessages = url?.searchParams.get("include_messages") === "true";
     return mockAgentRuns(includeMessages);
   }
+  if (/^\/api\/agent-runs\/[^/]+\/trace$/.test(path)) return mockAgentRunTrace(path);
   if (/^\/v1\/conversations\/[^/]+\/items$/.test(path)) {
     const allItems = mockConversationItems();
     const after = url?.searchParams.get("after");
@@ -328,6 +330,7 @@ async function main() {
   }, [api, key, REAL]);
   let ok = false, detail = "";
   let responsesRequestCount = 0;
+  let traceOptInRequestCount = 0;
   try {
     if (REAL) {
       page.on("request", (request) => {
@@ -343,6 +346,7 @@ async function main() {
         if (url.pathname === "/v1/responses") {
           responsesRequestCount += 1;
           const body = route.request().postDataJSON();
+          if (body?.agentgov?.include_trace === true) traceOptInRequestCount += 1;
           const sessionId = sessionIdFromResponsesBody(body);
           if (body?.input === "触发截断流负测") {
             return sse(route, [
@@ -487,6 +491,7 @@ async function main() {
         const resizeAria = await resizeHandle.getAttribute("aria-valuenow");
         const traceTabCount = await page.locator(".evidence-tab").count();
         const traceTabVisible = await page.getByTestId("evidence-tab-trace").isVisible().catch(() => false);
+        const semanticTraceChecks = REAL ? { skipped: true } : { skipped: false, ...await semanticTracePanelChecks(page) };
         const traceDrawerCount = await page.getByTestId("trace-drawer").count();
         const legacyModalVisible = await page.locator(".detail-modal-card").isVisible().catch(() => false);
         const historyTraceHref = await page.getByTestId("playground-evidence-panel")
@@ -496,19 +501,14 @@ async function main() {
         await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
         await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
 
-        let restoredTraceHref = "";
-        if (REAL) {
-          await page.reload({ waitUntil: "domcontentloaded" });
-          await page.getByTestId("message-actions").first().waitFor({ timeout: 30000 });
-          await page.getByTestId("message-action-view-trace").first().click();
-          await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
-          restoredTraceHref = await page.getByTestId("playground-evidence-panel")
-            .getByTestId("trace-open-langfuse")
-            .getAttribute("href")
-            .catch(() => "");
-          await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
-          await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-        }
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await page.getByTestId("message-actions").first().waitFor({ timeout: 30000 });
+        await page.getByTestId("message-action-view-trace").first().click();
+        await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
+        const restoredSemanticTraceChecks = REAL ? { skipped: true } : { skipped: false, ...await semanticTracePanelChecks(page) };
+        const restoredTraceHref = await page.getByTestId("playground-evidence-panel").getByTestId("trace-open-langfuse").getAttribute("href").catch(() => "");
+        await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
+        await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
 
         let historyTraceStatusChecks = { skipped: REAL };
         if (!REAL) {
@@ -519,20 +519,14 @@ async function main() {
           await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
           await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 });
 
-          await page.locator('[data-message-id="history_msg_4_assistant"]').getByTestId("message-action-view-trace").click();
-          await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 5000 });
-          const unlinkedLabel = await page.getByTestId("trace-langfuse-unavailable").innerText();
-          const unlinkedLinkCount = await page.getByTestId("playground-evidence-panel").getByTestId("trace-open-langfuse").count();
+          const unlinkedTraceDisabled = await page.locator('[data-message-id="history_msg_4_assistant"]').getByTestId("message-action-view-trace").isDisabled();
           historyTraceStatusChecks = {
             skipped: false,
             tracedHref: historyTraceHref,
             untracedLabel,
             untracedLinkCount,
-            unlinkedLabel,
-            unlinkedLinkCount,
+            unlinkedTraceDisabled,
           };
-          await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
-          await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 });
         }
 
         await page.getByTestId("message-action-create-feedback").first().click();
@@ -648,8 +642,11 @@ async function main() {
             realConversationItemsRequested: requestedRuntimeUrls.some((value) => /^\/v1\/conversations\/[^/]+\/items\?/.test(value)),
             sqliteMessageRestoreAbsent: !requestedRuntimeUrls.some((value) => value.startsWith("/api/agent-runs?") && value.includes("include_messages=true")),
             localMessageCacheAbsent: await page.evaluate(() => window.localStorage.getItem("playground-session-messages") === null),
+            traceOptInSent: traceOptInRequestCount > 0,
           },
           historyTraceStatusChecks,
+          semanticTraceChecks,
+          restoredSemanticTraceChecks,
         };
         ok = Object.values(counts).every((c) => c > 0)
           && (traceBox?.width || 0) >= 520
@@ -687,14 +684,20 @@ async function main() {
             && drawerChecks.historySourceChecks.conversationItemsPaginated
             && drawerChecks.historySourceChecks.sqliteMessageRestoreAbsent
             && drawerChecks.historySourceChecks.localMessageCacheAbsent
+            && drawerChecks.historySourceChecks.traceOptInSent
           ))
           && (REAL || (
             !historyTraceStatusChecks.skipped
             && historyTraceStatusChecks.tracedHref.includes("/project/agent-gov/traces/mock-trace-1")
             && historyTraceStatusChecks.untracedLabel === "无 Langfuse Trace"
             && historyTraceStatusChecks.untracedLinkCount === 0
-            && historyTraceStatusChecks.unlinkedLabel === "历史 Trace 未关联"
-            && historyTraceStatusChecks.unlinkedLinkCount === 0
+            && historyTraceStatusChecks.unlinkedTraceDisabled
+            && !semanticTraceChecks.skipped
+            && semanticTraceChecks.eventCount === 4
+            && semanticTraceChecks.thinkingCount === 1
+            && semanticTraceChecks.toolUseCount === 1
+            && semanticTraceChecks.thinkingTokenNoiseAbsent
+            && restoredSemanticTraceChecks.eventIds.join("|") === semanticTraceChecks.eventIds.join("|")
           ))
           && (REAL || (
             !markdownChecks.skipped

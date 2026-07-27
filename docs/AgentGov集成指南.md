@@ -66,14 +66,34 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
   "stream": true,
   "conversation": "conv_sess_...",
   "agentgov": {
-    "agent_id": "your-business-agent"
+    "agent_id": "your-business-agent",
+    "include_trace": true
   }
 }
 ```
 
 - `stream=false` 返回 Responses 对象；权威文本位于 `output[].content[].text`，运行关联位于 `agentgov.run_id`、`agentgov.conversation_id`、`agentgov.session_id`、`agentgov.trace_id` 等扩展字段。默认 `store=true` 时可通过 `GET /v1/responses/{response_id}` 取回已完成响应；`store=false` 只关闭公开取回，不关闭内部治理审计。
-- `stream=true` 返回 Responses-style SSE：标准事件包括 `response.created`、`response.output_text.delta`、`response.completed`、`response.failed`；control mode 另有 `agentgov.session`、`agentgov.tool_step`、`agentgov.confirmation.*`、`agentgov.result`、`agentgov.error`、`agentgov.done`。`agentgov.session.payload` 在运行开始时下发 `run_id`、会话/版本关联以及可用的 `langfuse_trace_id`、`langfuse_trace_url`，因此即使后续运行失败、取消或没有 `agentgov.result`，客户端仍可保留本次 Trace 入口。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
+- `stream=true` 返回 Responses-style SSE：标准事件包括 `response.created`、`response.output_text.delta`、`response.completed`、`response.failed`；control mode 另有 `agentgov.session`、`agentgov.tool_step`、`agentgov.confirmation.*`、`agentgov.result`、`agentgov.error`、`agentgov.done`。显式传 `agentgov.include_trace=true` 时还会收到 `agentgov.trace_event`。`agentgov.session.payload` 在运行开始时下发 `run_id`、会话/版本关联以及可用的 `langfuse_trace_id`、`langfuse_trace_url`，因此即使后续运行失败、取消或没有 `agentgov.result`，客户端仍可保留本次 Trace 入口。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
 - 边界：工具权限、MCP、skills、subagents、hooks 和 sandbox 以业务 Agent workspace 的 Claude Code 项目配置为准；Runtime 只选择 project discovery，`can_use_tool` 只桥接原生 `ask`。旧 Chat 字段 `agent`、`skills`、`skills_mode`、`allowed_tools`、`disallowed_tools`、`permission_mode` 已删除，传入返回 `422`。续聊复用同一 `conversation_id`，或使用 `previous_response_id` 让底座解析其所属会话；两种方式都会校验所选业务 Agent 与既有会话 owner 一致，不允许把 Agent A 的 SDK transcript 交给 Agent B 续接。若 `previous_response_id` 对应 run 没有 `session_id`，或其 conversation mapping 已被删除，底座返回 `409`，不会把“续接”静默降级成新会话。
+
+#### 4.2.1 Trace 语义事件与刷新
+
+- `agentgov.trace_event.payload` 是一条完整 SDK 事实，包含后端生成的 `event_id`、`run_id`、
+  `sequence`、原始消息/块位置、`kind`、`source_event`、`scope`、父工具调用和业务 payload。
+  `kind` 覆盖 `thinking`、`text`、`tool_use`、`tool_result`、`hook`、`task`、`system`、
+  `result` 等；一个 SDK content block 对应一条事件，因此同一消息中的多个工具调用不会丢失。
+- `StreamEvent`、heartbeat、SSE 信封、session/done 控制帧和
+  `SystemMessage:thinking_tokens` 计数快照只是传输/计量事实，不进入语义 Trace。Thinking 只从完整
+  ThinkingBlock 生成，opaque signature 不下发；这不影响 `response.output_text.delta` 文本流。
+- `agentgov.tool_step` 为存量 control 客户端暂时保留，现由同一投影器为每个工具 block 生成；
+  新客户端应消费 `agentgov.trace_event`。`agentgov.debug.sdk_raw=true` 仍按完整 SDK message
+  提供原始审计，包括带文本的 AssistantMessage；不得把 raw 事件直接渲染成业务时间线。
+- 运行完成后调用 `GET /api/agent-runs/{run_id}/trace`。该接口从 AgentRun 中的原始
+  `messages` 当场投影，不另存第二份语义 Trace，返回 `turn_status`、`turn_error`、`errors`、
+  `completeness` 和事件列表。`succeeded`、`failed`、`cancelled`、`interrupted` 均可刷新重放；
+  没有历史原始消息的旧 run 返回 `completeness=unavailable`，不伪造事件。
+- HITL 请求/决策仍由确认卡契约承载，不混入 Trace 事件；Langfuse 是更深的开发观测入口，
+  也不替代上面的运行证据投影。
 
 流式 Prompt Suggestion 是可选的下一轮输入辅助：
 
@@ -83,7 +103,7 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - Claude Code 可能因缓存或模型条件不生成建议，缺失不表示本轮失败。客户端收到后应只提供“填入输入框”动作，不自动发起下一轮请求。
 - Suggestion 是临时 UI 辅助，不属于 Prompt 治理资产，也不进入正式会话消息、SQLite run、response retrieve 或 SDK transcript；刷新后无需恢复。
 
-#### 4.2.1 流式 Web HITL 人工确认卡
+#### 4.2.2 流式 Web HITL 人工确认卡
 
 `ENABLE_CLAUDE_WEB_HITL=true` 且目标业务 Agent 的 Claude Code 权限规则触发 `ask` 时，Web 人工确认通过 `/v1/responses` control mode 的流式 SSE 暴露。非流式 Responses 不承载在线确认卡。集成方必须把该 SSE 连接当成带暂停点的状态机，而不是普通文本流。
 
@@ -122,7 +142,7 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - 页面刷新或客户端丢失 `decision_token` 后，不应伪造决策；提示用户重新运行当前任务。
 - 用户断开 SSE 时，底座会取消当前 run 的等待请求；上层系统应把卡片标为已中断或失效。
 
-#### 4.2.2 Workspace 权限与 Agent 专属流程
+#### 4.2.3 Workspace 权限与 Agent 专属流程
 
 所有注册业务 Agent 使用同一套运行、会话和治理接口。平台不按 Agent ID 注入工具、权限或业务流程，也不为某个 Agent 建立专用授权分支。
 
@@ -140,7 +160,7 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 - 目标：刷新/重开旧会话时重建对话气泡。
 - 最短路径：`POST /v1/conversations` 可预创建会话；`GET /v1/conversations` 列出会话；`GET /v1/conversations/{conversation_id}` 读取元数据；`DELETE /v1/conversations/{conversation_id}` 删除会话映射；`GET /v1/conversations/{conversation_id}/items` 从 SDK transcript 投影历史。
 - items 返回 `data[]`，每项包含 `id`、`role`、`parent_tool_use_id`、`content`；内容块保留 `thinking`、`text`、`tool_use`、`tool_result` 等 SDK 事实。若 transcript message UUID 能通过已提交的 SessionStore entry 确定性关联 `AgentRun`，该 item 还包含可选的 `agentgov` 扩展：`run_id`、`sdk_session_id`、`agent_version_id`、`langfuse_trace_id`、`langfuse_trace_url`。分页使用 cursor 风格 `after`、`limit`、`order`、`include`，不使用 offset。
-- 边界：只传 `conversation_id`，不传 `agent_id`；归属由底座解析。会话尚无 transcript 时 `data` 为空；读取未知会话或其 items 返回 `404`，删除未知映射返回 `deleted=false`。历史数据若 `agent_id` 为空但已经存在 `turns` 或 `sdk_session_id`，底座无法从该映射唯一证明 owner，会 fail-closed 返回 `409`；集成方应新建会话，不得指定 Agent 抢占，也不得依赖底座猜测或静默迁移。item 无 `agentgov` 表示旧 transcript 无法确定性关联 run；扩展存在但 Trace 字段为空表示该 run 未记录 Langfuse Trace。底座不按文本或时间猜测，也不伪造 Trace URL。会话正文继续来自 SDK transcript，后端不另建消息副本。
+- 边界：只传 `conversation_id`，不传 `agent_id`；归属由底座解析。会话尚无 transcript 时 `data` 为空；读取未知会话或其 items 返回 `404`，删除未知映射返回 `deleted=false`。历史数据若 `agent_id` 为空但已经存在 `turns` 或 `sdk_session_id`，底座无法从该映射唯一证明 owner，会 fail-closed 返回 `409`；集成方应新建会话，不得指定 Agent 抢占，也不得依赖底座猜测或静默迁移。item 无 `agentgov` 表示旧 transcript 无法确定性关联 run；扩展存在但 Trace 字段为空表示该 run 未记录 Langfuse Trace。底座不按文本或时间猜测，也不伪造 Trace URL。会话正文继续来自 SDK transcript；失败、取消或中断 run 的气泡/状态可由 `GET /api/agent-runs?session_id=...` 补齐，Trace 一律按 `run_id` 调专用 Trace API，不能从 conversation content block 猜测。
 
 ### 4.4 提交反馈并驱动闭环 — OpenAPI tag `feedback` / `improvements`
 - 目标：把用户/系统反馈喂回闭环，产出归因、优化、执行改动和回归测试设计。
@@ -209,7 +229,7 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 | 兼容接口 | 新集成替代路径 | 说明 |
 | --- | --- | --- |
 | `POST /api/chat` | `POST /v1/responses`，`stream=false` | 旧非流式 ChatRequest/ChatResponse 包装。 |
-| `POST /api/chat/stream` | `POST /v1/responses`，`stream=true` | 旧 SSE 事件名与 payload 兼容面。 |
+| `POST /api/chat/stream` | `POST /v1/responses`，`stream=true` | 默认 `event_mode=raw` 保旧 SSE；`?event_mode=semantic` 保文本流并输出 `trace_event`。 |
 | `/api/sessions*` | `/v1/conversations*` | 旧 session/offset 历史读取契约。 |
 | `POST /v1/chat/completions` | `POST /v1/responses` strict mode | 仅面向既有 OpenAI Chat Completions 客户端。 |
 

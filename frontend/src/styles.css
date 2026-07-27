@@ -6153,6 +6153,19 @@ body.is-resizing-evidence-panel {
   font-size: 11px;
 }
 .evidence-tab-panel { flex: 1; min-height: 0; overflow-y: auto; }
+.trace-load-status {
+  margin: 12px 14px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.trace-load-status.error { border-color: rgba(181, 72, 72, 0.26); background: rgba(181, 72, 72, 0.06); color: var(--danger); }
+.trace-load-status.unavailable { border-color: rgba(181, 107, 33, 0.26); background: rgba(181, 107, 33, 0.06); color: var(--warn); }
+.trace-load-status .secondary-button { margin-left: 10px; }
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(20, 14, 8, 0.32); z-index: 60; display: flex; justify-content: flex-end; }
 .drawer-shell {
   height: 100%;

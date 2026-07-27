@@ -265,6 +265,7 @@
           "tests/test_openai*.py",
           "tests/test_openapi*.py",
           "tests/test_responses*.py",
+          "tests/test_trace_*.py",
           "tests/test_upstream_contracts.py"
         ],
         "classification": {
@@ -319,6 +320,7 @@
           "tests/test_settings.py",
           "tests/test_agent_tests_frontend_contract.py",
           "tests/test_agentgov_testkit.py",
+          "tests/test_trace_*.py",
           "tests/test_upstream_contracts.py",
           "tests/test_workspace_hooks.py"
         ],
@@ -1046,7 +1048,7 @@
         },
         {
           "id": "responses_streaming_sse",
-          "description": "stream=true 的 Responses-style SSE 投影：SDK StreamEvent 文本增量只作传输、最终 AssistantMessage 快照为唯一事实源且偏差 fail-closed；response.* 标准通道两模式都发、agentgov.* 控制信封仅 control、前端按 RAF/32ms 批处理并以 response.completed 校准最终文本、Prompt Suggestion 使用后端权威 ID 且 strict 隔离、heartbeat 转 SSE comment、SDK Result/运行错误只产生一个 failed 终态并投影 UI 错误、tool_step 投影、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
+          "description": "stream=true 的 Responses-style SSE 投影：SDK StreamEvent 文本增量只作传输、最终 AssistantMessage 快照为唯一事实源且偏差 fail-closed；response.* 标准通道两模式都发、agentgov.* 控制信封仅 control；Trace 仅由完整 SDK 消息投影，thinking_tokens 计数帧不进入语义时间线，完整 thinking、全部 tool/hook/task/result 保留，结束后可由 AgentRun 同源重放；前端按 RAF/32ms 批处理并以 response.completed 校准最终文本、Prompt Suggestion 使用后端权威 ID 且 strict 隔离、heartbeat 转 SSE comment、SDK Result/运行错误只产生一个 failed 终态并投影 UI 错误、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
           "pytest": [
             "tests/test_responses_stream.py::test_control_stream_maps_core_events",
             "tests/test_claude_runtime.py::test_stream_enriches_langfuse_input_output",
@@ -1064,6 +1066,15 @@
             "tests/test_responses_stream.py::test_projection_closes_upstream_when_client_stops_consuming",
             "tests/test_responses_stream.py::test_projection_accepts_async_iterator_without_aclose",
             "tests/test_responses_stream.py::test_tool_step_from_raw",
+            "tests/test_trace_stream_contract.py::test_trace_opt_in_emits_complete_thinking_and_every_tool_block",
+            "tests/test_trace_stream_contract.py::test_trace_is_opt_in_and_sdk_raw_keeps_assistant_snapshot",
+            "tests/test_trace_projection.py::test_projector_suppresses_thinking_token_counters_but_keeps_complete_sdk_facts",
+            "tests/test_trace_projection.py::test_projector_event_ids_are_stable_and_backend_owned",
+            "tests/test_trace_projection.py::test_incremental_projector_counts_suppressed_messages_for_refresh_parity",
+            "tests/test_trace_projection.py::test_native_semantic_projection_keeps_text_and_replaces_raw_noise_with_trace",
+            "tests/test_agent_runs_api.py::test_agent_run_trace_is_refresh_safe_and_semantic",
+            "tests/test_agent_runs_api.py::test_agent_run_trace_reports_unavailable_for_legacy_run_without_messages",
+            "tests/test_chat_stream_agent_id.py::test_chat_stream_semantic_mode_suppresses_thinking_counter_and_keeps_tools",
             "tests/test_responses_stream.py::test_confirmation_projection_keeps_token_and_renames",
             "tests/test_responses_stream.py::test_endpoint_stream_control",
             "tests/test_responses_stream.py::test_delta_and_created_carry_openai_conformant_fields",

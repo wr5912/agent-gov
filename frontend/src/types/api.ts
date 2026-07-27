@@ -585,6 +585,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-runs/{run_id}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the refresh-safe semantic Trace for one Agent run */
+        get: operations["get_agent_run_trace_api_agent_runs__run_id__trace_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-test-assets": {
         parameters: {
             query?: never;
@@ -2340,6 +2357,12 @@ export interface components {
             case_id?: string | null;
             debug?: components["schemas"]["AgentGovDebug"] | null;
             /**
+             * Include Trace
+             * @description Emit complete semantic SDK facts as agentgov.trace_event envelopes.
+             * @default false
+             */
+            include_trace: boolean;
+            /**
              * Max Turns
              * @description Claude Code turn cap.
              */
@@ -2719,6 +2742,8 @@ export interface components {
             completed_at?: string | null;
             /** Created At */
             created_at?: string | null;
+            /** Errors */
+            errors?: string[];
             /** Langfuse Trace Id */
             langfuse_trace_id?: string | null;
             /** Langfuse Trace Url */
@@ -2738,6 +2763,61 @@ export interface components {
             sdk_session_id?: string | null;
             /** Session Id */
             session_id?: string | null;
+            /** Turn Error */
+            turn_error?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Turn Index */
+            turn_index?: number | null;
+            /** Turn Status */
+            turn_status?: ("running" | "succeeded" | "failed" | "cancelled" | "interrupted") | null;
+        };
+        /**
+         * AgentRunTraceResponse
+         * @description Refresh-safe Trace projection backed by the persisted AgentRun timeline.
+         */
+        AgentRunTraceResponse: {
+            /** Agent Activity */
+            agent_activity?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Agent Version Id */
+            agent_version_id?: string | null;
+            /** Alert Id */
+            alert_id?: string | null;
+            /** Case Id */
+            case_id?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /**
+             * Completeness
+             * @enum {string}
+             */
+            completeness: "complete" | "unavailable";
+            /** Created At */
+            created_at?: string | null;
+            /** Errors */
+            errors?: string[];
+            /** Events */
+            events?: components["schemas"]["AgentTraceEvent"][];
+            /** Langfuse Trace Id */
+            langfuse_trace_id?: string | null;
+            /** Langfuse Trace Url */
+            langfuse_trace_url?: string | null;
+            /** Run Id */
+            run_id: string;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+            /** Session Id */
+            session_id?: string | null;
+            /** Turn Error */
+            turn_error?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Turn Index */
+            turn_index?: number | null;
+            /** Turn Status */
+            turn_status?: ("running" | "succeeded" | "failed" | "cancelled" | "interrupted") | null;
         };
         /** AgentStarterPromptResponse */
         AgentStarterPromptResponse: {
@@ -3129,6 +3209,42 @@ export interface components {
             test_files?: string[];
             /** Tests Directory Present */
             tests_directory_present: boolean;
+        };
+        /**
+         * AgentTraceEvent
+         * @description One stable semantic event derived from a complete Claude SDK message.
+         */
+        AgentTraceEvent: {
+            /** Block Index */
+            block_index?: number | null;
+            /** Event Id */
+            event_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "thinking" | "text" | "tool_use" | "tool_result" | "hook" | "task" | "system" | "result" | "sdk_message" | "content_block";
+            /** Message Index */
+            message_index: number;
+            /** Parent Tool Use Id */
+            parent_tool_use_id?: string | null;
+            /** Payload */
+            payload?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Run Id */
+            run_id: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "main" | "subagent";
+            /** Sequence */
+            sequence: number;
+            /** Source Event */
+            source_event: string;
+            /** Subagent Id */
+            subagent_id?: string | null;
         };
         /** AssetCreateRequest */
         AssetCreateRequest: {
@@ -7679,6 +7795,55 @@ export interface operations {
             };
         };
     };
+    get_agent_run_trace_api_agent_runs__run_id__trace_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunTraceResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
     list_agent_test_assets_api_agent_test_assets_get: {
         parameters: {
             query?: never;
@@ -8624,7 +8789,10 @@ export interface operations {
     };
     chat_stream_api_chat_stream_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description raw preserves the legacy SDK-message stream; semantic adds complete trace_event facts and suppresses transport noise. */
+                event_mode?: "raw" | "semantic";
+            };
             header?: never;
             path?: never;
             cookie?: never;

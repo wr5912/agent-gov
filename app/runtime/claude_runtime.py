@@ -28,7 +28,7 @@ from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
 from .managed_agent_policy import ManagedAgentPolicyError, require_profile_runtime_workspace_policy
 from .managed_claude_events import ManagedClaudeEvent
-from .message_utils import extract_text, message_event_name, to_plain
+from .message_utils import extract_text, is_top_level_message, message_event_name, to_plain
 from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
 from .prompt_suggestion_generator import PromptSuggestionGenerator
@@ -39,6 +39,7 @@ from .schemas import ChatRequest, ChatResponse
 from .session_store import LocalSession, LocalSessionStore
 from .session_turn_lease import SessionTurnLeaseHeartbeat
 from .settings import AppSettings
+from .speech_summary import SpeechSummaryService
 from .stores.feedback_store import FeedbackStore
 
 _CLAUDE_CHILD_BLOCKED_CONTROL_ENV_KEYS = frozenset(
@@ -52,12 +53,7 @@ _LANGFUSE_ATTRIBUTE_MAX_LENGTH = 200
 
 
 def _require_profile(profile: AgentRuntimeProfile | None) -> AgentRuntimeProfile:
-    """profile 必须已由上游解析。
-
-    这里曾经回落到预制的 main profile。main 已是可删除的普通业务 Agent，没有预制条目可回落；
-    更重要的是回落本身是错误掩蔽——它把「上游没解析出 profile」变成「静默跑在别的 Agent 上」。
-    """
-
+    """拒绝把上游 profile 解析失败静默回落到其他业务 Agent。"""
     if profile is None:
         raise RuntimeUnavailableError("runtime profile was not resolved for this run")
     return profile
@@ -151,6 +147,11 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
         self.model_provider_router = ModelProviderRouter(settings)
         self.output_formatter = DSPyOutputFormatter(settings, langfuse=self.langfuse, provider_router=self.model_provider_router)
         self.prompt_suggestion_generator = PromptSuggestionGenerator(settings, provider_router=self.model_provider_router, langfuse=self.langfuse)
+        self.speech_summary_service = SpeechSummaryService(
+            settings,
+            provider_router=self.model_provider_router,
+            langfuse=self.langfuse,
+        )
         self.job_runner = AgentJobRunner(
             settings=settings,
             profiles=self.profiles,
@@ -560,7 +561,8 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
             mirror_error = str(getattr(msg, "error", None) or "SessionStore mirror failed")
             state.mirror_errors.append(mirror_error)
             state.errors.append(f"SessionStoreMirrorError: {mirror_error}")
-        if text:
+        message_name = msg.__class__.__name__
+        if text and (isinstance(msg, result_message_type) or (message_name.startswith("AssistantMessage") and is_top_level_message(msg))):
             state.answer_parts.append(text)
 
         candidate_session_id = getattr(msg, "session_id", None)
@@ -748,6 +750,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
         *,
         profile: AgentRuntimeProfile | None = None,
         cli_path_override: Path | None = None,
+        with_speech_summary: bool = False,
     ) -> AsyncIterator[ManagedClaudeEvent]:
         from .claude_runtime_stream import stream_claude_runtime
 
@@ -757,6 +760,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
             req,
             profile=selected_profile,
             cli_path_override=cli_path_override,
+            with_speech_summary=with_speech_summary,
         )
         try:
             async for event in source:

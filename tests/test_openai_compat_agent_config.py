@@ -14,13 +14,30 @@ from app.runtime.schemas import ChatResponse
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from fastapi.testclient import TestClient
 
-from app_test_utils import load_test_app as _load_app
+from app_test_utils import load_test_app as _base_load_app
 from business_agent_test_utils import LEGACY_MAIN_AGENT_ID
 from test_agent_workspace_packages import _import_new_agent
 
 
+def _load_app(monkeypatch, tmp_path, **kwargs):
+    return _base_load_app(
+        monkeypatch,
+        tmp_path,
+        requires_web_hitl=False,
+        **kwargs,
+    )
+
+
 def _register_biz(client: TestClient, agent_id: str = "soc-ops", name: str = "客服助手") -> None:
-    assert _import_new_agent(client, agent_id=agent_id, name=name).status_code == 200
+    assert (
+        _import_new_agent(
+            client,
+            agent_id=agent_id,
+            name=name,
+            requires_web_hitl=False,
+        ).status_code
+        == 200
+    )
 
 
 def _fake_capturing_run(captured: dict):

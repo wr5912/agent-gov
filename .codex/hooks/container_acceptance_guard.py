@@ -10,6 +10,7 @@ PRIVATE_MAKE_TARGETS = (
     "_container-core-smoke",
     "_container-openapi-check",
     "_container-live-test",
+    "_container-speech-summary-test",
     "_container-health-e2e",
     "_smoke",
     "_ui-smoke",
@@ -27,6 +28,7 @@ DIRECT_ACCEPTANCE_SCRIPTS = (
     "scripts/verify_improvement_ui_real_container.mjs",
     "scripts/verify_openai_responses_container.mjs",
     "scripts/verify_provider_health_container.mjs",
+    "scripts/verify_speech_summary_container.py",
 )
 SHELL_BOUNDARY = r"(?:^|(?:&&|\|\||;|\|)\s*)"
 PREFIX = r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+\s+)*(?:command\s+)?"

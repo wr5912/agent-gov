@@ -8,10 +8,9 @@
 - 层① 适配器:claude_prompt_suggestions —— 把 CLI 的 raw `prompt_suggestion` 消息
   解析成 PromptSuggestionMessage。
 - 层② 后端 SSE 契约:openai_responses_stream —— 把 typed managed source 中的
-  `prompt_suggestion` 控制事件投影成
-  `agentgov.prompt_suggestion` 信封;成功轮里可**晚于 done**(迟到帧),失败轮丢弃。
-- 端到端:真实 runtime.stream_events → 真实投影,证明「答案完成→done 提前→建议随后」这条真实
-  时序下建议仍能到达前端。这一层此前缺失,正是它让「迟到建议被投影丢弃」的回归漏过。
+  `prompt_suggestion` 控制事件投影成 `agentgov.prompt_suggestion` 信封；done 后一律丢弃。
+- 端到端:真实 runtime.stream_events → 真实投影，证明 Result 后到达的建议在有界排空期
+  进入 SSE，且 done / Responses 标准终态保持最后。
 
 前端消费层由 Vitest reducer 测试和 Playwright 浏览器主流程共同覆盖。
 """
@@ -194,9 +193,7 @@ _DONE = AgentGovControlEvent(name="done", data={})
 def test_layer2_projects_suggestion_to_agentgov_envelope_before_done() -> None:
     """层②:建议在 done **之前**到达时,被投影成 `agentgov.prompt_suggestion` 信封。
 
-    这是「早到」路径(原始设计);「晚到」路径见
-    test_layer2_delivers_late_suggestion_after_done_on_success。两条一起覆盖修复后的契约:
-    成功轮无论建议早于还是晚于 done 都送达,只有失败轮丢弃。
+    这是唯一允许的成功路径；done 之后的建议由下一条负向用例确认会被丢弃。
     """
     suggestion_event = AgentGovControlEvent(
         name="prompt_suggestion",
@@ -214,22 +211,16 @@ def test_layer2_projects_suggestion_to_agentgov_envelope_before_done() -> None:
     assert names.index("agentgov.prompt_suggestion") < names.index("agentgov.done")
 
 
-def test_layer2_delivers_late_suggestion_after_done_on_success() -> None:
-    """层② **回归**:成功轮里 done 之后到达的建议必须仍被投影(迟到帧)。
-
-    这正是曾经断掉的场景:批5 让 runtime 在答案完成时即发 done、建议随后才到,而投影
-    `_project_prompt_suggestion` 原来带 `done_emitted / terminal_status is not None` 守卫,
-    把成功轮 done 之后的建议丢掉 → 前端永远收不到。修复后只在**失败**时丢弃。
-    """
+def test_layer2_drops_suggestion_after_done_on_success() -> None:
+    """终态之后的任何建议都必须丢弃。"""
     late = AgentGovControlEvent(
         name="prompt_suggestion",
         data={"suggestion": "接下来检查失败路径", "session_id": "sess-9"},
     )
     events = _sse_events([_SESSION, _RESULT, _DONE, late])
     names = [n for n, _ in events]
-    assert "agentgov.prompt_suggestion" in names, "成功轮 done 之后的迟到建议必须送达(修复点)"
-    body = dict(events)["agentgov.prompt_suggestion"]
-    assert body.get("payload", body)["suggestion"] == "接下来检查失败路径"
+    assert "agentgov.prompt_suggestion" not in names
+    assert names[-1] == "response.completed"
 
 
 def test_layer2_drops_late_suggestion_after_failure() -> None:
@@ -247,13 +238,8 @@ def test_layer2_drops_late_suggestion_after_failure() -> None:
 # ---------------------------------------------------------------- 端到端(runtime → 投影)
 
 
-def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeypatch) -> None:
-    """**回归护栏**:真实 runtime.stream_events → 真实投影,迟到建议必须到达前端 SSE。
-
-    复刻真实时序:答案完成 → runtime 提前发 done → 建议随后到(runtime 帧序里建议在
-    done 之后)。此前投影会丢弃它,前端永远收不到;这条端到端断言 `agentgov.prompt_suggestion`
-    确实出现在投影后的 SSE 里。缺这一层测试,是当初回归漏过的根因。
-    """
+def test_endtoend_suggestion_is_drained_before_terminal(tmp_path, monkeypatch) -> None:
+    """真实 runtime 与 Responses 投影都保持建议在终态之前。"""
     import json
 
     from app.runtime.claude_runtime import ClaudeRuntime
@@ -275,7 +261,7 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
         )
         yield AssistantMessage(content=[TextBlock(text="答案")], model="m", session_id=sid)
         yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False, num_turns=1, session_id=sid, result="答案")
-        # 建议在答案之后才生成 —— 真实时序,到达时 done 已发出
+        # 建议在 Result 之后到达，但仍处在终态有界排空期。
         yield PromptSuggestionMessage("接下来检查失败路径", "u1", sid)
 
     monkeypatch.setattr(ps, "query_with_prompt_suggestions", fake_query)
@@ -323,10 +309,10 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
 
     raw_frames, sse_events = asyncio.run(asyncio.wait_for(run(), timeout=30))
 
-    # 前提:runtime 里建议确实排在 done 之后(否则这条测不到真问题)
-    assert raw_frames.index("prompt_suggestion") > raw_frames.index("done"), f"runtime 帧序应为建议晚于 done,实得 {raw_frames}"
-    # 核心:投影后前端能收到建议
-    assert "agentgov.prompt_suggestion" in sse_events, f"迟到建议被投影丢弃,前端收不到。SSE={sse_events}"
+    assert raw_frames.index("prompt_suggestion") < raw_frames.index("done")
+    assert raw_frames[-1] == "done"
+    assert "agentgov.prompt_suggestion" in sse_events
+    assert sse_events[-1] == "response.completed"
 
 
 def test_layer2_projects_full_candidate_list_with_compat_first_item() -> None:

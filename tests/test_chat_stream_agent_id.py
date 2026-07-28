@@ -12,7 +12,16 @@ from app.runtime.managed_claude_events import AgentGovControlEvent, ClaudeSdkMes
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from fastapi.testclient import TestClient
 
-from app_test_utils import load_test_app as _load_app
+from app_test_utils import load_test_app as _base_load_app
+
+
+def _load_app(monkeypatch, tmp_path, **kwargs):
+    return _base_load_app(
+        monkeypatch,
+        tmp_path,
+        requires_web_hitl=False,
+        **kwargs,
+    )
 
 
 def test_chat_stream_requires_agent_id_422(monkeypatch, tmp_path: Path) -> None:
@@ -63,7 +72,7 @@ def test_chat_rejects_removed_runtime_policy_fields(monkeypatch, tmp_path: Path)
 def test_chat_stream_projects_prompt_suggestion_event(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
 
-    async def fake_stream(req, *, profile=None):
+    async def fake_stream(req, *, profile=None, **kwargs):
         yield AgentGovControlEvent(
             name="prompt_suggestion",
             data={"suggestion": "继续检查边界条件", "run_id": "run-1", "session_id": "session-1"},
@@ -82,7 +91,7 @@ def test_chat_stream_projects_prompt_suggestion_event(monkeypatch, tmp_path: Pat
 def test_chat_stream_semantic_mode_suppresses_thinking_counter_and_keeps_tools(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
 
-    async def fake_stream(req, *, profile=None):
+    async def fake_stream(req, *, profile=None, **kwargs):
         from claude_agent_sdk import (
             AssistantMessage,
             SystemMessage,

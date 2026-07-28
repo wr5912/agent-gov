@@ -21,8 +21,17 @@ from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ChatRequest
 from fastapi.testclient import TestClient
 
-from app_test_utils import load_test_app as _load_app
+from app_test_utils import load_test_app as _base_load_app
 from test_agent_workspace_packages import _import_new_agent
+
+
+def _load_app(monkeypatch, tmp_path, **kwargs):
+    return _base_load_app(
+        monkeypatch,
+        tmp_path,
+        requires_web_hitl=False,
+        **kwargs,
+    )
 
 
 def _patch_sdk_query(monkeypatch, fake_query) -> None:
@@ -168,9 +177,7 @@ def _as_managed(frame):
                 )
         if not content and text:
             content.append(TextBlock(text=text))
-        return ClaudeSdkMessageEvent(
-            AssistantMessage(content=content, model="legacy-test", session_id="sdk-9")
-        )
+        return ClaudeSdkMessageEvent(AssistantMessage(content=content, model="legacy-test", session_id="sdk-9"))
     if class_name == "UserMessage":
         content = [
             ToolResultBlock(
@@ -267,8 +274,8 @@ def test_control_stream_maps_core_events() -> None:
         "agentgov.session",
         "response.output_text.delta",
         "agentgov.result",
-        "response.completed",
         "agentgov.done",
+        "response.completed",
     ]
     by = dict(events)
     assert by["response.created"]["response"]["id"] == "resp_run-9"
@@ -345,7 +352,7 @@ def test_frames_after_done_are_ignored() -> None:
     )
     names = [name for name, _ in events]
 
-    assert names == ["response.created", "agentgov.session", "response.failed", "agentgov.error", "agentgov.done"]
+    assert names == ["response.created", "agentgov.session", "agentgov.error", "agentgov.done", "response.failed"]
     assert "response.output_text.delta" not in names
     assert "agentgov.result" not in names
 
@@ -361,7 +368,7 @@ def test_frames_after_failed_terminal_are_ignored_until_done() -> None:
     )
     names = [name for name, _ in events]
 
-    assert names == ["response.created", "agentgov.session", "response.failed", "agentgov.error", "agentgov.done"]
+    assert names == ["response.created", "agentgov.session", "agentgov.error", "agentgov.done", "response.failed"]
 
 
 def test_source_eof_without_done_or_result_still_emits_failed_terminal() -> None:
@@ -390,7 +397,7 @@ def test_source_exception_before_session_emits_one_standard_failed_terminal() ->
     events = _parse(asyncio.run(go()))
     names = [name for name, _ in events]
 
-    assert names == ["response.created", "agentgov.session", "response.failed", "agentgov.error", "agentgov.done"]
+    assert names == ["response.created", "agentgov.session", "agentgov.error", "agentgov.done", "response.failed"]
     assert names.count("response.failed") == 1
     assert dict(events)["response.failed"]["error"] == {
         "error_code": "STREAM_SOURCE_ERROR",
@@ -578,7 +585,15 @@ def _fake_capturing_stream(captured: dict, frames):
 
 
 def _register_biz(client: TestClient, agent_id: str = "soc-ops") -> None:
-    assert _import_new_agent(client, agent_id=agent_id, name="客服").status_code == 200
+    assert (
+        _import_new_agent(
+            client,
+            agent_id=agent_id,
+            name="客服",
+            requires_web_hitl=False,
+        ).status_code
+        == 200
+    )
 
 
 def test_endpoint_stream_control(monkeypatch, tmp_path: Path) -> None:
@@ -622,7 +637,11 @@ def test_endpoint_stream_control_maps_request_fields(monkeypatch, tmp_path: Path
     assert req.case_id == "case-1"
     assert req.max_turns == 7
     assert req.system_append == "只输出正文"
-    assert req.metadata == {"source": "playground", "__agentgov_store__": False}
+    assert req.metadata == {
+        "source": "playground",
+        "__agentgov_response_mode__": "control",
+        "__agentgov_store__": False,
+    }
     assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops/workspace")
 
 
@@ -734,32 +753,34 @@ def test_endpoint_stream_fails_closed_for_unmigratable_previous_response_session
     assert saved.turns == 0
 
 
-def test_stream_persists_session_and_run_before_response_completed(monkeypatch, tmp_path: Path) -> None:
-    # race 回归：在 result 事件（-> response.completed）时刻，session（sdk_session_id+agent_id）与 run 必须已落库，
-    # 使 /v1/conversations/items 与 /v1/responses/{id} retrieve 在完成信号时刻即可查（修复前此处未落库、会失败）。
+def test_stream_persists_session_and_run_before_done_terminal(monkeypatch, tmp_path: Path) -> None:
+    # race 回归：result 只是 SDK 进度事实；在 done（-> response.completed）时刻，
+    # session（sdk_session_id+agent_id）与 run 必须已落库，使 items/retrieve 在公开终态即可查。
     _patch_sdk_query(monkeypatch, _fake_sdk_query_success("sdk-race"))
     module = _load_app(monkeypatch, tmp_path)
 
-    at_result: dict = {}
+    at_terminal: dict = {}
     run_id: dict = {}
+    result_sdk_session_id: dict = {}
 
     def check(ev):
         data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
         if data.get("run_id"):
             run_id["v"] = data["run_id"]
         if ev.get("event") == "result":
+            result_sdk_session_id["v"] = data.get("sdk_session_id")
+        if ev.get("event") == "done":
             s = module.session_store.get("sess-race")
-            at_result["sdk_session_id"] = s.sdk_session_id if s else None
-            at_result["event_sdk_session_id"] = data.get("sdk_session_id")
-            at_result["agent_id"] = s.agent_id if s else None
-            at_result["run_found"] = bool(run_id.get("v")) and module.feedback_store.find_run(run_id=run_id["v"]) is not None
+            at_terminal["sdk_session_id"] = s.sdk_session_id if s else None
+            at_terminal["agent_id"] = s.agent_id if s else None
+            at_terminal["run_found"] = bool(run_id.get("v")) and module.feedback_store.find_run(run_id=run_id["v"]) is not None
 
     _drive_stream(module, ChatRequest(message="hi", session_id="sess-race"), on_event=check)
 
-    assert at_result.get("sdk_session_id") == at_result.get("event_sdk_session_id")  # session 已落库
-    assert at_result.get("sdk_session_id")
-    assert at_result.get("agent_id")  # agent_id 非空（否则 items 会从空列表退化为 500）
-    assert at_result.get("run_found") is True  # run 已记录（retrieve 完成即可查）
+    assert at_terminal.get("sdk_session_id") == result_sdk_session_id.get("v")
+    assert at_terminal.get("sdk_session_id")
+    assert at_terminal.get("agent_id")  # agent_id 非空（否则 items 会从空列表退化为 500）
+    assert at_terminal.get("run_found") is True  # run 已记录（retrieve 完成即可查）
 
 
 def test_stream_run_write_failure_rolls_back_session_completion(monkeypatch, tmp_path: Path) -> None:
@@ -848,7 +869,9 @@ def test_stream_finalization_exhaustion_interrupts_and_allows_immediate_retry(mo
     run_id = session_event["data"]["run_id"]
 
     assert calls == 3
-    assert not any(event.get("event") == "result" for event in events)
+    # SDK ResultMessage 已经真实发生，故 result 作为进度事实保留；持久化失败由后续
+    # error 覆盖最终状态，Responses projector 只会在 done 时发布 response.failed。
+    assert any(event.get("event") == "result" for event in events)
     error_event = next(event for event in events if event.get("event") == "error")
     assert error_event["data"]["error_code"] == "RUNTIME_FINALIZATION_FAILED"
     assert [event.get("event") for event in events][-2:] == ["error", "done"]
@@ -866,7 +889,7 @@ def test_stream_finalization_exhaustion_interrupts_and_allows_immediate_retry(mo
 
 
 def test_stream_persists_exactly_once(monkeypatch, tmp_path: Path) -> None:
-    # 幂等：is_result 处落库 + finally 兜底，不得双落库。
+    # 幂等：SDK 原生消息源排空后的主动落库 + finalize 兜底不得双落库。
     _patch_sdk_query(monkeypatch, _fake_sdk_query_success("sdk-once"))
     module = _load_app(monkeypatch, tmp_path)
     calls = {"n": 0}

@@ -856,6 +856,7 @@ export interface paths {
         put?: never;
         /**
          * Run a Claude Agent task and return the full result
+         * @deprecated
          * @description Runs one Claude Agent SDK query. Requires a registered business agent_id.
          */
         post: operations["chat_api_chat_post"];
@@ -876,6 +877,7 @@ export interface paths {
         put?: never;
         /**
          * Run a Claude Agent task as server-sent events
+         * @deprecated
          * @description Streams session, message, prompt_suggestion, result, error, and done events as text/event-stream. Requires a registered business agent_id.
          */
         post: operations["chat_stream_api_chat_stream_post"];
@@ -1866,6 +1868,7 @@ export interface paths {
         put?: never;
         /**
          * Run a non-streaming OpenAI-compatible chat completion
+         * @deprecated
          * @description Maps OpenAI-style messages into one Claude Agent prompt. OpenAI requests carry no agent_id; the target agent is operator-configured via /api/settings/openai-compat-agent (defaults to the main agent).
          */
         post: operations["openai_chat_completions_v1_chat_completions_post"];
@@ -2407,6 +2410,12 @@ export interface components {
              * @description Claude Code turn cap.
              */
             max_turns?: number | null;
+            /**
+             * With Speech Summary
+             * @description Control streaming only: emit best-effort agentgov.speech_summary events.
+             * @default false
+             */
+            with_speech_summary: boolean;
         };
         /**
          * AgentGovResponseExtension
@@ -2450,6 +2459,32 @@ export interface components {
             } | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * AgentGovSpeechSummaryEnvelope
+         * @description Public SSE data contract shared by all Speech Summary surfaces.
+         */
+        AgentGovSpeechSummaryEnvelope: {
+            /** Payload */
+            payload: components["schemas"]["ThinkingSpeechSummaryPayload"] | components["schemas"]["AssistantResponseSpeechSummaryPayload"];
+            /** Run Id */
+            run_id: string;
+            /** Seq */
+            seq: number;
+            /** Ts */
+            ts: number;
+            /**
+             * Type
+             * @default agentgov.speech_summary
+             * @constant
+             */
+            type: "agentgov.speech_summary";
+            /**
+             * V
+             * @default 1
+             * @constant
+             */
+            v: 1;
         };
         /** AgentInfo */
         AgentInfo: {
@@ -3390,6 +3425,28 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
+        /** AssistantResponseSpeechSummaryPayload */
+        AssistantResponseSpeechSummaryPayload: {
+            /** Char Count */
+            char_count: number;
+            /** Message Id */
+            message_id: string;
+            /**
+             * Scope
+             * @default main
+             * @constant
+             */
+            scope: "main";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source_kind: "assistant_response";
+            /** Summary Id */
+            summary_id: string;
+            /** Text */
+            text: string;
+        };
         /** AttachFeedbackCaseRequest */
         AttachFeedbackCaseRequest: {
             /**
@@ -3582,6 +3639,128 @@ export interface components {
             } | null;
         };
         /**
+         * ChatStreamRequest
+         * @description Legacy Chat SSE request with a stream-only derived-event opt-in.
+         * @example {
+         *       "agent_id": "security-operations-expert",
+         *       "max_turns": 8,
+         *       "message": "请说明当前 workspace 中有哪些 subagents 和 skills"
+         *     }
+         */
+        ChatStreamRequest: {
+            /**
+             * Agent Id
+             * @description Registered business agent to run. Required by /api/chat and /api/chat/stream; requests without it are rejected with 422.
+             */
+            agent_id?: string | null;
+            /**
+             * Alert Id
+             * @description Optional SOC alert id used by the feedback loop.
+             */
+            alert_id?: string | null;
+            /**
+             * Case Id
+             * @description Optional SOC case id used by the feedback loop.
+             */
+            case_id?: string | null;
+            /**
+             * Max Turns
+             * @description Per-request turn cap. Defaults to MAX_TURNS.
+             */
+            max_turns?: number | null;
+            /**
+             * Message
+             * @description User message or task prompt.
+             */
+            message: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Model
+             * @description Per-request model override. Defaults to AGENT_MODEL.
+             */
+            model?: string | null;
+            /**
+             * Session Id
+             * @description Client-visible session id. If omitted, the API creates one.
+             */
+            session_id?: string | null;
+            /**
+             * System Append
+             * @description Extra instruction appended to the Claude Code preset prompt.
+             */
+            system_append?: string | null;
+            /**
+             * With Speech Summary
+             * @description Emit best-effort agentgov.speech_summary events before the terminal done event.
+             * @default false
+             */
+            with_speech_summary: boolean;
+        };
+        /**
+         * ClaudeSdkEventsRequest
+         * @description SDK-native SSE request; kept separate from shared Chat/raw schemas.
+         * @example {
+         *       "agent_id": "security-operations-expert",
+         *       "max_turns": 8,
+         *       "message": "请说明当前 workspace 中有哪些 subagents 和 skills"
+         *     }
+         */
+        ClaudeSdkEventsRequest: {
+            /**
+             * Agent Id
+             * @description Registered business agent to run. Required by /api/chat and /api/chat/stream; requests without it are rejected with 422.
+             */
+            agent_id?: string | null;
+            /**
+             * Alert Id
+             * @description Optional SOC alert id used by the feedback loop.
+             */
+            alert_id?: string | null;
+            /**
+             * Case Id
+             * @description Optional SOC case id used by the feedback loop.
+             */
+            case_id?: string | null;
+            /**
+             * Max Turns
+             * @description Per-request turn cap. Defaults to MAX_TURNS.
+             */
+            max_turns?: number | null;
+            /**
+             * Message
+             * @description User message or task prompt.
+             */
+            message: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Model
+             * @description Per-request model override. Defaults to AGENT_MODEL.
+             */
+            model?: string | null;
+            /**
+             * Session Id
+             * @description Client-visible session id. If omitted, the API creates one.
+             */
+            session_id?: string | null;
+            /**
+             * System Append
+             * @description Extra instruction appended to the Claude Code preset prompt.
+             */
+            system_append?: string | null;
+            /**
+             * With Speech Summary
+             * @description Emit best-effort agentgov.speech_summary events alongside native SDK messages.
+             * @default false
+             */
+            with_speech_summary: boolean;
+        };
+        /**
          * ClaudeUserInputDecisionRequest
          * @description HITL 决策请求（目标契约）。
          *
@@ -3645,6 +3824,11 @@ export interface components {
             decision_payload?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
+            /**
+             * Decision Token
+             * @description Only returned for an authenticated exact run_id + status=waiting polling query while the API process is still waiting.
+             */
+            decision_token?: string | null;
             /** Expires At */
             expires_at: string;
             /** Input */
@@ -4776,7 +4960,7 @@ export interface components {
             max_turns?: number | null;
             /**
              * Messages
-             * @description OpenAI-compatible chat messages.
+             * @description OpenAI-compatible text chat messages.
              */
             messages: components["schemas"]["OpenAIChatMessage"][];
             /** Metadata */
@@ -4790,7 +4974,7 @@ export interface components {
             model?: string | null;
             /**
              * Stream
-             * @description Reserved for compatibility. This shim currently returns non-streaming responses.
+             * @description This compatibility endpoint is non-streaming; true is rejected with 422.
              * @default false
              */
             stream: boolean;
@@ -4817,8 +5001,11 @@ export interface components {
         OpenAIChatMessage: {
             /** Content */
             content: string;
-            /** Role */
-            role: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "developer" | "system" | "user" | "assistant";
         };
         /**
          * OpenAICompatAgentConfig
@@ -4845,6 +5032,14 @@ export interface components {
         OpenAICompatAgentUpdate: {
             /** Agent Id */
             agent_id: string;
+        };
+        /** OpenAIErrorResponse */
+        OpenAIErrorResponse: {
+            error: {
+                code: string;
+                message: string;
+                type: string;
+            };
         };
         /** OptimizationChange */
         OptimizationChange: {
@@ -5030,7 +5225,7 @@ export interface components {
          *     ``agentgov.output_text``（不在顶层放 output_text 冒充 OpenAI 标准字段）。
          */
         ResponseObject: {
-            agentgov: components["schemas"]["AgentGovResponseExtension"];
+            agentgov?: components["schemas"]["AgentGovResponseExtension"] | null;
             /** Created At */
             created_at?: number | null;
             /** Id */
@@ -5129,6 +5324,33 @@ export interface components {
              */
             type: "reasoning_text";
         };
+        /** ResponsesInputMessage */
+        ResponsesInputMessage: {
+            /** Content */
+            content: string | components["schemas"]["ResponsesInputText"][];
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "developer" | "system" | "user" | "assistant";
+            /**
+             * Type
+             * @default message
+             * @constant
+             */
+            type: "message";
+        };
+        /** ResponsesInputText */
+        ResponsesInputText: {
+            /** Text */
+            text: string;
+            /**
+             * Type
+             * @default input_text
+             * @constant
+             */
+            type: "input_text";
+        };
         /**
          * ResponsesRequest
          * @description ``POST /v1/responses`` 请求。无 ``agentgov`` = strict 模式；有 = control 模式。
@@ -5143,11 +5365,9 @@ export interface components {
             conversation?: string | null;
             /**
              * Input
-             * @description Prompt string, or Responses input items.
+             * @description Non-empty prompt string, or typed text message items containing a current user message.
              */
-            input: string | {
-                [key: string]: components["schemas"]["JsonValue"];
-            }[];
+            input: string | components["schemas"]["ResponsesInputMessage"][];
             /**
              * Instructions
              * @description OpenAI standard field NAME. In AgentGov this is APPEND-ONLY (mapped to system_append, appended to the Claude Code preset + workspace CLAUDE.md), which differs from OpenAI replace/swap semantics. Rejected (422) on the strict surface.
@@ -5555,6 +5775,30 @@ export interface components {
             timestamp: string;
         } & {
             [key: string]: unknown;
+        };
+        /** ThinkingSpeechSummaryPayload */
+        ThinkingSpeechSummaryPayload: {
+            /** Block Index */
+            block_index: number;
+            /** Char Count */
+            char_count: number;
+            /** Message Id */
+            message_id: string;
+            /**
+             * Scope
+             * @default main
+             * @constant
+             */
+            scope: "main";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source_kind: "thinking";
+            /** Summary Id */
+            summary_id: string;
+            /** Text */
+            text: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -8028,7 +8272,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ChatRequest"];
+                "application/json": components["schemas"]["ClaudeSdkEventsRequest"];
             };
         };
         responses: {
@@ -9043,7 +9287,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ChatRequest"];
+                "application/json": components["schemas"]["ChatStreamRequest"];
             };
         };
         responses: {
@@ -13052,6 +13296,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description The selected Agent runtime failed to produce a compatible response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAIErrorResponse"];
                 };
             };
             /** @description Configured runtime or model/agent target is temporarily unavailable. */

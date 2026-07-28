@@ -73,7 +73,7 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 ```
 
 - `stream=false` 返回 Responses 对象；权威文本位于 `output[].content[].text`，运行关联位于 `agentgov.run_id`、`agentgov.conversation_id`、`agentgov.session_id`、`agentgov.trace_id` 等扩展字段。默认 `store=true` 时可通过 `GET /v1/responses/{response_id}` 取回已完成响应；`store=false` 只关闭公开取回，不关闭内部治理审计。
-- `stream=true` 返回 Responses-style SSE：标准通道除 `response.created`、`response.output_text.delta`、`response.completed`、`response.failed` 外，还按 `response.output_item.*`、`response.content_part.*`、`response.reasoning_text.delta/done` 输出 reasoning 生命周期。control mode 另有 `agentgov.session`、`agentgov.tool_step`、`agentgov.tool_call.started`、`agentgov.tool_call.arguments.delta/done`、`agentgov.tool_call.result`、`agentgov.confirmation.*`、`agentgov.result`、`agentgov.error`、`agentgov.done`。这些工具事件只是服务端 agent loop 的执行观察，绝不输出标准 `function_call` 让客户端重复执行。显式传 `agentgov.include_trace=true` 时还会收到 `agentgov.trace_event`。`agentgov.session.payload` 在运行开始时下发 `run_id`、会话/版本关联以及可用的 `langfuse_trace_id`、`langfuse_trace_url`，因此即使后续运行失败、取消或没有 `agentgov.result`，客户端仍可保留本次 Trace 入口。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
+- `stream=true` 返回 Responses-style SSE：标准通道除 `response.created`、`response.output_text.delta`、`response.completed`、`response.failed` 外，还按 `response.output_item.*`、`response.content_part.*`、`response.reasoning_text.delta/done` 输出 reasoning 生命周期。control mode 另有 `agentgov.session`、`agentgov.tool_step`、`agentgov.tool_call.started`、`agentgov.tool_call.arguments.delta/done`、`agentgov.tool_call.result`、`agentgov.confirmation.*`、`agentgov.result`、`agentgov.error`、`agentgov.done`，以及显式开启后的 `agentgov.speech_summary`。这些工具事件只是服务端 agent loop 的执行观察，绝不输出标准 `function_call` 让客户端重复执行。显式传 `agentgov.include_trace=true` 时还会收到 `agentgov.trace_event`。`agentgov.session.payload` 在运行开始时下发 `run_id`、会话/版本关联以及可用的 `langfuse_trace_id`、`langfuse_trace_url`，因此即使后续运行失败、取消或没有 `agentgov.result`，客户端仍可保留本次 Trace 入口。heartbeat 使用 SSE comment 保活，不应写入业务时间线。所有 control 与派生事件均在标准终态前收口；`response.completed` 或 `response.failed` 恰好一次并始终是最后一个业务事件。
 - 流式、非流式与 retrieve 的 `output[]` 都使用同一稳定顺序和 ID：存在 ThinkingBlock 时先是 `reasoning`（`rs_<run_id>`），随后是 assistant `message`（`msg_<run_id>`）。
 - 产品内置 Playground 是有意的例外：live turn 直接消费下节的 SDK-native 入口，不经 `/v1/responses` 或 `/api/chat/stream`；会话列表和历史恢复仍使用 `/v1/conversations*`。
 - 边界：工具权限、MCP、skills、subagents、hooks 和 sandbox 以业务 Agent workspace 的 Claude Code 项目配置为准；Runtime 只选择 project discovery，`can_use_tool` 只桥接原生 `ask`。旧 Chat 字段 `agent`、`skills`、`skills_mode`、`allowed_tools`、`disallowed_tools`、`permission_mode` 已删除，传入返回 `422`。续聊复用同一 `conversation_id`，或使用 `previous_response_id` 让底座解析其所属会话；两种方式都会校验所选业务 Agent 与既有会话 owner 一致，不允许把 Agent A 的 SDK transcript 交给 Agent B 续接。若 `previous_response_id` 对应 run 没有 `session_id`，或其 conversation mapping 已被删除，底座返回 `409`，不会把“续接”静默降级成新会话。
@@ -105,14 +105,38 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - 官方容器与本机调试 env 示例均以 `ENABLE_BACKEND_PROMPT_SUGGESTION=true` 显式选择后端派生路径；`AppSettings` 默认仍关闭该受控特例。关闭时回退 Claude Code 原生 `--prompt-suggestions`，该原生能力可能被上游 feature gate 或 cache 状态抑制。启动日志通过 `prompt_suggestion_source=backend|claude_native` 暴露当前来源；建议生成失败只记录结构化 warning，不改变主 Run 成功状态。
 - Claude Code 可能因缓存或模型条件不生成建议，缺失不表示本轮失败。客户端收到后应只提供“填入输入框”动作，不自动发起下一轮请求。
 - Suggestion 是临时 UI 辅助，不属于 Prompt 治理资产，也不进入正式会话消息、SQLite run、response retrieve 或 SDK transcript；刷新后无需恢复。
+- Prompt Suggestion 在各接口终态前进行有界排空；超时或失败时跳过，不允许在
+  `agentgov.done`、`done`、`response.completed` 或 `response.failed` 后迟到。
+
+流式 Speech Summary 是另一项独立、显式 opt-in 的 TTS 文本辅助：
+
+- `/api/agent-runtime/sdk-events` 和 `/api/chat/stream` 在各自请求体传
+  `with_speech_summary=true`；后者的 `raw` 与 `semantic` 模式都直接输出 canonical
+  `event: agentgov.speech_summary`。
+- `/v1/responses` 仅在 control mode、`stream=true` 时接受
+  `agentgov.with_speech_summary=true`；非流式开启返回 `422`，strict mode 不接受且不输出该
+  AgentGov 扩展。
+- `source_kind=thinking` 来自一个完整顶层 ThinkingBlock 的原生
+  `content_block_stop`；`source_kind=assistant_response` 来自完整顶层
+  AssistantMessage 中全部非空 TextBlock 的合并正文。ResultMessage 只表示整个 Agent Loop
+  终止，不是一次回答摘要来源。
+- 只处理主 Agent，工具、子 Agent、空块、纯工具调用消息跳过。摘要是 10–50 字的临时文本，
+  不包含音频，不写入 SDK session、SQLite、response retrieve，也不混入 Claude SDK
+  usage/cost。超时、模型错误或安全过滤失败均静默丢弃。
+- 实际启用边界由 `SPEECH_SUMMARY_BOUNDARIES` 决定；请求开关与环境边界必须同时开启。官方
+  容器和本机调试 env 示例保持相同边界，默认超时/终态排空为 15/5 秒。
 
 #### 4.2.2 Claude SDK-native 受管事件 — OpenAPI tag `claude-sdk-events`
 
 - `POST /api/agent-runtime/sdk-events` 是正式的 managed turn 交互入口，`agent_id` 必填并受统一 API key 保护；Playground 的 live turn 只调用该入口。
 - 每个官方 `claude-agent-sdk` yield 原序输出一帧 `claude.sdk.<ClassName>`。`data` 是递归 dataclass → JSON 的机械序列化：不筛选、不改名、不合并、不调和快照，也没有 `str()` fallback。`StreamEvent.event`、ThinkingBlock signature、tool I/O、`SystemMessage:thinking_tokens` 和未来未知 SDK class 都保留。
-- AgentGov-owned 控制面使用 `agentgov.session`、`agentgov.confirmation.requested/resolved`、`agentgov.prompt_suggestion`、`agentgov.result/error/done`；heartbeat 使用 SSE comment。SDK `ResultMessage` 与 `agentgov.done` 的所有权和终态含义不同，客户端不能二选一替代。
+- AgentGov-owned 控制面使用 `agentgov.session`、`agentgov.confirmation.requested/resolved`、`agentgov.prompt_suggestion`、可选 `agentgov.speech_summary`、`agentgov.result/error/done`；heartbeat 使用 SSE comment。`agentgov.result` 只投影 SDK `ResultMessage` 已到达的进度事实，之后仍可能排空 transcript mirror 和派生任务；只有 `agentgov.done` 才表示 managed turn 已持久化并收尾，客户端不能把两者当作可互换终态。
 - 浏览器只把顶层 `text_delta` 放入回答；subagent text、thinking、工具 input delta/result 和未知消息进入运行证据。`thinking_tokens` 只显示为指标。block identity 使用 `parent_tool_use_id + message_start.message.id + index`，没有 message id 时才使用本地 message epoch，不能仅依赖每帧不同的 `StreamEvent.uuid`。
-- 收到 `agentgov.done` 后 UI 可解除“运行中”，但连接仍读到 EOF，以接收迟到的 Prompt Suggestion。后续异步写入必须绑定本轮 assistant message id/run token，不能按“最后一条消息”写入。完成后的 Trace 只有 `completeness=complete` 才替换 live evidence；不可用或请求失败时保留原生 live evidence。
+- Prompt Suggestion 与 Speech Summary 都在终态前完成或有界排空；`agentgov.done` 是最后一个
+  业务事件。UI 收到后可解除“运行中”，并继续读到 EOF 以正常关闭连接，但不得期待迟到业务
+  事件。后续异步写入必须绑定本轮 assistant message id/run token，不能按“最后一条消息”
+  写入。完成后的 Trace 只有 `completeness=complete` 才替换 live evidence；不可用或请求失败时
+  保留原生 live evidence。
 - 该接口跟随仓库锁定的 SDK 版本，不是 UI schema，也不是 CLI stdout byte stream。若调用方需要 OpenAI 标准事件或长期外部兼容，应使用 `/v1/responses`。
 
 #### 4.2.3 Runtime 原始事件调试 — OpenAPI tag `debug`
@@ -136,6 +160,8 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - 当前实现的 Runtime kind 是 `claude-code`。Claude Code 后面的模型出口即使是 Qwen/Kimi，
   Runtime kind 也不变；未来直接接 Qwen Code/Kimi CLI 时新增 driver 并继续使用同一路径。
   此接口不是 Anthropic-compatible provider HTTP wire。
+- raw 请求模型不包含 `with_speech_summary`，显式传入返回 `422`；响应体、响应头和旁路接口都
+  不承载 Speech Summary。
 - `/api/chat/stream?event_mode=raw` 和 `agentgov.debug.sdk_raw` 是历史的已解析 SDK 投影，
   不是 byte-exact CLI stdout；业务对话/语义 Trace 继续使用它们或 `/v1/responses`，不要把
   原始调试流直接渲染为业务时间线。
@@ -146,8 +172,12 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 
 最短集成流程：
 
-1. `POST /v1/responses`，传 `stream=true` 和 `agentgov.agent_id`，保持 SSE 连接直到 `response.completed` / `response.failed` 以及 `agentgov.done`。
-2. 渲染标准 Responses 事件；control mode 同时处理 `agentgov.session`、`agentgov.tool_step` 和可选的 `agentgov.prompt_suggestion` 等事件。收到 SSE comment heartbeat 时只刷新连接存活时间。
+1. `POST /v1/responses`，传 `stream=true` 和 `agentgov.agent_id`，保持 SSE 连接直到最后的
+   `response.completed` 或 `response.failed`；control 流中的 `agentgov.done` 会先于该标准
+   终态出现。
+2. 渲染标准 Responses 事件；control mode 同时处理 `agentgov.session`、`agentgov.tool_step`
+   和可选的 `agentgov.prompt_suggestion`、`agentgov.speech_summary` 等事件。收到 SSE comment
+   heartbeat 时只刷新连接存活时间。
 3. 收到 `agentgov.confirmation.requested` 时，从其 `payload` 读取 `request_id`、`decision_token`、请求类型、工具或问题信息并渲染内联确认卡；不要关闭原 SSE 连接。
 4. 用户决策后调用 `POST /v1/agentgov/confirmation-requests/{request_id}/decision`。请求体只使用 OpenAPI 的 `action`、`decision_token`、`answer`、`message`；不得回传 `run_id`、`session_id`、`business_agent_id`，也不得使用顶层 `answers`、`response`、`updated_input` 或 `allow_modified`。
 5. 继续读取原 SSE 流；收到 `agentgov.confirmation.resolved` 后更新同一张卡片，最终按标准 Responses 完成或失败事件收口。
@@ -259,16 +289,17 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 - **在上层另存一份会话/消息副本**：会话事实的单一真相源是 agent 的 SDK transcript，按 `conversation_id` 向底座取，不要并行存储。
 - **用 `session_id` 或 `sdk_session_id` 当新集成的会话 URL id**：二者是 AgentGov/SDK 内部关联值；新集成使用 `conversation_id`。
 
-## 7. 历史兼容附录
+## 7. 已弃用兼容接口附录
 
-以下接口仅为已有调用方保留，不是新集成入口，也不再承载新增 AgentGov 控制面能力：
+以下接口已在 OpenAPI 标记 `deprecated: true`，但本阶段不删除且未设置 sunset 日期。它们仅为
+已有调用方保留，不是新集成入口，也不再承载新增 AgentGov 控制面能力：
 
 | 兼容接口 | 新集成替代路径 | 说明 |
 | --- | --- | --- |
-| `POST /api/chat` | `POST /v1/responses`，`stream=false` | 旧非流式 ChatRequest/ChatResponse 包装。 |
-| `POST /api/chat/stream` | `POST /v1/responses`，`stream=true` | 默认 `event_mode=raw` 保旧 SSE；`?event_mode=semantic` 保文本流并输出 `trace_event`。 |
+| `POST /api/chat` | `POST /v1/responses`，`stream=false` | 旧非流式 ChatRequest/ChatResponse 包装；不支持 Speech Summary。 |
+| `POST /api/chat/stream` | `POST /v1/responses`，`stream=true` | 默认 `event_mode=raw` 保旧 SSE；`?event_mode=semantic` 保文本流并输出 `trace_event`；两模式可显式开启 Speech Summary。 |
 | `/api/sessions*` | `/v1/conversations*` | 旧 session/offset 历史读取契约。 |
-| `POST /v1/chat/completions` | `POST /v1/responses` strict mode | 仅面向既有 OpenAI Chat Completions 客户端。 |
+| `POST /v1/chat/completions` | `POST /v1/responses` strict mode | 仅面向既有 OpenAI Chat Completions 客户端；不支持 Speech Summary。 |
 
 兼容接口当前仍由 OpenAPI 或运行时提供，但新客户端不得以它们建立新的控制面依赖。迁移后使用 `conversation_id`、Responses 标准事件和 canonical HITL decision 路径；旧接口的删除需另行完成消费者确认与迁移公告。
 

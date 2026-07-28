@@ -13,6 +13,7 @@ def create_test_business_agent_workspace(
     *,
     agent_id: str,
     name: str,
+    requires_web_hitl: bool = True,
 ) -> None:
     """Create the minimum Claude-native Business Agent Workspace used by tests."""
     workspace.mkdir(parents=True, exist_ok=True)
@@ -34,7 +35,7 @@ def create_test_business_agent_workspace(
                     "defaultMode": "default",
                     "disableBypassPermissionsMode": "disable",
                     "allow": ["Read(./**)", "Glob", "Grep", "Skill"],
-                    "ask": ["Bash(*)", "Edit(./**)", "Write(./**)"],
+                    "ask": (["Bash(*)", "Edit(./**)", "Write(./**)"] if requires_web_hitl else []),
                     "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)"],
                 },
             },

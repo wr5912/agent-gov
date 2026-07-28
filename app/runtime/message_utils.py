@@ -59,6 +59,13 @@ def extract_text(message: Any) -> str:
     return "\n".join(pieces).strip()
 
 
+def is_top_level_message(message: Any) -> bool:
+    """Only an explicit non-null SDK parent marks subagent scope."""
+
+    parent_tool_use_id = message.get("parent_tool_use_id") if isinstance(message, dict) else getattr(message, "parent_tool_use_id", None)
+    return parent_tool_use_id is None
+
+
 def extract_stream_text_delta(message: Any) -> str | None:
     """只读取 SDK ``StreamEvent.content_block_delta.text_delta``，保留原始空白。"""
     if message.__class__.__name__ != "StreamEvent":
@@ -125,8 +132,10 @@ def extract_answer_from_messages(messages: list[Any]) -> str | None:
             continue
         event = str(message.get("event") or message.get("type") or message.get("role") or "")
         if event.startswith("AssistantMessage") or event == "assistant":
-            assistant_parts.append(text)
-        else:
+            if is_top_level_message(message):
+                assistant_parts.append(text)
+            continue
+        if event.startswith("ResultMessage") and is_top_level_message(message):
             fallback_parts.append(text)
     answer = "\n\n".join(assistant_parts or fallback_parts).strip()
     return answer or None

@@ -225,7 +225,12 @@ def test_chat_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -
 
     monkeypatch.setattr(module.runtime, "run", fake_run)
     with TestClient(module.app) as client:
-        created = _import_new_agent(client, agent_id="soc-ops", name="客服助手")
+        created = _import_new_agent(
+            client,
+            agent_id="soc-ops",
+            name="客服助手",
+            requires_web_hitl=False,
+        )
         assert created.status_code == 200
 
         # 带 agent_id -> 路由到该业务 Agent 的 profile（被治理对象，cwd=其 workspace）。

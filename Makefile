@@ -82,7 +82,8 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/runtime_cleanup.py \
 	scripts/cleanup_runtime_artifacts.py \
 	scripts/run_main_flow_tests.py \
-	scripts/run_container_acceptance.py
+	scripts/run_container_acceptance.py \
+	scripts/verify_speech_summary_container.py
 
 TEST_ARTIFACT_ROOT ?= artifacts/test-quality
 BACKEND_TEST_ARTIFACT_DIR ?= $(TEST_ARTIFACT_ROOT)/backend-main-full
@@ -92,7 +93,7 @@ GOVERNANCE_BASE_REF_ARG := $(if $(strip $(GOVERNANCE_BASE_REF)),--base-ref $(GOV
 CONTAINER_ACCEPTANCE := $(PYTHON_RUN) scripts/run_container_acceptance.py --env-file "$(COMPOSE_ENV_FILE)"
 REQUIRE_CONTAINER_ACCEPTANCE = [ "$$AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE" = "1" ] && [ -n "$$AGENT_GOV_ACCEPTANCE_RUN_ID" ] || { echo "Use the public container acceptance Make target." >&2; exit 1; }
 
-.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check container-core-smoke container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke ui-openai-responses-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts _container-core-smoke _container-openapi-check _container-live-test _container-health-e2e _smoke _ui-smoke _ui-feedback-smoke _ui-openai-responses-smoke _langfuse-smoke
+.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check container-core-smoke container-openapi-check container-live-test container-speech-summary-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke ui-openai-responses-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts _container-core-smoke _container-openapi-check _container-live-test _container-speech-summary-test _container-health-e2e _smoke _ui-smoke _ui-feedback-smoke _ui-openai-responses-smoke _langfuse-smoke
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -344,3 +345,18 @@ _container-live-test:
 		-e AGENT_GOV_ACCEPTANCE_RUN_ID \
 		-v "$(CURDIR):/app" -w /app \
 		claude-agent-api -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'
+
+container-speech-summary-test:
+	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _container-speech-summary-test
+
+_container-speech-summary-test:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
+	@raw_enabled=$$(awk -F= '$$1 == "ENABLE_AGENT_RUNTIME_RAW_EVENTS" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null | tr '[:upper:]' '[:lower:]'); \
+	case "$$raw_enabled" in 1|true|yes|on) ;; \
+		*) echo "container-speech-summary-test requires ENABLE_AGENT_RUNTIME_RAW_EVENTS=true in the selected complete Compose env." >&2; exit 1 ;; \
+	esac; \
+	host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
+	api_key=$$(awk -F= '$$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null); \
+	API_KEY="$$api_key" $(PYTHON_RUN) scripts/verify_speech_summary_container.py --base-url "$$api_base"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,12 +25,14 @@ from .managed_claude_events import (
 )
 from .message_utils import (
     extract_assistant_text_snapshot,
+    is_top_level_message,
     reconcile_stream_snapshot,
     to_plain,
 )
 from .runtime_db import utc_now
 from .schemas import ChatRequest
 from .session_turn_lease import SessionTurnLeaseHeartbeat
+from .speech_summary import SpeechSummaryCoordinator
 
 if TYPE_CHECKING:
     from .claude_runtime import ClaudeRuntime, RuntimeRequestContext
@@ -50,9 +52,9 @@ class StreamRun:
     root_metadata: JsonObject
     propagation: JsonObject
     final_output: JsonObject | None = None
-    persisted: bool = False  # 幂等落库标志：ResultMessage 处先落库，非取消终止时 finally 兜底
+    persisted: bool = False  # 幂等落库：SDK 原生消息源排空后提交，finalize 仅作兜底
     persistence_attempted: bool = False
-    finalized: bool = False  # 幂等收尾标志：ResultMessage 处即收尾，其余路径由 finally 兜底
+    finalized: bool = False  # 幂等收尾：派生事件排空后只发送一次 done
     turn_heartbeat: SessionTurnLeaseHeartbeat | None = None
     started_at_monotonic: float = 0.0
     provider_gate_ms: int | None = None
@@ -60,6 +62,10 @@ class StreamRun:
     first_text_delta_ms: int | None = None
     partial_text_segment: str = ""
     cli_path_override: Path | None = None
+    with_speech_summary: bool = False
+    speech_summary_coordinator: SpeechSummaryCoordinator | None = None
+    prompt_suggestion_task: asyncio.Task[None] | None = None
+    derived_events_drained: bool = False
 
 
 async def _new_stream_run(
@@ -68,6 +74,7 @@ async def _new_stream_run(
     profile: AgentRuntimeProfile,
     *,
     cli_path_override: Path | None = None,
+    with_speech_summary: bool = False,
 ) -> StreamRun:
     context = await runtime._new_runtime_request_context(req, profile=profile, agent_id=profile.agent_id)
     web_hitl_enabled = bool(runtime.settings.enable_claude_web_hitl and runtime.user_input_service is not None)
@@ -85,6 +92,7 @@ async def _new_stream_run(
         propagation=runtime._langfuse_propagation_attributes(req, context, "stream", profile=profile),
         started_at_monotonic=time.monotonic(),
         cli_path_override=cli_path_override,
+        with_speech_summary=with_speech_summary,
     )
 
 
@@ -94,6 +102,7 @@ async def stream_claude_runtime(
     *,
     profile: AgentRuntimeProfile | None = None,
     cli_path_override: Path | None = None,
+    with_speech_summary: bool = False,
 ) -> AsyncIterator[ManagedClaudeEvent]:
     # profile 由上游解析（路由层 resolve_business_profile）。不回落预制 main：main 已是可删除的
     # 普通业务 Agent，回落会把「未解析出 profile」掩蔽成「跑在别的 Agent 上」。
@@ -103,6 +112,7 @@ async def stream_claude_runtime(
         req,
         selected_profile,
         cli_path_override=cli_path_override,
+        with_speech_summary=with_speech_summary,
     )
     context = stream_run.request_context
     heartbeat = SessionTurnLeaseHeartbeat(
@@ -148,6 +158,13 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[ManagedCla
             ) as generation:
                 runtime.langfuse.set_trace_attributes(generation, **stream_run.propagation)
                 event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None] = asyncio.Queue()
+                stream_run.speech_summary_coordinator = SpeechSummaryCoordinator(
+                    service=runtime.speech_summary_service,
+                    run_id=context.run_id,
+                    boundaries=runtime.settings.speech_summary_boundaries,
+                    enabled=stream_run.with_speech_summary,
+                    emit=event_queue.put,
+                )
                 # 建议来源二选一:后端生成(受控特例,默认)走 SDK 原生 query/client——不加
                 # CLI 的 --prompt-suggestions、也没有 3 秒尾随窗口,建议由 _emit_query_events
                 # 在答案完成后自行派生;关掉后端开关则回退 CLI 原生 SUGGESTION MODE 路径。
@@ -216,7 +233,6 @@ async def _emit_query_events(
     query_func: Any,
     sdk_client_factory: Any,
     result_message_type: type,
-    finalize: Callable[[], Awaitable[None]],
 ) -> None:
     runtime = stream_run.runtime
     provider_gate_started = time.monotonic()
@@ -247,40 +263,48 @@ async def _emit_query_events(
             options=options,
         )
     )
+    terminal_result_errors: list[str] | None = None
     try:
-        async for msg in messages:
-            if stream_run.sdk_init_ms is None:
-                stream_run.sdk_init_ms = _elapsed_ms(sdk_started)
-            is_result, result_errors = await _emit_sdk_message_frame(
-                stream_run,
-                event_queue,
-                msg,
-                result_message_type,
-            )
-            if not is_result:
-                continue
-            if stream_run.query_state.mirror_errors:
-                await asyncio.to_thread(
-                    _abort_stream_run,
+        with claude_prompt_suggestions.prompt_suggestion_trailing_timeout(runtime.settings.prompt_suggestion_terminal_drain_seconds):
+            async for msg in messages:
+                if stream_run.sdk_init_ms is None:
+                    stream_run.sdk_init_ms = _elapsed_ms(sdk_started)
+                is_result, result_errors = await _emit_sdk_message_frame(
                     stream_run,
-                    terminal_status="failed",
-                    error=stream_run.query_state.mirror_errors[-1],
+                    event_queue,
+                    msg,
+                    result_message_type,
                 )
-                await event_queue.put(
-                    AgentGovControlEvent(
-                        name="error",
-                        data={"errors": list(stream_run.query_state.errors)},
-                    )
-                )
-                continue
-            # 落库先于 result 事件（-> response.completed），使 items/retrieve 在完成信号时刻即可查。
-            await asyncio.to_thread(_persist_stream_run, stream_run)
-            await _publish_result_event(stream_run, event_queue, result_errors)
-            # 答案已完成，立刻收尾；可选建议在 done 后派生，不占用用户可见终态。
-            await finalize()
-            await _emit_backend_prompt_suggestion(stream_run, event_queue)
+                if not is_result:
+                    continue
+                # ResultMessage 是 SDK 已结束主 Agent Loop 的原生事实，不等于 HTTP
+                # 公开终态；先投影它并启动派生任务，但继续保持 turn intent=running，
+                # 让 SDK 在 Result 后完成 transcript mirror flush。
+                terminal_result_errors = result_errors
+                await _publish_result_event(stream_run, event_queue, result_errors)
+                _start_backend_prompt_suggestion(stream_run, event_queue)
     finally:
         await close_async_iterator(messages)
+    if terminal_result_errors is None:
+        return
+    if stream_run.query_state.mirror_errors:
+        await asyncio.to_thread(
+            _abort_stream_run,
+            stream_run,
+            terminal_status="failed",
+            error=stream_run.query_state.mirror_errors[-1],
+        )
+        await event_queue.put(
+            AgentGovControlEvent(
+                name="error",
+                data={"errors": list(stream_run.query_state.errors)},
+            )
+        )
+        return
+    # SDK 的 transcript mirror 可能在 ResultMessage 之后才批量 flush；必须先等原生
+    # 消息源完全结束，才能把 turn intent 从 running 原子提交为终态。持久化仍先于
+    # 最终 done/response.completed，故 items 与 retrieve 在公开完成信号到达时已可查询。
+    await asyncio.to_thread(_persist_stream_run, stream_run)
 
 
 async def _emit_sdk_message_frame(
@@ -295,9 +319,11 @@ async def _emit_sdk_message_frame(
         return False, []
     # SDK 每一次 yield 在任何接口投影之前先进入唯一的有类型事实流。
     await event_queue.put(ClaudeSdkMessageEvent(message=message))
+    if stream_run.speech_summary_coordinator is not None:
+        stream_run.speech_summary_coordinator.observe(message)
     if message.__class__.__name__ == "StreamEvent":
         delta = stream_delta(message)
-        if delta is not None and delta[0] == "text_delta":
+        if is_top_level_message(message) and delta is not None and delta[0] == "text_delta":
             stream_run.partial_text_segment += delta[1]
             if stream_run.first_text_delta_ms is None:
                 stream_run.first_text_delta_ms = _elapsed_ms(stream_run.started_at_monotonic)
@@ -305,7 +331,7 @@ async def _emit_sdk_message_frame(
         return False, []
 
     snapshot = extract_assistant_text_snapshot(message)
-    if message.__class__.__name__.startswith("AssistantMessage"):
+    if message.__class__.__name__.startswith("AssistantMessage") and is_top_level_message(message):
         if stream_run.partial_text_segment:
             reconcile_stream_snapshot(stream_run.partial_text_segment, snapshot)
         stream_run.partial_text_segment = ""
@@ -319,6 +345,18 @@ async def _emit_sdk_message_frame(
     return is_result, result_errors
 
 
+def _start_backend_prompt_suggestion(
+    stream_run: StreamRun,
+    event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None],
+) -> None:
+    if stream_run.prompt_suggestion_task is not None or not stream_run.runtime.settings.enable_backend_prompt_suggestion:
+        return
+    stream_run.prompt_suggestion_task = asyncio.create_task(
+        _emit_backend_prompt_suggestion(stream_run, event_queue),
+        name=f"prompt-suggestion-{stream_run.request_context.run_id}",
+    )
+
+
 async def _emit_backend_prompt_suggestion(
     stream_run: StreamRun,
     event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None],
@@ -329,13 +367,18 @@ async def _emit_backend_prompt_suggestion(
     故后端自生成。best-effort——生成失败/为空一律静默,不影响主 Run。
     """
     runtime = stream_run.runtime
-    if not runtime.settings.enable_backend_prompt_suggestion:
-        return
     user_message = stream_run.request_context.prompt
     if not isinstance(user_message, str):
         return
     answer = _answer_text_from_state(stream_run.query_state)
-    suggestions = await asyncio.to_thread(runtime.prompt_suggestion_generator.generate, user_message, answer)
+    try:
+        suggestions = await asyncio.wait_for(
+            asyncio.to_thread(runtime.prompt_suggestion_generator.generate, user_message, answer),
+            timeout=runtime.settings.prompt_suggestion_timeout_seconds,
+        )
+    except TimeoutError:
+        logger.warning("event=prompt_suggestion.generate status=failed error_type=TimeoutError")
+        return
     if not suggestions:
         return
     await event_queue.put(_prompt_suggestion_event(stream_run, suggestions))
@@ -421,13 +464,7 @@ async def _run_sdk_query(
     cancelled = False
 
     async def finalize() -> None:
-        """收尾（观测归档 -> 可能的 error -> done），恰好一次。
-
-        由 ResultMessage 处即时调用，使终态不被可选的 Prompt Suggestion 扣住；
-        error/无 ResultMessage/异常等路径由 finally 兜底调用。顺序保持
-        「complete -> error -> done」不变：投影层会丢弃 done 之后的 error，
-        若把 done 提前到 complete 之前，收尾期的错误就会被静默吞掉。
-        """
+        """在全部派生事件完成或有界取消后，收口观测并发送唯一 done。"""
         if stream_run.finalized:
             return
         stream_run.finalized = True
@@ -449,7 +486,6 @@ async def _run_sdk_query(
             query_func,
             sdk_client_factory,
             result_message_type,
-            finalize,
         )
     except asyncio.CancelledError as exc:
         cancelled = True
@@ -477,18 +513,20 @@ async def _run_sdk_query(
             await event_queue.put(AgentGovControlEvent(name="error", data=error_data))
     finally:
         if cancelled:
+            await _cancel_derived_events(stream_run)
             if stream_run.runtime.user_input_service is not None:
                 stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
         else:
-            # 正常路径已在 ResultMessage 处收过尾；这里兜底 error/无 ResultMessage 等路径。
+            await _drain_derived_events(stream_run)
             await finalize()
-            await event_queue.put(None)
+        await event_queue.put(None)
 
 
 def _persist_stream_run(stream_run: StreamRun) -> None:
     """幂等落库：抽取 output + session save + record_run。
 
-    在 ResultMessage 处（response.completed 之前）先调，使 items/retrieve 在完成信号时刻即可查；
+    在 SDK 原生消息源完全排空后、done/response.completed 之前先调，使 transcript mirror
+    的 Result 后 flush 仍受 running intent 保护，同时 items/retrieve 在完成信号时刻即可查；
     ``_complete_stream_run`` 的 finally 再兜底调（error/无 ResultMessage 路径）；客户端取消不落库。
     ``stream_run.persisted`` 保证一次流式请求恰好落库一次（session save 同时置 sdk_session_id+agent_id，
     满足 items 的 owning-agent 强校验，不会出现 sdk_session_id 已置而 agent_id 为空的 500 中间态）。
@@ -601,6 +639,63 @@ def _stream_timing_metadata(stream_run: StreamRun) -> JsonObject:
         "complete_ms": _elapsed_ms(stream_run.started_at_monotonic),
     }
     return {key: value for key, value in timings.items() if value is not None}
+
+
+async def _drain_derived_events(stream_run: StreamRun) -> None:
+    if stream_run.derived_events_drained:
+        return
+    stream_run.derived_events_drained = True
+    waits: list[asyncio.Task[None]] = []
+    coordinator = stream_run.speech_summary_coordinator
+    if coordinator is not None:
+        waits.append(
+            asyncio.create_task(
+                coordinator.drain(stream_run.runtime.settings.speech_summary_terminal_drain_seconds),
+                name=f"speech-summary-drain-{stream_run.request_context.run_id}",
+            )
+        )
+    if stream_run.prompt_suggestion_task is not None:
+        waits.append(
+            asyncio.create_task(
+                _drain_prompt_suggestion(stream_run),
+                name=f"prompt-suggestion-drain-{stream_run.request_context.run_id}",
+            )
+        )
+    if waits:
+        await asyncio.gather(*waits, return_exceptions=True)
+    if coordinator is not None:
+        coordinator.close()
+
+
+async def _drain_prompt_suggestion(stream_run: StreamRun) -> None:
+    task = stream_run.prompt_suggestion_task
+    if task is None or task.done():
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        return
+    try:
+        async with asyncio.timeout(stream_run.runtime.settings.prompt_suggestion_terminal_drain_seconds):
+            await task
+    except TimeoutError:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def _cancel_derived_events(stream_run: StreamRun) -> None:
+    if stream_run.derived_events_drained:
+        return
+    stream_run.derived_events_drained = True
+    coordinator = stream_run.speech_summary_coordinator
+    waits: list[Awaitable[object]] = []
+    if coordinator is not None:
+        waits.append(coordinator.cancel())
+    prompt_task = stream_run.prompt_suggestion_task
+    if prompt_task is not None and not prompt_task.done():
+        prompt_task.cancel()
+    if prompt_task is not None:
+        waits.append(asyncio.gather(prompt_task, return_exceptions=True))
+    if waits:
+        await asyncio.gather(*waits, return_exceptions=True)
 
 
 async def _drain_stream_queue(

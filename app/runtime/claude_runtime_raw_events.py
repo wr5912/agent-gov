@@ -13,6 +13,7 @@ from .claude_cli_raw_capture import ClaudeCliRawCapture
 from .claude_runtime import ClaudeRuntime
 from .errors import FeedbackStoreError
 from .json_types import JsonObject
+from .managed_claude_events import AgentGovControlEvent, ManagedClaudeEvent
 from .runtime_raw_events import (
     RuntimeRawCaptureUnavailableError,
     RuntimeRawCaptureUnsupportedError,
@@ -44,7 +45,7 @@ class ClaudeRuntimeRawEventsBackend:
             raise RuntimeRawCaptureUnsupportedError("Raw Runtime capture currently requires Linux and Unix domain sockets")
 
         capture = await ClaudeCliRawCapture.open(self.settings.claude_cli_path)
-        source = self.runtime.stream(
+        source = self.runtime.stream_events(
             req,
             profile=profile,
             cli_path_override=capture.wrapper_path,
@@ -77,7 +78,7 @@ class PreparedClaudeRuntimeRawEvents:
     def __init__(
         self,
         *,
-        source: AsyncIterator[JsonObject],
+        source: AsyncIterator[ManagedClaudeEvent],
         capture: ClaudeCliRawCapture,
         metadata: RuntimeRawEventMetadata,
         max_bytes: int,
@@ -217,9 +218,9 @@ class PreparedClaudeRuntimeRawEvents:
     async def _drain_runtime_stream(self) -> None:
         try:
             async for event in self.source:
-                if event.get("event") != "error":
+                if not isinstance(event, AgentGovControlEvent) or event.name != "error":
                     continue
-                self._failure = _platform_failure(event.get("data"))
+                self._failure = _platform_failure(event.data)
                 break
         except asyncio.CancelledError:
             raise
@@ -256,10 +257,10 @@ class PreparedClaudeRuntimeRawEvents:
         await self.capture.aclose()
 
 
-def _session_event_data(event: JsonObject) -> JsonObject:
-    data = event.get("data")
-    if event.get("event") != "session" or not isinstance(data, dict):
+def _session_event_data(event: ManagedClaudeEvent) -> JsonObject:
+    if not isinstance(event, AgentGovControlEvent) or event.name != "session":
         raise RuntimeRawCaptureUnavailableError("Managed Runtime did not emit its session metadata before execution")
+    data = event.data
     if not data.get("run_id") or not data.get("session_id"):
         raise RuntimeRawCaptureUnavailableError("Managed Runtime session metadata is incomplete")
     return data

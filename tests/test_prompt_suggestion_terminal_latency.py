@@ -1,17 +1,11 @@
-"""终态不得被可选的 Prompt Suggestion 扣住。
+"""Prompt Suggestion 在终态前按配置做有界排空。
 
-`--prompt-suggestions` 让 CLI 在每轮之后再吐一条「下一句可以问什么」。适配器为此在
-ResultMessage 之后保留了 3 秒尾随窗口——但交互模式下 CLI 进程还活着、输出流不会关闭，
-**没有建议就必定等满 3 秒**。答案早就写完了，`done` 却迟到 3 秒；前端 `onDone` 里
-`setStreaming(false)` 才解除「停止」按钮，于是每个业务 Agent、每一轮对话都白等 3 秒，
-这 3 秒里发不出下一句。讽刺的是，这功能本来就是为了加快「下一句」。
+`--prompt-suggestions` 可能在 ResultMessage 之后才返回建议，而交互模式下 CLI 输出流
+不会自行关闭。Runtime 必须同时满足两点：给建议一个短暂机会，又不能无限等待。因此这组
+测试钉住生产默认 3 秒 drain 上限和终态最后性；配置窗口是明确 UX 预算，不是开放式尾随。
 
-这里断言的是**生产默认值（3.0）下的终态时延**——不像
-`test_interactive_trailing_timeout_does_not_fail_completed_result` 传 0.01 把问题绕过去：
-那条证明的是「超时不会把成功 Run 弄失败」，而不是「用户不用等」。
-
-契约：答案完成即收尾；建议若稍后到达，作为迟到帧从仍打开的流送出（Responses 投影层
-早已把 prompt_suggestion 豁免于 done 守卫，正是为此预留）。
+契约：Result 后最多等待配置的 drain 窗口；建议在窗口内到达则先发送建议再发送 done，
+没有建议或超时则取消派生工作并发送 done。终态之后不再有业务帧。
 
 这些用例走**真实的 runtime.stream**，真实的 query_with_prompt_suggestions、真实的尾随
 生成器、真实的 3.0 默认值；只把最底层的 SDK 客户端换成一个「像活着的 CLI 那样不关闭
@@ -39,8 +33,9 @@ TRAILING_WINDOW = claude_prompt_suggestions._TRAILING_TIMEOUT_SECONDS
 
 
 def test_the_production_trailing_window_is_still_what_we_think_it_is() -> None:
-    """若有人把默认窗口调小，下面的时延断言就不再证明原问题——先钉住前提。"""
-    assert TRAILING_WINDOW >= 1.0, "尾随窗口已被调小；请重新评估本文件的时延断言是否仍在证明「终态被扣住」"
+    """原生适配默认值应与部署级 Prompt drain 默认值保持一致。"""
+    settings = AppSettings(_env_file=None)
+    assert settings.prompt_suggestion_terminal_drain_seconds == TRAILING_WINDOW
 
 
 def _result_raw(session_id: str) -> dict:
@@ -181,33 +176,33 @@ async def _stream_until_done(runtime: ClaudeRuntime) -> tuple[list[str], float, 
 
 
 @pytest.mark.parametrize("suggestion_delay", [None, TRAILING_WINDOW / 2])
-def test_terminal_does_not_wait_for_the_optional_suggestion(tmp_path, monkeypatch, suggestion_delay) -> None:
-    """**核心用例**：答案完成后，done 必须立刻发出，不等尾随窗口。
-
-    修复前：无建议时 done 迟到满 3 秒——每个业务 Agent、每一轮对话都白等，
-    这 3 秒里「停止」按钮还挂着、发不出下一句。
-    """
+def test_terminal_wait_for_optional_suggestion_is_bounded(
+    tmp_path,
+    monkeypatch,
+    suggestion_delay,
+) -> None:
+    """Result 到 done 的等待不得超过配置窗口；窗口内建议必须先于 done。"""
     _install_live_cli(monkeypatch, suggestion_delay=suggestion_delay)
     runtime = _runtime(tmp_path)
 
     events, result_at, done_at = asyncio.run(asyncio.wait_for(_stream_until_done(runtime), timeout=TRAILING_WINDOW + 10))
 
-    assert "result" in events
-    # 断言的是「答案到终态」的净差，而不是绝对时延——后者含 runtime 启动开销，
-    # 会随环境浮动，测不准这笔税。
+    assert "result" in events and events[-1] == "done"
     tax = done_at - result_at
-    assert tax < TRAILING_WINDOW / 3, (
-        f"答案完成后又白等了 {tax:.2f}s 才收尾（尾随窗口 {TRAILING_WINDOW}s）：这段时间「停止」按钮还挂着、发不出下一句，而每个业务 Agent 每一轮都要交这笔税"
-    )
+    assert tax <= TRAILING_WINDOW + 1
+    if suggestion_delay is None:
+        assert tax >= TRAILING_WINDOW * 0.8
+        assert "prompt_suggestion" not in events
+    else:
+        assert "prompt_suggestion" in events
+        assert events.index("prompt_suggestion") < events.index("done")
 
 
-def test_a_late_suggestion_still_reaches_the_client_after_the_terminal(tmp_path, monkeypatch) -> None:
-    """建议迟到不该被丢掉：终态先发，建议作为迟到帧从仍打开的流送出。
-
-    前端按 session 存建议（usePromptSuggestion 的 suggestionsBySession），与 run/流
-    生命周期解耦，天然能接受晚到的帧；Responses 投影层也已把 prompt_suggestion
-    豁免于 done 守卫。所以「不等」不等于「丢弃」。
-    """
+def test_suggestion_within_drain_reaches_client_before_terminal(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """窗口内建议送达且 done 始终最后。"""
     _install_live_cli(monkeypatch, suggestion_delay=0.2)
     runtime = _runtime(tmp_path)
 
@@ -215,11 +210,12 @@ def test_a_late_suggestion_still_reaches_the_client_after_the_terminal(tmp_path,
         events: list[str] = []
         async for frame in runtime.stream(ChatRequest(message="hi")):
             events.append(frame["event"])
-            if frame["event"] == "prompt_suggestion":
+            if frame["event"] == "done":
                 break
         return events
 
     events = asyncio.run(asyncio.wait_for(collect(), timeout=TRAILING_WINDOW + 10))
 
-    assert "prompt_suggestion" in events, "建议被丢了——修时延不能把功能一起修没"
-    assert events.index("done") < events.index("prompt_suggestion"), "终态应先于迟到的建议：这正是「不让可选增强扣住终态」的形状"
+    assert "prompt_suggestion" in events
+    assert events.index("prompt_suggestion") < events.index("done")
+    assert events[-1] == "done"

@@ -16,6 +16,8 @@ from app.runtime.runtime_raw_events import (
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
+from .runtime_preflight import require_non_stream_hitl_free, require_stream_hitl_available
+
 
 def create_runtime_raw_events_router(
     *,
@@ -46,6 +48,10 @@ def create_runtime_raw_events_router(
             raise RuntimeRawEventsDisabledError("Raw Agent Runtime events are disabled; set ENABLE_AGENT_RUNTIME_RAW_EVENTS=true with API_KEY configured")
 
         profile = resolve_business_profile(settings, agent_registry_store, req.agent_id)
+        if req.stream:
+            require_stream_hitl_available(profile, settings, surface="/api/debug/agent-runtime/raw-events")
+        else:
+            require_non_stream_hitl_free(profile, surface="/api/debug/agent-runtime/raw-events")
         prepared = await backend.start(req, profile=profile)
         headers = raw_event_response_headers(prepared.metadata)
         if req.stream:

@@ -21,6 +21,7 @@ class NativeChatSemanticProjector:
             return [frame]
         if event != "message":
             return [frame]
+        scope = data.get("scope")
         if data.get("text_kind") == "delta":
             delta_event = data.get("event")
             if delta_event not in {
@@ -29,13 +30,13 @@ class NativeChatSemanticProjector:
                 "StreamEvent",
             }:
                 return []
-            return [frame] if isinstance(data.get("text"), str) and data.get("text") else []
+            return [frame] if scope != "subagent" and isinstance(data.get("text"), str) and data.get("text") else []
         if data.get("event") == "StreamEvent":
             return []
 
         projected: list[JsonObject] = []
         text = data.get("text")
-        if isinstance(text, str) and text:
+        if scope != "subagent" and isinstance(text, str) and text:
             projected.append(frame)
         raw = data.get("raw")
         if not isinstance(raw, dict) or self.trace_projector is None:

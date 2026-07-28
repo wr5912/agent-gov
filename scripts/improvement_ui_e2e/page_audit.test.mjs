@@ -61,3 +61,26 @@ test("missing controlled failures and optional artifact 404s both fail the audit
     missing: 1,
   }]);
 });
+
+test("presentation navigation cancellation is ignored without hiding transport failures", () => {
+  const state = diagnostics();
+  state.requestFailures = [
+    {
+      method: "GET",
+      url: "http://runtime.test/api/agent-registry/soc-ops/presentation",
+      error: "net::ERR_ABORTED",
+    },
+    {
+      method: "GET",
+      url: "http://runtime.test/api/agent-registry/soc-ops/presentation",
+      error: "net::ERR_CONNECTION_REFUSED",
+    },
+    {
+      method: "GET",
+      url: "http://runtime.test/api/agent-registry",
+      error: "net::ERR_ABORTED",
+    },
+  ];
+
+  assert.deepEqual(unexpectedDiagnostics(state).requestFailures, state.requestFailures.slice(1));
+});

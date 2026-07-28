@@ -16,6 +16,7 @@ def load_test_app(
     api_key: str = "",
     extra_agent_ids: Sequence[str] = (),
     raw_events_enabled: bool = False,
+    requires_web_hitl: bool = True,
 ):
     root = tmp_path / "docker" / "volume"
     data = root / "data"
@@ -39,6 +40,7 @@ def load_test_app(
         default_workspace,
         agent_id=DEFAULT_BUSINESS_AGENT_ID,
         name="Security Operations Expert",
+        requires_web_hitl=requires_web_hitl,
     )
     for agent_id in dict.fromkeys(extra_agent_ids):
         if agent_id == DEFAULT_BUSINESS_AGENT_ID:
@@ -47,6 +49,7 @@ def load_test_app(
             data / "business-agents" / agent_id / "workspace",
             agent_id=agent_id,
             name=f"Test Business Agent {agent_id}",
+            requires_web_hitl=requires_web_hitl,
         )
 
     monkeypatch.setenv("HOST_RUNTIME_VOLUME_ROOT", str(root))

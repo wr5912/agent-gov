@@ -19,8 +19,12 @@ from app.runtime.claude_user_input_service import (
 from app.runtime.records.claude_user_input_records import ClaudeUserInputRequestRecord
 
 
-def _response(record: ClaudeUserInputRequestRecord) -> ClaudeUserInputRequestResponse:
-    return ClaudeUserInputRequestResponse(**record.public_payload())
+def _response(
+    record: ClaudeUserInputRequestRecord,
+    *,
+    decision_token: str | None = None,
+) -> ClaudeUserInputRequestResponse:
+    return ClaudeUserInputRequestResponse(**record.public_payload(include_token=decision_token))
 
 
 def _submit_decision(service: ClaudeUserInputService, request_id: str, req: ClaudeUserInputDecisionRequest) -> ClaudeUserInputDecisionResponse:
@@ -54,11 +58,13 @@ def create_claude_user_input_router(
     @router.get(
         "/api/claude-user-input-requests",
         response_model=ClaudeUserInputRequestListResponse,
+        response_model_exclude_none=True,
         summary="List Claude SDK HITL requests for Playground Web confirmation",
     )
     @router.get(
         "/api/claude-hitl-requests",
         response_model=ClaudeUserInputRequestListResponse,
+        response_model_exclude_none=True,
         summary="List Claude SDK HITL requests for Playground Web confirmation",
         include_in_schema=False,
     )
@@ -69,9 +75,20 @@ def create_claude_user_input_router(
         business_agent_id: str | None = Query(default=None),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> ClaudeUserInputRequestListResponse:
+        exact_waiting_run = run_id if run_id and status == "waiting" else None
         return ClaudeUserInputRequestListResponse(
             requests=[
-                _response(record)
+                _response(
+                    record,
+                    decision_token=(
+                        service.waiting_decision_token(
+                            record.request_id,
+                            run_id=exact_waiting_run,
+                        )
+                        if exact_waiting_run
+                        else None
+                    ),
+                )
                 for record in service.list_requests(
                     session_id=session_id,
                     run_id=run_id,

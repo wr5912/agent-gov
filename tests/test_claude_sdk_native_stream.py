@@ -3,9 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 from app.routers.claude_sdk_events import create_claude_sdk_events_router
 from app.runtime.chat_stream_projector import ChatStreamProjector
 from app.runtime.managed_claude_events import (
@@ -14,6 +11,8 @@ from app.runtime.managed_claude_events import (
     sdk_message_to_json,
 )
 from app.runtime.settings import AppSettings
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 @dataclass
@@ -27,7 +26,7 @@ class UnsupportedSdkMessage:
 
 
 class _FakeRuntime:
-    async def stream_events(self, req, *, profile):
+    async def stream_events(self, req, *, profile, **kwargs):
         from claude_agent_sdk import AssistantMessage, StreamEvent, ThinkingBlock
 
         yield AgentGovControlEvent(
@@ -59,7 +58,7 @@ class _FakeRuntime:
 def test_native_sdk_route_preserves_one_frame_per_sdk_yield(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.claude_sdk_events.resolve_business_profile",
-        lambda settings, store, agent_id: object(),
+        lambda settings, store, agent_id: type("Profile", (), {"requires_web_hitl": False})(),
     )
     app = FastAPI()
     app.include_router(
@@ -80,11 +79,7 @@ def test_native_sdk_route_preserves_one_frame_per_sdk_yield(monkeypatch) -> None
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["content-type"].startswith("text/event-stream")
-    event_names = [
-        line.removeprefix("event: ")
-        for line in response.text.splitlines()
-        if line.startswith("event: ")
-    ]
+    event_names = [line.removeprefix("event: ") for line in response.text.splitlines() if line.startswith("event: ")]
     assert event_names == [
         "agentgov.session",
         "claude.sdk.StreamEvent",

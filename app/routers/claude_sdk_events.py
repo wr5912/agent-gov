@@ -15,9 +15,12 @@ from app.runtime.managed_claude_events import (
     sdk_message_event_name,
     sdk_message_to_json,
 )
-from app.runtime.schemas import ChatRequest
 from app.runtime.settings import AppSettings
+from app.runtime.speech_summary import build_speech_summary_envelope
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
+from app.runtime.stream_request_schemas import ClaudeSdkEventsRequest
+
+from .runtime_preflight import require_stream_hitl_available
 
 _CONTROL_EVENT_NAMES = {
     "claude_user_input_required": "agentgov.confirmation.requested",
@@ -51,17 +54,24 @@ def create_claude_sdk_events_router(
             "This contract follows the pinned Claude Agent SDK; it is not a UI-shaped or byte-exact CLI stream."
         ),
     )
-    async def sdk_events(req: ChatRequest) -> StreamingResponse:
+    async def sdk_events(req: ClaudeSdkEventsRequest) -> StreamingResponse:
         if not (req.agent_id and req.agent_id.strip()):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="agent_id is required and must identify a registered business agent",
             )
         profile = resolve_business_profile(settings, agent_registry_store, req.agent_id)
+        require_stream_hitl_available(profile, settings, surface="/api/agent-runtime/sdk-events")
 
         async def event_stream():
-            async for event in runtime.stream_events(req, profile=profile):
+            data_frame_seq = 0
+            async for event in runtime.stream_events(
+                req,
+                profile=profile,
+                with_speech_summary=req.with_speech_summary,
+            ):
                 if isinstance(event, ClaudeSdkMessageEvent):
+                    data_frame_seq += 1
                     yield _sse(
                         sdk_message_event_name(event.message),
                         sdk_message_to_json(event.message),
@@ -71,6 +81,13 @@ def create_claude_sdk_events_router(
                     yield f": keepalive run_id={event.run_id} timestamp={event.timestamp}\n\n"
                     continue
                 if isinstance(event, AgentGovControlEvent):
+                    data_frame_seq += 1
+                    if event.name == "speech_summary":
+                        yield _sse(
+                            "agentgov.speech_summary",
+                            build_speech_summary_envelope(event.data, seq=data_frame_seq),
+                        )
+                        continue
                     event_name = _CONTROL_EVENT_NAMES.get(event.name, f"agentgov.{event.name}")
                     yield _sse(event_name, event.data)
                     continue

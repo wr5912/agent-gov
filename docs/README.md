@@ -76,6 +76,9 @@
 - [测试资产组合治理](./engineering/测试资产组合治理.md)：`docs/engineering/测试资产组合治理.md`，测试分类、生命周期、执行通道、可信证据、TIA/xdist 晋级和 mutation 的权威工程契约
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`
 - [GSD长程重构阶段清单](./engineering/GSD长程重构阶段清单.md)：`docs/engineering/GSD长程重构阶段清单.md`
+- [Agent 运行时语义事件与 Speech Summary 整改方案](./engineering/Agent运行时语义事件与SpeechSummary整改方案.md)：
+  `docs/engineering/Agent运行时语义事件与SpeechSummary整改方案.md`，定义 3.0.3 的主 Agent
+  作用域、Speech Summary typed output、派生事件终态、Responses/兼容接口/raw/HITL 契约和真实容器验收
 - [vLLM 模型网关与 Sidecar 整改方案](./engineering/vLLM模型网关与Sidecar整改优化方案.md)：`docs/engineering/vLLM模型网关与Sidecar整改优化方案.md`
 - [OpenAI 兼容接口能否替代原生 Chat 端点评估](./engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)：`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`，已落地的外部 Responses 契约、第一方 Playground SDK-native 流与独立 Chat 兼容投影边界；`/v1/conversations` 继续承载会话恢复
 

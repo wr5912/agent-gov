@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { isExpectedRequestCancellation } from "./improvement_ui_e2e/page_audit.mjs";
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
@@ -307,8 +308,7 @@ async function main() {
     page.on("pageerror", (error) => audit.pageErrors.push(error.message));
     page.on("requestfailed", (request) => {
       const failure = request.failure()?.errorText || "unknown";
-      const path = new URL(request.url()).pathname;
-      if (path.endsWith("/presentation") && /ERR_ABORTED|NS_BINDING_ABORTED/.test(failure)) return;
+      if (isExpectedRequestCancellation({ method: request.method(), url: request.url(), error: failure })) return;
       audit.requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
     });
     page.on("response", (response) => {

@@ -30,6 +30,10 @@ class ClaudeUserInputRequestResponse(BaseModel):
     created_at: str
     expires_at: str
     resolved_at: Optional[str] = None
+    decision_token: Optional[str] = Field(
+        default=None,
+        description="Only returned for an authenticated exact run_id + status=waiting polling query while the API process is still waiting.",
+    )
 
 
 class ClaudeUserInputRequestListResponse(BaseModel):

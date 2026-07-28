@@ -517,8 +517,16 @@ def test_stream_finishes_when_completion_step_raises(tmp_path, monkeypatch):
 
     events = asyncio.run(scenario())
 
-    assert [event["event"] for event in events] == ["session", "message", "error", "done"]
-    assert "RuntimeError: completion boom" in events[2]["data"]["errors"]
+    # ResultMessage 是已发生的 SDK 进度事实；后续持久化失败不能抹掉它，但必须用
+    # error 覆盖最终状态，并以 done 收口。
+    assert [event["event"] for event in events] == [
+        "session",
+        "message",
+        "result",
+        "error",
+        "done",
+    ]
+    assert "RuntimeError: completion boom" in events[3]["data"]["errors"]
 
 
 def test_interactive_stream_client_cancel_closes_sdk_and_aborts_turn(tmp_path, monkeypatch):

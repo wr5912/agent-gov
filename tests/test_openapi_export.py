@@ -286,6 +286,49 @@ def test_openapi_documents_streaming_media_types():
     assert {"401", "403", "404", "409", "413", "422", "501", "503"} <= set(raw_operation["responses"])
 
 
+def test_openapi_documents_speech_summary_without_polluting_raw_or_shared_chat() -> None:
+    schema = build_openapi_schema()
+    components = schema["components"]["schemas"]
+
+    sdk_properties = components["ClaudeSdkEventsRequest"]["properties"]
+    chat_stream_properties = components["ChatStreamRequest"]["properties"]
+    shared_chat_properties = components["ChatRequest"]["properties"]
+    raw_properties = components["RuntimeRawEventsRequest"]["properties"]
+    response_extension = components["AgentGovRequestExtension"]["properties"]
+    assert sdk_properties["with_speech_summary"]["default"] is False
+    assert chat_stream_properties["with_speech_summary"]["default"] is False
+    assert response_extension["with_speech_summary"]["default"] is False
+    assert "with_speech_summary" not in shared_chat_properties
+    assert "with_speech_summary" not in raw_properties
+
+    envelope = components["AgentGovSpeechSummaryEnvelope"]
+    assert set(envelope["required"]) == {
+        "run_id",
+        "ts",
+        "seq",
+        "payload",
+    }
+    assert envelope["additionalProperties"] is False
+    assert envelope["properties"]["v"]["const"] == 1
+    assert envelope["properties"]["type"]["const"] == "agentgov.speech_summary"
+
+    sdk_events = schema["paths"]["/api/agent-runtime/sdk-events"]["post"]["x-agentgov-sse-events"]
+    chat_events = schema["paths"]["/api/chat/stream"]["post"]["x-agentgov-sse-events"]
+    responses_events = schema["paths"]["/v1/responses"]["post"]["x-agentgov-sse-events"]
+    assert sdk_events[-1]["event"] == "agentgov.speech_summary"
+    assert chat_events == [sdk_events[-1]]
+    assert responses_events[0]["condition"].startswith("control mode and stream=true")
+
+    for path in (
+        "/api/chat",
+        "/api/chat/stream",
+        "/v1/chat/completions",
+    ):
+        assert schema["paths"][path]["post"]["deprecated"] is True
+    completion_failure = schema["paths"]["/v1/chat/completions"]["post"]["responses"]["502"]
+    assert completion_failure["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/OpenAIErrorResponse"}
+
+
 def test_openapi_documents_ownerless_session_conflicts() -> None:
     schema = build_openapi_schema()
 

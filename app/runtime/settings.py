@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Optional, TypedDict, cast
 
-from pydantic import Field, PrivateAttr, field_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .agent_job_errors import provider_api_key_configured
@@ -17,12 +17,38 @@ from .model_provider import ModelProviderBackend
 from .protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 
 RuntimeVolumeMode = Literal["container", "local-debug"]
+SpeechSummaryBoundary = Literal[
+    "thinking_block_completed",
+    "assistant_response_completed",
+]
+SPEECH_SUMMARY_BOUNDARY_VALUES = frozenset(
+    {
+        "thinking_block_completed",
+        "assistant_response_completed",
+    }
+)
 
 
 def _csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def parse_speech_summary_boundaries(value: str) -> tuple[SpeechSummaryBoundary, ...]:
+    """解析部署级 Speech Summary 边界；整体空字符串是显式关闭。"""
+
+    if not value.strip():
+        return ()
+    parts = [item.strip() for item in value.split(",")]
+    if any(not item for item in parts):
+        raise ValueError("SPEECH_SUMMARY_BOUNDARIES contains an empty segment")
+    unknown = [item for item in parts if item not in SPEECH_SUMMARY_BOUNDARY_VALUES]
+    if unknown:
+        raise ValueError(f"SPEECH_SUMMARY_BOUNDARIES contains unknown value: {unknown[0]}")
+    if len(parts) != len(set(parts)):
+        raise ValueError("SPEECH_SUMMARY_BOUNDARIES contains duplicate values")
+    return cast(tuple[SpeechSummaryBoundary, ...], tuple(parts))
 
 
 def _json_object(value: str | None) -> JsonObject:
@@ -71,6 +97,11 @@ class RuntimeSettingsLogFields(TypedDict):
     dspy_output_formatter_timeout_seconds: int
     agent_test_run_timeout_seconds: int
     prompt_suggestion_source: Literal["backend", "claude_native"]
+    prompt_suggestion_timeout_seconds: float
+    prompt_suggestion_terminal_drain_seconds: float
+    speech_summary_boundaries: str
+    speech_summary_timeout_seconds: float
+    speech_summary_terminal_drain_seconds: float
     claude_web_hitl_enabled: bool
     hitl_timeout_seconds: int
     agent_runtime_raw_events_enabled: bool
@@ -213,6 +244,24 @@ class AppSettings(BaseSettings):
     # 推理模型(如 deepseek-v4-flash)会先吐 reasoning_content 再吐正文,max_tokens 必须留够
     # 思考预算,否则思考吃光配额、正文为空(finish_reason=length)。
     backend_prompt_suggestion_max_tokens: int = Field(default=1024, alias="BACKEND_PROMPT_SUGGESTION_MAX_TOKENS")
+    prompt_suggestion_timeout_seconds: float = Field(default=15.0, gt=0, le=300, alias="PROMPT_SUGGESTION_TIMEOUT_SECONDS")
+    prompt_suggestion_terminal_drain_seconds: float = Field(
+        default=3.0,
+        ge=0,
+        le=60,
+        alias="PROMPT_SUGGESTION_TERMINAL_DRAIN_SECONDS",
+    )
+    speech_summary_boundaries_raw: str = Field(
+        default="thinking_block_completed,assistant_response_completed",
+        alias="SPEECH_SUMMARY_BOUNDARIES",
+    )
+    speech_summary_timeout_seconds: float = Field(default=15.0, gt=0, le=300, alias="SPEECH_SUMMARY_TIMEOUT_SECONDS")
+    speech_summary_terminal_drain_seconds: float = Field(
+        default=5.0,
+        ge=0,
+        le=60,
+        alias="SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS",
+    )
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
     # 仅流式 Playground/Responses 请求使用；非流式调用仍由 runtime 显式关闭，避免把
     # StreamEvent 写入会话事实、反馈证据或治理任务输入。
@@ -282,6 +331,18 @@ class AppSettings(BaseSettings):
             return normalized or None
         return value
 
+    @field_validator("speech_summary_boundaries_raw")
+    @classmethod
+    def _valid_speech_summary_boundaries(cls, value: str) -> str:
+        parse_speech_summary_boundaries(value)
+        return value
+
+    @model_validator(mode="after")
+    def _thinking_summary_requires_partial_messages(self) -> "AppSettings":
+        if "thinking_block_completed" in self.speech_summary_boundaries and not self.include_partial_messages:
+            raise ValueError("thinking_block_completed requires INCLUDE_PARTIAL_MESSAGES=true")
+        return self
+
     def model_post_init(self, __context: Any) -> None:
         _derive_profile_dirs(self)
 
@@ -320,6 +381,10 @@ class AppSettings(BaseSettings):
     @property
     def dspy_output_formatter_timeout_seconds(self) -> int:
         return self.dspy_output_formatter_timeout_seconds_override or self.governance_agent_timeout_seconds
+
+    @property
+    def speech_summary_boundaries(self) -> tuple[SpeechSummaryBoundary, ...]:
+        return parse_speech_summary_boundaries(self.speech_summary_boundaries_raw)
 
     @property
     def resolved_claude_config_dir(self) -> Optional[Path]:
@@ -418,6 +483,11 @@ def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFiel
         "dspy_output_formatter_timeout_seconds": settings.dspy_output_formatter_timeout_seconds,
         "agent_test_run_timeout_seconds": settings.agent_test_run_timeout_seconds,
         "prompt_suggestion_source": ("backend" if settings.enable_backend_prompt_suggestion else "claude_native"),
+        "prompt_suggestion_timeout_seconds": settings.prompt_suggestion_timeout_seconds,
+        "prompt_suggestion_terminal_drain_seconds": settings.prompt_suggestion_terminal_drain_seconds,
+        "speech_summary_boundaries": ",".join(settings.speech_summary_boundaries),
+        "speech_summary_timeout_seconds": settings.speech_summary_timeout_seconds,
+        "speech_summary_terminal_drain_seconds": settings.speech_summary_terminal_drain_seconds,
         "claude_web_hitl_enabled": settings.enable_claude_web_hitl,
         "hitl_timeout_seconds": settings.hitl_timeout_seconds,
         "agent_runtime_raw_events_enabled": settings.enable_agent_runtime_raw_events,

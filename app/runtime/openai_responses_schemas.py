@@ -14,14 +14,11 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.runtime.json_types import JsonObject
-
-# 顶层请求默认 extra="ignore"（pydantic 默认）：不 reject 真实 OpenAI 客户端发来的、
-# 本项目暂不建模的标准字段（temperature/top_p/tools/reasoning 等）。只有 agentgov 子模型 forbid。
 
 
 class AgentGovDebug(BaseModel):
@@ -46,14 +43,57 @@ class AgentGovRequestExtension(BaseModel):
         default=False,
         description="Emit complete semantic SDK facts as agentgov.trace_event envelopes.",
     )
+    with_speech_summary: bool = Field(
+        default=False,
+        description="Control streaming only: emit best-effort agentgov.speech_summary events.",
+    )
     debug: Optional[AgentGovDebug] = None
+
+
+class ResponsesInputText(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["input_text"] = "input_text"
+    text: str = Field(min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def _non_blank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("input_text must contain non-whitespace text")
+        return value
+
+
+class ResponsesInputMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["message"] = "message"
+    role: Literal["developer", "system", "user", "assistant"]
+    content: str | Annotated[list[ResponsesInputText], Field(min_length=1)]
+
+    @field_validator("content")
+    @classmethod
+    def _valid_content(cls, value: str | list[ResponsesInputText]) -> str | list[ResponsesInputText]:
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("message content must contain non-whitespace text")
+        return value
+
+    def text_content(self) -> str:
+        if isinstance(self.content, str):
+            return self.content
+        return "\n".join(block.text for block in self.content)
 
 
 class ResponsesRequest(BaseModel):
     """``POST /v1/responses`` 请求。无 ``agentgov`` = strict 模式；有 = control 模式。"""
 
+    model_config = ConfigDict(extra="forbid")
+
     model: Optional[str] = Field(default=None, description="Per-request LLM override only; never an agent handle.")
-    input: str | list[JsonObject] = Field(..., description="Prompt string, or Responses input items.")
+    input: str | Annotated[list[ResponsesInputMessage], Field(min_length=1)] = Field(
+        ...,
+        description="Non-empty prompt string, or typed text message items containing a current user message.",
+    )
     instructions: Optional[str] = Field(
         default=None,
         description=(
@@ -74,6 +114,16 @@ class ResponsesRequest(BaseModel):
         description="Flat observability tags only (source/client_run_label); backend does not route on these.",
     )
     agentgov: Optional[AgentGovRequestExtension] = Field(default=None, description="Presence selects control mode; carries the non-standard control plane.")
+
+    @model_validator(mode="after")
+    def _valid_input(self) -> ResponsesRequest:
+        if isinstance(self.input, str):
+            if not self.input.strip():
+                raise ValueError("input must contain non-whitespace text")
+            return self
+        if not any(item.role == "user" and item.text_content().strip() for item in self.input):
+            raise ValueError("input items must contain at least one non-empty user message")
+        return self
 
 
 # ---- Response ----
@@ -147,7 +197,7 @@ class ResponseObject(BaseModel):
     output: list[ResponseReasoningItem | ResponseOutputMessage] = Field(default_factory=list)
     usage: Optional[JsonObject] = None
     metadata: JsonObject = Field(default_factory=dict)
-    agentgov: AgentGovResponseExtension
+    agentgov: Optional[AgentGovResponseExtension] = None
 
 
 # ---- Conversations（会话对象，投影自 SDK session / transcript，不另建副本）----

@@ -186,6 +186,11 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "dspy_output_formatter_timeout_seconds": 300,
         "agent_test_run_timeout_seconds": 1800,
         "prompt_suggestion_source": "backend",
+        "prompt_suggestion_timeout_seconds": 15.0,
+        "prompt_suggestion_terminal_drain_seconds": 3.0,
+        "speech_summary_boundaries": "thinking_block_completed,assistant_response_completed",
+        "speech_summary_timeout_seconds": 15.0,
+        "speech_summary_terminal_drain_seconds": 5.0,
         "claude_web_hitl_enabled": False,
         "hitl_timeout_seconds": 300,
         "agent_runtime_raw_events_enabled": False,
@@ -298,3 +303,88 @@ def test_get_settings_is_pure_and_does_not_create_runtime_dirs(tmp_path, monkeyp
     assert all(not path.exists() for path in expected_dirs)
 
     get_settings.cache_clear()
+
+
+def test_speech_summary_boundaries_and_timeouts_have_explicit_defaults() -> None:
+    settings = AppSettings(_env_file=None)
+    disabled = AppSettings(_env_file=None, SPEECH_SUMMARY_BOUNDARIES="")
+
+    assert settings.speech_summary_boundaries == (
+        "thinking_block_completed",
+        "assistant_response_completed",
+    )
+    assert settings.speech_summary_timeout_seconds == 15
+    assert settings.speech_summary_terminal_drain_seconds == 5
+    assert settings.prompt_suggestion_timeout_seconds == 15
+    assert settings.prompt_suggestion_terminal_drain_seconds == 3
+    assert disabled.speech_summary_boundaries == ()
+
+
+@pytest.mark.parametrize(
+    "boundaries",
+    [
+        "thinking_block_completed,unknown",
+        "thinking_block_completed,thinking_block_completed",
+        "thinking_block_completed,",
+        ",assistant_response_completed",
+    ],
+)
+def test_invalid_speech_summary_boundaries_fail_settings_startup(
+    boundaries: str,
+) -> None:
+    with pytest.raises(ValueError, match="SPEECH_SUMMARY_BOUNDARIES"):
+        AppSettings(
+            _env_file=None,
+            SPEECH_SUMMARY_BOUNDARIES=boundaries,
+        )
+
+
+def test_thinking_summary_requires_partial_sdk_messages() -> None:
+    with pytest.raises(
+        ValueError,
+        match="thinking_block_completed requires INCLUDE_PARTIAL_MESSAGES=true",
+    ):
+        AppSettings(
+            _env_file=None,
+            SPEECH_SUMMARY_BOUNDARIES="thinking_block_completed",
+            INCLUDE_PARTIAL_MESSAGES=False,
+        )
+
+    assistant_only = AppSettings(
+        _env_file=None,
+        SPEECH_SUMMARY_BOUNDARIES="assistant_response_completed",
+        INCLUDE_PARTIAL_MESSAGES=False,
+    )
+    assert assistant_only.speech_summary_boundaries == ("assistant_response_completed",)
+
+
+def test_container_and_local_debug_examples_preserve_speech_boundary_guidance() -> None:
+    required_block = """# Speech Summary 生成边界，多个值使用英文逗号分隔。
+#
+# 可用边界：
+# - thinking_block_completed
+#   顶层 ThinkingBlock 完成时触发。内部对应 Claude Agent SDK
+#   StreamEvent 中 thinking 类型的原生 content_block_stop，用于播报处理进度。
+#
+# - assistant_response_completed
+#   完整顶层 AssistantMessage 到达且包含非空 TextBlock 时触发；
+#   合并该消息全部正文后生成一次结果摘要。
+#
+# 推荐组合：
+# - 进度播报 + 结果摘要（推荐）：
+#   thinking_block_completed,assistant_response_completed
+# - 仅结果摘要，成本和思维内容风险更低：
+#   assistant_response_completed
+# - 仅进度播报：
+#   thinking_block_completed
+# - 留空：禁止生成任何 Speech Summary。
+#
+# 未知值或重复值应在应用启动时校验失败，不得静默忽略。
+SPEECH_SUMMARY_BOUNDARIES=thinking_block_completed,assistant_response_completed"""
+
+    container = (REPO_ROOT / "docker/.env.example").read_text(encoding="utf-8")
+    local_debug = (REPO_ROOT / "docker/.env.local-debug.example").read_text(encoding="utf-8")
+    for content in (container, local_debug):
+        assert required_block in content
+        assert "SPEECH_SUMMARY_TIMEOUT_SECONDS=15" in content
+        assert "SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS=5" in content

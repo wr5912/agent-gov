@@ -208,11 +208,11 @@ def _runtime(tmp_path, monkeypatch, *, enabled: bool):
     return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=default_profile_resolver(settings))
 
 
-def test_runtime_emits_backend_generated_suggestion_after_done(tmp_path, monkeypatch) -> None:
-    """开关开启:runtime.stream 在 done 之后 emit **恰好一帧**、载完整候选批次。
+def test_runtime_drains_backend_generated_suggestion_before_done(tmp_path, monkeypatch) -> None:
+    """开关开启:runtime.stream 在 done 之前 emit **恰好一帧**、载完整候选批次。
 
     一帧载整批(而非每条一帧)是刻意的:投影层不透传 run_id,客户端拿不到 batch key;
-    done 之后到建议之间用户可以发下一轮,多帧会让两轮候选混在一起且不收敛。
+    多帧会让跨轮候选难以建立稳定批次边界。
     """
     runtime = _runtime(tmp_path, monkeypatch, enabled=True)
     captured = {}
@@ -235,8 +235,8 @@ def test_runtime_emits_backend_generated_suggestion_after_done(tmp_path, monkeyp
     assert suggestion["data"]["suggestions"] == ["跑测试", "看日志", "提交代码"]
     # 附加式:`suggestion` 保留且恒等首条(老客户端零改动)
     assert suggestion["data"]["suggestion"] == "跑测试"
-    # 迟到帧:建议在 done 之后(答案完成即收尾,生成不扣终态)
-    assert names.index("prompt_suggestion") > names.index("done")
+    assert names.index("prompt_suggestion") < names.index("done")
+    assert names[-1] == "done"
     # grounding:拿到了用户输入与助手回答
     assert captured["user"] == "修好 bug 再跑测试"
     assert "答案正文" in captured["answer"]

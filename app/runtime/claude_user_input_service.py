@@ -72,6 +72,7 @@ class SdkUserInputDecision:
 @dataclass
 class _PendingRuntimeRequest:
     request_id: str
+    decision_token: str
     future: asyncio.Future[SdkUserInputDecision]
     event_queue: asyncio.Queue[JsonObject | None]
     raw_input: JsonObject
@@ -151,6 +152,7 @@ class ClaudeUserInputService:
         )
         pending = _PendingRuntimeRequest(
             request_id=request_id,
+            decision_token=token,
             future=loop.create_future(),
             event_queue=event_queue,
             raw_input=raw_input,
@@ -244,6 +246,19 @@ class ClaudeUserInputService:
             business_agent_id=business_agent_id,
             limit=limit,
         )
+
+    def waiting_decision_token(
+        self,
+        request_id: str,
+        *,
+        run_id: str,
+    ) -> str | None:
+        """Return the in-memory token only for the exact run that is still pending."""
+
+        pending = self._pending.get(request_id)
+        if pending is None or pending.run_id != run_id or pending.future.done():
+            return None
+        return pending.decision_token
 
     @staticmethod
     def _build_sdk_decision(

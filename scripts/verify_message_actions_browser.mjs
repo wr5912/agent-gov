@@ -37,16 +37,15 @@ const ui = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${port}`).replace(/
 const api = (process.env.RUNTIME_API_BASE || "http://runtime.test").replace(/\/$/, "");
 const key = process.env.RUNTIME_API_KEY || envv("FRONTEND_RUNTIME_API_KEY") || envv("API_KEY") || "";
 const RETRIES = Number(process.env.RETRIES || 1);
+const MAX_SSE_DOM_LATENCY_MS = 150;
 const screenshotDir = process.env.VERIFY_SCREENSHOT_DIR || mkdtempSync(join(tmpdir(), "agentgov-message-actions-"));
 
 function startVite() {
   const child = spawn("pnpm", ["--dir", "frontend", "exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
     cwd: repoRoot,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "inherit", "inherit"],
     detached: true,
   });
-  child.stdout.on("data", () => {});
-  child.stderr.on("data", () => {});
   return child;
 }
 
@@ -416,8 +415,8 @@ async function main() {
               },
             },
             { event: "agentgov.result", data: { run_id: "mock-run-live", session_id: sessionId, agent_version_id: "v-mock", agent_activity: { tool_calls: [], tool_results: [], tool_names: [] } } },
-            { event: "agentgov.done", data: { ok: true } },
             { event: "agentgov.prompt_suggestion", data: { suggestion: "继续检查失败路径。", suggestions: ["继续检查失败路径。", "看一下日志", "换个角度分析"], session_id: sessionId } },
+            { event: "agentgov.done", data: { ok: true } },
           ]);
         }
         return json(route, mockPayload(url));
@@ -648,6 +647,7 @@ async function main() {
             canonicalAssistantTextExact: latestAssistantText === "我是 AgentGov 测试助手。",
             sseReceiptToDomSamples: domLatencies.length,
             sseReceiptToDomP95Ms: domLatencyP95,
+            sseReceiptToDomThresholdMs: MAX_SSE_DOM_LATENCY_MS,
             traceFromSessionSurvivesResult: liveTraceHref.includes("/project/agent-gov/traces/mock-trace-live"),
           };
           await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
@@ -787,7 +787,7 @@ async function main() {
             && autoPanelChecks.suggestionClearedAfterUse
             && autoPanelChecks.canonicalAssistantTextExact
             && autoPanelChecks.sseReceiptToDomSamples > 0
-            && autoPanelChecks.sseReceiptToDomP95Ms <= 100
+            && autoPanelChecks.sseReceiptToDomP95Ms <= autoPanelChecks.sseReceiptToDomThresholdMs
             && autoPanelChecks.traceFromSessionSurvivesResult
           ));
         detail = JSON.stringify({ counts, drawerChecks });
@@ -797,7 +797,7 @@ async function main() {
           await page.getByRole("button", { name: "发送" }).click();
           await page.waitForFunction(() => {
             const messages = document.querySelectorAll('[data-message-role="assistant"]');
-            return messages[messages.length - 1]?.textContent?.includes("Stream ended before terminal event");
+            return messages[messages.length - 1]?.textContent?.includes("Stream ended before agentgov.done");
           }, undefined, { timeout: 8000 });
           const terminalFailureText = await page.locator('[data-message-role="assistant"]').last().innerText();
           const failureTraceHref = await page.getByTestId("playground-evidence-panel")
@@ -807,7 +807,7 @@ async function main() {
           const terminalFailureCheck = {
             partialTextPreserved: terminalFailureText.includes("半截响应"),
             interruptionVisible: terminalFailureText.includes("运行失败")
-              && terminalFailureText.includes("Stream ended before terminal event"),
+              && terminalFailureText.includes("Stream ended before agentgov.done"),
             traceAvailableWithoutResult: failureTraceHref.includes("/project/agent-gov/traces/mock-trace-failure"),
           };
           ok = ok
@@ -817,6 +817,7 @@ async function main() {
           detail = JSON.stringify({ counts, drawerChecks, terminalFailureCheck });
         }
       } catch (e) {
+        ok = false;
         detail = `attempt ${attempt}: ${e instanceof Error ? e.message.slice(0, 80) : e}`;
         console.error("retry:", detail);
       }

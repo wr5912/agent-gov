@@ -28,6 +28,7 @@ from app.runtime.managed_claude_events import (
     stream_event_payload,
 )
 from app.runtime.message_utils import (
+    is_top_level_message,
     message_event_name,
     reconcile_stream_snapshot,
 )
@@ -42,6 +43,7 @@ from app.runtime.openai_responses_tools import (
     ToolObservation,
 )
 from app.runtime.schemas import ChatResponse
+from app.runtime.speech_summary import build_speech_summary_envelope
 
 HEARTBEAT_INTERVAL_S = 15
 _ENVELOPE_VERSION = 1
@@ -164,7 +166,9 @@ class _ResponsesSseProjector:
     message_done: bool = False
     terminal_status: Optional[str] = None
     pending_completed_response: JsonObject | None = None
+    pending_failure: JsonObject | None = None
     done_emitted: bool = False
+    agentgov_error_emitted: bool = False
     trace_projector: AgentTraceProjector | None = None
     tool_observer: ServerToolObservationProjector = field(default_factory=ServerToolObservationProjector)
 
@@ -211,14 +215,16 @@ class _ResponsesSseProjector:
         if isinstance(event, AgentGovHeartbeatEvent):
             return [": keepalive\n\n"]
         if isinstance(event, ClaudeSdkMessageEvent):
-            if self.done_emitted or self.terminal_status is not None or self.pending_completed_response is not None:
+            if self.done_emitted or self.pending_completed_response is not None or self.pending_failure is not None:
                 return []
             return self._project_sdk_message(event.message)
         if not isinstance(event, AgentGovControlEvent):
             raise TypeError(f"Unsupported managed Claude event: {event.__class__.__name__}")
         if event.name == "prompt_suggestion":
             return self._project_prompt_suggestion(event.data)
-        if event.name != "done" and (self.done_emitted or self.terminal_status is not None or self.pending_completed_response is not None):
+        if event.name == "speech_summary":
+            return self._project_speech_summary(event.data)
+        if self.done_emitted:
             return []
         if event.name == "session":
             return self._project_session(event.data)
@@ -275,10 +281,11 @@ class _ResponsesSseProjector:
     def _project_sdk_message(self, message: Any) -> list[str]:
         raw = sdk_message_to_json(message)
         chunks: list[str] = []
+        top_level = is_top_level_message(message)
         if message.__class__.__name__ == "StreamEvent":
-            chunks.extend(self._project_stream_event(message))
+            chunks.extend(self._project_stream_event(message, include_standard=top_level))
         else:
-            chunks.extend(self._project_complete_message(message, raw))
+            chunks.extend(self._project_complete_message(message, raw, include_standard=top_level))
         if self.control and self.sdk_raw:
             chunks.append(
                 self._envelope(
@@ -288,13 +295,13 @@ class _ResponsesSseProjector:
             )
         return chunks
 
-    def _project_stream_event(self, message: Any) -> list[str]:
+    def _project_stream_event(self, message: Any, *, include_standard: bool) -> list[str]:
         delta = stream_delta(message)
         if delta is not None:
             kind, value = delta
-            if kind == "thinking_delta":
+            if kind == "thinking_delta" and include_standard:
                 return self._project_reasoning_delta(value)
-            if kind == "text_delta":
+            if kind == "text_delta" and include_standard:
                 return self._project_text_delta(value)
             if kind == "input_json_delta":
                 return self._tool_chunks(self.tool_observer.arguments_delta(message, value))
@@ -499,9 +506,15 @@ class _ResponsesSseProjector:
             ),
         ]
 
-    def _project_complete_message(self, message: Any, raw: JsonObject) -> list[str]:
+    def _project_complete_message(
+        self,
+        message: Any,
+        raw: JsonObject,
+        *,
+        include_standard: bool,
+    ) -> list[str]:
         chunks: list[str] = []
-        if message.__class__.__name__.startswith("AssistantMessage"):
+        if include_standard and message.__class__.__name__.startswith("AssistantMessage"):
             thinking_snapshot, text_snapshot = _content_snapshots(message)
             if thinking_snapshot is not None:
                 suffix = reconcile_stream_snapshot(
@@ -550,7 +563,7 @@ class _ResponsesSseProjector:
         return [self._envelope(event_name, payload) for event_name, payload in observations]
 
     def _project_prompt_suggestion(self, data: JsonObject) -> list[str]:
-        if not self.control or self.terminal_status == "failed":
+        if not self.control or self.done_emitted or self.pending_failure is not None:
             return []
         suggestions = _suggestion_list(data)
         if not suggestions:
@@ -565,6 +578,13 @@ class _ResponsesSseProjector:
                 },
             )
         ]
+
+    def _project_speech_summary(self, data: JsonObject) -> list[str]:
+        if not self.control or self.done_emitted:
+            return []
+        seq_no = self._next()
+        envelope = build_speech_summary_envelope(data, seq=seq_no)
+        return [_sse("agentgov.speech_summary", envelope, event_id=seq_no)]
 
     def _response_from_result(self, data: JsonObject) -> JsonObject:
         chat = ChatResponse(
@@ -605,43 +625,46 @@ class _ResponsesSseProjector:
         errors = [str(error) for error in raw_errors] if isinstance(raw_errors, list) else []
         failed_now = bool(errors) and self.terminal_status is None
         if failed_now:
-            self.terminal_status = "failed"
             self.pending_completed_response = None
-            chunks.append(
-                self._std(
-                    "response.failed",
-                    {"response": response, "error": {"errors": errors}},
-                )
-            )
+            self.pending_failure = {"response": response, "error": {"errors": errors}}
         elif not errors and self.terminal_status is None:
             self.pending_completed_response = response
         if self.control:
             chunks.append(self._envelope("agentgov.result", data))
             if failed_now:
-                chunks.append(
-                    self._envelope(
-                        "agentgov.error",
-                        {**data, "errors": errors},
-                    )
-                )
+                chunks.extend(self._project_agentgov_error({**data, "errors": errors}))
         return chunks
 
     def _project_error(self, data: JsonObject) -> list[str]:
-        if self.terminal_status is not None:
+        if self.done_emitted:
             return []
-        self.terminal_status = "failed"
         self.pending_completed_response = None
-        chunks = [self._std("response.failed", {"error": data})]
-        if self.control:
-            chunks.append(self._envelope("agentgov.error", data))
-        return chunks
+        if self.pending_failure is None:
+            self.pending_failure = {"error": data}
+        return self._project_agentgov_error(data)
+
+    def _project_agentgov_error(self, data: JsonObject) -> list[str]:
+        if not self.control or self.agentgov_error_emitted:
+            return []
+        self.agentgov_error_emitted = True
+        return [self._envelope("agentgov.error", data)]
 
     def _project_done(self) -> list[str]:
         if self.done_emitted:
             return []
         self.done_emitted = True
         chunks: list[str] = []
-        if self.terminal_status is None and self.pending_completed_response is not None:
+        if self.pending_completed_response is None and self.pending_failure is None:
+            detail = "Agent stream ended without a ResultMessage"
+            error: JsonObject = {
+                "error_code": "STREAM_TERMINATED_WITHOUT_RESULT",
+                "errors": [detail],
+            }
+            self.pending_failure = {"error": error}
+            chunks.extend(self._project_agentgov_error(error))
+        if self.control:
+            chunks.append(self._envelope("agentgov.done", {}))
+        if self.pending_failure is None and self.pending_completed_response is not None:
             self.terminal_status = "completed"
             chunks.append(
                 self._std(
@@ -649,18 +672,9 @@ class _ResponsesSseProjector:
                     {"response": self.pending_completed_response},
                 )
             )
-        elif self.terminal_status is None:
+        else:
             self.terminal_status = "failed"
-            detail = "Agent stream ended without a ResultMessage"
-            error: JsonObject = {
-                "error_code": "STREAM_TERMINATED_WITHOUT_RESULT",
-                "errors": [detail],
-            }
-            chunks.append(self._std("response.failed", {"error": error}))
-            if self.control:
-                chunks.append(self._envelope("agentgov.error", error))
-        if self.control:
-            chunks.append(self._envelope("agentgov.done", {}))
+            chunks.append(self._std("response.failed", self.pending_failure or {"error": {}}))
         return chunks
 
 

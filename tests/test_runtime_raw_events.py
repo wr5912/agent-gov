@@ -12,6 +12,7 @@ from app.runtime.claude_runtime_raw_events import (
     ClaudeRuntimeRawEventsBackend,
     PreparedClaudeRuntimeRawEvents,
 )
+from app.runtime.managed_claude_events import AgentGovControlEvent, ManagedClaudeEvent
 from app.runtime.runtime_raw_events import (
     RuntimeRawCaptureUnsupportedError,
     RuntimeRawEventMetadata,
@@ -21,8 +22,17 @@ from app.runtime.runtime_raw_events import (
 from app.runtime.settings import AppSettings
 from fastapi.testclient import TestClient
 
-from app_test_utils import load_test_app as _load_app
+from app_test_utils import load_test_app as _base_load_app
 from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+
+
+def _load_app(monkeypatch, tmp_path, **kwargs):
+    return _base_load_app(
+        monkeypatch,
+        tmp_path,
+        requires_web_hitl=False,
+        **kwargs,
+    )
 
 
 class _FakePreparedRawEvents:
@@ -192,10 +202,14 @@ class _FakeCapture:
         self._release.set()
 
 
-async def _runtime_events(*events: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+async def _runtime_events(*events: dict[str, Any]) -> AsyncIterator[ManagedClaudeEvent]:
     for event in events:
         await asyncio.sleep(0)
-        yield event
+        data = event.get("data")
+        yield AgentGovControlEvent(
+            name=str(event["event"]),
+            data=data if isinstance(data, dict) else {},
+        )
 
 
 def _metadata() -> RuntimeRawEventMetadata:
@@ -281,12 +295,12 @@ def test_stream_closes_without_platform_frames_after_first_raw_byte_failure() ->
             release_tail.set()
             await super().aclose()
 
-    async def failing_runtime() -> AsyncIterator[dict[str, Any]]:
+    async def failing_runtime() -> AsyncIterator[ManagedClaudeEvent]:
         await release_failure.wait()
-        yield {
-            "event": "error",
-            "data": {"error_code": "RUNTIME_FINALIZATION_FAILED", "detail": "persistence failed"},
-        }
+        yield AgentGovControlEvent(
+            name="error",
+            data={"error_code": "RUNTIME_FINALIZATION_FAILED", "detail": "persistence failed"},
+        )
 
     async def exercise() -> None:
         capture = CoordinatedCapture([b'{"type":"assistant"}\n'])
@@ -309,10 +323,10 @@ def test_stream_limit_cancels_blocked_managed_runtime() -> None:
     runtime_release = asyncio.Event()
     runtime_closed = asyncio.Event()
 
-    async def blocked_runtime() -> AsyncIterator[dict[str, Any]]:
+    async def blocked_runtime() -> AsyncIterator[ManagedClaudeEvent]:
         try:
             await runtime_release.wait()
-            yield {"event": "done", "data": "[DONE]"}
+            yield AgentGovControlEvent(name="done", data={})
         finally:
             runtime_closed.set()
 
@@ -356,7 +370,7 @@ def test_claude_backend_uses_execution_local_cli_override_and_managed_stream(mon
         return capture
 
     class FakeRuntime:
-        def stream(self, req, *, profile, cli_path_override):
+        def stream_events(self, req, *, profile, cli_path_override):
             seen.update(
                 {
                     "request": req,

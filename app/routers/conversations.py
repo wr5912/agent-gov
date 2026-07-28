@@ -76,11 +76,7 @@ def _item_run_contexts(
     session: LocalSession,
     messages: list[JsonObject],
 ) -> ConversationItemRunContexts:
-    message_uuids = {
-        message_uuid
-        for message in messages
-        if isinstance((message_uuid := message.get("uuid")), str) and message_uuid
-    }
+    message_uuids = {message_uuid for message in messages if isinstance((message_uuid := message.get("uuid")), str) and message_uuid}
     if not message_uuids or not session.sdk_project_key or not session.sdk_session_id:
         return {}
 

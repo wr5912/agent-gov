@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNER_PATH = REPO_ROOT / "scripts/run_container_acceptance.py"
 HOOK_PATH = REPO_ROOT / ".codex/hooks/container_acceptance_guard.py"
 MAIN_FLOW_PATH = REPO_ROOT / "scripts/run_main_flow_tests.py"
+SPEECH_VERIFIER_PATH = REPO_ROOT / "scripts/verify_speech_summary_container.py"
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
@@ -33,6 +34,7 @@ RUNNER = _load_module("agentgov_container_acceptance", RUNNER_PATH)
 HOOK = _load_module("agentgov_container_acceptance_hook", HOOK_PATH)
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 MAIN_FLOW = _load_module("agentgov_run_main_flow_tests", MAIN_FLOW_PATH)
+SPEECH_VERIFIER = _load_module("agentgov_speech_summary_container", SPEECH_VERIFIER_PATH)
 
 
 def test_acceptance_profiles_are_exact_and_compose_parallelism_is_bounded(tmp_path: Path) -> None:
@@ -282,6 +284,7 @@ def test_runner_failure_does_not_echo_captured_secrets(monkeypatch: pytest.Monke
         "bash scripts/run_healthcheck_container_e2e.sh",
         "./scripts/run_healthcheck_container_e2e.sh",
         "node scripts/verify_openai_responses_container.mjs",
+        "python scripts/verify_speech_summary_container.py",
         "python -m pytest tests/test_live_runtime_acceptance.py",
     ),
 )
@@ -293,6 +296,7 @@ def test_pretool_guard_blocks_container_acceptance_bypasses(command: str) -> Non
     "command",
     (
         "make container-core-smoke",
+        "make container-speech-summary-test",
         "make test",
         "pytest tests/test_runtime.py",
         "pnpm --dir frontend run verify:asset-registry",
@@ -323,6 +327,7 @@ def test_make_routes_real_acceptance_through_refresh_and_keeps_main_full_serial(
         ("container-core-smoke", "core"),
         ("container-openapi-check", "core"),
         ("container-live-test", "core"),
+        ("container-speech-summary-test", "core"),
         ("container-health-e2e", "isolated-health"),
         ("langfuse-smoke", "langfuse"),
     ):
@@ -333,6 +338,9 @@ def test_make_routes_real_acceptance_through_refresh_and_keeps_main_full_serial(
     live_body = makefile.split("_container-live-test:", 1)[1].split("\n\n", 1)[0]
     assert "-e AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE" in live_body
     assert "-e AGENT_GOV_ACCEPTANCE_RUN_ID" in live_body
+    speech_body = makefile.split("_container-speech-summary-test:", 1)[1].split("\n\n", 1)[0]
+    assert "ENABLE_AGENT_RUNTIME_RAW_EVENTS" in speech_body
+    assert "scripts/verify_speech_summary_container.py" in speech_body
     assert "test: codex-guard test-backend" not in makefile
     test_body = makefile.split("test:\n", 1)[1].split("\n\n", 1)[0]
     assert test_body.index("codex-guard") < test_body.index("test-backend")
@@ -436,3 +444,16 @@ def test_live_pytest_requires_the_runner_freshness_marker() -> None:
     assert "AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE" in live_test
     assert "AGENT_GOV_ACCEPTANCE_RUN_ID" in live_test
     assert "make container-live-test 完成镜像重建和服务 recreate" in live_test
+
+
+def test_speech_summary_verifier_requires_the_public_container_target() -> None:
+    with pytest.raises(SPEECH_VERIFIER.AcceptanceError, match="container-speech-summary-test"):
+        SPEECH_VERIFIER._require_container_acceptance({})
+
+    SPEECH_VERIFIER._require_container_acceptance(
+        {
+            "AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE": "1",
+            "AGENT_GOV_ACCEPTANCE_RUN_ID": "run-current",
+            "AGENT_GOV_CONTAINER_ACCEPTANCE_PROFILE": "core",
+        }
+    )

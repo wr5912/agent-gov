@@ -6,6 +6,7 @@ from http import HTTPStatus
 from fastapi import FastAPI
 
 from app.runtime.runtime_raw_events import RAW_EVENT_RESPONSE_HEADER_DESCRIPTIONS
+from app.runtime.speech_summary import AgentGovSpeechSummaryEnvelope
 
 OpenApiObject = dict[str, object]
 OpenApiMapping = Mapping[str, object]
@@ -14,12 +15,14 @@ OpenApiMutableMapping = MutableMapping[str, object]
 HTTP_METHODS = frozenset({"get", "post", "put", "delete", "patch", "options", "head"})
 HTTP_ERROR_COMPONENT = "HttpErrorResponse"
 DOMAIN_ERROR_COMPONENT = "DomainErrorResponse"
+OPENAI_ERROR_COMPONENT = "OpenAIErrorResponse"
 VALIDATION_ERROR_COMPONENT = "HTTPValidationError"
 SECURITY_SCHEME_NAME = "HTTPBearer"
 CHAT_STREAM_PATH = "/api/chat/stream"
 CLAUDE_SDK_EVENTS_PATH = "/api/agent-runtime/sdk-events"
 RAW_EVENTS_PATH = "/api/debug/agent-runtime/raw-events"
 RESPONSES_PATH = "/v1/responses"
+CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 
 _HTTP_ERROR_SCHEMA: OpenApiObject = {
     "title": HTTP_ERROR_COMPONENT,
@@ -45,6 +48,25 @@ _DOMAIN_ERROR_SCHEMA: OpenApiObject = {
     "description": "AgentGov domain error envelope. Extra top-level fields carry route-specific diagnostics.",
 }
 
+_OPENAI_ERROR_SCHEMA: OpenApiObject = {
+    "title": OPENAI_ERROR_COMPONENT,
+    "type": "object",
+    "required": ["error"],
+    "additionalProperties": False,
+    "properties": {
+        "error": {
+            "type": "object",
+            "required": ["message", "type", "code"],
+            "additionalProperties": False,
+            "properties": {
+                "message": {"type": "string"},
+                "type": {"type": "string"},
+                "code": {"type": "string"},
+            },
+        }
+    },
+}
+
 _ERROR_DESCRIPTIONS = {
     400: "Business rule violation or malformed domain request.",
     401: "Invalid or missing Bearer API key.",
@@ -56,6 +78,7 @@ _ERROR_DESCRIPTIONS = {
     422: "Request validation error or route-level semantic validation error.",
     500: "AgentGov data integrity error returned through the HTTP error envelope.",
     501: "The host platform cannot provide byte-exact native Runtime capture.",
+    502: "The selected Agent runtime failed to produce a compatible response.",
     503: "Configured runtime or model/agent target is temporarily unavailable.",
 }
 
@@ -114,6 +137,8 @@ def apply_openapi_contract(schema: OpenApiMutableMapping) -> None:
     schemas = _mapping(components.setdefault("schemas", {}))
     schemas.setdefault(HTTP_ERROR_COMPONENT, _HTTP_ERROR_SCHEMA)
     schemas.setdefault(DOMAIN_ERROR_COMPONENT, _DOMAIN_ERROR_SCHEMA)
+    schemas.setdefault(OPENAI_ERROR_COMPONENT, _OPENAI_ERROR_SCHEMA)
+    _install_model_schema(schemas, AgentGovSpeechSummaryEnvelope)
 
     paths = _mapping(schema.get("paths", {}))
     for path, path_item in paths.items():
@@ -159,8 +184,8 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
         return {400, 404, 422, 503}
     if path == RAW_EVENTS_PATH:
         return {403, 404, 409, 413, 422, 501, 503}
-    if path == "/v1/chat/completions":
-        return {400, 404, 422, 503}
+    if path == CHAT_COMPLETIONS_PATH:
+        return {400, 404, 422, 502, 503}
     if path == RESPONSES_PATH:
         return {400, 404, 409, 422, 503}
     if path == "/v1/responses/{response_id}":
@@ -224,8 +249,9 @@ def operation_items(schema: OpenApiMapping) -> list[tuple[str, str, OpenApiMappi
 
 def _apply_operation_contract(path: str, method: str, operation: OpenApiMutableMapping) -> None:
     _fix_streaming_success_response(path, operation)
+    _document_sse_events(path, operation)
     for status_code in sorted(expected_error_statuses(path, method, operation)):
-        _add_error_response(operation, status_code)
+        _add_error_response(path, operation, status_code)
 
 
 def _fix_streaming_success_response(path: str, operation: OpenApiMutableMapping) -> None:
@@ -261,13 +287,16 @@ def _fix_streaming_success_response(path: str, operation: OpenApiMutableMapping)
         content.setdefault("text/event-stream", _sse_media_type("OpenAI Responses-style SSE events"))
 
 
-def _add_error_response(operation: OpenApiMutableMapping, status_code: int) -> None:
+def _add_error_response(path: str, operation: OpenApiMutableMapping, status_code: int) -> None:
     responses = _mapping(operation.setdefault("responses", {}))
     key = str(status_code)
     if status_code == 422 and key in responses:
         _extend_422_response(_mapping(responses[key]))
         return
-    component = HTTP_ERROR_COMPONENT if status_code in {401, 403, 413, 415, 500} else DOMAIN_ERROR_COMPONENT
+    if path == CHAT_COMPLETIONS_PATH and status_code == 502:
+        component = OPENAI_ERROR_COMPONENT
+    else:
+        component = HTTP_ERROR_COMPONENT if status_code in {401, 403, 413, 415, 500} else DOMAIN_ERROR_COMPONENT
     responses.setdefault(
         key,
         {
@@ -301,6 +330,43 @@ def _sse_media_type(description: str) -> OpenApiObject:
             }
         },
     }
+
+
+def _document_sse_events(path: str, operation: OpenApiMutableMapping) -> None:
+    speech = {
+        "event": "agentgov.speech_summary",
+        "schema": {"$ref": "#/components/schemas/AgentGovSpeechSummaryEnvelope"},
+    }
+    if path == CLAUDE_SDK_EVENTS_PATH:
+        operation["x-agentgov-sse-events"] = [
+            {
+                "event": "claude.sdk.*",
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "description": "Open event family following the pinned Claude Agent SDK dataclass.",
+                },
+            },
+            speech,
+        ]
+    elif path == CHAT_STREAM_PATH:
+        operation["x-agentgov-sse-events"] = [speech]
+    elif path == RESPONSES_PATH:
+        operation["x-agentgov-sse-events"] = [
+            {
+                **speech,
+                "condition": "control mode and stream=true and agentgov.with_speech_summary=true",
+            }
+        ]
+
+
+def _install_model_schema(schemas: OpenApiMutableMapping, model: type) -> None:
+    generated = model.model_json_schema(ref_template="#/components/schemas/{model}")
+    definitions = generated.pop("$defs", {})
+    if isinstance(definitions, Mapping):
+        for name, definition in definitions.items():
+            schemas.setdefault(name, definition)
+    schemas.setdefault(model.__name__, generated)
 
 
 def _mapping(value: object) -> OpenApiMutableMapping:

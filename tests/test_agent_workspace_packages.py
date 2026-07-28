@@ -50,12 +50,13 @@ def _import_new_agent(
     agent_id: str,
     name: str,
     package: bytes | None = None,
+    requires_web_hitl: bool = True,
 ):
     content = package or _workspace_package(
         {
             "CLAUDE.md": f"# {name}\n".encode(),
             ".mcp.json": b'{"mcpServers": {}}\n',
-            ".claude/settings.json": b'{"permissions":{"ask":["Bash(*)"]}}\n',
+            ".claude/settings.json": (b'{"permissions":{"ask":["Bash(*)"]}}\n' if requires_web_hitl else b'{"permissions":{"ask":[]}}\n'),
         },
         agent_id=agent_id,
     )

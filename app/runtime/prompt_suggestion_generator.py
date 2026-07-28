@@ -90,6 +90,7 @@ class PromptSuggestionGenerator:
                 logger.warning("event=prompt_suggestion.generate status=skipped reason=model_not_configured")
                 return []
             kwargs: dict[str, Any] = dict(self.provider_router.formatter_kwargs())
+            kwargs.setdefault("timeout", self.settings.prompt_suggestion_timeout_seconds)
             content = (
                 f"用户本轮输入:\n{user_message[:_MAX_ANSWER_CHARS]}\n\n"
                 f"助手本轮回答:\n{agent_answer[:_MAX_ANSWER_CHARS]}\n\n"

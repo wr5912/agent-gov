@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.claude_runtime import ClaudeRuntime
@@ -17,6 +18,8 @@ from app.runtime.schemas import (
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
+
+from .runtime_preflight import require_non_stream_hitl_free
 
 
 def create_openai_router(
@@ -34,8 +37,9 @@ def create_openai_router(
         response_model=OpenAIChatCompletionResponse,
         summary="Run a non-streaming OpenAI-compatible chat completion",
         description="Maps OpenAI-style messages into one Claude Agent prompt. OpenAI requests carry no agent_id; the target agent is operator-configured via /api/settings/openai-compat-agent (defaults to the main agent).",
+        deprecated=True,
     )
-    async def openai_chat_completions(req: OpenAIChatCompletionRequest) -> OpenAIChatCompletionResponse:
+    async def openai_chat_completions(req: OpenAIChatCompletionRequest) -> OpenAIChatCompletionResponse | JSONResponse:
         prompt_parts = []
         for msg in req.messages:
             prompt_parts.append(f"{msg.role}: {msg.content}")
@@ -54,15 +58,23 @@ def create_openai_router(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Configured OpenAI-compat agent is unavailable: {exc}. Reconfigure via /api/settings/openai-compat-agent.",
             ) from exc
+        require_non_stream_hitl_free(profile, surface="/v1/chat/completions")
         result = await runtime.run(chat_req, profile=profile)
+        if result.errors or not (result.answer or "").strip():
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={
+                    "error": {
+                        "message": "Agent runtime failed to produce a chat completion.",
+                        "type": "server_error",
+                        "code": "agent_runtime_error",
+                    }
+                },
+            )
         return OpenAIChatCompletionResponse(
             id=result.session_id,
             model=req.model or settings.agent_model,
-            choices=[
-                OpenAIChatCompletionChoice(
-                    message=OpenAIChatMessage(role="assistant", content=result.answer or "")
-                )
-            ],
+            choices=[OpenAIChatCompletionChoice(message=OpenAIChatMessage(role="assistant", content=result.answer or ""))],
             usage=result.usage,
         )
 

@@ -12,7 +12,7 @@ from .managed_claude_events import (
     sdk_message_to_json,
     stream_delta,
 )
-from .message_utils import extract_assistant_text_snapshot, extract_text, message_event_name
+from .message_utils import extract_assistant_text_snapshot, extract_text, is_top_level_message, message_event_name
 
 
 class ChatStreamProjector:
@@ -43,6 +43,8 @@ class ChatStreamProjector:
         message = event.message
         raw = sdk_message_to_json(message)
         event_name = message_event_name(message)
+        scope = "main" if is_top_level_message(message) else "subagent"
+        parent_tool_use_id = getattr(message, "parent_tool_use_id", None)
         delta = stream_delta(message)
         if delta is not None:
             delta_kind, text = delta
@@ -56,6 +58,8 @@ class ChatStreamProjector:
                         "event": projected_event,
                         "text": text,
                         "text_kind": "delta",
+                        "scope": scope,
+                        "parent_tool_use_id": parent_tool_use_id,
                         "raw": raw,
                     },
                 }
@@ -68,6 +72,8 @@ class ChatStreamProjector:
                         "event": "StreamEvent",
                         "text": "",
                         "text_kind": "transport",
+                        "scope": scope,
+                        "parent_tool_use_id": parent_tool_use_id,
                         "raw": raw,
                     },
                 }
@@ -83,6 +89,8 @@ class ChatStreamProjector:
                     "event": event_name,
                     "text": text,
                     "text_kind": text_kind,
+                    "scope": scope,
+                    "parent_tool_use_id": parent_tool_use_id,
                     "raw": {**raw, "event": event_name},
                 },
             }

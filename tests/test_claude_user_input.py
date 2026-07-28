@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 from app.routers.claude_user_input import create_claude_user_input_router
 from app.runtime.claude_user_input_schemas import ClaudeUserInputDecisionRequest
@@ -611,5 +612,62 @@ def test_submit_decision_rejects_duplicate_submit(tmp_path):
                 decision=_decision(request["decision_token"]),
                 decided_by="tester",
             )
+
+    asyncio.run(scenario())
+
+
+def test_waiting_token_is_exposed_only_to_exact_authenticated_run_poll(
+    tmp_path,
+) -> None:
+    async def scenario():
+        service = _service(tmp_path)
+        app = FastAPI()
+        app.include_router(
+            create_claude_user_input_router(
+                service=service,
+                require_api_key=lambda: None,
+            )
+        )
+        _event_queue, task, request = await _start_wait(
+            service,
+            run_id="run-raw",
+        )
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            exact = await client.get(
+                "/api/claude-user-input-requests",
+                params={"run_id": "run-raw", "status": "waiting"},
+            )
+            run_without_status = await client.get(
+                "/api/claude-user-input-requests",
+                params={"run_id": "run-raw"},
+            )
+            wide_waiting = await client.get(
+                "/api/claude-user-input-requests",
+                params={"status": "waiting"},
+            )
+
+            exact_request = exact.json()["requests"][0]
+            assert exact_request["decision_token"] == request["decision_token"]
+            assert "decision_token" not in run_without_status.json()["requests"][0]
+            assert "decision_token" not in wide_waiting.json()["requests"][0]
+
+            service.submit_decision(
+                request["request_id"],
+                decision=_decision(
+                    request["decision_token"],
+                    action="deny",
+                ),
+                decided_by="tester",
+            )
+            assert (await task).action == "deny"
+            terminal = await client.get(
+                "/api/claude-user-input-requests",
+                params={"run_id": "run-raw"},
+            )
+            assert "decision_token" not in terminal.json()["requests"][0]
 
     asyncio.run(scenario())

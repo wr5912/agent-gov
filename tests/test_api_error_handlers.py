@@ -210,7 +210,12 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
 
 
 def test_chat_during_agent_version_maintenance_returns_structured_503(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path, extra_agent_ids=(ORDINARY_TEST_AGENT_ID,))
+    module = _load_app(
+        monkeypatch,
+        tmp_path,
+        extra_agent_ids=(ORDINARY_TEST_AGENT_ID,),
+        requires_web_hitl=False,
+    )
     # 维护态由 main.py 装配的 provider 判定，所有注册业务 Agent 走同一条校验路径。
     monkeypatch.setattr(module.runtime, "agent_version_maintenance_provider", lambda agent_id: True)
 

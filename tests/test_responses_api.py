@@ -10,9 +10,18 @@ from app.runtime.schemas import ChatResponse
 from app.runtime.session_store import LocalSession
 from fastapi.testclient import TestClient
 
-from app_test_utils import load_test_app as _load_app
+from app_test_utils import load_test_app as _base_load_app
 from business_agent_test_utils import LEGACY_MAIN_AGENT_ID
 from test_agent_workspace_packages import _import_new_agent
+
+
+def _load_app(monkeypatch, tmp_path, **kwargs):
+    return _base_load_app(
+        monkeypatch,
+        tmp_path,
+        requires_web_hitl=False,
+        **kwargs,
+    )
 
 
 def _register_biz(
@@ -20,7 +29,15 @@ def _register_biz(
     agent_id: str = "soc-ops",
     name: str = "客服助手",
 ) -> None:
-    assert _import_new_agent(client, agent_id=agent_id, name=name).status_code == 200
+    assert (
+        _import_new_agent(
+            client,
+            agent_id=agent_id,
+            name=name,
+            requires_web_hitl=False,
+        ).status_code
+        == 200
+    )
 
 
 def _fake_capturing_run(captured: dict):
@@ -127,9 +144,7 @@ def test_control_response_projects_reasoning_before_message_with_stable_ids(
         "rs_run-reasoning",
         "msg_run-reasoning",
     ]
-    assert body["output"][0]["content"] == [
-        {"type": "reasoning_text", "text": "完整推理"}
-    ]
+    assert body["output"][0]["content"] == [{"type": "reasoning_text", "text": "完整推理"}]
 
 
 def test_control_input_items_store_false_and_reserved_metadata(monkeypatch, tmp_path: Path) -> None:
@@ -142,8 +157,15 @@ def test_control_input_items_store_false_and_reserved_metadata(monkeypatch, tmp_
             "/v1/responses",
             json={
                 "input": [
-                    {"role": "user", "content": [{"type": "input_text", "text": "第一段"}, {"text": "第二段"}]},
-                    {"text": "第三段"},
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "第一段"},
+                            {"type": "input_text", "text": "第二段"},
+                        ],
+                    },
+                    {"type": "message", "role": "user", "content": "第三段"},
                 ],
                 "store": False,
                 "metadata": {"source": "playground", "__agentgov_store__": True},
@@ -154,7 +176,11 @@ def test_control_input_items_store_false_and_reserved_metadata(monkeypatch, tmp_
         body = resp.json()
 
     assert captured["req"].message == "第一段\n第二段\n第三段"
-    assert captured["req"].metadata == {"source": "playground", "__agentgov_store__": False}
+    assert captured["req"].metadata == {
+        "source": "playground",
+        "__agentgov_response_mode__": "control",
+        "__agentgov_store__": False,
+    }
     assert body["metadata"] == {"source": "playground"}
 
 

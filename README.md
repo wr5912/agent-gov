@@ -101,7 +101,7 @@ make container-core-smoke
 
 `GET /health/live` 只表示 API 进程存活，不访问 Git、CLI、数据库或外部模型服务，也是 Compose 对 API 的健康检查；`GET /health/ready` 只读取后台 provider 探测缓存，模型不可用时返回 `503` 和明确诊断；`GET /health` 返回控制面状态及同一份 provider 摘要。`make up` 只要求控制面 liveness，模型 provider 降级不会再被 Compose 折叠成 `dependency claude-agent-api failed to start`。需要诊断时运行 `make compose-diagnose`，输出会明确区分“API liveness 失败”和“API 已存活但外部模型 provider 探测失败”，并把 Compose dependency 文案标记为次级症状，而不是镜像启动失败；需要把 provider readiness 作为验收门时运行 `make smoke`。`make container-core-smoke` 在同一轮刷新后并行执行 readiness、UI 首页和运行容器 OpenAPI 三项只读检查。
 
-所有依赖真实 Docker Compose 运行态的验收只通过公开的 `make smoke`、`make container-core-smoke`、`make ui-smoke`、`make ui-feedback-smoke`、`make ui-openai-responses-smoke`、`make container-openapi-check`、`make container-live-test`、`make container-health-e2e` 或 `make langfuse-smoke` 入口运行。每次入口都会在统一锁内基于当前工作树（包括相关未提交内容）调用 Compose build，允许复用安全的 Docker build cache，但不执行 `git pull`/`git fetch`；随后加载 `COMPOSE_ENV_FILE` 选择的完整配置，`--force-recreate` 本轮服务，并核对镜像、容器和工作树 freshness 后才开始验收。core/Langfuse 入口不会执行 `down -v`，因此保留 `${HOME}/volume-agent-gov`；纯宿主机 pytest、`make test`、Vitest、mock 浏览器检查和静态检查不触发容器刷新。多个 Compose/live/真实浏览器入口保持串行，不要自行并发；可并行的容器只读检查已收口到 `make container-core-smoke`。
+所有依赖真实 Docker Compose 运行态的验收只通过公开的 `make smoke`、`make container-core-smoke`、`make ui-smoke`、`make ui-feedback-smoke`、`make ui-openai-responses-smoke`、`make container-openapi-check`、`make container-live-test`、`make container-speech-summary-test`、`make container-health-e2e` 或 `make langfuse-smoke` 入口运行。每次入口都会在统一锁内基于当前工作树（包括相关未提交内容）调用 Compose build，允许复用安全的 Docker build cache，但不执行 `git pull`/`git fetch`；随后加载 `COMPOSE_ENV_FILE` 选择的完整配置，`--force-recreate` 本轮服务，并核对镜像、容器和工作树 freshness 后才开始验收。core/Langfuse 入口不会执行 `down -v`，因此保留 `${HOME}/volume-agent-gov`；纯宿主机 pytest、`make test`、Vitest、mock 浏览器检查和静态检查不触发容器刷新。多个 Compose/live/真实浏览器入口保持串行，不要自行并发；可并行的容器只读检查已收口到 `make container-core-smoke`。
 
 外部 vLLM 探测超时的确定性容器回归使用真实 Compose API/UI/LiteLLM 容器和多视口 Playwright：
 
@@ -354,7 +354,12 @@ OTEL_LOG_RAW_API_BODIES=1
 如果你在 `docker/.env` 中修改了 `HOST_PORT`，把上面的 `58080` 替换成对应端口。`/health` 响应也会返回这些文档 URL。
 当 `API_KEY` 非空时，Swagger UI 里先点击 `Authorize`，输入 `docker/.env` 中的 `API_KEY`；curl 请求则添加 `Authorization: Bearer $API_KEY`。
 
-## 聊天 API
+## 聊天 API（兼容入口）
+
+`POST /api/chat` 与 `POST /api/chat/stream` 当前继续可用，但已在 OpenAPI 标记
+`deprecated: true`，不再作为新集成入口，也没有在本阶段设置 sunset 日期。新集成使用
+`POST /v1/responses`；第一方 Playground live turn 使用
+`POST /api/agent-runtime/sdk-events`。
 
 ```bash
 export API_BASE=http://localhost:58080
@@ -387,7 +392,11 @@ curl -X POST "$API_BASE/api/chat" \
 curl -N -X POST "$API_BASE/api/chat/stream" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
-  -d '{"message":"你好，先介绍你的能力", "agent_id":"your-business-agent"}'
+  -d '{
+    "message": "你好，先介绍你的能力",
+    "agent_id": "your-business-agent",
+    "with_speech_summary": true
+  }'
 ```
 
 该兼容入口默认 `event_mode=raw`，继续输出旧的 **AgentGov SSE + 已解析 SDK message 快照**；
@@ -399,6 +408,9 @@ curl -N -X POST "$API_BASE/api/chat/stream" \
 使用 `GET /api/agent-runs/{run_id}/trace` 从已持久化 AgentRun 重放同一 Trace。
 Chat 的投影器独立于 Responses；`StreamEvent:thinking_delta` 会携带真实 thinking 增量，
 `SystemMessage:thinking_tokens` 的 `text_kind=metric` 仅表示 token 指标，不冒充 thinking 文本。
+`with_speech_summary` 默认 `false`；显式开启后，`raw` 与 `semantic` 模式都以
+`event: agentgov.speech_summary` 输出同一个 canonical 信封，不把摘要包装进旧 `message`
+事件。该文本只用于可选 TTS 播报，不含音频、不持久化，也不计入 Claude SDK usage/cost。
 
 Playground 的实时对话不经 Chat 或 Responses 二次投影，而直接使用正式 SDK-native 入口：
 
@@ -406,16 +418,25 @@ Playground 的实时对话不经 Chat 或 Responses 二次投影，而直接使�
 curl -N -X POST "$API_BASE/api/agent-runtime/sdk-events" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
-  -d '{"message":"你好，展示一次原生 SDK 流", "agent_id":"your-business-agent"}'
+  -d '{
+    "message": "你好，展示一次原生 SDK 流",
+    "agent_id": "your-business-agent",
+    "with_speech_summary": true
+  }'
 ```
 
 每个官方 `claude-agent-sdk` yield 按原顺序恰好对应一帧
 `event: claude.sdk.<ClassName>`；`data` 只做递归 dataclass → JSON 的机械序列化，
 不筛选、不重命名、不合并，也不把未知值静默 `str()`。`StreamEvent.event`、thinking
 signature、tool input/output 和未来未知 SDK message class 均保留。AgentGov 自己拥有的
-session、HITL、result、error、done 与 Prompt Suggestion 使用独立的 `agentgov.*` 事件；
+session、HITL、result、error、done、Prompt Suggestion 与可选 Speech Summary 使用独立的
+`agentgov.*` 事件；
 heartbeat 是 SSE comment。SDK `ResultMessage` 只表示 SDK 终态，
-`agentgov.result` / `agentgov.done` 表示 managed turn 已完成持久化和收尾。
+`agentgov.result` 只投影该进度事实；Runtime 随后仍会排空 SDK transcript mirror 和派生任务。
+只有 `agentgov.done` 才表示 managed turn 已完成持久化和收尾。
+Speech Summary 的 `source_kind` 只会是顶层 `thinking` 或
+`assistant_response`；`ResultMessage` 不作为一次模型响应的摘要来源。派生事件会在终态前
+有界排空，`agentgov.done` 始终是最后一个业务事件。
 该契约跟随仓库锁定的 `claude-agent-sdk` 版本，不是 UI shape，也不是 Claude CLI
 stdout 的 byte-exact 副本。
 
@@ -450,13 +471,33 @@ Agent profile、SessionStore、session lease、权限/HITL、hooks、MCP、Langf
 `AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES` 控制，默认 64 MiB。当前 driver 是 Claude Code；
 即使其模型出口接到 Qwen/Kimi，`X-AgentGov-Runtime-Kind` 仍是 `claude-code`。未来直接接入
 Qwen Code/Kimi CLI 时复用同一路径并新增 driver，不能把模型 provider 名冒充 Runtime。
-该响应也不是 Anthropic-compatible provider HTTP wire body。
+该响应也不是 Anthropic-compatible provider HTTP wire body。raw 请求模型不包含
+`with_speech_summary`；显式传入会返回 `422`，响应体和响应头都不会混入 Speech Summary。
 
-流式业务对话会尽力生成下一轮建议（每轮**至多 N 条**候选，默认 3，由 `BACKEND_PROMPT_SUGGESTION_COUNT` 配置；模型给不满就少给，不凑数）。`AppSettings` 默认关闭后端派生这一受控特例，官方 `docker/.env.example` 与 `docker/.env.local-debug.example` 通过 `ENABLE_BACKEND_PROMPT_SUGGESTION=true` 显式开启；关闭时回退 Claude Code 原生 `--prompt-suggestions`，但该路径可能受上游 feature gate 或 cache 状态抑制。启动日志的 `prompt_suggestion_source` 会显示当前使用 `backend` 还是 `claude_native`。`/api/chat/stream` 以 `event: prompt_suggestion` 输出 `{suggestion, suggestions, run_id, session_id}`；SDK-native 入口以 `event: agentgov.prompt_suggestion` 输出同一 data；`/v1/responses` 仅在 control 模式输出统一信封，`payload` 为 `{suggestion, suggestions, session_id}`，strict 模式不输出 AgentGov 扩展事件。`suggestions` 是完整候选列表；`suggestion` 恒等于 `suggestions[0]`，为向后兼容保留，只读它的客户端无需改动。整批候选在**一帧**内下发。建议生成失败或模型明确返回空时不影响正式回答，也不进入消息历史、SQLite run、response retrieve 或 SDK transcript；失败会记录不含异常正文的结构化 warning。
+流式业务对话会尽力生成下一轮建议（每轮**至多 N 条**候选，默认 3，由 `BACKEND_PROMPT_SUGGESTION_COUNT` 配置；模型给不满就少给，不凑数）。`AppSettings` 默认关闭后端派生这一受控特例，官方 `docker/.env.example` 与 `docker/.env.local-debug.example` 通过 `ENABLE_BACKEND_PROMPT_SUGGESTION=true` 显式开启；关闭时回退 Claude Code 原生 `--prompt-suggestions`，但该路径可能受上游 feature gate 或 cache 状态抑制。启动日志的 `prompt_suggestion_source` 会显示当前使用 `backend` 还是 `claude_native`。`/api/chat/stream` 以 `event: prompt_suggestion` 输出 `{suggestion, suggestions, run_id, session_id}`；SDK-native 入口以 `event: agentgov.prompt_suggestion` 输出同一 data；`/v1/responses` 仅在 control 模式输出统一信封，`payload` 为 `{suggestion, suggestions, session_id}`，strict 模式不输出 AgentGov 扩展事件。`suggestions` 是完整候选列表；`suggestion` 恒等于 `suggestions[0]`，为向后兼容保留，只读它的客户端无需改动。整批候选在**一帧**内下发。建议在终态前进行有界排空；超时、失败或模型明确返回空时静默跳过，不改变正式回答，也不进入消息历史、SQLite run、response retrieve 或 SDK transcript。
+
+### Responses 与 Speech Summary
+
+新集成使用 `/v1/responses`。Speech Summary 只允许在 control mode、`stream=true` 时通过
+`agentgov.with_speech_summary=true` 开启；非流式开启返回 `422`，strict mode 不接受也不输出
+AgentGov Speech 事件。control 流可在标准终态前输出
+`event: agentgov.speech_summary`，随后完成其余 control 收口；`response.completed` 或
+`response.failed` 恰好一次且始终是最后一个业务事件。
+
+摘要边界由 `SPEECH_SUMMARY_BOUNDARIES` 控制，可选择顶层 ThinkingBlock 的原生
+`content_block_stop` 与完整顶层 AssistantMessage。默认超时/终态排空为 15/5 秒；只处理主
+Agent，工具、子 Agent、空内容和纯工具调用消息会跳过。失败静默丢弃，不发送
+`agentgov.error`。
+
+真实容器专项验收使用 `make container-speech-summary-test`。该入口要求
+`COMPOSE_ENV_FILE` 选择的一份完整 Compose env 已显式设置
+`ENABLE_AGENT_RUNTIME_RAW_EVENTS=true`，随后会 fresh-build/recreate 当前工作树并验证 SDK
+SSE、Chat Stream raw/semantic、Responses control/strict、三个兼容接口、raw byte-exact 与
+HITL 全链路；临时 Agent 和出口配置会在结束时清理。默认部署仍保持 raw 关闭。
 
 ## OpenAI Compatible 接口
 
-项目额外提供了一个最小的非流式 OpenAI Compatible shim：
+项目额外保留一个最小的非流式 OpenAI Compatible shim：
 
 ```bash
 curl -X POST "$API_BASE/v1/chat/completions" \
@@ -470,7 +511,12 @@ curl -X POST "$API_BASE/v1/chat/completions" \
   }'
 ```
 
-注意：这是兼容接入用的轻量 shim，不是完整 OpenAI API 实现。新集成使用 `/v1/responses` 的 `agentgov.agent_id` 显式选择业务 Agent；原生 `/api/chat*` 同样要求 `agent_id`。`agent`、`skills`、`skills_mode`、`allowed_tools`、`disallowed_tools` 和 `permission_mode` 已从 Chat 请求契约删除，传入会返回 `422`。工具权限、MCP、skills、subagents 和 hooks 以业务 Agent workspace 的 Claude Code 项目配置为准。
+注意：这是已标记 deprecated 的兼容 shim，不是完整 OpenAI API 实现，本阶段继续保留且没有
+sunset 日期。新集成使用 `/v1/responses` 的 `agentgov.agent_id` 显式选择业务 Agent；原生
+`/api/chat*` 同样要求 `agent_id`。`agent`、`skills`、`skills_mode`、`allowed_tools`、
+`disallowed_tools`、`permission_mode` 和 Speech Summary 扩展均不属于该请求契约，传入会返回
+`422`。工具权限、MCP、skills、subagents 和 hooks 以业务 Agent workspace 的 Claude Code
+项目配置为准。
 
 ## 管理 API
 

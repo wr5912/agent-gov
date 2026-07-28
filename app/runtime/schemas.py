@@ -1,6 +1,6 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.types import JsonValue
 
 from app.runtime.json_types import JsonObject
@@ -37,6 +37,13 @@ class ChatRequest(BaseModel):
     model: Optional[str] = Field(default=None, description="Per-request model override. Defaults to AGENT_MODEL.")
     system_append: Optional[str] = Field(default=None, description="Extra instruction appended to the Claude Code preset prompt.")
     metadata: JsonObject = Field(default_factory=dict)
+
+    @field_validator("message")
+    @classmethod
+    def _non_blank_message(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("message must contain non-whitespace text")
+        return value
 
 
 class ChatResponse(BaseModel):
@@ -504,16 +511,34 @@ class EvidencePackageFileResponse(BaseModel):
 
 
 class OpenAIChatMessage(BaseModel):
-    role: str
-    content: str
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["developer", "system", "user", "assistant"]
+    content: str = Field(min_length=1)
+
+    @field_validator("content")
+    @classmethod
+    def _non_blank_content(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("chat message content must contain non-whitespace text")
+        return value
 
 
 class OpenAIChatCompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     model: Optional[str] = Field(default=None, description="Model override. Defaults to AGENT_MODEL.")
-    messages: list[OpenAIChatMessage] = Field(..., description="OpenAI-compatible chat messages.")
-    stream: bool = Field(default=False, description="Reserved for compatibility. This shim currently returns non-streaming responses.")
-    max_turns: Optional[int] = Field(default=None, description="Claude Agent turn cap for this request.")
+    messages: list[OpenAIChatMessage] = Field(min_length=1, description="OpenAI-compatible text chat messages.")
+    stream: bool = Field(default=False, description="This compatibility endpoint is non-streaming; true is rejected with 422.")
+    max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Claude Agent turn cap for this request.")
     metadata: JsonObject = Field(default_factory=dict)
+
+    @field_validator("stream")
+    @classmethod
+    def _non_stream_only(cls, value: bool) -> bool:
+        if value:
+            raise ValueError("/v1/chat/completions does not support stream=true; use /v1/responses")
+        return value
 
 
 class OpenAIChatCompletionChoice(BaseModel):

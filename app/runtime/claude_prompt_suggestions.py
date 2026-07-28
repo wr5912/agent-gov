@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterable, AsyncIterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -24,11 +26,26 @@ from app.runtime.json_types import JsonObject
 _PROMPT_SUGGESTIONS_FLAG = "prompt-suggestions"
 _CLI_HELP_TIMEOUT_SECONDS = 10
 _TRAILING_TIMEOUT_SECONDS = 3.0
+_TRAILING_TIMEOUT_CONTEXT: ContextVar[float] = ContextVar(
+    "prompt_suggestion_trailing_timeout_seconds",
+    default=_TRAILING_TIMEOUT_SECONDS,
+)
 _CLI_SUPPORT_CACHE: dict[tuple[str, int, int], bool] = {}
 
 logger = logging.getLogger(__name__)
 
 PromptInput = str | AsyncIterable[JsonObject]
+
+
+@contextmanager
+def prompt_suggestion_trailing_timeout(seconds: float):
+    """Bind the per-run native suggestion drain without changing SDK options."""
+
+    token = _TRAILING_TIMEOUT_CONTEXT.set(max(0.0, seconds))
+    try:
+        yield
+    finally:
+        _TRAILING_TIMEOUT_CONTEXT.reset(token)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,9 +129,10 @@ async def _prompt_suggestions_supported(options: ClaudeAgentOptions) -> bool:
 async def _receive_messages_with_trailing_suggestion(
     client: ClaudeSDKClient,
     *,
-    trailing_timeout_seconds: float = _TRAILING_TIMEOUT_SECONDS,
+    trailing_timeout_seconds: float | None = None,
 ) -> AsyncIterator[Message | PromptSuggestionMessage]:
     """读取正式结果，并为可能晚于 Result 的建议保留有限尾随窗口。"""
+    trailing_timeout = _TRAILING_TIMEOUT_CONTEXT.get() if trailing_timeout_seconds is None else max(0.0, trailing_timeout_seconds)
     raw_query = client._query
     if raw_query is None:
         raise RuntimeError("Claude SDK client connected without an internal query stream")
@@ -147,7 +165,7 @@ async def _receive_messages_with_trailing_suggestion(
                     yield message
                     if isinstance(message, ResultMessage):
                         result_seen = True
-                        trailing_deadline = asyncio.get_running_loop().time() + trailing_timeout_seconds
+                        trailing_deadline = asyncio.get_running_loop().time() + trailing_timeout
 
             if result_seen and suggestion_seen:
                 return

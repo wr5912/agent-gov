@@ -31,6 +31,8 @@ from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 
+from .runtime_preflight import require_non_stream_hitl_free, require_stream_hitl_available
+
 
 class _RunPlan(NamedTuple):
     chat_req: ChatRequest
@@ -39,6 +41,7 @@ class _RunPlan(NamedTuple):
     control: bool
     sdk_raw: bool
     include_trace: bool
+    with_speech_summary: bool
 
 
 def _resolve_session_id(
@@ -113,7 +116,7 @@ def _resolve_run_target(
         agent_id = (req.agentgov.agent_id or "").strip()
         if not agent_id:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="agentgov.agent_id is required in control mode (use a registered business agent)",
             )
         profile = resolve_business_profile(settings, agent_registry_store, agent_id)
@@ -121,7 +124,7 @@ def _resolve_run_target(
 
     if req.instructions is not None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 "instructions is not supported on the strict /v1/responses surface: AgentGov instructions is "
                 "append-only (Claude Code preset + workspace CLAUDE.md single source of truth), not OpenAI "
@@ -169,7 +172,27 @@ def _prepare_run(
     )
     sdk_raw = bool(control and req.agentgov and req.agentgov.debug and req.agentgov.debug.sdk_raw)
     include_trace = bool(control and req.agentgov and req.agentgov.include_trace)
-    return _RunPlan(chat_req, profile, effective_agent_id, control, sdk_raw, include_trace)
+    with_speech_summary = bool(control and req.agentgov and req.agentgov.with_speech_summary)
+    if with_speech_summary and not req.stream:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="agentgov.with_speech_summary=true requires stream=true",
+        )
+    if not control:
+        require_non_stream_hitl_free(profile, surface="strict /v1/responses")
+    elif req.stream:
+        require_stream_hitl_available(profile, settings, surface="control /v1/responses")
+    else:
+        require_non_stream_hitl_free(profile, surface="control /v1/responses")
+    return _RunPlan(
+        chat_req,
+        profile,
+        effective_agent_id,
+        control,
+        sdk_raw,
+        include_trace,
+        with_speech_summary,
+    )
 
 
 async def _create_response_impl(
@@ -190,7 +213,11 @@ async def _create_response_impl(
         session_store=runtime.session_store,
     )
     if req.stream:
-        source = runtime.stream_events(plan.chat_req, profile=plan.profile)
+        source = runtime.stream_events(
+            plan.chat_req,
+            profile=plan.profile,
+            with_speech_summary=plan.with_speech_summary,
+        )
         return StreamingResponse(
             iter_responses_sse(
                 source,
@@ -201,6 +228,10 @@ async def _create_response_impl(
                 include_trace=plan.include_trace,
             ),
             media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+            },
         )
     result = await runtime.run(plan.chat_req, profile=plan.profile)
     return response_from_chat_response(
@@ -209,6 +240,7 @@ async def _create_response_impl(
         agent_id=plan.effective_agent_id,
         metadata=public_metadata(req.metadata),
         created_at=int(time.time()),
+        include_agentgov=plan.control,
     )
 
 

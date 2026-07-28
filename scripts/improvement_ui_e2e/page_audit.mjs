@@ -15,6 +15,15 @@ function isExpectedHttpError(item, expectedHttpErrors) {
   ));
 }
 
+export function isExpectedRequestCancellation(item) {
+  if (item.method !== "GET" || !/ERR_ABORTED|NS_BINDING_ABORTED/.test(item.error)) return false;
+  try {
+    return new URL(item.url).pathname.endsWith("/presentation");
+  } catch {
+    return false;
+  }
+}
+
 export function attachDiagnostics(page, apiBase, uiBase = "") {
   const state = { consoleErrors: [], pageErrors: [], requestFailures: [], httpErrors: [], requests: [] };
   const apiOrigin = new URL(apiBase).origin;
@@ -74,7 +83,7 @@ export function unexpectedDiagnostics(state, expectedHttpErrors = []) {
   return {
     consoleErrors: unexpectedConsole,
     pageErrors: state.pageErrors,
-    requestFailures: state.requestFailures,
+    requestFailures: state.requestFailures.filter((item) => !isExpectedRequestCancellation(item)),
     httpErrors: unexpectedHttp,
     missingExpectedHttpErrors: missingExpected,
   };

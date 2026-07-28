@@ -19,6 +19,7 @@ from app.runtime.openai_responses_schemas import (
     ResponseOutputText,
     ResponseReasoningItem,
     ResponseReasoningText,
+    ResponsesInputMessage,
     ResponsesRequest,
     ResponseStatus,
 )
@@ -31,6 +32,7 @@ _RESPONSE_PREFIX = "resp_"
 # store=false 时打上，retrieve 据此对公开 GET 返回 404（内部审计仍保留 run）。
 _RESERVED_PREFIX = "__agentgov"
 STORE_MARKER_KEY = "__agentgov_store__"
+RESPONSE_MODE_MARKER_KEY = "__agentgov_response_mode__"
 
 
 def public_metadata(metadata: object) -> JsonObject:
@@ -75,27 +77,14 @@ def run_id_from_response(response_id: Optional[str]) -> Optional[str]:
     return response_id
 
 
-def extract_input_text(value: object) -> str:
+def extract_input_text(value: str | list[ResponsesInputMessage]) -> str:
     """把 Responses ``input``（字符串或 items 数组）取成本轮 Claude Code prompt 文本。"""
     if isinstance(value, str):
         return value
     parts: list[str] = []
-    if isinstance(value, list):
-        for item in value:
-            if not isinstance(item, dict):
-                continue
-            role = item.get("role")
-            if isinstance(role, str) and role not in ("user", "input"):
-                continue  # 跳过 assistant/system/developer 历史项，不把非用户文本注入本轮 user prompt
-            content = item.get("content")
-            if isinstance(content, str):
-                parts.append(content)
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and isinstance(block.get("text"), str):
-                        parts.append(block["text"])
-            elif isinstance(item.get("text"), str):
-                parts.append(item["text"])
+    for item in value:
+        if item.role == "user":
+            parts.append(item.text_content())
     return "\n".join(part for part in parts if part)
 
 
@@ -112,6 +101,7 @@ def build_chat_request(
     ext = req.agentgov
     # 先剥掉客户端可能塞进来的保留 backend key（防伪造 store 标记），再由服务端按 store 打标。
     metadata = public_metadata(req.metadata)
+    metadata[RESPONSE_MODE_MARKER_KEY] = "control" if ext is not None else "strict"
     if not req.store:
         metadata[STORE_MARKER_KEY] = False
     return ChatRequest(
@@ -179,6 +169,8 @@ def extract_reasoning_from_messages(messages: object) -> str:
         event = message.get("event")
         if not isinstance(event, str) or not event.startswith("AssistantMessage"):
             continue
+        if message.get("parent_tool_use_id") is not None:
+            continue
         content = message.get("content")
         if not isinstance(content, list):
             continue
@@ -222,19 +214,13 @@ def response_from_chat_response(
     agent_id: Optional[str],
     metadata: JsonObject,
     created_at: Optional[int] = None,
+    include_agentgov: bool = True,
 ) -> ResponseObject:
     """live 非流式：``runtime.run`` 的 ``ChatResponse`` -> ``ResponseObject``。"""
     answer = chat.answer or ""
     reasoning = extract_reasoning_from_messages(chat.messages)
-    return ResponseObject(
-        id=response_id_from_run(chat.run_id) or chat.run_id,
-        created_at=created_at,
-        status=derive_status(chat.errors, chat.stop_reason),
-        model=model,
-        output=response_output_items(run_id=chat.run_id, text=answer, reasoning=reasoning),
-        usage=map_usage(chat.usage),
-        metadata=public_metadata(metadata),
-        agentgov=AgentGovResponseExtension(
+    extension = (
+        AgentGovResponseExtension(
             run_id=chat.run_id,
             conversation_id=conversation_id_from_session(chat.session_id),
             session_id=chat.session_id,
@@ -247,7 +233,19 @@ def response_from_chat_response(
             total_cost_usd=chat.total_cost_usd,
             stop_reason=chat.stop_reason,
             errors=list(chat.errors or []),
-        ),
+        )
+        if include_agentgov
+        else None
+    )
+    return ResponseObject(
+        id=response_id_from_run(chat.run_id) or chat.run_id,
+        created_at=created_at,
+        status=derive_status(chat.errors, chat.stop_reason),
+        model=model,
+        output=response_output_items(run_id=chat.run_id, text=answer, reasoning=reasoning),
+        usage=map_usage(chat.usage),
+        metadata=public_metadata(metadata),
+        agentgov=extension,
     )
 
 
@@ -270,15 +268,12 @@ def response_from_run_payload(run: JsonObject) -> ResponseObject:
     usage = run.get("usage")
     cost = run.get("total_cost_usd")
     reasoning = extract_reasoning_from_messages(messages)
-    return ResponseObject(
-        id=response_id_from_run(run_id) or run_id,
-        created_at=iso_to_epoch(run.get("created_at")),
-        status=derive_status(errors, run.get("stop_reason"), run.get("turn_status")),
-        model=_str_or_none(run.get("model")),
-        output=response_output_items(run_id=run_id, text=answer or None, reasoning=reasoning or None),
-        usage=map_usage(usage),
-        metadata=public_metadata(run.get("metadata")),
-        agentgov=AgentGovResponseExtension(
+    metadata = run.get("metadata")
+    strict_mode = isinstance(metadata, dict) and metadata.get(RESPONSE_MODE_MARKER_KEY) == "strict"
+    extension = (
+        None
+        if strict_mode
+        else AgentGovResponseExtension(
             run_id=run_id or None,
             conversation_id=conversation_id_from_session(_str_or_none(run.get("session_id"))),
             session_id=_str_or_none(run.get("session_id")),
@@ -292,5 +287,15 @@ def response_from_run_payload(run: JsonObject) -> ResponseObject:
             total_cost_usd=cost if isinstance(cost, (int, float)) else None,
             stop_reason=_str_or_none(run.get("stop_reason")),
             errors=list(errors) if isinstance(errors, list) else [],
-        ),
+        )
+    )
+    return ResponseObject(
+        id=response_id_from_run(run_id) or run_id,
+        created_at=iso_to_epoch(run.get("created_at")),
+        status=derive_status(errors, run.get("stop_reason"), run.get("turn_status")),
+        model=_str_or_none(run.get("model")),
+        output=response_output_items(run_id=run_id, text=answer or None, reasoning=reasoning or None),
+        usage=map_usage(usage),
+        metadata=public_metadata(run.get("metadata")),
+        agentgov=extension,
     )

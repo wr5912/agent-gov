@@ -188,13 +188,13 @@ def test_interactive_trailing_timeout_does_not_fail_completed_result() -> None:
     client._query = BlockingAfterResultQuery()
 
     async def collect():
-        return [
-            message
-            async for message in prompt_suggestions._receive_messages_with_trailing_suggestion(
-                client,
-                trailing_timeout_seconds=0.01,
-            )
-        ]
+        with prompt_suggestions.prompt_suggestion_trailing_timeout(0.01):
+            return [
+                message
+                async for message in prompt_suggestions._receive_messages_with_trailing_suggestion(
+                    client,
+                )
+            ]
 
     messages = asyncio.run(asyncio.wait_for(collect(), timeout=1))
 
@@ -327,11 +327,8 @@ def test_runtime_emits_backend_owned_suggestion_without_persisting_it(tmp_path, 
         "session_id": "api-session",
     }
     assert events.index(suggestion) > events.index(result)
-    # 契约已变更：done 不再是最后一帧。答案完成即收尾，建议作为**迟到帧**跟在 done 之后
-    # ——否则交互模式下没有建议时，每一轮都要为它白等满 3 秒尾随窗口。
-    # 迟到帧仍会送达：Responses 投影层把 prompt_suggestion 豁免于 done 守卫，
-    # 前端也按 session 存建议，与 run/流生命周期解耦。
-    assert events.index(suggestion) > events.index(next(event for event in events if event["event"] == "done"))
+    # 派生事件在终态前有界排空；done 恢复为最后一个业务帧，客户端无需接受终态后数据。
+    assert events.index(suggestion) < events.index(next(event for event in events if event["event"] == "done"))
     assert {event["event"] for event in events} >= {"result", "done", "prompt_suggestion"}
     assert record is not None
     assert all(message.get("event") != "PromptSuggestionMessage" for message in record["messages"])

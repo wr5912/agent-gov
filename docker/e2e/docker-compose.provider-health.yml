@@ -3,8 +3,12 @@ services:
     build:
       context: ..
       dockerfile: docker/e2e/slow-vllm.Dockerfile
+      args:
+        AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
     image: agent-gov-slow-vllm:e2e
     container_name: ${CONTAINER_NAME_PREFIX}-slow-vllm
+    labels:
+      io.agentgov.acceptance-run-id: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
     environment:
       SLOW_VLLM_DELAY_SECONDS: "8"
     healthcheck:

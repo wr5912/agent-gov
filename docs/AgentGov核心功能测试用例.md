@@ -1300,7 +1300,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：OpenAPI/pytest 契约、前端网络请求、真实容器 Playwright 截图、API 响应、容器健康状态。
 
-自动验收：核心 API 契约已绑定到 `tests/quality_policy.json` 的 `openai_responses_first_surface`、`responses_streaming_sse` 与 `playground_native_sdk_stream` 场景，覆盖 `tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_sdk_projector.py`、`tests/test_responses_retrieve.py`、`tests/test_claude_sdk_native_stream.py`、`tests/test_conversations_api.py`、`tests/test_trace_projection.py`、`tests/test_trace_stream_contract.py` 和 `tests/test_agent_runs_api.py`；旧 Chat raw/semantic 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收使用 Responses API 验收与消息动作浏览器脚本：打开 Compose UI、真实调用 Compose API，验证 UI live turn 只请求 SDK-native endpoint、会话走 `/v1/conversations`、Trace 刷新重放、Responses retrieve 可用，并执行 hostile / boundary 请求。
+自动验收：核心 API 契约已绑定到 `tests/quality_policy.json` 的 `openai_responses_first_surface`、`responses_streaming_sse` 与 `playground_native_sdk_stream` 场景，覆盖 `tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_sdk_projector.py`、`tests/test_responses_retrieve.py`、`tests/test_claude_sdk_native_stream.py`、`tests/test_conversations_api.py`、`tests/test_trace_projection.py`、`tests/test_trace_stream_contract.py` 和 `tests/test_agent_runs_api.py`；旧 Chat raw/semantic 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收统一使用 `make ui-openai-responses-smoke`：公开入口先基于当前工作树重建镜像、recreate Compose UI/API，再运行 Responses API 验收与消息动作浏览器脚本，验证 UI live turn 只请求 SDK-native endpoint、会话走 `/v1/conversations`、Trace 刷新重放、Responses retrieve 可用，并执行 hostile / boundary 请求。
 
 ## 开发推进规则
 

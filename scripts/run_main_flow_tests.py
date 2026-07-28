@@ -10,18 +10,33 @@ from pathlib import Path
 from test_quality.policy import load_quality_policy, main_flow_bindings, validate_quality_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+CONTAINER_ACCEPTANCE_ENV_KEYS = (
+    "RUNTIME_UI_BASE",
+    "RUNTIME_API_BASE",
+    "RUNTIME_BROWSER_API_BASE",
+    "RUNTIME_API_KEY",
+    "AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE",
+    "AGENT_GOV_ACCEPTANCE_RUN_ID",
+    "AGENT_GOV_CONTAINER_ACCEPTANCE_PROFILE",
+)
+
+
+def _host_test_env() -> dict[str, str]:
+    env = os.environ.copy()
+    for key in CONTAINER_ACCEPTANCE_ENV_KEYS:
+        env.pop(key, None)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
 
 
 def _run_pytest_bindings(pytest_nodes: list[str], *, repo_root: Path) -> int:
     if not pytest_nodes:
         return 0
-    env = os.environ.copy()
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "agentgov_testkit.pytest_plugin", *pytest_nodes],
         cwd=repo_root,
         check=False,
-        env=env,
+        env=_host_test_env(),
     ).returncode
 
 
@@ -34,7 +49,7 @@ def run_ui_bindings(ui_scripts: list[str], *, repo_root: Path, artifact_root: Pa
     for script_name in ui_scripts:
         script_artifacts = artifact_root / _artifact_name(script_name)
         script_artifacts.mkdir(parents=True, exist_ok=True)
-        env = os.environ.copy()
+        env = _host_test_env()
         env["RETRIES"] = env.get("RETRIES", "1")
         env["VERIFY_SCREENSHOT_DIR"] = str(script_artifacts.resolve())
         result = subprocess.run(

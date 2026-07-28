@@ -563,13 +563,30 @@ function suggestionList(data: Record<string, unknown>): string[] {
     .filter(Boolean);
 }
 
-function formatStreamError(data: unknown): string {
+export function formatStreamError(data: unknown): string {
   if (!isRecord(data)) return JSON.stringify(data);
   const errorCode = stringValue(data.error_code);
   const errors = Array.isArray(data.errors) ? data.errors.map(String).join("\n") : "";
   if (!errorCode) return errors || JSON.stringify(data);
   const detail = stringValue(data.message) || stringValue(data.detail) || errors || "Model-backed runtime request failed.";
-  return `${errorCode}: ${detail}`;
+  const diagnosticFields: Array<[string, unknown]> = [
+    ["route", data.route],
+    ["probe", data.probe],
+    ["reason", data.reason],
+    ["endpoint", data.endpoint],
+    ["status_code", data.status_code],
+    ["duration_ms", data.duration_ms],
+    ["retryable", data.retryable],
+    ["action", data.action],
+  ];
+  const diagnostics = diagnosticFields.flatMap(([key, value]) => {
+    if ((typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") || String(value).trim() === "") {
+      return [];
+    }
+    const rendered = `${key}=${String(value).trim()}`;
+    return detail.includes(rendered) ? [] : [rendered];
+  });
+  return [`${errorCode}: ${detail}`, ...diagnostics].join("\n");
 }
 
 function stringValue(value: unknown): string | undefined {

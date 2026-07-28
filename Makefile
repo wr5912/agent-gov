@@ -80,15 +80,18 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/runtime_bootstrap_safety.py \
 	scripts/runtime_cleanup.py \
 	scripts/cleanup_runtime_artifacts.py \
-	scripts/run_main_flow_tests.py
+	scripts/run_main_flow_tests.py \
+	scripts/run_container_acceptance.py
 
 TEST_ARTIFACT_ROOT ?= artifacts/test-quality
 BACKEND_TEST_ARTIFACT_DIR ?= $(TEST_ARTIFACT_ROOT)/backend-main-full
 QUALITY_POLICY ?= tests/quality_policy.json
 GOVERNANCE_BASE_REF ?=
 GOVERNANCE_BASE_REF_ARG := $(if $(strip $(GOVERNANCE_BASE_REF)),--base-ref $(GOVERNANCE_BASE_REF),)
+CONTAINER_ACCEPTANCE := $(PYTHON_RUN) scripts/run_container_acceptance.py --env-file "$(COMPOSE_ENV_FILE)"
+REQUIRE_CONTAINER_ACCEPTANCE = [ "$$AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE" = "1" ] && [ -n "$$AGENT_GOV_ACCEPTANCE_RUN_ID" ] || { echo "Use the public container acceptance Make target." >&2; exit 1; }
 
-.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check container-core-smoke container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke ui-openai-responses-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts _container-core-smoke _container-openapi-check _container-live-test _container-health-e2e _smoke _ui-smoke _ui-feedback-smoke _ui-openai-responses-smoke _langfuse-smoke
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -126,6 +129,10 @@ ui-logs:
 	$(COMPOSE) logs -f claude-agent-ui
 
 ui-smoke:
+	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _ui-smoke
+
+_ui-smoke:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
 	@frontend_port=$${FRONTEND_HOST_PORT:-$$(awk -F= '$$1 == "FRONTEND_HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
 	frontend_url=$${FRONTEND_URL:-http://localhost:$${frontend_port:-55173}}; \
 	i=1; \
@@ -144,9 +151,33 @@ ui-design-parity:
 	pnpm --dir frontend run verify:design-parity
 
 ui-feedback-smoke:
-	@if [ -z "$$RUNTIME_UI_BASE" ]; then echo "RUNTIME_UI_BASE=<real-container-ui> is required" >&2; exit 1; fi
-	@if [ -z "$$RUNTIME_API_BASE" ]; then echo "RUNTIME_API_BASE=<real-container-api> is required" >&2; exit 1; fi
-	@VERIFY_SCREENSHOT_DIR="$${VERIFY_SCREENSHOT_DIR:-/tmp/agentgov-ui-feedback-smoke}" pnpm --dir frontend run verify:real-container
+	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _ui-feedback-smoke
+
+_ui-feedback-smoke:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
+	@frontend_port=$${FRONTEND_HOST_PORT:-$$(awk -F= '$$1 == "FRONTEND_HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	api_key=$$(awk -F= '$$1 == "FRONTEND_RUNTIME_API_KEY" || $$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null); \
+	RUNTIME_UI_BASE="http://localhost:$${frontend_port:-55173}" \
+	RUNTIME_API_BASE="http://localhost:$${host_port:-58080}" \
+	RUNTIME_API_KEY="$$api_key" \
+	VERIFY_SCREENSHOT_DIR="$${VERIFY_SCREENSHOT_DIR:-/tmp/agentgov-ui-feedback-smoke}" \
+	pnpm --dir frontend run verify:real-container:impl
+
+ui-openai-responses-smoke:
+	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _ui-openai-responses-smoke
+
+_ui-openai-responses-smoke:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
+	@frontend_port=$${FRONTEND_HOST_PORT:-$$(awk -F= '$$1 == "FRONTEND_HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	api_key=$$(awk -F= '$$1 == "FRONTEND_RUNTIME_API_KEY" || $$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null); \
+	RUNTIME_UI_BASE="http://localhost:$${frontend_port:-55173}" \
+	RUNTIME_API_BASE="http://localhost:$${host_port:-58080}" \
+	RUNTIME_BROWSER_API_BASE="http://localhost:$${host_port:-58080}" \
+	RUNTIME_API_KEY="$$api_key" \
+	VERIFY_SCREENSHOT_DIR="$${VERIFY_SCREENSHOT_DIR:-/tmp/agentgov-openai-responses-smoke}" \
+	pnpm --dir frontend run verify:openai-responses-container:impl
 
 langfuse-dirs:
 	@runtime_root=$$($(PYTHON_RUN) -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from bootstrap_runtime_volume import resolve_runtime_root; print(resolve_runtime_root(None, Path(sys.argv[1])).as_posix())' "$(COMPOSE_ENV_FILE)"); \
@@ -162,7 +193,11 @@ langfuse-stop:
 langfuse-logs:
 	$(COMPOSE) --profile langfuse logs -f langfuse-web langfuse-worker
 
-langfuse-smoke:
+langfuse-smoke: langfuse-dirs
+	$(CONTAINER_ACCEPTANCE) --profile langfuse -- $(MAKE) --no-print-directory _langfuse-smoke
+
+_langfuse-smoke:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
 	$(PYTHON_RUN) scripts/langfuse_smoke.py --env-file "$(COMPOSE_ENV_FILE)"
 
 runtime-bootstrap:
@@ -201,7 +236,18 @@ runtime-bootstrap-clean:
 clean-runtime-artifacts: runtime-clean local-debug-clean runtime-bootstrap-clean
 
 smoke:
+	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _smoke
+
+_smoke:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
 	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py --env-file "$(COMPOSE_ENV_FILE)" --require-ready
+
+container-core-smoke:
+	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _container-core-smoke
+
+_container-core-smoke:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
+	+@$(MAKE) --no-print-directory --keep-going --jobs=3 _smoke _ui-smoke _container-openapi-check
 
 compose-diagnose:
 	@bash scripts/compose_diagnose.sh
@@ -230,12 +276,20 @@ openapi-contract-check:
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
 
 container-openapi-check:
+	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _container-openapi-check
+
+_container-openapi-check:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
 	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
 	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --base-url "$$api_base" --compare-local --fail
 
 container-health-e2e:
+	$(CONTAINER_ACCEPTANCE) --profile isolated-health -- $(MAKE) --no-print-directory _container-health-e2e
+
+_container-health-e2e:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
 	bash scripts/run_healthcheck_container_e2e.sh
 
 sync-version:
@@ -262,7 +316,9 @@ test-backend:
 	$(PYTHON_RUN) scripts/run_test_lane.py --policy $(QUALITY_POLICY) --lane main-full --artifact-dir $(BACKEND_TEST_ARTIFACT_DIR)
 	$(PYTHON_RUN) scripts/check_docs_governance.py --collect-pytest
 
-test: codex-guard test-backend
+test:
+	+$(MAKE) --no-print-directory codex-guard
+	+$(MAKE) --no-print-directory test-backend
 
 coverage:
 	$(PYTHON_RUN) scripts/run_test_lane.py --policy $(QUALITY_POLICY) --lane main-full --artifact-dir $(BACKEND_TEST_ARTIFACT_DIR)
@@ -277,4 +333,13 @@ mutation-test:
 	$(PYTHON_RUN) scripts/run_mutation_lane.py --policy $(QUALITY_POLICY) --artifact-dir $(TEST_ARTIFACT_ROOT)/mutation
 
 container-live-test:
-	$(COMPOSE) run --rm --entrypoint sh -e REQUIRE_LIVE_RUNTIME=1 -v "$(CURDIR):/app" -w /app claude-agent-api -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'
+	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _container-live-test
+
+_container-live-test:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
+	$(COMPOSE) run --rm --entrypoint sh \
+		-e REQUIRE_LIVE_RUNTIME=1 \
+		-e AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE \
+		-e AGENT_GOV_ACCEPTANCE_RUN_ID \
+		-v "$(CURDIR):/app" -w /app \
+		claude-agent-api -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'

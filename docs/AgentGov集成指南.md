@@ -248,7 +248,7 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 - **演进中**（接入需关注变更）：业务 Agent 多租与隔离、审批外移细化、改进治理工作台的用户主流程术语。
 - OpenAPI 与生成类型是契约边界；底座变更公开 API 时会同步 OpenAPI 与迁移说明。集成方应以 OpenAPI 版本为对接基线，并对 `4xx/5xx` 做稳健处理。
 - `POST /v1/responses` 是单 endpoint 双响应媒体类型：`stream=false` 返回 `application/json` 的 Responses 对象；`stream=true` 返回 `text/event-stream` 的 Responses-style SSE。
-- 运维验收应同时检查运行容器 `/openapi.json` 的 `info.version` 与仓库 `VERSION` / 镜像 tag 一致；版本不一致优先按部署镜像或容器未 recreate 的漂移处理。
+- 运维验收应同时检查运行容器 `/openapi.json` 的 `info.version` 与仓库 `VERSION` / 镜像 tag 一致；版本不一致优先按部署镜像或容器未 recreate 的漂移处理。仓库内的真实 Compose 验收只使用公开 Make 入口；入口基于当前工作树重建本地镜像、加载 `COMPOSE_ENV_FILE` 选择的完整配置、`--force-recreate` 服务并校验本轮 freshness 后才执行检查，不会自动拉取远端代码。纯宿主机测试不需要刷新容器。
 
 ## 6. 集成反模式（请不要这么做）
 

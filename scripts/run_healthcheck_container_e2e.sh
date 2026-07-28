@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
+if [[ "${AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE:-}" != "1" || -z "${AGENT_GOV_ACCEPTANCE_RUN_ID:-}" ]]; then
+  echo "Use make container-health-e2e so images and containers are refreshed before acceptance." >&2
+  exit 1
+fi
+
 project="agentgov-health-e2e-$$"
 prefix="$project"
 runtime_root=$(mktemp -d /tmp/agentgov-health-runtime.XXXXXX)
@@ -41,6 +46,7 @@ api_port=$(free_port)
 ui_port=$(free_port)
 compose=(
   docker compose
+  --parallel 3
   --env-file "$compose_env_file"
   -f docker/docker-compose.yml
   -f docker/e2e/docker-compose.provider-health.yml
@@ -50,9 +56,10 @@ compose=(
 cleanup() {
   "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
   if [[ -d "$runtime_root" ]]; then
+    app_version=${APP_VERSION:-$(<VERSION)}
     docker run --rm --network none \
       --volume "$runtime_root:/runtime" \
-      --entrypoint sh agent-gov-api:dev \
+      --entrypoint sh "agent-gov-api:$app_version" \
       -c 'chmod -R a+rwX /runtime' >/dev/null 2>&1 || true
     rm -rf "$runtime_root" || true
   fi
@@ -76,20 +83,39 @@ mkdir -p "$HOST_DATA_MOUNT" "$HOST_GOVERNOR_WORKSPACE_MOUNT" "$HOST_GOVERNOR_CLA
 
 "${compose[@]}" build slow-vllm agent-gov-litellm-sidecar claude-agent-api claude-agent-ui
 services=$("${compose[@]}" config --services)
-grep -qx "slow-vllm" <<<"$services"
+expected_services=$'agent-gov-litellm-sidecar\nclaude-agent-api\nclaude-agent-ui\nslow-vllm'
+if [[ "$(sort <<<"$services")" != "$expected_services" ]]; then
+  echo "Health E2E Compose service set is not the expected isolated stack." >&2
+  exit 1
+fi
 if grep -q "claude-agent-worker" <<<"$services"; then
   echo "retired claude-agent-worker is still present in the E2E stack" >&2
   exit 1
 fi
 
 started_at=$(date +%s)
-if ! "${compose[@]}" up -d --wait --wait-timeout 90 --remove-orphans; then
+if ! "${compose[@]}" up -d --force-recreate --wait --wait-timeout 90 --remove-orphans; then
   "${compose[@]}" ps --all || true
   "${compose[@]}" logs --no-color --tail 120 claude-agent-api agent-gov-litellm-sidecar slow-vllm || true
   exit 1
 fi
 startup_seconds=$(( $(date +%s) - started_at ))
 echo "Compose control plane startup completed in ${startup_seconds}s"
+
+for service in slow-vllm agent-gov-litellm-sidecar claude-agent-api claude-agent-ui; do
+  container_id=$("${compose[@]}" ps -q "$service")
+  if [[ -z "$container_id" ]]; then
+    echo "Health E2E service has no running container: $service" >&2
+    exit 1
+  fi
+  container_label=$(docker inspect --format '{{ index .Config.Labels "io.agentgov.acceptance-run-id" }}' "$container_id")
+  image_id=$(docker inspect --format '{{ .Image }}' "$container_id")
+  image_label=$(docker inspect --format '{{ index .Config.Labels "io.agentgov.acceptance-run-id" }}' "$image_id")
+  if [[ "$container_label" != "$AGENT_GOV_ACCEPTANCE_RUN_ID" || "$image_label" != "$AGENT_GOV_ACCEPTANCE_RUN_ID" ]]; then
+    echo "Health E2E service did not use this acceptance run: $service" >&2
+    exit 1
+  fi
+done
 
 diagnosis=$(
   .venv/bin/python scripts/diagnose_runtime_health.py \
@@ -108,7 +134,7 @@ RUNTIME_UI_BASE="http://localhost:$ui_port" \
 RUNTIME_API_BASE="http://localhost:$api_port" \
 RUNTIME_API_KEY="$api_key" \
 VERIFY_SCREENSHOT_DIR="$artifact_root" \
-pnpm --dir frontend run verify:provider-health-container
+pnpm --dir frontend run verify:provider-health-container:impl
 
 log_file="$artifact_root/container.log"
 "${compose[@]}" logs --no-color claude-agent-api agent-gov-litellm-sidecar slow-vllm >"$log_file" 2>&1

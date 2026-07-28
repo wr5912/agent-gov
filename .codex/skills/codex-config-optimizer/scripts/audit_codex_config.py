@@ -124,9 +124,9 @@ MATRIX_EXPECTATIONS = (
     (
         ".codex/skills/runtime-env-governance/SKILL.md",
         "runtime/env 测试模式选择矩阵",
-        ("测试模式选择矩阵", "make container-live-test", "docker/.env.local-debug"),
+        ("测试模式选择矩阵", "真实容器验收前", "--force-recreate", "make container-core-smoke"),
         "move-to-skill",
-        "live 验收必须走 Docker Compose 容器和 docker/.env；local-debug 仅服务专项调试测试。",
+        "真实容器验收必须先重建当前工作树镜像、recreate 服务并加载所选配置。",
     ),
     (
         ".codex/skills/test-sync-governance/SKILL.md",
@@ -391,6 +391,37 @@ def _audit_hook_paths(root: Path, path: Path, text: str) -> Iterable[Issue]:
         )
 
 
+def _audit_container_acceptance_hook_wiring(root: Path) -> Iterable[Issue]:
+    for rel in (".codex/hooks.json", ".claude/settings.json"):
+        path = root / rel
+        if not path.is_file():
+            continue
+        text = _read(path)
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        hooks = payload.get("hooks") if isinstance(payload, dict) else None
+        pre_tool_use = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+        wired = False
+        if isinstance(pre_tool_use, list):
+            for entry in pre_tool_use:
+                if not isinstance(entry, dict) or entry.get("matcher") != "Bash":
+                    continue
+                values = (value for command, args in _iter_command_hooks(entry) for value in (command, *args))
+                if any("container_acceptance_guard.py" in value for value in values):
+                    wired = True
+                    break
+        if not wired:
+            yield Issue(
+                "P0",
+                rel,
+                _find_line(text, "PreToolUse") or 1,
+                "缺少 Bash PreToolUse 容器验收入口 guard 接线。",
+                "keep",
+            )
+
+
 def _audit_agent(root: Path, path: Path, text: str) -> Iterable[Issue]:
     rel = _relative(root, path)
     if not (rel.startswith(".codex/agents/") or rel.startswith(".claude/agents/")):
@@ -444,10 +475,7 @@ def _audit_rules(root: Path, path: Path, text: str) -> Iterable[Issue]:
         return
     for node in tree.body:
         valid_call = (
-            isinstance(node, ast.Expr)
-            and isinstance(node.value, ast.Call)
-            and isinstance(node.value.func, ast.Name)
-            and node.value.func.id == "prefix_rule"
+            isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "prefix_rule"
         )
         if not valid_call:
             yield Issue(
@@ -480,6 +508,12 @@ def _term_guidance(term: str) -> tuple[str, str, str]:
     return TERM_GUIDANCE.get(term, ("merge", "按需 skill 或 reference", "审计后确认重复配置已减少"))
 
 
+def _is_negated_terminology(line: str, term: str) -> bool:
+    term_index = line.find(term)
+    prefix = line[max(0, term_index - 16) : term_index]
+    return any(negation in prefix for negation in ENV_TERMINOLOGY_NEGATIONS)
+
+
 def _terminology_risks(root: Path, files: list[Path]) -> list[TerminologyRisk]:
     risks: list[TerminologyRisk] = []
     for path in files:
@@ -488,12 +522,12 @@ def _terminology_risks(root: Path, files: list[Path]) -> list[TerminologyRisk]:
         for line_number, line in enumerate(text.splitlines(), start=1):
             if any(coverage_context in line for coverage_context in ENV_TERMINOLOGY_COVERAGE_CONTEXTS):
                 continue
-            if any(negation in line for negation in ENV_TERMINOLOGY_NEGATIONS):
-                continue
             if not any(context in line for context in ENV_CONTEXT_TERMS):
                 continue
             matched_term = next((term for term in ENV_OVERRIDE_TERMS if term in line), None)
             if not matched_term:
+                continue
+            if _is_negated_terminology(line, matched_term):
                 continue
             excerpt = line.strip()
             if len(excerpt) > 140:
@@ -522,6 +556,7 @@ def _matrix_coverage(root: Path) -> list[MatrixCoverage]:
 
 def _collect_issues(root: Path, files: list[Path]) -> list[Issue]:
     issues = list(_audit_instruction_discovery(root))
+    issues.extend(_audit_container_acceptance_hook_wiring(root))
     for path in files:
         text = _read(path)
         issues.extend(_audit_size(root, path, text))
@@ -573,10 +608,7 @@ def _print_report(root: Path) -> list[Issue]:
     for term, paths, total in term_report:
         path_list = ", ".join(f"`{path}`" for path in paths)
         action, target_surface, verification = _term_guidance(term)
-        print(
-            f"- `{term}` 出现 {total} 次，涉及 {path_list}。"
-            f"建议动作：`{action}`；目标配置面：{target_surface}；验证：{verification}。"
-        )
+        print(f"- `{term}` 出现 {total} 次，涉及 {path_list}。建议动作：`{action}`；目标配置面：{target_surface}；验证：{verification}。")
 
     terminology_risks = _terminology_risks(root, files)
     print()
@@ -585,10 +617,7 @@ def _print_report(root: Path) -> list[Issue]:
     if not terminology_risks:
         print("- 未发现 env/runtime 语境下的“覆盖”术语风险。")
     for risk in terminology_risks:
-        print(
-            f"- `{risk.path}:{risk.line}` 命中 `{risk.term}`：{risk.excerpt} "
-            f"建议：{risk.suggestion}"
-        )
+        print(f"- `{risk.path}:{risk.line}` 命中 `{risk.term}`：{risk.excerpt} 建议：{risk.suggestion}")
 
     matrix_coverage = _matrix_coverage(root)
     print()
@@ -599,10 +628,7 @@ def _print_report(root: Path) -> list[Issue]:
             print(f"- OK `{coverage.path}` 覆盖 {coverage.label}。验证：{coverage.verification}")
             continue
         missing = "、".join(f"`{marker}`" for marker in coverage.missing_markers)
-        print(
-            f"- MISSING `{coverage.path}` 缺少 {coverage.label} 标记：{missing}。"
-            f"建议动作：`{coverage.action}`；验证：{coverage.verification}"
-        )
+        print(f"- MISSING `{coverage.path}` 缺少 {coverage.label} 标记：{missing}。建议动作：`{coverage.action}`；验证：{coverage.verification}")
     return issues
 
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ClaudeSdkEvidenceReducer } from "./claudeSdkStream";
+import { ClaudeSdkEvidenceReducer, formatStreamError } from "./claudeSdkStream";
 
 describe("ClaudeSdkEvidenceReducer", () => {
   it("keys block deltas by message identity and index instead of StreamEvent uuid", () => {
@@ -128,5 +128,42 @@ describe("ClaudeSdkEvidenceReducer", () => {
     expect(effects.traceEvents[0].kind).toBe("system");
     expect(effects.traceEvents[0].payload?.metric).toBe("thinking_tokens");
     expect(effects.traceEvents[0].payload?.estimated_tokens).toBe(42);
+  });
+});
+
+describe("formatStreamError", () => {
+  it("renders only the structured safe diagnostics from an SDK error envelope", () => {
+    const rendered = formatStreamError({
+      error_code: "VLLM_VERSION_PROBE_FAILED",
+      message: "External vLLM readiness probe timed out.",
+      route: "vllm_direct",
+      probe: "vllm_version",
+      reason: "timeout",
+      endpoint: "http://slow-vllm:8000",
+      duration_ms: 5000,
+      retryable: true,
+      action: "verify the external vLLM process",
+      api_key: "must-not-render",
+      headers: { Authorization: "must-not-render" },
+    });
+
+    expect(rendered).toContain("VLLM_VERSION_PROBE_FAILED: External vLLM readiness probe timed out.");
+    expect(rendered).toContain("probe=vllm_version");
+    expect(rendered).toContain("reason=timeout");
+    expect(rendered).toContain("endpoint=http://slow-vllm:8000");
+    expect(rendered).toContain("action=verify the external vLLM process");
+    expect(rendered).not.toContain("must-not-render");
+  });
+
+  it("does not duplicate diagnostics already present in the detail", () => {
+    const rendered = formatStreamError({
+      error_code: "MODEL_PROVIDER_ERROR",
+      detail: "Provider failed probe=models action=retry",
+      probe: "models",
+      action: "retry",
+    });
+
+    expect(rendered.match(/probe=models/g)).toHaveLength(1);
+    expect(rendered.match(/action=retry/g)).toHaveLength(1);
   });
 });

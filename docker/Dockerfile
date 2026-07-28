@@ -79,5 +79,8 @@ COPY docker/runtime-bootstrap /app/docker/runtime-bootstrap
 
 RUN mkdir -p /governor-workspace /claude-roots/governor/.claude /data
 
+ARG AGENT_GOV_ACCEPTANCE_RUN_ID=unmanaged
+LABEL io.agentgov.acceptance-run-id="${AGENT_GOV_ACCEPTANCE_RUN_ID}"
+
 ENTRYPOINT ["python", "-m", "app.runtime.service_launcher"]
 CMD ["api"]

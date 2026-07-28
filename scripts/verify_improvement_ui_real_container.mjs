@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 import process from "node:process";
+import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
 import { runRealContainerAcceptance } from "./improvement_ui_e2e/real_container_flow.mjs";
 import { runtimeConfigFromEnv } from "./improvement_ui_e2e/runtime_client.mjs";
+
+requireContainerAcceptance();
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");

@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import process from "node:process";
+import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
 
 import {
   assertNoForbiddenUiRequests,
@@ -20,6 +21,7 @@ const { chromium } = require("playwright");
 const repoRoot = new URL("..", import.meta.url).pathname;
 const ts = "2026-06-21T00:00:00Z";
 const REAL = Boolean(process.env.RUNTIME_UI_BASE);
+requireContainerAcceptance(REAL);
 const port = Number(process.env.IMPROVEMENT_DECISION_PORT || 55208);
 const uiBase = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${port}`).replace(/\/$/, "");
 const apiBase = (process.env.RUNTIME_API_BASE || "http://runtime.test").replace(/\/$/, "");

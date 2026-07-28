@@ -37,7 +37,7 @@ def test_codex_config_audit_reports_guided_hot_terms(tmp_path, capsys):
 
 def test_codex_config_audit_reports_env_override_terminology_risks(tmp_path, capsys):
     module = _load_audit_module()
-    _write(tmp_path / "AGENTS.md", "环境变量使用本地私有覆盖文件。\n")
+    _write(tmp_path / "AGENTS.md", "环境变量使用本地私有覆盖文件，它不是 layered override。\n")
     _write(tmp_path / "AGENTS.override.md", "不要把 env 文件叫覆盖文件。\n")
 
     module._print_report(tmp_path)
@@ -47,6 +47,26 @@ def test_codex_config_audit_reports_env_override_terminology_risks(tmp_path, cap
     assert "`AGENTS.md:1` 命中 `本地私有覆盖`" in output
     assert "选择 env 文件" in output
     assert "`AGENTS.override.md:1` 命中" not in output
+
+
+def test_codex_config_audit_requires_container_acceptance_hook_wiring(tmp_path, capsys):
+    module = _load_audit_module()
+    _write(tmp_path / ".codex/hooks.json", '{"hooks":{"PreToolUse":[]}}\n')
+    _write(tmp_path / ".claude/settings.json", '{"hooks":{"Stop":[]}}\n')
+
+    module._print_report(tmp_path)
+
+    output = capsys.readouterr().out
+    assert output.count("缺少 Bash PreToolUse 容器验收入口 guard 接线") == 2
+
+
+def test_project_container_acceptance_hooks_are_wired():
+    module = _load_audit_module()
+    files = module._iter_files(REPO_ROOT)
+
+    issues = module._collect_issues(REPO_ROOT, files)
+
+    assert not [issue for issue in issues if "容器验收入口 guard 接线" in issue.message]
 
 
 def test_codex_config_audit_includes_claude_surfaces(tmp_path, capsys):
@@ -88,11 +108,7 @@ def test_codex_config_audit_reports_three_matrix_coverage(tmp_path, capsys):
 def test_project_config_audit_matrix_coverage_is_complete():
     module = _load_audit_module()
 
-    missing = [
-        (coverage.path, coverage.label, coverage.missing_markers)
-        for coverage in module._matrix_coverage(REPO_ROOT)
-        if coverage.missing_markers
-    ]
+    missing = [(coverage.path, coverage.label, coverage.missing_markers) for coverage in module._matrix_coverage(REPO_ROOT) if coverage.missing_markers]
 
     assert missing == []
 

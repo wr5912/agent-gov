@@ -60,4 +60,4 @@ def test_cli_tee_preserves_stdout_bytes_and_bypasses_version_probe(tmp_path: Pat
         await capture.aclose()
         assert not directory.exists()
 
-    asyncio.run(exercise())
+    asyncio.run(asyncio.wait_for(exercise(), timeout=5))

@@ -3,6 +3,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import process from "node:process";
+import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
+
+requireContainerAcceptance();
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
@@ -160,7 +163,7 @@ async function main() {
           await agentSelect.selectOption("security-operations-expert");
           await page.getByTestId("chat-composer-input").fill("provider health failure acceptance");
           const modelRequest = page.waitForRequest(
-            (request) => new URL(request.url()).pathname === "/v1/responses" && request.method() === "POST",
+            (request) => new URL(request.url()).pathname === "/api/agent-runtime/sdk-events" && request.method() === "POST",
             { timeout: 10000 },
           );
           await page.getByTestId("chat-send").click();

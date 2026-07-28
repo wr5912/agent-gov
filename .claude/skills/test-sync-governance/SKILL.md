@@ -60,6 +60,8 @@ description: "迭代功能（新增/修改/删除行为、改契约、重构、�
 
 TIA 和 xdist 在满足 `tests/quality_policy.json` 的配对样本与时间窗前只作为 shadow 证据。未知改动必须回退全量；局部选择结果不能替代提交前或发布前的完整回归。
 
+安全并行只发生在资源边界清楚的层级：宿主机目标 pytest、配置审计和前端 build 可作为独立任务最多 3 路并行；`main-full`、共享 artifact 目录、真实浏览器、live provider 和 Compose 变更保持串行。真实容器的批量只读检查使用 `make container-core-smoke`，不得自行并发多个 build/recreate。
+
 ## 收尾验证
 
 改动类型先映射到推荐验证命令，不默认跑全量，也不把局部测试当成发版证明：
@@ -68,9 +70,9 @@ TIA 和 xdist 在满足 `tests/quality_policy.json` 的配对样本与时间窗�
 | --- | --- | --- |
 | `.codex` / `.claude` skill、README、docs 容器治理 | `git diff --check`、`scripts/check_docs_governance.py`、`scripts/check_stage_language.py`、`scripts/check_codex_governance.py --mode fail`、相关 skill/governance 单测 | 用户要求完整验证、发版、或改动影响运行时代码 |
 | docs 归档、删除、重命名或权威替换 | `tests/test_documentation_contracts.py`、`scripts/check_orphan_tests.py`、`scripts/check_docs_governance.py` | 提交/发版时追加 `make test` |
-| runtime/env、Docker、模型凭据边界 | settings/env policy/documentation 相关 pytest；真实 live 改动追加 `make container-live-test` | 影响 Agent job 主流程时跑 `make main-flow-test` |
+| runtime/env、Docker、模型凭据边界 | settings/env policy/documentation 相关 pytest；只读容器批次用 `make container-core-smoke`，真实 live 改动追加 `make container-live-test` | 影响 Agent job 主流程时跑 `make main-flow-test` |
 | 产品主流程、Agent job、formatter、store、API/UI 状态 | `make main-flow-test` + 相关 pytest | 提交/发版时跑 `make test` |
-| 四阶段改进治理 UI 设计一致性、抽屉/modal 语义、Playground 动作边界 | `pnpm --dir frontend run verify:design-parity`，必要时追加真实容器 `RUNTIME_UI_BASE` 验收 | 改动真实前端组件时同时跑 `pnpm --dir frontend build` |
+| 四阶段改进治理 UI 设计一致性、抽屉/modal 语义、Playground 动作边界 | `pnpm --dir frontend run verify:design-parity`，必要时追加 `make ui-feedback-smoke` | 改动真实前端组件时同时跑 `pnpm --dir frontend build` |
 | 前端可见行为 | `pnpm --dir frontend build`，必要时浏览器 smoke | 改 OpenAPI/类型时先生成并检查漂移 |
 | 仅版本面或发版元数据 | 版本引用检索、Compose config、前端 build 或相关 smoke | 创建 tag 前确认分支/tag 远端校验 |
 

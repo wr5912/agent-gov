@@ -96,9 +96,12 @@ make logs
 
 ```bash
 make smoke
+make container-core-smoke
 ```
 
-`GET /health/live` 只表示 API 进程存活，不访问 Git、CLI、数据库或外部模型服务，也是 Compose 对 API 的健康检查；`GET /health/ready` 只读取后台 provider 探测缓存，模型不可用时返回 `503` 和明确诊断；`GET /health` 返回控制面状态及同一份 provider 摘要。`make up` 只要求控制面 liveness，模型 provider 降级不会再被 Compose 折叠成 `dependency claude-agent-api failed to start`。需要诊断时运行 `make compose-diagnose`，输出会明确区分“API liveness 失败”和“API 已存活但外部模型 provider 探测失败”，并把 Compose dependency 文案标记为次级症状，而不是镜像启动失败；需要把 provider readiness 作为验收门时运行 `make smoke`。
+`GET /health/live` 只表示 API 进程存活，不访问 Git、CLI、数据库或外部模型服务，也是 Compose 对 API 的健康检查；`GET /health/ready` 只读取后台 provider 探测缓存，模型不可用时返回 `503` 和明确诊断；`GET /health` 返回控制面状态及同一份 provider 摘要。`make up` 只要求控制面 liveness，模型 provider 降级不会再被 Compose 折叠成 `dependency claude-agent-api failed to start`。需要诊断时运行 `make compose-diagnose`，输出会明确区分“API liveness 失败”和“API 已存活但外部模型 provider 探测失败”，并把 Compose dependency 文案标记为次级症状，而不是镜像启动失败；需要把 provider readiness 作为验收门时运行 `make smoke`。`make container-core-smoke` 在同一轮刷新后并行执行 readiness、UI 首页和运行容器 OpenAPI 三项只读检查。
+
+所有依赖真实 Docker Compose 运行态的验收只通过公开的 `make smoke`、`make container-core-smoke`、`make ui-smoke`、`make ui-feedback-smoke`、`make ui-openai-responses-smoke`、`make container-openapi-check`、`make container-live-test`、`make container-health-e2e` 或 `make langfuse-smoke` 入口运行。每次入口都会在统一锁内基于当前工作树（包括相关未提交内容）调用 Compose build，允许复用安全的 Docker build cache，但不执行 `git pull`/`git fetch`；随后加载 `COMPOSE_ENV_FILE` 选择的完整配置，`--force-recreate` 本轮服务，并核对镜像、容器和工作树 freshness 后才开始验收。core/Langfuse 入口不会执行 `down -v`，因此保留 `${HOME}/volume-agent-gov`；纯宿主机 pytest、`make test`、Vitest、mock 浏览器检查和静态检查不触发容器刷新。多个 Compose/live/真实浏览器入口保持串行，不要自行并发；可并行的容器只读检查已收口到 `make container-core-smoke`。
 
 外部 vLLM 探测超时的确定性容器回归使用真实 Compose API/UI/LiteLLM 容器和多视口 Playwright：
 
@@ -163,8 +166,11 @@ pnpm preview
 Docker Compose 前端服务使用 `docker/.env` 注入配置：
 
 ```bash
+# 日常启停
 make ui-build
 make ui-up
+
+# 真实容器验收；该命令会自行重建并 recreate，无需先执行上面两条
 make ui-smoke
 ```
 
@@ -172,10 +178,6 @@ make ui-smoke
 
 ```bash
 make ui-design-parity
-
-RUNTIME_UI_BASE=http://localhost:55173 \
-RUNTIME_API_BASE=http://localhost:58080 \
-RUNTIME_API_KEY='<optional-api-key>' \
 make ui-feedback-smoke
 ```
 
@@ -653,9 +655,9 @@ make local-debug-env
 make local-debug-bootstrap
 ```
 
-`docker/.env.local-debug` 不是极简覆盖文件，它应与 `docker/.env` 保持 Runtime/API 应用配置同构；主要差异只应是路径、端口和宿主机访问地址。模型提供商、治理任务、DSPy、Claude SDK、Runtime Langfuse tracing 等配置都应在两个文件中有同名 key。Compose、前端容器端口、Langfuse Postgres/ClickHouse/Redis/MinIO 镜像和初始化账号等部署编排项只放在 `docker/.env`。
+`docker/.env.local-debug` 是一份完整的本机调试配置文件，应与 `docker/.env` 保持 Runtime/API 应用配置同构；主要差异只应是路径、端口和宿主机访问地址。模型提供商、治理任务、DSPy、Claude SDK、Runtime Langfuse tracing 等配置都应在两个文件中有同名 key。Compose、前端容器端口、Langfuse Postgres/ClickHouse/Redis/MinIO 镜像和初始化账号等部署编排项只放在 `docker/.env`。
 
-功能测试和验收测试不使用 `docker/.env.local-debug`，除非测试目标明确是本机调试 env 选择本身。`make test` 是离线功能硬门；需要真实模型和真实运行态的 live 验收必须先部署 Docker Compose 容器环境，并通过 `make container-live-test` 在容器内使用 `docker/.env` 和容器挂载路径执行。
+功能测试和验收测试不使用 `docker/.env.local-debug`，除非测试目标明确是本机调试 env 选择本身。`make test` 是离线功能硬门且保持串行 main-full；需要真实模型和真实运行态的 live 验收通过 `make container-live-test`，入口会先用当前工作树重建镜像、recreate Compose 服务，再在容器内使用所选 Compose env 和容器挂载路径执行。
 
 需要调整本机调试路径时编辑 `docker/.env.local-debug`；需要调整容器部署路径时编辑 `docker/.env` 或部署系统注入的 `HOST_RUNTIME_VOLUME_ROOT`。需要显式沿用旧目录时，可以在对应模式中把 `HOST_RUNTIME_VOLUME_ROOT` 设置为 `<repo root>/docker/volume`。
 

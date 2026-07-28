@@ -125,3 +125,20 @@ def test_project_level_docs_and_skills_do_not_embed_business_agent_behavior():
         text = _read_repo_text(path)
         for marker in agent_specific_markers:
             assert marker not in text, f"项目级入口 {path} 不得复制业务 Agent 专属标记 {marker}"
+
+
+def test_container_acceptance_docs_require_fresh_current_worktree_and_public_targets():
+    readme = _read_repo_text("README.md")
+    integration = _read_repo_text("docs/AgentGov集成指南.md")
+    test_governance = _read_repo_text("docs/engineering/测试资产组合治理.md")
+    core_cases = _read_repo_text("docs/AgentGov核心功能测试用例.md")
+
+    for text in (readme, integration, test_governance):
+        assert "当前工作树" in text
+        assert "--force-recreate" in text
+        assert "公开" in text
+    assert "make container-core-smoke" in readme
+    assert "最多三路并行" in test_governance
+    assert "main-full` 保持串行" in test_governance
+    assert "make ui-openai-responses-smoke" in core_cases
+    assert "pnpm --dir frontend run verify:openai-responses-container" not in core_cases

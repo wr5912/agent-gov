@@ -40,4 +40,7 @@ RUN python -m pip install --no-cache-dir \
 
 COPY docker/litellm_sidecar_entrypoint.py /app/litellm_sidecar_entrypoint.py
 
+ARG AGENT_GOV_ACCEPTANCE_RUN_ID=unmanaged
+LABEL io.agentgov.acceptance-run-id="${AGENT_GOV_ACCEPTANCE_RUN_ID}"
+
 ENTRYPOINT ["python", "/app/litellm_sidecar_entrypoint.py"]

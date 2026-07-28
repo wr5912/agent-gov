@@ -11,9 +11,10 @@
 关键约束：导入时**只读入一个本地 dict，绝不改写全局 `os.environ`**（否则 collection 阶段会污染
 同进程其他测试）；凭据仅在每个 live 用例内经 `monkeypatch` 临时注入、用完即还原。
 
-运行方式：必须在 Docker Compose API 容器等真实容器测试环境中执行，使用 `docker/.env`
-经 Compose 注入的运行时环境；`docker/.env.local-debug` 只用于本机调试专项测试，不用于本文件。
-宿主机直接执行会 skip，不伪装成 local-debug。
+运行方式：必须通过 `make container-live-test` 在 Docker Compose API 容器等真实容器测试
+环境中执行，使用所选 Compose env 注入的运行时环境；统一 runner 的本轮 freshness 标记是
+严格前置条件。`docker/.env.local-debug` 只用于本机调试专项测试，不用于本文件。宿主机直接
+执行会 skip，不伪装成 local-debug。
 
 chat 用例额外要求已由 API 启动协调器或 `make runtime-bootstrap` 准备并验证的容器运行卷。
 """
@@ -79,6 +80,10 @@ _LIVE_CREDS = _read_live_creds()
 
 
 def _container_acceptance_skip_reason() -> str | None:
+    acceptance_active = os.environ.get("AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE", "").strip().lower() in _TRUTHY
+    acceptance_run_id = os.environ.get("AGENT_GOV_ACCEPTANCE_RUN_ID", "").strip()
+    if not acceptance_active or not acceptance_run_id:
+        return "live 验收必须通过 make container-live-test 完成镜像重建和服务 recreate"
     if os.environ.get("RUNTIME_CONTAINER", "").strip().lower() not in _TRUTHY:
         return "live 验收必须在 Docker Compose API 容器等真实容器环境中运行（RUNTIME_CONTAINER=1）"
     missing = [path.as_posix() for path in _CONTAINER_REQUIRED_PATHS if not path.exists()]

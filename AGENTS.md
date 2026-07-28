@@ -132,6 +132,8 @@ store 投影 -> 持久化 payload，并核查空态、成功态、失败详情�
   mutation 和测试缺口的单一入口；旧 coverage-only manifest 不得恢复。
 - 提交前继续运行串行 `main-full`。TIA 与 xdist 在至少 20 组同 SHA 配对样本、跨越
   14 天且零漏测/并行特有失败前只允许 shadow，不得以一次提速结果直接晋级。
+- 依赖真实 Docker Compose 运行态的验收只能通过公共 Make 入口；入口必须基于当前工作树
+  重建本地镜像、force-recreate 服务并加载所选配置。纯宿主机测试不触发该流程。
 - UI 空态、成功态、失败详情必须有场景证据，不能用后端单测或 coverage 百分比替代。
 - 生命周期加非法转移测试；并发资源加重复/竞争/部分失败测试；外部输入加异常/恶意/越权测试；
   Agent 输出契约加 hostile backend-owned 字段污染测试。

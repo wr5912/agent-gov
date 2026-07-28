@@ -8,6 +8,9 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
+
+requireContainerAcceptance();
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");

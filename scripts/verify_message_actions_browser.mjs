@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
 import { scrollNavigationMetrics } from "./playground_scroll_test_helpers.mjs";
 import { mockAgentRunTrace, semanticTracePanelChecks } from "./playground_trace_test_helpers.mjs";
 
@@ -30,6 +31,7 @@ function envv(name) {
 }
 
 const REAL = !!process.env.RUNTIME_UI_BASE;
+requireContainerAcceptance(REAL);
 const port = Number(process.env.MESSAGE_ACTIONS_PORT || 55198);
 const ui = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${port}`).replace(/\/$/, "");
 const api = (process.env.RUNTIME_API_BASE || "http://runtime.test").replace(/\/$/, "");

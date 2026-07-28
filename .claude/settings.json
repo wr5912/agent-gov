@@ -13,6 +13,22 @@
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.codex/hooks/container_acceptance_guard.py"
+            ],
+            "timeout": 5,
+            "statusMessage": "检查真实容器验收入口"
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [

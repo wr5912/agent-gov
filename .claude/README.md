@@ -5,7 +5,8 @@
 ## 项目共享内容
 
 - `settings.json`: 可提交的 Claude Code 项目级设置；当前对内建 Read 工具限制私有 env 读取、
-  要求 env 写入确认，并在 SessionStart 注入语言约束、在 Stop 运行项目治理硬门。
+  要求 env 写入确认，在 PreToolUse 阻断真实容器验收旁路，并在 SessionStart 注入语言约束、
+  在 Stop 运行项目治理硬门。
   Read deny 不约束 Bash/Python 子进程，不应表述为 OS 安全边界；严格隔离需另行启用
   Claude sandbox 或组织级 managed policy。
 - `rules/project.md`: 通用工作流和执行顺序。

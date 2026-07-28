@@ -19,4 +19,7 @@ ENV VITE_LANGFUSE_URL=http://localhost:53000
 ENV VITE_DEV_PROXY_TARGET=http://claude-agent-api:8080
 EXPOSE 5173
 
+ARG AGENT_GOV_ACCEPTANCE_RUN_ID=unmanaged
+LABEL io.agentgov.acceptance-run-id="${AGENT_GOV_ACCEPTANCE_RUN_ID}"
+
 CMD ["sh", "-c", "pnpm dev --host 0.0.0.0 --port ${FRONTEND_PORT:-5173}"]

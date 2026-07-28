@@ -420,7 +420,9 @@ def test_runtime_env_governance_skill_keeps_required_boundary_terms() -> None:
         "`RUNTIME_VOLUME_MODE` 不应出现在官方 env 示例中",
         "本机后台 Agent job 不复用交互式 Claude `/login`",
         "原 Docker Compose 容器服务中生效",
-        "make ui-build && make ui-up && make ui-smoke",
+        "以当前工作树重建本地镜像",
+        "`--force-recreate`",
+        "make container-core-smoke",
         "不另起临时 Vite",
         "`MODEL_PROVIDER_API_KEY` required privately",
         "测试模式选择矩阵",
@@ -499,7 +501,7 @@ def test_project_dspy_entrypoint_suppresses_known_litellm_import_warnings() -> N
 
 def test_container_live_test_includes_litellm_sidecar_dependency() -> None:
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-    target = makefile.split("container-live-test:", 1)[1].split("\n\n", 1)[0]
+    target = makefile.split("_container-live-test:", 1)[1].split("\n\n", 1)[0]
 
     assert "--no-deps" not in target
     assert "tests/test_live_runtime_acceptance.py" in target

@@ -48,6 +48,7 @@
 - 完整验证硬门：`make test`（依赖 `codex-guard`，先运行 Agent 配置审计、Codex/docs 治理、阶段语言、版本一致性和 OpenAPI 契约检查，再跑 `main-full`、coverage 与可信证据校验）。
 - 测试资产单一入口：`tests/quality_policy.json`，统一管理覆盖率、双维分类、owner、lane、主流程、TIA、并行晋级、mutation 和 GAP；旧 coverage-only manifest 不得恢复。
 - TIA 与 xdist 在至少 20 组同 SHA 配对样本、跨越 14 天且零漏测/并行特有失败前只允许 shadow；提交前始终运行完整串行后端 lane。
+- 依赖真实 Docker Compose 运行态的验收只能通过公共 Make 入口；入口必须基于当前工作树重建本地镜像、force-recreate 服务并加载所选配置。纯宿主机测试不触发该流程。
 
 `warn`、dry-run 或只读审计类命令只能用于 Analyze 阶段观察；Verify 阶段必须运行正式 `--mode fail`，不得以 `warn` 作为通过标准。
 

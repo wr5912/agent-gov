@@ -44,7 +44,7 @@
 | OpenAPI 导出 | `.venv/bin/python scripts/export_openapi.py` |
 | 前端类型 | `pnpm --dir frontend generate:api-types` |
 | 前端构建 | `pnpm --dir frontend build` |
-| 浏览器 smoke | `RUNTIME_UI_BASE=... RUNTIME_API_BASE=... pnpm --dir frontend verify:feedback-browser` |
+| 浏览器 smoke | mock/设计基准用 `make ui-design-parity`；真实 Compose 工作台用 `make ui-feedback-smoke` |
 | 真实历史数据 | 使用 `${HOME}/volume-agent-gov/data` 或迁移前 `docker/volume/data` 中现有数据访问列表、详情和关键投影 |
 
 如果某项没有运行，阶段总结必须写明原因、剩余风险和下次恢复路径。不能用“应该没问题”替代。

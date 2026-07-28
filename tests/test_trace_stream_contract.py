@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+from app.runtime.managed_claude_events import AgentGovControlEvent, ClaudeSdkMessageEvent
 from app.runtime.openai_responses_stream import iter_responses_sse
 
 SESSION = {
@@ -14,7 +15,50 @@ DONE = {"event": "done", "data": "[DONE]"}
 
 async def _frames(items):
     for item in items:
-        yield item
+        event = item.get("event")
+        data = item.get("data")
+        data = data if isinstance(data, dict) else {}
+        if event != "message":
+            yield AgentGovControlEvent(name=str(event), data=data)
+            continue
+
+        from claude_agent_sdk import (
+            AssistantMessage,
+            SystemMessage,
+            TextBlock,
+            ThinkingBlock,
+            ToolUseBlock,
+        )
+
+        raw = data.get("raw") if isinstance(data.get("raw"), dict) else {}
+        if str(data.get("event") or "").startswith("SystemMessage"):
+            yield ClaudeSdkMessageEvent(
+                SystemMessage(
+                    subtype="thinking_tokens",
+                    data={"estimated_tokens": 1},
+                )
+            )
+            continue
+        content = []
+        for block in raw.get("content", []):
+            if isinstance(block, dict) and isinstance(block.get("thinking"), str):
+                content.append(
+                    ThinkingBlock(
+                        thinking=block["thinking"],
+                        signature=str(block.get("signature") or ""),
+                    )
+                )
+            elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                content.append(TextBlock(text=block["text"]))
+            elif isinstance(block, dict) and block.get("id") and block.get("name"):
+                content.append(
+                    ToolUseBlock(
+                        id=str(block["id"]),
+                        name=str(block["name"]),
+                        input=block.get("input") if isinstance(block.get("input"), dict) else {},
+                    )
+                )
+        yield ClaudeSdkMessageEvent(AssistantMessage(content=content, model="test"))
 
 
 def _collect(items, **kwargs) -> str:
@@ -84,7 +128,7 @@ def test_trace_opt_in_emits_complete_thinking_and_every_tool_block() -> None:
 
     assert [event["kind"] for event in trace_events] == ["thinking", "tool_use", "tool_use", "text"]
     assert [step["tool_name"] for step in tool_steps] == ["Glob", "Read"]
-    assert trace_events[0]["payload"] == {"thinking": "完整思考"}
+    assert trace_events[0]["payload"]["thinking"] == "完整思考"
 
 
 def test_trace_is_opt_in_and_sdk_raw_keeps_assistant_snapshot() -> None:
@@ -110,5 +154,6 @@ def test_trace_is_opt_in_and_sdk_raw_keeps_assistant_snapshot() -> None:
     )
 
     assert "event: agentgov.trace_event" not in default_text
-    sdk_raw = [data["payload"]["raw"] for name, data in raw_events if name == "agentgov.sdk_raw"]
-    assert sdk_raw == [assistant["data"]["raw"]]
+    sdk_raw = [data["payload"] for name, data in raw_events if name == "agentgov.sdk_raw"]
+    assert sdk_raw[0]["sdk_event"] == "AssistantMessage"
+    assert sdk_raw[0]["raw"]["content"] == [{"text": "answer"}]

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Playground Claude native user-input UI contract:
-// mock /v1/responses SSE -> render HITL cards -> submit decisions -> keep decision token out of visible/local persisted trace.
+// mock SDK-native SSE -> render HITL cards -> submit decisions -> keep decision token out of visible/local persisted trace.
 import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -88,12 +88,6 @@ function routeData(path) {
   return {};
 }
 
-function sessionIdFromResponsesBody(body) {
-  return typeof body.conversation === "string" && body.conversation.startsWith("conv_")
-    ? body.conversation.slice("conv_".length)
-    : "hitl-ui-session";
-}
-
 function requestEvent(kind, sessionId) {
   const common = {
     business_agent_id: "response-disposal",
@@ -124,7 +118,7 @@ function requestEvent(kind, sessionId) {
       decision_token: "secret-question-token",
       request_type: "ask_user_question",
       tool_name: "AskUserQuestion",
-      redacted_input: {
+      input: {
         questions: [
           {
             header: "Scope",
@@ -142,7 +136,7 @@ function requestEvent(kind, sessionId) {
       decision_token: "secret-high-tool-token",
       request_type: "tool_permission",
       tool_name: "mcp__sec-ops__soc_api__manual",
-      redacted_input: { playbookId: "playbook-1" },
+      input: { playbookId: "playbook-1" },
     };
   }
   return {
@@ -151,7 +145,7 @@ function requestEvent(kind, sessionId) {
     decision_token: "secret-tool-token",
     request_type: "tool_permission",
     tool_name: "Read",
-    redacted_input: { file_path: "report.md" },
+    input: { file_path: "report.md" },
   };
 }
 
@@ -163,17 +157,16 @@ async function installMockRoutes(page, streamRequests, decisionRequests) {
     if (url.origin === uiBase) return route.continue();
     if (url.hostname !== "runtime.test") return route.continue();
     const path = url.pathname;
-    if (path === "/v1/responses" && request.method() === "POST") {
+    if (path === "/api/agent-runtime/sdk-events" && request.method() === "POST") {
       const body = request.postDataJSON();
-      const sessionId = sessionIdFromResponsesBody(body);
+      const sessionId = body.session_id || "hitl-ui-session";
       streamRequests.push(body);
       streamIndex += 1;
       const kind = streamIndex === 1 ? "tool" : streamIndex === 2 ? "high" : "question";
       return sse(route, [
         { event: "agentgov.session", data: { session_id: sessionId, sdk_session_id: "sdk-hitl-ui-session", run_id: `run-${kind}` } },
         { event: "agentgov.confirmation.requested", data: requestEvent(kind, sessionId) },
-        { event: "response.completed", data: { response: { status: "completed" } } },
-        { event: "agentgov.done", data: "[DONE]" },
+        { event: "agentgov.done", data: {} },
       ]);
     }
     const decisionMatch = path.match(/^\/v1\/agentgov\/confirmation-requests\/([^/]+)\/decision$/);
@@ -266,7 +259,7 @@ async function main() {
       throw new Error("AskUserQuestion decision token leaked into visible UI or localStorage");
     }
     if (streamRequests.length !== 3) throw new Error(`expected 3 stream requests, got ${streamRequests.length}`);
-    if (streamRequests.some((item) => item.agentgov?.agent_id !== "response-disposal")) {
+    if (streamRequests.some((item) => item.agent_id !== "response-disposal")) {
       throw new Error(`topbar agent selection did not flow into chat requests: ${JSON.stringify(streamRequests)}`);
     }
     if (decisionRequests.length !== 3) throw new Error(`expected 3 decision requests, got ${decisionRequests.length}`);

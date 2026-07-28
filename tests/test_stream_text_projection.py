@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.runtime import claude_prompt_suggestions
 from app.runtime.async_iterators import close_async_iterator
+from app.runtime.managed_claude_events import AgentGovControlEvent, ClaudeSdkMessageEvent
 from app.runtime.message_utils import extract_assistant_text_snapshot, extract_stream_text_delta
 from app.runtime.openai_responses_stream import iter_responses_sse
 from app.runtime.schemas import ChatRequest
@@ -67,7 +68,34 @@ def _patch_sdk_query(monkeypatch, fake_query) -> None:
 
 async def _frames(values):
     for value in values:
-        yield value
+        event = value.get("event")
+        data = value.get("data")
+        data = data if isinstance(data, dict) else {}
+        if event != "message":
+            yield AgentGovControlEvent(name=str(event), data=data)
+            continue
+        from claude_agent_sdk import AssistantMessage, StreamEvent, TextBlock
+
+        if data.get("text_kind") == "delta":
+            yield ClaudeSdkMessageEvent(
+                StreamEvent(
+                    uuid="projection-test",
+                    session_id="sdk-stream",
+                    event={
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": data.get("text")},
+                    },
+                )
+            )
+        else:
+            yield ClaudeSdkMessageEvent(
+                AssistantMessage(
+                    content=[TextBlock(text=str(data.get("text") or ""))],
+                    model="test",
+                    session_id="sdk-stream",
+                )
+            )
 
 
 def _project(values) -> list[tuple[str, object]]:
@@ -229,7 +257,19 @@ def test_runtime_partial_events_are_transport_only_and_timings_reach_trace(
     record = module.feedback_store.find_run(run_id=run_id)
 
     assert captured_options[0].include_partial_messages is True
-    assert [frame["data"].get("text_kind") for frame in stream_messages] == ["delta", "delta", "snapshot", "snapshot"]
+    assert [frame["data"].get("text_kind") for frame in stream_messages] == [
+        "delta",
+        "delta",
+        "delta",
+        "snapshot",
+        "snapshot",
+    ]
+    assert [frame["data"]["event"] for frame in stream_messages[:3]] == [
+        "StreamEvent:thinking_delta",
+        "StreamEvent",
+        "StreamEvent",
+    ]
+    assert stream_messages[0]["data"]["text"] == "hidden"
     assert record is not None
     assert all(message.get("event") != "StreamEvent" for message in record["messages"])
     assert record["answer_summary"] == "你好"

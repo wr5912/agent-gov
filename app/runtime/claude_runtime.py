@@ -27,6 +27,7 @@ from .governor_job_trace import run_governor_profile_json
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
 from .managed_agent_policy import ManagedAgentPolicyError, require_profile_runtime_workspace_policy
+from .managed_claude_events import ManagedClaudeEvent
 from .message_utils import extract_text, message_event_name, to_plain
 from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
@@ -741,13 +742,13 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
         profile = candidate_profile(self.settings, agent_id=agent_id, workspace_dir=worktree_path, candidate_id=change_set_id)
         return await self.run(req, profile=profile, agent_version_id_override=candidate_commit_sha)
 
-    async def stream(
+    async def stream_events(
         self,
         req: ChatRequest,
         *,
         profile: AgentRuntimeProfile | None = None,
         cli_path_override: Path | None = None,
-    ) -> AsyncIterator[JsonObject]:
+    ) -> AsyncIterator[ManagedClaudeEvent]:
         from .claude_runtime_stream import stream_claude_runtime
 
         selected_profile = await asyncio.to_thread(self._resolve_runtime_profile, req, profile)
@@ -760,5 +761,33 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
         try:
             async for event in source:
                 yield event
+        finally:
+            await close_async_iterator(source)
+
+    async def stream(
+        self,
+        req: ChatRequest,
+        *,
+        profile: AgentRuntimeProfile | None = None,
+        cli_path_override: Path | None = None,
+    ) -> AsyncIterator[JsonObject]:
+        """Chat-specific compatibility projection.
+
+        New endpoint adapters must consume ``stream_events`` directly so Chat is not
+        a shared wire normalizer.
+        """
+
+        from .chat_stream_projector import iter_chat_frames
+
+        source = iter_chat_frames(
+            self.stream_events(
+                req,
+                profile=profile,
+                cli_path_override=cli_path_override,
+            )
+        )
+        try:
+            async for frame in source:
+                yield frame
         finally:
             await close_async_iterator(source)

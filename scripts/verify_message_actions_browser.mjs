@@ -237,12 +237,6 @@ function mockPayload(urlOrPath) {
   return {};
 }
 
-function sessionIdFromResponsesBody(body) {
-  return typeof body.conversation === "string" && body.conversation.startsWith("conv_")
-    ? body.conversation.slice("conv_".length)
-    : "mock-session";
-}
-
 async function scrollDistance(page) {
   return page.getByTestId("playground-messages").evaluate((el) => Math.round(el.scrollHeight - el.clientHeight - el.scrollTop));
 }
@@ -300,7 +294,7 @@ async function main() {
       const result = await originalRead.apply(this, args);
       if (result?.value instanceof Uint8Array) {
         const chunk = new TextDecoder().decode(result.value);
-        if (chunk.includes("response.output_text.delta")) {
+        if (chunk.includes("text_delta")) {
           window.__agentgovLastStreamReceipt = performance.now();
           window.setTimeout(() => { window.__agentgovLastStreamReceipt = null; }, 250);
         }
@@ -329,8 +323,7 @@ async function main() {
     }
   }, [api, key, REAL]);
   let ok = false, detail = "";
-  let responsesRequestCount = 0;
-  let traceOptInRequestCount = 0;
+  let sdkEventsRequestCount = 0;
   try {
     if (REAL) {
       page.on("request", (request) => {
@@ -343,12 +336,11 @@ async function main() {
         const url = new URL(route.request().url());
         if (url.hostname !== "runtime.test") return route.continue();
         requestedRuntimeUrls.push(`${url.pathname}${url.search}`);
-        if (url.pathname === "/v1/responses") {
-          responsesRequestCount += 1;
+        if (url.pathname === "/api/agent-runtime/sdk-events") {
+          sdkEventsRequestCount += 1;
           const body = route.request().postDataJSON();
-          if (body?.agentgov?.include_trace === true) traceOptInRequestCount += 1;
-          const sessionId = sessionIdFromResponsesBody(body);
-          if (body?.input === "触发截断流负测") {
+          const sessionId = body?.session_id || "mock-session";
+          if (body?.message === "触发截断流负测") {
             return sse(route, [
               {
                 event: "agentgov.session",
@@ -361,8 +353,19 @@ async function main() {
                   langfuse_trace_url: "http://langfuse-web:3000/project/agent-gov/traces/mock-trace-failure",
                 },
               },
-              { event: "response.output_text.delta", data: { delta: "半截响应" } },
-              { event: "agentgov.done", data: { ok: true } },
+              {
+                event: "claude.sdk.StreamEvent",
+                data: {
+                  uuid: "mock-truncated-delta",
+                  session_id: "mock-sdk-session",
+                  parent_tool_use_id: null,
+                  event: {
+                    type: "content_block_delta",
+                    index: 0,
+                    delta: { type: "text_delta", text: "半截响应" },
+                  },
+                },
+              },
             ]);
           }
           const canonicalText = "我是 AgentGov 测试助手。";
@@ -378,14 +381,41 @@ async function main() {
                 langfuse_trace_url: "http://langfuse-web:3000/project/agent-gov/traces/mock-trace-live",
               },
             },
-            ...Array.from(`${canonicalText}不会进入最终文本`).map((delta) => ({
-              event: "response.output_text.delta",
-              data: { delta },
+            {
+              event: "claude.sdk.StreamEvent",
+              data: {
+                uuid: "mock-message-start",
+                session_id: "mock-sdk-session",
+                parent_tool_use_id: null,
+                event: { type: "message_start", message: { id: "mock-message" } },
+              },
+            },
+            ...Array.from(`${canonicalText}不会进入最终文本`).map((text, index) => ({
+              event: "claude.sdk.StreamEvent",
+              data: {
+                uuid: `mock-text-${index}`,
+                session_id: "mock-sdk-session",
+                parent_tool_use_id: null,
+                event: {
+                  type: "content_block_delta",
+                  index: 0,
+                  delta: { type: "text_delta", text },
+                },
+              },
             })),
+            {
+              event: "claude.sdk.AssistantMessage",
+              data: {
+                content: [{ text: canonicalText }],
+                model: "mock",
+                parent_tool_use_id: null,
+                message_id: "mock-message",
+                session_id: "mock-sdk-session",
+              },
+            },
             { event: "agentgov.result", data: { run_id: "mock-run-live", session_id: sessionId, agent_version_id: "v-mock", agent_activity: { tool_calls: [], tool_results: [], tool_names: [] } } },
-            { event: "agentgov.prompt_suggestion", data: { v: 1, type: "agentgov.prompt_suggestion", run_id: "mock-run-live", ts: Date.now() / 1000, seq: 4, payload: { suggestion: "继续检查失败路径。", suggestions: ["继续检查失败路径。", "看一下日志", "换个角度分析"], session_id: sessionId } } },
-            { event: "response.completed", data: { response: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: canonicalText }] }] } } },
             { event: "agentgov.done", data: { ok: true } },
+            { event: "agentgov.prompt_suggestion", data: { suggestion: "继续检查失败路径。", suggestions: ["继续检查失败路径。", "看一下日志", "换个角度分析"], session_id: sessionId } },
           ]);
         }
         return json(route, mockPayload(url));
@@ -393,32 +423,41 @@ async function main() {
     }
     await page.goto(ui, { waitUntil: "domcontentloaded" });
     await page.getByTestId("playground").waitFor({ timeout: 20000 });
-    const streamBatchChecks = REAL ? { skipped: true } : await page.evaluate(async () => {
-      const { createResponseDeltaBatcher, completedResponseText } = await import("/src/api/responsesStream.ts");
-      const dispatched = [];
-      const started = performance.now();
-      const batcher = createResponseDeltaBatcher((envelope) => {
-        dispatched.push({ envelope, at: performance.now() });
+    const nativeReducerChecks = REAL ? { skipped: true } : await page.evaluate(async () => {
+      const { ClaudeSdkEvidenceReducer } = await import("/src/api/claudeSdkStream.ts");
+      const reducer = new ClaudeSdkEvidenceReducer();
+      reducer.setRunId("run-browser-reducer");
+      reducer.reduce("claude.sdk.StreamEvent", {
+        uuid: "message-start",
+        parent_tool_use_id: null,
+        event: { type: "message_start", message: { id: "message-browser" } },
       });
-      for (const delta of Array.from("流式增量批处理".repeat(20))) {
-        batcher.enqueue({ event: "response.output_text.delta", data: { delta } });
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      const firstBatch = dispatched[0];
-      batcher.enqueue({ event: "response.output_text.delta", data: { delta: "尾" } });
-      batcher.enqueue({ event: "agentgov.result", data: { ok: true } });
-      const canonical = completedResponseText({
-        response: { output: [{ content: [{ type: "output_text", text: "权威最终文本" }] }] },
+      const first = reducer.reduce("claude.sdk.StreamEvent", {
+        uuid: "thinking-transport-1",
+        parent_tool_use_id: null,
+        event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "逐步" } },
+      }).traceEvents[0];
+      const second = reducer.reduce("claude.sdk.StreamEvent", {
+        uuid: "thinking-transport-2",
+        parent_tool_use_id: null,
+        event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "分析" } },
+      }).traceEvents[0];
+      const topLevel = reducer.reduce("claude.sdk.AssistantMessage", {
+        message_id: "message-browser",
+        parent_tool_use_id: null,
+        content: [{ text: "权威最终文本" }],
+      });
+      const subagent = reducer.reduce("claude.sdk.AssistantMessage", {
+        message_id: "message-subagent",
+        parent_tool_use_id: "task-1",
+        content: [{ text: "子 Agent 证据" }],
       });
       return {
         skipped: false,
-        scheduledDispatchCount: firstBatch ? 1 : 0,
-        mergedTextExact: firstBatch?.envelope?.data?.delta === "流式增量批处理".repeat(20),
-        receiptToDispatchMs: firstBatch ? firstBatch.at - started : Number.POSITIVE_INFINITY,
-        nonDeltaFlushOrder:
-          dispatched.at(-2)?.envelope?.data?.delta === "尾"
-          && dispatched.at(-1)?.envelope?.event === "agentgov.result",
-        canonicalTextExact: canonical === "权威最终文本",
+        stableBlockIdentity: first?.event_id === second?.event_id && first?.sequence === second?.sequence,
+        thinkingDeltaAccumulated: second?.payload?.thinking === "逐步分析",
+        canonicalTextExact: topLevel.finalText === "权威最终文本",
+        subagentTextNotAnswer: subagent.finalText === undefined && subagent.traceEvents[0]?.scope === "subagent",
       };
     });
     const maxAttempts = REAL ? RETRIES : 1;
@@ -571,7 +610,7 @@ async function main() {
           await waitNearBottom(page);
           const suggestion = page.getByTestId("prompt-suggestion");
           await suggestion.waitFor({ timeout: 8000 });
-          const requestsBeforeSuggestionClick = responsesRequestCount;
+          const requestsBeforeSuggestionClick = sdkEventsRequestCount;
           const suggestionChips = suggestion.getByTestId("prompt-suggestion-item");
           // mock 一帧送 3 条 ⇒ 必须渲染 3 个 chip。不测这条的话,多候选退化回单条也照样绿
           // (下面的 first() 点击对单条同样成立)。
@@ -602,7 +641,7 @@ async function main() {
             suggestionChipTextsMatchFrame:
               suggestionChipTexts.join("|") === "继续检查失败路径。|看一下日志|换个角度分析",
             suggestionFilledInput: await page.getByTestId("chat-composer-input").inputValue() === "继续检查失败路径。",
-            suggestionDidNotAutoSend: responsesRequestCount === requestsBeforeSuggestionClick,
+            suggestionDidNotAutoSend: sdkEventsRequestCount === requestsBeforeSuggestionClick,
             suggestionClearedAfterUse: await page.getByTestId("prompt-suggestion").count() === 0,
             canonicalAssistantTextExact: latestAssistantText === "我是 AgentGov 测试助手。",
             sseReceiptToDomSamples: domLatencies.length,
@@ -635,14 +674,16 @@ async function main() {
           markdownChecks,
           scrollChecks,
           autoPanelChecks,
-          streamBatchChecks,
+          nativeReducerChecks,
           historySourceChecks: {
             conversationItemsRequested: requestedRuntimeUrls.some((value) => value.startsWith("/v1/conversations/conv_mock-session/items?")),
             conversationItemsPaginated: requestedRuntimeUrls.some((value) => value.startsWith("/v1/conversations/conv_mock-session/items?") && value.includes("after=msg_13")),
             realConversationItemsRequested: requestedRuntimeUrls.some((value) => /^\/v1\/conversations\/[^/]+\/items\?/.test(value)),
             sqliteMessageRestoreAbsent: !requestedRuntimeUrls.some((value) => value.startsWith("/api/agent-runs?") && value.includes("include_messages=true")),
             localMessageCacheAbsent: await page.evaluate(() => window.localStorage.getItem("playground-session-messages") === null),
-            traceOptInSent: traceOptInRequestCount > 0,
+            nativeSdkStreamSent: sdkEventsRequestCount > 0,
+            responsesBridgeAbsent: !requestedRuntimeUrls.some((value) => value.startsWith("/v1/responses")),
+            chatBridgeAbsent: !requestedRuntimeUrls.some((value) => value.startsWith("/api/chat/stream")),
           },
           historyTraceStatusChecks,
           semanticTraceChecks,
@@ -672,19 +713,20 @@ async function main() {
           && (!REAL || restoredTraceHref.includes("/traces/"))
           && (!REAL || drawerChecks.historySourceChecks.realConversationItemsRequested)
           && (REAL || (
-            !streamBatchChecks.skipped
-            && streamBatchChecks.scheduledDispatchCount === 1
-            && streamBatchChecks.mergedTextExact
-            && streamBatchChecks.receiptToDispatchMs <= 100
-            && streamBatchChecks.nonDeltaFlushOrder
-            && streamBatchChecks.canonicalTextExact
+            !nativeReducerChecks.skipped
+            && nativeReducerChecks.stableBlockIdentity
+            && nativeReducerChecks.thinkingDeltaAccumulated
+            && nativeReducerChecks.canonicalTextExact
+            && nativeReducerChecks.subagentTextNotAnswer
           ))
           && (REAL || (
             drawerChecks.historySourceChecks.conversationItemsRequested
             && drawerChecks.historySourceChecks.conversationItemsPaginated
             && drawerChecks.historySourceChecks.sqliteMessageRestoreAbsent
             && drawerChecks.historySourceChecks.localMessageCacheAbsent
-            && drawerChecks.historySourceChecks.traceOptInSent
+            && drawerChecks.historySourceChecks.nativeSdkStreamSent
+            && drawerChecks.historySourceChecks.responsesBridgeAbsent
+            && drawerChecks.historySourceChecks.chatBridgeAbsent
           ))
           && (REAL || (
             !historyTraceStatusChecks.skipped

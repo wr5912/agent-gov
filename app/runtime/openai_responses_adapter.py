@@ -17,6 +17,8 @@ from app.runtime.openai_responses_schemas import (
     ResponseObject,
     ResponseOutputMessage,
     ResponseOutputText,
+    ResponseReasoningItem,
+    ResponseReasoningText,
     ResponsesRequest,
     ResponseStatus,
 )
@@ -165,10 +167,52 @@ def iso_to_epoch(value: object) -> Optional[int]:
         return None
 
 
-def _output_from_text(text: Optional[str]) -> list[ResponseOutputMessage]:
-    if not text:
-        return []
-    return [ResponseOutputMessage(content=[ResponseOutputText(text=text)])]
+def extract_reasoning_from_messages(messages: object) -> str:
+    """Project complete SDK ThinkingBlocks without treating token metrics as text."""
+
+    if not isinstance(messages, list):
+        return ""
+    parts: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        event = message.get("event")
+        if not isinstance(event, str) or not event.startswith("AssistantMessage"):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            thinking = block.get("thinking") if isinstance(block, dict) else None
+            if isinstance(thinking, str) and thinking:
+                parts.append(thinking)
+    return "\n\n".join(parts)
+
+
+def response_output_items(
+    *,
+    run_id: str,
+    text: Optional[str],
+    reasoning: Optional[str],
+) -> list[ResponseReasoningItem | ResponseOutputMessage]:
+    """Build stable output item ids/order shared by live, stream completion, and retrieve."""
+
+    output: list[ResponseReasoningItem | ResponseOutputMessage] = []
+    if reasoning:
+        output.append(
+            ResponseReasoningItem(
+                id=f"rs_{run_id}",
+                content=[ResponseReasoningText(text=reasoning)],
+            )
+        )
+    if text:
+        output.append(
+            ResponseOutputMessage(
+                id=f"msg_{run_id}",
+                content=[ResponseOutputText(text=text)],
+            )
+        )
+    return output
 
 
 def response_from_chat_response(
@@ -181,12 +225,13 @@ def response_from_chat_response(
 ) -> ResponseObject:
     """live 非流式：``runtime.run`` 的 ``ChatResponse`` -> ``ResponseObject``。"""
     answer = chat.answer or ""
+    reasoning = extract_reasoning_from_messages(chat.messages)
     return ResponseObject(
         id=response_id_from_run(chat.run_id) or chat.run_id,
         created_at=created_at,
         status=derive_status(chat.errors, chat.stop_reason),
         model=model,
-        output=_output_from_text(answer),
+        output=response_output_items(run_id=chat.run_id, text=answer, reasoning=reasoning),
         usage=map_usage(chat.usage),
         metadata=public_metadata(metadata),
         agentgov=AgentGovResponseExtension(
@@ -224,12 +269,13 @@ def response_from_run_payload(run: JsonObject) -> ResponseObject:
     errors = run.get("errors")
     usage = run.get("usage")
     cost = run.get("total_cost_usd")
+    reasoning = extract_reasoning_from_messages(messages)
     return ResponseObject(
         id=response_id_from_run(run_id) or run_id,
         created_at=iso_to_epoch(run.get("created_at")),
         status=derive_status(errors, run.get("stop_reason"), run.get("turn_status")),
         model=_str_or_none(run.get("model")),
-        output=_output_from_text(answer or None),
+        output=response_output_items(run_id=run_id, text=answer or None, reasoning=reasoning or None),
         usage=map_usage(usage),
         metadata=public_metadata(run.get("metadata")),
         agentgov=AgentGovResponseExtension(

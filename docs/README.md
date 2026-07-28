@@ -77,7 +77,7 @@
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`
 - [GSD长程重构阶段清单](./engineering/GSD长程重构阶段清单.md)：`docs/engineering/GSD长程重构阶段清单.md`
 - [vLLM 模型网关与 Sidecar 整改方案](./engineering/vLLM模型网关与Sidecar整改优化方案.md)：`docs/engineering/vLLM模型网关与Sidecar整改优化方案.md`
-- [OpenAI 兼容接口能否替代原生 Chat 端点评估](./engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)：`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`，已落地的 Responses-first ADR 与当前工程契约；`/v1/responses` + `/v1/conversations` 为 canonical，chat/completions 与旧 `/api/chat*` 只作兼容面
+- [OpenAI 兼容接口能否替代原生 Chat 端点评估](./engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)：`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`，已落地的外部 Responses 契约、第一方 Playground SDK-native 流与独立 Chat 兼容投影边界；`/v1/conversations` 继续承载会话恢复
 
 ## 评审与复盘
 

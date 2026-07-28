@@ -5,11 +5,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import make_dataclass
 from pathlib import Path
 
 import pytest
 from app.runtime import claude_prompt_suggestions
 from app.runtime.async_iterators import close_async_iterator
+from app.runtime.managed_claude_events import (
+    AgentGovControlEvent,
+    AgentGovHeartbeatEvent,
+    ClaudeSdkMessageEvent,
+)
 from app.runtime.openai_responses_stream import iter_responses_sse
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ChatRequest
@@ -94,7 +100,94 @@ def _drive_stream(module, req: ChatRequest, on_event=None) -> list:
 
 async def _aiter(frames):
     for frame in frames:
-        yield frame
+        yield _as_managed(frame)
+
+
+def _as_managed(frame):
+    event = frame.get("event")
+    data = frame.get("data")
+    data = data if isinstance(data, dict) else {}
+    if event == "heartbeat":
+        return AgentGovHeartbeatEvent(
+            run_id=str(data.get("run_id") or "run-9"),
+            timestamp=str(data.get("timestamp") or ""),
+        )
+    if event != "message":
+        return AgentGovControlEvent(
+            name=str(event),
+            data=data,
+        )
+
+    from claude_agent_sdk import (
+        AssistantMessage,
+        StreamEvent,
+        TextBlock,
+        ThinkingBlock,
+        ToolResultBlock,
+        ToolUseBlock,
+        UserMessage,
+    )
+
+    sdk_event = str(data.get("event") or "SdkMessage")
+    text = data.get("text") if isinstance(data.get("text"), str) else ""
+    raw = dict(data.get("raw")) if isinstance(data.get("raw"), dict) else {}
+    if data.get("text_kind") == "delta" or sdk_event == "StreamEvent":
+        return ClaudeSdkMessageEvent(
+            StreamEvent(
+                uuid="legacy-test-delta",
+                session_id="sdk-9",
+                event={
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": text},
+                },
+            )
+        )
+    class_name, _, subtype = sdk_event.partition(":")
+    if class_name == "AssistantMessage":
+        content = []
+        for block in raw.get("content", []):
+            if not isinstance(block, dict):
+                continue
+            if isinstance(block.get("thinking"), str):
+                content.append(
+                    ThinkingBlock(
+                        thinking=block["thinking"],
+                        signature=str(block.get("signature") or ""),
+                    )
+                )
+            elif isinstance(block.get("text"), str):
+                content.append(TextBlock(text=block["text"]))
+            elif isinstance(block.get("id"), str) and isinstance(block.get("name"), str):
+                content.append(
+                    ToolUseBlock(
+                        id=block["id"],
+                        name=block["name"],
+                        input=block.get("input") if isinstance(block.get("input"), dict) else {},
+                    )
+                )
+        if not content and text:
+            content.append(TextBlock(text=text))
+        return ClaudeSdkMessageEvent(
+            AssistantMessage(content=content, model="legacy-test", session_id="sdk-9")
+        )
+    if class_name == "UserMessage":
+        content = [
+            ToolResultBlock(
+                tool_use_id=str(block.get("tool_use_id")),
+                content=block.get("content"),
+                is_error=bool(block.get("is_error")),
+            )
+            for block in raw.get("content", [])
+            if isinstance(block, dict) and block.get("tool_use_id")
+        ]
+        return ClaudeSdkMessageEvent(UserMessage(content=content))
+
+    raw.pop("event", None)
+    if subtype:
+        raw.setdefault("subtype", subtype)
+    message_type = make_dataclass(class_name, [(key, object) for key in raw])
+    return ClaudeSdkMessageEvent(message_type(**raw))
 
 
 def _collect(frames, **kwargs) -> str:
@@ -119,7 +212,13 @@ def _parse(sse_text: str):
                 name = line[len("event: ") :]
             elif line.startswith("data: "):
                 data = json.loads(line[len("data: ") :])
-        if name is not None:
+        if name is not None and name not in {
+            "response.output_item.added",
+            "response.output_item.done",
+            "response.content_part.added",
+            "response.content_part.done",
+            "response.output_text.done",
+        }:
             events.append((name, data))
     return events
 
@@ -304,8 +403,8 @@ def test_projection_closes_upstream_when_client_stops_consuming() -> None:
 
     async def blocking_source():
         try:
-            yield _SESSION
-            yield _ASSISTANT
+            yield _as_managed(_SESSION)
+            yield _as_managed(_ASSISTANT)
             await asyncio.Event().wait()
         finally:
             upstream_closed.set()
@@ -336,7 +435,7 @@ def test_projection_accepts_async_iterator_without_aclose() -> None:
 
         async def __anext__(self):
             try:
-                return next(self._frames)
+                return _as_managed(next(self._frames))
             except StopIteration:
                 raise StopAsyncIteration from None
 
@@ -463,7 +562,7 @@ def test_confirmation_projection_keeps_token_and_renames() -> None:
 def _fake_stream(frames):
     async def stream(req, *, profile=None, **kwargs):
         for frame in frames:
-            yield frame
+            yield _as_managed(frame)
 
     return stream
 
@@ -473,7 +572,7 @@ def _fake_capturing_stream(captured: dict, frames):
         captured["req"] = req
         captured["profile"] = profile
         for frame in frames:
-            yield frame
+            yield _as_managed(frame)
 
     return stream
 
@@ -484,7 +583,7 @@ def _register_biz(client: TestClient, agent_id: str = "soc-ops") -> None:
 
 def test_endpoint_stream_control(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    monkeypatch.setattr(module.runtime, "stream", _fake_stream([_SESSION, _ASSISTANT, _RESULT, _DONE]))
+    monkeypatch.setattr(module.runtime, "stream_events", _fake_stream([_SESSION, _ASSISTANT, _RESULT, _DONE]))
     with TestClient(module.app) as client:
         _register_biz(client)
         resp = client.post("/v1/responses", json={"input": "hi", "stream": True, "agentgov": {"agent_id": "soc-ops"}})
@@ -497,7 +596,7 @@ def test_endpoint_stream_control(monkeypatch, tmp_path: Path) -> None:
 def test_endpoint_stream_control_maps_request_fields(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     captured: dict = {}
-    monkeypatch.setattr(module.runtime, "stream", _fake_capturing_stream(captured, [_SESSION, _DONE]))
+    monkeypatch.setattr(module.runtime, "stream_events", _fake_capturing_stream(captured, [_SESSION, _DONE]))
     with TestClient(module.app) as client:
         _register_biz(client)
         resp = client.post(
@@ -530,7 +629,7 @@ def test_endpoint_stream_control_maps_request_fields(monkeypatch, tmp_path: Path
 def test_endpoint_stream_strict_uses_configured_agent_without_agentgov_events(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     captured: dict = {}
-    monkeypatch.setattr(module.runtime, "stream", _fake_capturing_stream(captured, [_SESSION, _ASSISTANT, _RESULT, _DONE]))
+    monkeypatch.setattr(module.runtime, "stream_events", _fake_capturing_stream(captured, [_SESSION, _ASSISTANT, _RESULT, _DONE]))
     with TestClient(module.app) as client:
         _register_biz(client)
         client.put("/api/settings/openai-compat-agent", json={"agent_id": "soc-ops"})
@@ -571,7 +670,7 @@ def test_endpoint_stream_projects_hitl_confirmation(monkeypatch, tmp_path: Path)
             "decided_by": "tester",
         },
     }
-    monkeypatch.setattr(module.runtime, "stream", _fake_stream([_SESSION, required, resolved, _DONE]))
+    monkeypatch.setattr(module.runtime, "stream_events", _fake_stream([_SESSION, required, resolved, _DONE]))
     with TestClient(module.app) as client:
         _register_biz(client)
         resp = client.post("/v1/responses", json={"input": "hi", "stream": True, "agentgov": {"agent_id": "soc-ops"}})
@@ -908,7 +1007,7 @@ def test_stream_retries_transient_turn_abort(
     assert saved is not None and saved.turns == 0 and saved.active_run_id is None
 
 
-def test_endpoint_sdk_result_error_is_failed_terminal_for_playground(monkeypatch, tmp_path: Path) -> None:
+def test_endpoint_sdk_result_error_is_failed_terminal_for_control_client(monkeypatch, tmp_path: Path) -> None:
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     async def fake_query(*, prompt, options, transport=None):

@@ -32,7 +32,10 @@ export function usePlaygroundTrace(
       if (controller.signal.aborted) return;
       patchMessage(setMessagesBySession, sessionId, messageId, (message) => ({
         ...mergeChatMessageRunContext(message, trace),
-        events: (trace.events || []).map(traceLogEvent),
+        // 只有完整持久化 trace 才校准替换；不可用/失败时保留本轮 SDK-native live evidence。
+        events: trace.completeness === "complete"
+          ? (trace.events || []).map(traceLogEvent)
+          : message.events,
         traceState: trace.completeness === "complete" ? "ready" : "unavailable",
         traceError: trace.completeness === "complete" ? undefined : "该历史运行没有可用的完整 SDK 消息。",
       }));

@@ -190,7 +190,7 @@ async def _create_response_impl(
         session_store=runtime.session_store,
     )
     if req.stream:
-        source = runtime.stream(plan.chat_req, profile=plan.profile)
+        source = runtime.stream_events(plan.chat_req, profile=plan.profile)
         return StreamingResponse(
             iter_responses_sse(
                 source,

@@ -112,17 +112,23 @@ class ClaudeCliRawCapture:
         if self._closed:
             return
         self._closed = True
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
+        server = self._server
+        writer = self._writer
+        self._server = None
+        self._writer = None
+        if server is not None:
+            server.close()
         if not self._connection.done():
             self._connection.cancel()
-        if self._writer is not None:
-            self._writer.close()
+        # Python 3.12 的 Server.wait_closed() 会等待活跃连接；必须先关闭
+        # 已接受的 writer，否则 listener 与连接互相等待形成确定性死锁。
+        if writer is not None:
+            writer.close()
+        if server is not None:
+            await server.wait_closed()
+        if writer is not None:
             with suppress(BrokenPipeError, ConnectionError):
-                await self._writer.wait_closed()
-            self._writer = None
+                await writer.wait_closed()
         await asyncio.to_thread(shutil.rmtree, self.directory, True)
 
 

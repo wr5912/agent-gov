@@ -1480,19 +1480,24 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
 
 
 def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
         sdk_session_id = options.resume or options.session_id
         await _mirror_entry(options, entry_uuid="langfuse-stream-entry")
-        yield {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Read",
-            "tool_input": {"file_path": "README.md"},
-            "tool_use_id": "toolu-read",
-        }
+        yield AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="toolu-read",
+                    name="Read",
+                    input={"file_path": "README.md"},
+                )
+            ],
+            model="<synthetic>",
+            session_id=sdk_session_id,
+        )
         yield AssistantMessage(
             content=[TextBlock(text="stream answer")],
             model="<synthetic>",

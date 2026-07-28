@@ -308,8 +308,10 @@ def test_client_cancel_closes_sdk_task_and_discards_unfinished_turn(tmp_path, mo
     session_id = "sess-client-cancel"
 
     async def exercise_cancel() -> str:
-        runtime_source = runtime.stream(ChatRequest(message="hello", session_id=session_id))
         if via_responses_sse:
+            runtime_source = runtime.stream_events(
+                ChatRequest(message="hello", session_id=session_id)
+            )
             consumer = iter_responses_sse(
                 runtime_source,
                 model="test-model",
@@ -320,6 +322,9 @@ def test_client_cancel_closes_sdk_task_and_discards_unfinished_turn(tmp_path, mo
                 if "event: response.output_text.delta" in chunk:
                     break
         else:
+            runtime_source = runtime.stream(
+                ChatRequest(message="hello", session_id=session_id)
+            )
             consumer = runtime_source
             async for event in consumer:
                 if event["event"] == "message":
@@ -390,7 +395,9 @@ def test_client_cancel_closes_sdk_task_when_hitl_cleanup_fails(tmp_path, monkeyp
     session_id = "sess-client-cancel-cleanup-error"
 
     async def exercise_cancel() -> str:
-        runtime_source = runtime.stream(ChatRequest(message="hello", session_id=session_id))
+        runtime_source = runtime.stream_events(
+            ChatRequest(message="hello", session_id=session_id)
+        )
         consumer = iter_responses_sse(
             runtime_source,
             model="test-model",

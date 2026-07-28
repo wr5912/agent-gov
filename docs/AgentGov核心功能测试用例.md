@@ -1268,7 +1268,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 自动验收：`tests/test_agv_acceptance.py::test_agv_049_collaboration_platform_selection_is_deferred`。该验收同时约束两条边界：当前不接入外部研发协作平台；后期多智能体协作在真实需求出现后重新选型，不预设候选产品。
 
-### AGV-050 OpenAI Responses-first 接口替代原生 Chat 主路径
+### AGV-050 Responses 外部契约与 Playground SDK-native 主路径
 
 状态：`current`
 
@@ -1279,19 +1279,20 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 测试步骤：
 
 1. 通过 Playground 发起一次真实业务 Agent 运行。
-2. 确认前端主运行请求走 `POST /v1/responses` control 模式，而不是旧 `/api/chat/stream`。
+2. 确认 Playground live turn 只走 `POST /api/agent-runtime/sdk-events`，不调用 `/v1/responses` 或旧 `/api/chat/stream`；每个官方 SDK yield 原序对应一帧 `claude.sdk.<ClassName>`。
 3. 通过 `/v1/conversations` 读取会话列表，并通过 `/v1/conversations/{conversation_id}/items` 验证会话 items 契约可用。
 4. 通过 `GET /v1/responses/{response_id}` 验证 `resp_<run_id>` 可从持久化 run 重建响应。
 5. 发起对抗式与边界请求：strict 模式 `instructions`、control 缺 `agentgov.agent_id`、`agentgov` 未知字段、非法 `max_turns`、保留 metadata 注入、旧 `/api/chat`/`/api/chat/stream` 缺 `agent_id`。
-6. 以 `agentgov.include_trace=true` 发起流式运行，构造完整 ThinkingBlock、同消息多个工具 block、hook/task/result，并同时产生大量 `SystemMessage:thinking_tokens`。
-7. 记录 live Trace，完成后调用 `GET /api/agent-runs/{run_id}/trace`，比较稳定 ID、顺序、类型和 payload；刷新 Playground 后再次打开同一 run 的 Trace。
+6. 分别调用 Responses control 流与 SDK-native 流，构造 thinking delta/ThinkingBlock signature、同消息多个工具 block 与 input JSON delta、tool result、hook/task/result，并同时产生大量 `SystemMessage:thinking_tokens`；验证 Responses 输出 reasoning 生命周期和 `agentgov.tool_call.*`，且没有标准 `function_call`。
+7. 在 Playground 记录 live evidence：block key 不依赖每帧 `StreamEvent.uuid`，顶层 text 才进入回答，subagent text 只进证据，thinking_tokens 只作指标；完成后调用 `GET /api/agent-runs/{run_id}/trace`，仅在 `completeness=complete` 时校准替换，刷新后再次打开同一 run 的 Trace。
 8. 分别制造 failed、cancelled、interrupted 终态，确认运行列表和 Trace API 返回持久化终态/错误；制造缺失 `messages` 的旧 run，确认明确返回 `completeness=unavailable`。
 9. 调用旧 `/api/chat/stream` 默认 raw 与 `?event_mode=semantic`，确认 raw 兼容、semantic 保留文本流且只把完整 SDK 事实投影为 `trace_event`。
 
 成功标准：
 
-- `/v1/responses` + `/v1/conversations` 承载 Playground 主运行与会话恢复主路径，前端不再把旧 `/api/chat/stream` 作为主运行入口。
+- `/api/agent-runtime/sdk-events` 承载 Playground live turn，`/v1/conversations` 承载会话恢复；前端 live turn 不经过 Responses 或 Chat projector。
 - control 模式能把业务 Agent、conversation、run、response retrieve 串成同一条运行事实链；`response.output[]` 与 `agentgov.run_id/session_id/conversation_id` 可审计。
+- Responses 的 reasoning/message 在流式、非流式和 retrieve 中有稳定 ID 与顺序；服务端工具调用只产生 `agentgov.tool_call.*` 观察和兼容 `agentgov.tool_step`，不会要求客户端重复执行。
 - hostile 输入被 4xx 拒绝，保留 metadata 不回显，旧原生 Chat 入口仍按兼容契约拒绝缺失 `agent_id`，不静默跑 main。
 - `/v1/chat/completions` 保持兼容入口定位，不作为 HITL、会话治理或工具时间线主控制面。
 - Trace 不出现 `SystemMessage:thinking_tokens` 洪水；每个完整 ThinkingBlock 只形成一条 thinking 事件，同消息全部工具调用/结果、hook、task、result 和 subagent 归属无遗漏。
@@ -1299,7 +1300,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：OpenAPI/pytest 契约、前端网络请求、真实容器 Playwright 截图、API 响应、容器健康状态。
 
-自动验收：核心 API 契约已绑定到 `tests/quality_policy.json` 的 `openai_responses_first_surface` 与 `responses_streaming_sse` 主流程，覆盖 `tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_retrieve.py`、`tests/test_conversations_api.py`、`tests/test_trace_projection.py`、`tests/test_trace_stream_contract.py` 和 `tests/test_agent_runs_api.py`；旧 Chat raw/semantic 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收使用 `pnpm --dir frontend run verify:openai-responses-container` 与消息动作浏览器脚本：打开 Compose UI、真实调用 Compose API，验证 UI 请求 `/v1/responses`、会话走 `/v1/conversations`、Trace 刷新重放、retrieve 可用，并执行 hostile / boundary 请求。
+自动验收：核心 API 契约已绑定到 `tests/quality_policy.json` 的 `openai_responses_first_surface`、`responses_streaming_sse` 与 `playground_native_sdk_stream` 场景，覆盖 `tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_sdk_projector.py`、`tests/test_responses_retrieve.py`、`tests/test_claude_sdk_native_stream.py`、`tests/test_conversations_api.py`、`tests/test_trace_projection.py`、`tests/test_trace_stream_contract.py` 和 `tests/test_agent_runs_api.py`；旧 Chat raw/semantic 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收使用 Responses API 验收与消息动作浏览器脚本：打开 Compose UI、真实调用 Compose API，验证 UI live turn 只请求 SDK-native endpoint、会话走 `/v1/conversations`、Trace 刷新重放、Responses retrieve 可用，并执行 hostile / boundary 请求。
 
 ## 开发推进规则
 

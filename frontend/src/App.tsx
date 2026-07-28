@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { deleteSession, defaultRuntimeConfig, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConversationItems, getCurrentAgentRef, getHealth, getSessions, isLegacyDockerApiBase, listBusinessAgents, streamChat, submitClaudeUserInputDecision } from "./api/runtime";
+import { deleteSession, defaultRuntimeConfig, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConversationItems, getCurrentAgentRef, getHealth, getSessions, isLegacyDockerApiBase, listBusinessAgents, submitClaudeUserInputDecision } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
 import { AssetRegistry } from "./components/AssetRegistry";
@@ -15,15 +15,11 @@ import { useConfigMapping } from "./hooks/useConfigMapping";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { usePlaygroundSessionScope } from "./hooks/usePlaygroundSessionScope";
 import { usePlaygroundTrace } from "./hooks/usePlaygroundTrace";
-import { cancelWaitingUserInputRequests, claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, stringValue } from "./claudeUserInputState";
-import { mergeChatMessageRunContext } from "./chatMessageRunContext";
+import { usePlaygroundRun } from "./hooks/usePlaygroundRun";
+import { cancelWaitingUserInputRequests, patchUserInputRequest } from "./claudeUserInputState";
 import { messagesFromConversationItems } from "./playgroundHistory";
-import { traceLogEvent, upsertTraceEvent } from "./playgroundTrace";
 import { usePromptSuggestion } from "./hooks/usePromptSuggestion";
-import { newId, newSessionId } from "./utils/ids";
-import type { AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo, StreamLogEvent } from "./types/runtime";
-import { isRecord } from "./utils/records";
-import { agentActivityFromResult } from "./api/responsesStream";
+import type { AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo } from "./types/runtime";
 import { getAgentRuns } from "./api/feedback";
 import { defaultLangfuseUrl, makeApiDocsUrl } from "./runtimeUrls";
 import "./styles.css";
@@ -73,7 +69,6 @@ export default function App() {
   const [feedbackDrawerOpen, setFeedbackDrawerOpen] = useState(false);
   const [feedbackContext, setFeedbackContext] = useState<FeedbackContext | null>(null);
 
-  const abortRef = useRef<AbortController | null>(null);
   const decisionTokensRef = useRef<Record<string, string>>({});
   const shouldMigrateLegacyApiBase = isLegacyDockerApiBase(clientConfig.apiBase) && !isLegacyDockerApiBase(runtimeDefaults.apiBase);
   const migratedClientConfig = useMemo<RuntimeClientConfig>(() => {
@@ -267,6 +262,35 @@ export default function App() {
     setSubmittingUserInputRequests(new Set());
   }
 
+  const { sendMessage, stopStream } = usePlaygroundRun({
+    clientConfig: effectiveClientConfig,
+    input,
+    streaming,
+    activeSessionId,
+    selectedBusinessAgentId,
+    alertId,
+    caseId,
+    maxTurns,
+    streamingAssistantMessageId,
+    decisionTokensRef,
+    promptSuggestion,
+    setInput,
+    setStreaming,
+    setStreamingAssistantMessageId,
+    setLastError,
+    setSessionSidebarOpen,
+    setEvidencePanelOpen,
+    setActiveTraceMessageId,
+    setUserInputErrors,
+    setSubmittingUserInputRequests,
+    claimLocalSession,
+    updateSessionMessages,
+    updateUserInputRequest,
+    cancelUserInputForMessage,
+    calibrateTrace,
+    refresh,
+  });
+
   async function submitUserInputDecision(
     request: ClaudeUserInputRequest,
     input: Omit<ClaudeUserInputDecisionPayload, "decision_token">,
@@ -341,241 +365,6 @@ export default function App() {
     } catch (error) {
       setLastError(error instanceof Error ? error.message : String(error));
     }
-  }
-
-  async function sendMessage() {
-    const message = input.trim();
-    if (!message || streaming) return;
-    if (!selectedBusinessAgentId) {
-      setLastError("请选择业务 Agent 后再发送消息。");
-      return;
-    }
-
-    const sessionId = activeSessionId || newSessionId();
-    if (!activeSessionId) claimLocalSession(sessionId, selectedBusinessAgentId);
-    promptSuggestion.clear(sessionId);
-    setInput("");
-    setStreaming(true);
-    setStreamingAssistantMessageId(undefined);
-    setLastError(undefined);
-    setSessionSidebarOpen(false);
-    setEvidencePanelOpen(true);
-
-    const userMessage: ChatMessage = {
-      id: newId("msg"),
-      role: "user",
-      content: message,
-      createdAt: new Date().toISOString(),
-    };
-    const assistantMessage: ChatMessage = {
-      id: newId("msg"),
-      role: "assistant",
-      content: "",
-      createdAt: new Date().toISOString(),
-      sessionId,
-      alertId: alertId.trim() || undefined,
-      caseId: caseId.trim() || undefined,
-      events: [],
-    };
-    setStreamingAssistantMessageId(assistantMessage.id);
-    setActiveTraceMessageId(assistantMessage.id);
-
-    updateSessionMessages(sessionId, (prev) => [...prev, userMessage, assistantMessage]);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    const appendAssistantEvent = (event: StreamLogEvent, runContext?: unknown) => {
-      updateSessionMessages(sessionId, (prev) => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last?.role === "assistant") {
-          const updated = {
-            ...(runContext ? mergeChatMessageRunContext(last, runContext) : last),
-            events: upsertTraceEvent(last.events || [], event),
-            traceState: "live" as const,
-            traceError: undefined,
-          };
-          next[next.length - 1] = updated;
-        }
-        return next;
-      });
-    };
-
-    let streamCompleted = false;
-    let runtimeRunId: string | undefined;
-    try {
-      await streamChat(
-        effectiveClientConfig,
-        {
-          session_id: sessionId,
-          alert_id: alertId.trim() || undefined,
-          case_id: caseId.trim() || undefined,
-          message,
-          agent_id: selectedBusinessAgentId || undefined,
-          max_turns: maxTurns,
-          metadata: {
-            client: "agent-gov-ui",
-          },
-        },
-        {
-          onSession: (runtimeSessionId) => {
-            if (runtimeSessionId && runtimeSessionId !== sessionId) {
-              claimLocalSession(runtimeSessionId, selectedBusinessAgentId);
-            }
-          },
-          onEnvelope: (envelope) => {
-            if (envelope.event === "session" && isRecord(envelope.data)) {
-              runtimeRunId = stringValue(envelope.data.run_id);
-              updateSessionMessages(sessionId, (prev) => {
-                const next = [...prev];
-                const last = next[next.length - 1];
-                if (last?.role === "assistant") next[next.length - 1] = mergeChatMessageRunContext(last, envelope.data);
-                return next;
-              });
-            }
-            if (envelope.event === "claude_user_input_required") {
-              const request = claudeUserInputRequestFromData(envelope.data);
-              if (request) {
-                if (request.decision_token) decisionTokensRef.current[request.request_id] = request.decision_token;
-                setUserInputErrors((prev) => {
-                  const next = { ...prev };
-                  delete next[request.request_id];
-                  return next;
-                });
-                updateSessionMessages(sessionId, (prev) => {
-                  const next = [...prev];
-                  const last = next[next.length - 1];
-                  if (last?.role === "assistant") {
-                    const safeRequest = { ...request, decision_token: undefined };
-                    next[next.length - 1] = {
-                      ...last,
-                      userInputRequests: mergeUserInputRequest(last.userInputRequests, safeRequest),
-                    };
-                  }
-                  return next;
-                });
-              }
-            }
-            if (envelope.event === "claude_user_input_resolved" && isRecord(envelope.data)) {
-              const requestId = stringValue(envelope.data.request_id);
-              if (requestId) {
-                delete decisionTokensRef.current[requestId];
-                updateUserInputRequest(requestId, {
-                  status: envelope.data.status === "cancelled" ? "cancelled" : "resolved",
-                  decision: nullableString(envelope.data.decision),
-                  resolved_at: nullableString(envelope.data.resolved_at) || new Date().toISOString(),
-                });
-              }
-            }
-          },
-          onTraceEvent: (event) => {
-            runtimeRunId = event.run_id || runtimeRunId;
-            appendAssistantEvent(traceLogEvent(event));
-          },
-          onText: (text) => {
-            updateSessionMessages(sessionId, (prev) => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (last?.role === "assistant") {
-                next[next.length - 1] = {
-                  ...last,
-                  content: `${last.content}${text}`,
-                };
-              }
-              return next;
-            });
-          },
-          onFinalText: (text) => {
-            updateSessionMessages(sessionId, (prev) => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (last?.role === "assistant") next[next.length - 1] = { ...last, content: text };
-              return next;
-            });
-          },
-          onPromptSuggestion: (suggestions, runtimeSessionId) => promptSuggestion.receive(runtimeSessionId, suggestions),
-          onResult: (result) => {
-            if (!isRecord(result)) return;
-            const agentActivity = agentActivityFromResult(result);
-            updateSessionMessages(sessionId, (prev) => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (last?.role === "assistant") {
-                next[next.length - 1] = {
-                  ...mergeChatMessageRunContext(last, result),
-                  agentActivity,
-                };
-              }
-              return next;
-            });
-          },
-          onError: (messageText) => {
-            setLastError(messageText);
-            updateSessionMessages(sessionId, (prev) => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (last?.role === "assistant") {
-                const failureText = `运行失败：\n${messageText}`;
-                next[next.length - 1] = {
-                  ...last,
-                  content: last.content ? `${last.content}\n\n${failureText}` : failureText,
-                };
-              }
-              return next;
-            });
-          },
-          onDone: () => {
-            streamCompleted = true;
-            setStreaming(false);
-            abortRef.current = null;
-            setSubmittingUserInputRequests(new Set());
-            if (runtimeRunId) void calibrateTrace(sessionId, assistantMessage.id, runtimeRunId);
-            refresh();
-          },
-        },
-        controller.signal,
-      );
-    } catch (error) {
-      if (!controller.signal.aborted && (error as Error).name !== "AbortError") {
-        const messageText = error instanceof Error ? error.message : String(error);
-        setLastError(messageText);
-        updateSessionMessages(sessionId, (prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") {
-            const failureText = `运行失败：\n${messageText}`;
-            next[next.length - 1] = {
-              ...last,
-              content: last.content ? `${last.content}\n\n${failureText}` : failureText,
-            };
-          }
-          return next;
-        });
-      }
-    } finally {
-      if (!streamCompleted) {
-        cancelUserInputForMessage(
-          sessionId,
-          assistantMessage.id,
-          controller.signal.aborted ? "client_cancelled" : "runtime_interrupted",
-        );
-        if (runtimeRunId) {
-          window.setTimeout(() => void calibrateTrace(sessionId, assistantMessage.id, runtimeRunId as string), 500);
-        }
-      }
-      setStreaming(false);
-      setStreamingAssistantMessageId(undefined);
-      abortRef.current = null;
-    }
-  }
-
-  function stopStream() {
-    cancelUserInputForMessage(activeSessionId, streamingAssistantMessageId, "client_cancelled");
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setStreaming(false);
-    setStreamingAssistantMessageId(undefined);
   }
 
   function showPlaygroundWindow() {

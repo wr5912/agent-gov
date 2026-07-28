@@ -21,8 +21,17 @@ class NativeChatSemanticProjector:
             return [frame]
         if event != "message":
             return [frame]
-        if data.get("text_kind") == "delta" or data.get("event") == "StreamEvent":
+        if data.get("text_kind") == "delta":
+            delta_event = data.get("event")
+            if delta_event not in {
+                "StreamEvent:text_delta",
+                "StreamEvent:thinking_delta",
+                "StreamEvent",
+            }:
+                return []
             return [frame] if isinstance(data.get("text"), str) and data.get("text") else []
+        if data.get("event") == "StreamEvent":
+            return []
 
         projected: list[JsonObject] = []
         text = data.get("text")

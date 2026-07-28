@@ -17,6 +17,7 @@ DOMAIN_ERROR_COMPONENT = "DomainErrorResponse"
 VALIDATION_ERROR_COMPONENT = "HTTPValidationError"
 SECURITY_SCHEME_NAME = "HTTPBearer"
 CHAT_STREAM_PATH = "/api/chat/stream"
+CLAUDE_SDK_EVENTS_PATH = "/api/agent-runtime/sdk-events"
 RAW_EVENTS_PATH = "/api/debug/agent-runtime/raw-events"
 RESPONSES_PATH = "/v1/responses"
 
@@ -82,6 +83,7 @@ _DOMAIN_PREFIXES = (
 )
 _RUNTIME_OR_RELEASE_PREFIXES = (
     "/api/chat",
+    "/api/agent-runtime/sdk-events",
     "/v1/chat/completions",
     "/v1/responses",
     "/api/agent-repository",
@@ -153,6 +155,8 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
         return {404}
     if path == CHAT_STREAM_PATH or path == "/api/chat":
         return {400, 404, 422, 503}
+    if path == CLAUDE_SDK_EVENTS_PATH:
+        return {400, 404, 422, 503}
     if path == RAW_EVENTS_PATH:
         return {403, 404, 409, 413, 422, 501, 503}
     if path == "/v1/chat/completions":
@@ -188,7 +192,14 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
 
 
 def _can_return_runtime_unavailable(path: str) -> bool:
-    if path in {"/api/chat", CHAT_STREAM_PATH, RAW_EVENTS_PATH, "/v1/chat/completions", RESPONSES_PATH}:
+    if path in {
+        "/api/chat",
+        CHAT_STREAM_PATH,
+        CLAUDE_SDK_EVENTS_PATH,
+        RAW_EVENTS_PATH,
+        "/v1/chat/completions",
+        RESPONSES_PATH,
+    }:
         return True
     if any(path.startswith(prefix) for prefix in _RUNTIME_OR_RELEASE_PREFIXES):
         return any(part in path for part in _RUNTIME_OR_RELEASE_PATH_PARTS)
@@ -220,9 +231,10 @@ def _apply_operation_contract(path: str, method: str, operation: OpenApiMutableM
 def _fix_streaming_success_response(path: str, operation: OpenApiMutableMapping) -> None:
     responses = _mapping(operation.setdefault("responses", {}))
     success = _mapping(responses.setdefault("200", {"description": "Successful Response"}))
-    if path == CHAT_STREAM_PATH:
+    if path in {CHAT_STREAM_PATH, CLAUDE_SDK_EVENTS_PATH}:
         success["description"] = "Server-sent event stream."
-        success["content"] = {"text/event-stream": _sse_media_type("Claude Agent SSE events")}
+        description = "Claude Agent SDK-native SSE events" if path == CLAUDE_SDK_EVENTS_PATH else "Claude Agent Chat SSE events"
+        success["content"] = {"text/event-stream": _sse_media_type(description)}
         return
     if path == RAW_EVENTS_PATH:
         success["description"] = "Byte-exact native Runtime stdout. stream=false buffers the body; stream=true flushes the same byte sequence incrementally."

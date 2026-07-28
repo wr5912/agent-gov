@@ -44,6 +44,33 @@ def test_retrieve_reconstructs_output_from_messages(monkeypatch, tmp_path: Path)
     assert body["agentgov"]["agent_id"] == "soc-ops"
 
 
+def test_retrieve_preserves_reasoning_item_ids_and_order(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    run_id = _record(
+        module,
+        run_id="run-ret-reasoning",
+        messages=[
+            {
+                "event": "AssistantMessage",
+                "content": [
+                    {"thinking": "持久化推理", "signature": "signed"},
+                    {"text": "持久化答案"},
+                ],
+            }
+        ],
+    )
+    with TestClient(module.app) as client:
+        body = client.get(f"/v1/responses/resp_{run_id}").json()
+
+    assert [item["type"] for item in body["output"]] == ["reasoning", "message"]
+    assert [item["id"] for item in body["output"]] == [
+        "rs_run-ret-reasoning",
+        "msg_run-ret-reasoning",
+    ]
+    assert body["output"][0]["content"][0]["text"] == "持久化推理"
+    assert body["output"][1]["content"][0]["text"] == "持久化答案"
+
+
 def test_retrieve_status_failed_from_errors(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     run_id = _record(module, run_id="run-fail", errors=["ToolError: boom"])

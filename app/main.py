@@ -29,6 +29,7 @@ from app.routers.agents import create_agents_router
 from app.routers.assets import create_assets_router
 from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
+from app.routers.claude_sdk_events import create_claude_sdk_events_router
 from app.routers.claude_user_input import create_claude_user_input_router
 from app.routers.config import create_config_router
 from app.routers.conversations import create_conversations_router
@@ -418,6 +419,14 @@ app.include_router(
 )
 app.include_router(
     create_chat_router(
+        runtime=runtime,
+        settings=settings,
+        agent_registry_store=agent_registry_store,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_claude_sdk_events_router(
         runtime=runtime,
         settings=settings,
         agent_registry_store=agent_registry_store,

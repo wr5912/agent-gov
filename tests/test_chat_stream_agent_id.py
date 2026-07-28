@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.runtime.managed_claude_events import AgentGovControlEvent, ClaudeSdkMessageEvent
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from fastapi.testclient import TestClient
 
@@ -63,13 +64,13 @@ def test_chat_stream_projects_prompt_suggestion_event(monkeypatch, tmp_path: Pat
     module = _load_app(monkeypatch, tmp_path)
 
     async def fake_stream(req, *, profile=None):
-        yield {
-            "event": "prompt_suggestion",
-            "data": {"suggestion": "继续检查边界条件", "run_id": "run-1", "session_id": "session-1"},
-        }
-        yield {"event": "done", "data": "[DONE]"}
+        yield AgentGovControlEvent(
+            name="prompt_suggestion",
+            data={"suggestion": "继续检查边界条件", "run_id": "run-1", "session_id": "session-1"},
+        )
+        yield AgentGovControlEvent(name="done", data={})
 
-    monkeypatch.setattr(module.runtime, "stream", fake_stream)
+    monkeypatch.setattr(module.runtime, "stream_events", fake_stream)
     with TestClient(module.app) as client:
         response = client.post("/api/chat/stream", json={"message": "hi", "agent_id": DEFAULT_BUSINESS_AGENT_ID})
 
@@ -82,35 +83,41 @@ def test_chat_stream_semantic_mode_suppresses_thinking_counter_and_keeps_tools(m
     module = _load_app(monkeypatch, tmp_path)
 
     async def fake_stream(req, *, profile=None):
-        yield {"event": "session", "data": {"run_id": "run-semantic", "session_id": "session-1"}}
-        yield {
-            "event": "message",
-            "data": {
-                "event": "SystemMessage:thinking_tokens",
-                "text": "",
-                "text_kind": "snapshot",
-                "raw": {"event": "SystemMessage:thinking_tokens", "subtype": "thinking_tokens"},
-            },
-        }
-        yield {
-            "event": "message",
-            "data": {
-                "event": "AssistantMessage",
-                "text": "answer",
-                "text_kind": "snapshot",
-                "raw": {
-                    "event": "AssistantMessage",
-                    "content": [
-                        {"thinking": "full"},
-                        {"name": "Read", "id": "tool-1", "input": {"file_path": "README.md"}},
-                        {"text": "answer"},
-                    ],
-                },
-            },
-        }
-        yield {"event": "done", "data": "[DONE]"}
+        from claude_agent_sdk import (
+            AssistantMessage,
+            SystemMessage,
+            TextBlock,
+            ThinkingBlock,
+            ToolUseBlock,
+        )
 
-    monkeypatch.setattr(module.runtime, "stream", fake_stream)
+        yield AgentGovControlEvent(
+            name="session",
+            data={"run_id": "run-semantic", "session_id": "session-1"},
+        )
+        yield ClaudeSdkMessageEvent(
+            SystemMessage(
+                subtype="thinking_tokens",
+                data={"estimated_tokens": 12, "estimated_tokens_delta": 1},
+            )
+        )
+        yield ClaudeSdkMessageEvent(
+            AssistantMessage(
+                content=[
+                    ThinkingBlock(thinking="full", signature="signature"),
+                    ToolUseBlock(
+                        name="Read",
+                        id="tool-1",
+                        input={"file_path": "README.md"},
+                    ),
+                    TextBlock(text="answer"),
+                ],
+                model="test",
+            )
+        )
+        yield AgentGovControlEvent(name="done", data={})
+
+    monkeypatch.setattr(module.runtime, "stream_events", fake_stream)
     with TestClient(module.app) as client:
         semantic = client.post(
             "/api/chat/stream?event_mode=semantic",

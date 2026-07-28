@@ -198,7 +198,7 @@ http://localhost:55173
 
 ## 反馈优化闭环
 
-Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；用户在“改进事项”中把反馈归并为事项后，按反馈整理、归因分析、优化执行、测试发布四个工作面板推进。治理 Agent 生成的归因、优化方案、执行记录和回归测试设计都写入事项级内容子资源，并保存 `generation_trace_id` / `generation_trace_url`。
+Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat`、`/api/chat/stream`、`/api/agent-runtime/sdk-events` 或 `/v1/responses` 受管运行都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；用户在“改进事项”中把反馈归并为事项后，按反馈整理、归因分析、优化执行、测试发布四个工作面板推进。治理 Agent 生成的归因、优化方案、执行记录和回归测试设计都写入事项级内容子资源，并保存 `generation_trace_id` / `generation_trace_url`。
 
 完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 导出临时 OpenAPI JSON。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
 
@@ -395,6 +395,27 @@ curl -N -X POST "$API_BASE/api/chat/stream" \
 `event: trace_event`；`SystemMessage:thinking_tokens` 计数帧不进入 Trace，完整 ThinkingBlock、
 全部工具调用/结果、hooks、tasks、ResultMessage 和 subagent 归属仍保留。运行结束或页面刷新后，
 使用 `GET /api/agent-runs/{run_id}/trace` 从已持久化 AgentRun 重放同一 Trace。
+Chat 的投影器独立于 Responses；`StreamEvent:thinking_delta` 会携带真实 thinking 增量，
+`SystemMessage:thinking_tokens` 的 `text_kind=metric` 仅表示 token 指标，不冒充 thinking 文本。
+
+Playground 的实时对话不经 Chat 或 Responses 二次投影，而直接使用正式 SDK-native 入口：
+
+```bash
+curl -N -X POST "$API_BASE/api/agent-runtime/sdk-events" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{"message":"你好，展示一次原生 SDK 流", "agent_id":"your-business-agent"}'
+```
+
+每个官方 `claude-agent-sdk` yield 按原顺序恰好对应一帧
+`event: claude.sdk.<ClassName>`；`data` 只做递归 dataclass → JSON 的机械序列化，
+不筛选、不重命名、不合并，也不把未知值静默 `str()`。`StreamEvent.event`、thinking
+signature、tool input/output 和未来未知 SDK message class 均保留。AgentGov 自己拥有的
+session、HITL、result、error、done 与 Prompt Suggestion 使用独立的 `agentgov.*` 事件；
+heartbeat 是 SSE comment。SDK `ResultMessage` 只表示 SDK 终态，
+`agentgov.result` / `agentgov.done` 表示 managed turn 已完成持久化和收尾。
+该契约跟随仓库锁定的 `claude-agent-sdk` 版本，不是 UI shape，也不是 Claude CLI
+stdout 的 byte-exact 副本。
 
 需要直接调试 Runtime 原生协议时，使用独立的 Runtime 中立接口：
 
@@ -429,7 +450,7 @@ Agent profile、SessionStore、session lease、权限/HITL、hooks、MCP、Langf
 Qwen Code/Kimi CLI 时复用同一路径并新增 driver，不能把模型 provider 名冒充 Runtime。
 该响应也不是 Anthropic-compatible provider HTTP wire body。
 
-流式业务对话会尽力生成下一轮建议（每轮**至多 N 条**候选，默认 3，由 `BACKEND_PROMPT_SUGGESTION_COUNT` 配置；模型给不满就少给，不凑数）。`AppSettings` 默认关闭后端派生这一受控特例，官方 `docker/.env.example` 与 `docker/.env.local-debug.example` 通过 `ENABLE_BACKEND_PROMPT_SUGGESTION=true` 显式开启；关闭时回退 Claude Code 原生 `--prompt-suggestions`，但该路径可能受上游 feature gate 或 cache 状态抑制。启动日志的 `prompt_suggestion_source` 会显示当前使用 `backend` 还是 `claude_native`。原生 `/api/chat/stream` 以 `event: prompt_suggestion` 输出 `{suggestion, suggestions, run_id, session_id}`；canonical `/v1/responses` 仅在 control 模式以 `event: agentgov.prompt_suggestion` 输出统一信封，`payload` 为 `{suggestion, suggestions, session_id}`，strict 模式不输出 AgentGov 扩展事件。`suggestions` 是完整候选列表；`suggestion` 恒等于 `suggestions[0]`，为向后兼容保留，只读它的客户端无需改动。整批候选在**一帧**内下发。建议生成失败或模型明确返回空时不影响正式回答，也不进入消息历史、SQLite run、response retrieve 或 SDK transcript；失败会记录不含异常正文的结构化 warning。
+流式业务对话会尽力生成下一轮建议（每轮**至多 N 条**候选，默认 3，由 `BACKEND_PROMPT_SUGGESTION_COUNT` 配置；模型给不满就少给，不凑数）。`AppSettings` 默认关闭后端派生这一受控特例，官方 `docker/.env.example` 与 `docker/.env.local-debug.example` 通过 `ENABLE_BACKEND_PROMPT_SUGGESTION=true` 显式开启；关闭时回退 Claude Code 原生 `--prompt-suggestions`，但该路径可能受上游 feature gate 或 cache 状态抑制。启动日志的 `prompt_suggestion_source` 会显示当前使用 `backend` 还是 `claude_native`。`/api/chat/stream` 以 `event: prompt_suggestion` 输出 `{suggestion, suggestions, run_id, session_id}`；SDK-native 入口以 `event: agentgov.prompt_suggestion` 输出同一 data；`/v1/responses` 仅在 control 模式输出统一信封，`payload` 为 `{suggestion, suggestions, session_id}`，strict 模式不输出 AgentGov 扩展事件。`suggestions` 是完整候选列表；`suggestion` 恒等于 `suggestions[0]`，为向后兼容保留，只读它的客户端无需改动。整批候选在**一帧**内下发。建议生成失败或模型明确返回空时不影响正式回答，也不进入消息历史、SQLite run、response retrieve 或 SDK transcript；失败会记录不含异常正文的结构化 warning。
 
 ## OpenAI Compatible 接口
 

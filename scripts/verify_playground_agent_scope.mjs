@@ -191,18 +191,72 @@ async function installMockRoutes(page, state) {
     if (path === "/api/agent-registry") return json(route, agents);
     const presentationMatch = path.match(/^\/api\/agent-registry\/([^/]+)\/presentation$/);
     if (presentationMatch) return json(route, presentation(decodeURIComponent(presentationMatch[1])));
-    if (path === "/v1/responses" && request.method() === "POST") {
+    if (path === "/api/agent-runtime/sdk-events" && request.method() === "POST") {
       const body = request.postDataJSON();
       state.responseRequests.push(body);
-      const sessionId = typeof body.conversation === "string" && body.conversation.startsWith("conv_")
-        ? body.conversation.slice("conv_".length)
+      const sessionId = typeof body.session_id === "string"
+        ? body.session_id
         : "new-agent-b-session";
       await new Promise((resolve) => setTimeout(resolve, 500));
       return sse(route, [
-        { event: "agentgov.session", data: { session_id: sessionId } },
-        { event: "response.output_text.delta", data: { delta: "Agent B 响应" } },
-        { event: "response.completed", data: { response: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "Agent B 响应" }] }] } } },
-        { event: "agentgov.done", data: { ok: true } },
+        {
+          event: "agentgov.session",
+          data: {
+            run_id: "run-agent-b",
+            session_id: sessionId,
+            sdk_session_id: "sdk-agent-b",
+            agent_id: body.agent_id,
+          },
+        },
+        {
+          event: "claude.sdk.StreamEvent",
+          data: {
+            uuid: "stream-agent-b-start",
+            session_id: sessionId,
+            parent_tool_use_id: null,
+            event: {
+              type: "message_start",
+              message: { id: "message-agent-b" },
+            },
+          },
+        },
+        {
+          event: "claude.sdk.StreamEvent",
+          data: {
+            uuid: "stream-agent-b-text",
+            session_id: sessionId,
+            parent_tool_use_id: null,
+            event: {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "text_delta", text: "Agent B 响应" },
+            },
+          },
+        },
+        {
+          event: "claude.sdk.AssistantMessage",
+          data: {
+            content: [{ text: "Agent B 响应" }],
+            model: "mock-model",
+            parent_tool_use_id: null,
+            message_id: "message-agent-b",
+            session_id: sessionId,
+          },
+        },
+        {
+          event: "agentgov.result",
+          data: {
+            run_id: "run-agent-b",
+            session_id: sessionId,
+            agent_version_id: "agent-b-v2",
+            agent_activity: {
+              tool_calls: [],
+              tool_results: [],
+              tool_names: [],
+            },
+          },
+        },
+        { event: "agentgov.done", data: {} },
       ]);
     }
     if (
@@ -323,11 +377,11 @@ async function main() {
     );
     if (state.responseRequests.length !== 1) throw new Error(`expected one model request, got ${state.responseRequests.length}`);
     const request = state.responseRequests[0];
-    if (request.agentgov?.agent_id !== "agent-b") {
+    if (request.agent_id !== "agent-b") {
       throw new Error(`request used the wrong business Agent: ${JSON.stringify(request)}`);
     }
-    if (request.conversation === "conv_session-a" || request.conversation === "conv_session-b") {
-      throw new Error(`Agent switch reused a historical conversation: ${request.conversation}`);
+    if (request.session_id === "session-a" || request.session_id === "session-b") {
+      throw new Error(`Agent switch reused a historical session: ${request.session_id}`);
     }
 
     await page.getByTestId("topbar-agent-switcher").selectOption("agent-a");

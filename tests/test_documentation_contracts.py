@@ -50,6 +50,19 @@ def test_runtime_raw_event_docs_distinguish_byte_stream_from_legacy_sdk_projecti
     assert "`agentgov.debug.sdk_raw` 是历史的已解析 SDK 投影" in guide
 
 
+def test_docs_separate_playground_sdk_native_from_chat_and_responses_projection():
+    readme = _read_repo_text("README.md")
+    guide = _read_repo_text("docs/AgentGov集成指南.md")
+    adr = _read_repo_text("docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md")
+
+    for text in (readme, guide, adr):
+        assert "/api/agent-runtime/sdk-events" in text
+        assert "claude.sdk.<ClassName>" in text
+    assert "不经 Chat 或 Responses 二次投影" in readme
+    assert "live turn 只调用该入口" in guide
+    assert "不继承或包装 Responses projector" in adr
+
+
 def test_openapi_exposes_current_improvement_trace_routes_and_hides_legacy_optimization_chain():
     paths = set(build_openapi_schema()["paths"])
 

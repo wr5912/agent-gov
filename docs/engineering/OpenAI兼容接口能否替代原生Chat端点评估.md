@@ -2,15 +2,16 @@
 
 > 状态：**Accepted / Implemented**。截至 `2026-07-10`，Responses-first 主路径、Conversations 会话投影和 canonical HITL decision API 已落地。
 >
-> 当前结论：AgentGov 已采用 OpenAI **Responses API 系列接口**作为主路径，首推 `POST /v1/responses` + `/v1/conversations`；`/v1/chat/completions`、`/api/chat`、`/api/chat/stream` 只保留兼容。
+> 当前结论：AgentGov 对外 OpenAI 风格集成采用 `POST /v1/responses` + `/v1/conversations`；产品内置 Playground 的 live turn 直接使用 `POST /api/agent-runtime/sdk-events`，避免 UI 依赖任何 Chat/Responses 二次投影。`/v1/chat/completions`、`/api/chat`、`/api/chat/stream` 只保留兼容。
 >
 > **口径变更声明**：本文的 canonical 由早期版本的 `/v1/chat/completions` 改为 **Responses-first**（`/v1/responses` + `/v1/conversations`），已经使用方确认；理由见「标准接口取舍」。此前「chat/completions 为 canonical」的口径作废。
 >
-> 契约真相源是 OpenAPI；当前实现以 `app/routers/responses.py`、`app/routers/conversations.py`、`app/routers/claude_user_input.py`、`app/runtime/openai_responses_schemas.py`、`app/runtime/openai_responses_stream.py`、`app/runtime/claude_user_input_schemas.py` 为准。外部接入权威说明见 [AgentGov 集成指南](../AgentGov集成指南.md)；早期 HITL [实现方案](../archive/design/Claude原生业务Agent人类确认机制整改实现方案.md)与[对抗审查计划](../archive/design/Claude原生业务Agent人类确认机制对抗审查整改计划.md)仅保留历史审计价值。
+> 契约真相源是 OpenAPI；当前实现以 `app/routers/responses.py`、`app/routers/claude_sdk_events.py`、`app/routers/conversations.py`、`app/routers/claude_user_input.py`、`app/runtime/managed_claude_events.py`、`app/runtime/openai_responses_schemas.py`、`app/runtime/openai_responses_stream.py`、`app/runtime/chat_stream_projector.py` 为准。外部接入权威说明见 [AgentGov 集成指南](../AgentGov集成指南.md)；早期 HITL [实现方案](../archive/design/Claude原生业务Agent人类确认机制整改实现方案.md)与[对抗审查计划](../archive/design/Claude原生业务Agent人类确认机制对抗审查整改计划.md)仅保留历史审计价值。
 
 ## 结论
 
-- **主推入口**：`POST /v1/responses`。它承载一次 AgentGov 业务 Agent 运行，覆盖非流式、流式、HITL 人工确认、工具时间线、Trace、`run_id`、`session_id` 与反馈治理上下文。
+- **外部集成主推入口**：`POST /v1/responses`。它承载一次 AgentGov 业务 Agent 运行，覆盖非流式、流式、HITL 人工确认、工具时间线、Trace、`run_id`、`session_id` 与反馈治理上下文。
+- **第一方 Playground live 入口**：`POST /api/agent-runtime/sdk-events`。它对每个官方 SDK yield 原序输出一帧 `claude.sdk.<ClassName>` 机械 JSON，UI 自己归并展示证据；该入口不继承或包装 Responses projector，会话列表与历史仍走 `/v1/conversations*`。
 - **会话入口**：`/v1/conversations` 系列。它承载会话创建、恢复、删除与历史读取；前端恢复会话历史应走 `/v1/conversations/{conversation_id}/items`，而不是继续扩展 `/api/sessions*`。
 - **兼容入口**：`/v1/chat/completions` 只面向已有 OpenAI Chat Completions 客户端，作为兼容包装；`/api/chat` 与 `/api/chat/stream` 只作为历史兼容面保留。
 - **扩展原则**：OpenAI 已有标准字段必须优先使用标准字段；只有业务 Agent 选择、HITL、Claude Code turn cap、raw SDK 调试等 OpenAI 无法表达的能力才进入 `agentgov` 扩展。
@@ -164,12 +165,15 @@
 | 事件 | 来源/用途 |
 | --- | --- |
 | `response.created` | 标准事件，返回 `response_id`、`conversation`（保持 wire 纯净，不塞 `run_id` 等私有字段） |
+| `response.output_item.added/done`、`response.content_part.added/done` | reasoning/message item 与 content part 的标准生命周期 |
+| `response.reasoning_text.delta/done` | ThinkingBlock 推理文本增量与完成快照 |
 | `response.output_text.delta` | assistant 文本增量 |
 | `response.completed` | 最终完成 |
 | `response.failed` | 结构化失败 |
 | `agentgov.session` | 在运行开始时下发 `run_id/session_id/sdk_session_id/agent_id/agent_version_id` 及可用的 `langfuse_trace_id/langfuse_trace_url`，失败或取消路径不依赖最终 result 才获得 Trace 引用 |
 | `agentgov.trace_event` | 仅 `agentgov.include_trace=true`；完整 thinking/text/tool/hook/task/system/result SDK 事实 |
 | `agentgov.tool_step` | 工具调用/工具结果的规整时间线 |
+| `agentgov.tool_call.started`、`.arguments.delta/done`、`.result` | 服务端 agent loop 已执行工具的实时观察；不是让客户端执行的 function call |
 | `agentgov.confirmation.requested` | HITL 人工确认卡 |
 | `agentgov.confirmation.resolved` | HITL 决策结果 |
 | `agentgov.result` / `agentgov.error` / `agentgov.done` | control mode 的运行收口事件 |
@@ -178,11 +182,12 @@
 
 实现契约：
 
-- **当前标准事件最小集**：`response.created`、`response.output_text.delta`、`response.completed`、`response.failed`；strict mode 只接收标准事件，不接 `agentgov.*`。
+- **标准事件集**：除 created/text/completed/failed 外，reasoning 与 message 均输出 output item/content part 生命周期；strict mode 只接收标准事件，不接 `agentgov.*`。
+- **稳定 output**：流式完成对象、非流式响应和 retrieve 共用 `reasoning(rs_<run_id>) -> message(msg_<run_id>)` 的顺序与 ID。thinking signature 只在 SDK-native/raw 调试面保留，不进入 OpenAI reasoning item。
 - **`agentgov.*` 事件使用统一信封** `{v, type, run_id, ts, seq, payload}`：`event:` 行=`type`、`data:` 行=信封 JSON、`id:`=`seq`，并由契约测试覆盖排序和字段隔离；当前不承诺断线 replay。
 - **Trace 单一投影**：live `agentgov.trace_event` 与 `GET /api/agent-runs/{run_id}/trace` 共用同一投影器；后者从 AgentRun 原始 `messages` 当场派生，不新增语义 Trace 表或文件副本。
 - **传输与事实分离**：`StreamEvent`、heartbeat、SSE 信封、session/done 和 `SystemMessage:thinking_tokens` 不进入 Trace；完整 ThinkingBlock 每块一条，同一消息的全部工具 block、hooks、tasks、ResultMessage 与 `parent_tool_use_id` 均保留。Thinking signature 不进入 clean payload。
-- **兼容投影**：`agentgov.tool_step` 暂时保留，并由同一 Trace 投影为每个工具 block 生成；`agentgov.debug.sdk_raw=true` 保留每个完整 SDK message，包括带文本的 AssistantMessage。
+- **服务端工具边界**：Claude Code agent loop 已经执行工具，因此 Responses 不输出标准 `function_call` item，避免客户端重复执行；control mode 输出 `agentgov.tool_call.*` 实时观察，同时保留 `agentgov.tool_step`。`agentgov.debug.sdk_raw=true` 保留每个 SDK message，包括带文本的 AssistantMessage。
 - **刷新终态**：AgentRun 同步保存 `turn_status`、`turn_index`、`turn_error`；旧 run 可由同表 SessionTurnIntent 富化。无 `messages` 的历史记录返回 `completeness=unavailable`，不得由 conversation block 拼出伪完整 Trace。
 - **`agentgov.confirmation.requested` 最小 payload**：必须包含 `request_id`、`decision_token`、`request_type`、`run_id`、`conversation_id`、`agent_id`；工具权限请求还必须包含 `tool_name`、`tool_input`、`risk_reason`，AskUserQuestion 请求还必须包含 `question`、`options`。`decision_token` 只在 requested 事件下发，不进入 resolved 事件、历史列表或日志投影。
   - **这些是对外投影字段名，需从现有 record 重命名映射**（`claude_user_input_records.py` public_payload）：`agent_id`←`business_agent_id`、`tool_input`←`input`、`risk_reason`←`risk`(JsonObject)、`conversation_id`←`session_id` 映射，AskUserQuestion 的 `question`/`options`←从 `input` 提取；不是现有字段透传。
@@ -221,12 +226,13 @@ HITL 的本质不是 OpenAI `tool_calls`。OpenAI `tool_calls` 是模型建议�
 
 ### `/api/chat` 与 `/api/chat/stream`
 
-保留为兼容别名：
+保留为独立兼容投影：
 
-- `/api/chat` 对应 `/v1/responses` control mode 的历史非流式包装，保持现有 `agent_id` 必填、无 Web HITL 卡片语义。
-- `/api/chat/stream` 对应 `/v1/responses` control mode 的历史流式包装；默认
+- `/api/chat` 保持现有 `agent_id` 必填、无 Web HITL 卡片语义。
+- `/api/chat/stream` 有自己的 SDK→Chat projector，不继承或包装 Responses projector；默认
   `event_mode=raw` 继续给旧集成返回原事件名，显式 `?event_mode=semantic` 时保留文本流，
-  用 `trace_event` 输出完整语义事实并过滤 thinking token 计数噪声。
+  用 `trace_event` 输出完整语义事实并过滤 thinking token 计数噪声。`thinking_delta` 携带真实
+  thinking 文本，`thinking_tokens` 只标成 metric。
 - **兼容不仅保原事件名、还须保原 payload 字段集**：现有 `claude_user_input_required` 携带的 `sdk_subagent_id`、`tool_use_id`、`api_session_id`、`context` 等比新 `confirmation.requested`「最小 payload」丰富；若旧流经新裁剪信封再翻译回旧事件会丢字段，破坏旧前端。迁移时须保全旧字段集，或显式列出允许裁剪项。
 - 文档、示例和新集成主推 `/v1/responses` + `/v1/conversations`。
 - 旧端点删除不在本文范围。
@@ -255,7 +261,7 @@ POST /v1/agentgov/confirmation-requests/{request_id}/decision
 2. **Response retrieve 已落地**：`GET /v1/responses/{id}` 已实现 `store` 与 `previous_response_id` 的最小语义，并从现有 run/session 事实重建响应。
 3. **Conversations 已落地**：`/v1/conversations*` 已提供创建、列表、读取、删除映射和 cursor 风格 items 历史投影。
 4. **canonical HITL 已落地**：Responses control SSE 已提供 `agentgov.confirmation.requested/resolved`，decision API 已收敛到 `/v1/agentgov/confirmation-requests/{request_id}/decision` 与最小请求体。
-5. **前端主路径已切换**：Playground 使用 `/v1/responses` 流式入口，会话侧栏和历史恢复使用 `/v1/conversations*`，decision 调用使用 canonical `/v1/agentgov/*` 路径。
+5. **前端 live 主路径已切换**：Playground 使用 `/api/agent-runtime/sdk-events`，不调用 `/v1/responses` 或 `/api/chat/stream`；会话侧栏和历史恢复使用 `/v1/conversations*`，decision 调用使用 canonical `/v1/agentgov/*` 路径。
 6. **兼容面继续保留**：`/v1/chat/completions`、`/api/chat`、`/api/chat/stream`、`/api/sessions*` 保持存量契约，并有独立回归覆盖；`/api/chat/stream` 仅增加显式 opt-in 的 semantic 观测模式，默认 raw wire 不变，不把兼容面升级为主控制面。
 7. **文档权威链已收口**：新集成只读 [AgentGov 集成指南](../AgentGov集成指南.md) 与 OpenAPI；早期 HITL 实现方案及对抗审查计划已归档。旧端点 deprecation/sunset 仍需消费者确认后另行决策，不属于本次已完成迁移。
 
@@ -267,7 +273,8 @@ POST /v1/agentgov/confirmation-requests/{request_id}/decision
 - 标准字段优先级：`instructions`、`conversation`、`previous_response_id` 不被 `agentgov` 平行字段替代；请求包含 `agentgov.instructions`、`agentgov.metadata`、`agentgov.conversation` 等字段时应被 schema 拒绝。
 - 字段所有权：`agentgov.alert_id/case_id`（backend-owned 路由）经 adapter **回填 `agent_runs` index 列**，per-agent 反馈匹配不退化；`source/client_run_label` 在 `metadata` 中原样回显、后端不路由。
 - `instructions` 语义：strict 模式发送 `instructions` 被 422 拒绝或忽略并回显告警（不静默按 append 生效）；control 模式按 append-only 生效、不替换受治理 prompt。
-- `/v1/responses` 流式：普通文本增量、完整 Trace、多工具 block、heartbeat、错误事件；live 与 AgentRun 刷新重放一致，thinking token 计数不进入 Trace。
+- `/v1/responses` 流式：text/reasoning 生命周期、服务端工具观察、heartbeat、错误事件；非流式/流式/retrieve 的 output item ID 与顺序一致，thinking token 计数不冒充 reasoning。
+- `/api/agent-runtime/sdk-events`：每个 SDK yield 恰好一帧、ThinkingBlock signature/tool I/O 保真、未知 class 保留、不可序列化值 fail-loud；Playground 顶层 text 与 subagent evidence 分流，done 后继续读迟到 suggestion，跨轮异步更新不串消息。
 - `GET /v1/responses/{id}`：`store=true` 可取回，`store=false` 不公开取回但内部治理审计仍存在。
 - HITL：允许一次、拒绝、本次运行允许、AskUserQuestion 自由文本回答。
 - `/v1/conversations/{id}/items`：`after/limit/order/include`、刷新页面后恢复同一会话历史，消息来自 SDK transcript 投影。
@@ -278,7 +285,7 @@ POST /v1/agentgov/confirmation-requests/{request_id}/decision
 ## 定位与边界
 
 - 本文是已接受并落地的 Responses-first ADR；当前 wire contract 仍以 OpenAPI 为准。
-- `/v1/responses` + `/v1/conversations` 是当前主推接口。
+- `/v1/responses` + `/v1/conversations` 是外部集成主推接口；第一方 Playground live turn 使用 `/api/agent-runtime/sdk-events`。
 - `/v1/chat/completions` 是兼容接口，不是 AgentGov 控制面主接口。
 - `/api/chat` 与 `/api/chat/stream` 保留兼容；semantic Trace 只是显式观测选项，新集成仍使用 Responses control。
 - AgentGov 后端仍是 Claude Code / claude-agent-sdk 的薄投影层；会话、消息、trace、工具事实以 SDK / agent 为单一真相源。

@@ -55,7 +55,7 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 
 ### 4.2 运行一次对话 — OpenAPI tag `openai-responses`
 - 目标：让 Agent 处理一条消息/任务。
-- 新集成主路径：`POST /v1/responses`。同一个 endpoint 通过 `stream` 统一非流式 JSON 与流式 SSE：
+- 外部 OpenAI 风格集成主路径：`POST /v1/responses`。同一个 endpoint 通过 `stream` 统一非流式 JSON 与流式 SSE：
   - **control mode（AgentGov 集成首选）**：请求包含 `agentgov`，且 `agentgov.agent_id` 必填；可同时传标准字段 `conversation`，以及 `agentgov.alert_id`、`agentgov.case_id`、`agentgov.max_turns` 等 OpenAPI 已声明扩展字段。
   - **strict mode（标准 OpenAI 客户端）**：请求不含 `agentgov`，运行运营者配置的 OpenAI-compatible 出口 Agent；不下发 `agentgov.*` 私有 SSE 事件。由于 AgentGov 的 `instructions` 是 append-only 而非 OpenAI replace/swap 语义，strict mode 传 `instructions` 返回 `422`。
 - 最小 control 请求以 OpenAPI 为准，典型形态如下：
@@ -73,7 +73,9 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 ```
 
 - `stream=false` 返回 Responses 对象；权威文本位于 `output[].content[].text`，运行关联位于 `agentgov.run_id`、`agentgov.conversation_id`、`agentgov.session_id`、`agentgov.trace_id` 等扩展字段。默认 `store=true` 时可通过 `GET /v1/responses/{response_id}` 取回已完成响应；`store=false` 只关闭公开取回，不关闭内部治理审计。
-- `stream=true` 返回 Responses-style SSE：标准事件包括 `response.created`、`response.output_text.delta`、`response.completed`、`response.failed`；control mode 另有 `agentgov.session`、`agentgov.tool_step`、`agentgov.confirmation.*`、`agentgov.result`、`agentgov.error`、`agentgov.done`。显式传 `agentgov.include_trace=true` 时还会收到 `agentgov.trace_event`。`agentgov.session.payload` 在运行开始时下发 `run_id`、会话/版本关联以及可用的 `langfuse_trace_id`、`langfuse_trace_url`，因此即使后续运行失败、取消或没有 `agentgov.result`，客户端仍可保留本次 Trace 入口。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
+- `stream=true` 返回 Responses-style SSE：标准通道除 `response.created`、`response.output_text.delta`、`response.completed`、`response.failed` 外，还按 `response.output_item.*`、`response.content_part.*`、`response.reasoning_text.delta/done` 输出 reasoning 生命周期。control mode 另有 `agentgov.session`、`agentgov.tool_step`、`agentgov.tool_call.started`、`agentgov.tool_call.arguments.delta/done`、`agentgov.tool_call.result`、`agentgov.confirmation.*`、`agentgov.result`、`agentgov.error`、`agentgov.done`。这些工具事件只是服务端 agent loop 的执行观察，绝不输出标准 `function_call` 让客户端重复执行。显式传 `agentgov.include_trace=true` 时还会收到 `agentgov.trace_event`。`agentgov.session.payload` 在运行开始时下发 `run_id`、会话/版本关联以及可用的 `langfuse_trace_id`、`langfuse_trace_url`，因此即使后续运行失败、取消或没有 `agentgov.result`，客户端仍可保留本次 Trace 入口。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
+- 流式、非流式与 retrieve 的 `output[]` 都使用同一稳定顺序和 ID：存在 ThinkingBlock 时先是 `reasoning`（`rs_<run_id>`），随后是 assistant `message`（`msg_<run_id>`）。
+- 产品内置 Playground 是有意的例外：live turn 直接消费下节的 SDK-native 入口，不经 `/v1/responses` 或 `/api/chat/stream`；会话列表和历史恢复仍使用 `/v1/conversations*`。
 - 边界：工具权限、MCP、skills、subagents、hooks 和 sandbox 以业务 Agent workspace 的 Claude Code 项目配置为准；Runtime 只选择 project discovery，`can_use_tool` 只桥接原生 `ask`。旧 Chat 字段 `agent`、`skills`、`skills_mode`、`allowed_tools`、`disallowed_tools`、`permission_mode` 已删除，传入返回 `422`。续聊复用同一 `conversation_id`，或使用 `previous_response_id` 让底座解析其所属会话；两种方式都会校验所选业务 Agent 与既有会话 owner 一致，不允许把 Agent A 的 SDK transcript 交给 Agent B 续接。若 `previous_response_id` 对应 run 没有 `session_id`，或其 conversation mapping 已被删除，底座返回 `409`，不会把“续接”静默降级成新会话。
 
 #### 4.2.1 Trace 语义事件与刷新
@@ -98,12 +100,22 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 流式 Prompt Suggestion 是可选的下一轮输入辅助：
 
 - `/api/chat/stream` 使用 `event: prompt_suggestion`，data 为 `{suggestion, suggestions, run_id, session_id}`。`suggestions` 是完整候选列表（每轮至多 N 条，默认 3）；`suggestion` 恒等于 `suggestions[0]`，为向后兼容保留。
+- `/api/agent-runtime/sdk-events` 使用 `event: agentgov.prompt_suggestion`，data 直接为 `{suggestion, suggestions, run_id, session_id}`；它不是 Responses 信封。
 - `/v1/responses` control 模式使用 `event: agentgov.prompt_suggestion` 和既有 `{v,type,run_id,ts,seq,payload}` 信封，payload 为 `{suggestion, suggestions, session_id}`；strict 模式不输出该扩展事件。整批候选在**一帧**内下发，不会分多帧。
 - 官方容器与本机调试 env 示例均以 `ENABLE_BACKEND_PROMPT_SUGGESTION=true` 显式选择后端派生路径；`AppSettings` 默认仍关闭该受控特例。关闭时回退 Claude Code 原生 `--prompt-suggestions`，该原生能力可能被上游 feature gate 或 cache 状态抑制。启动日志通过 `prompt_suggestion_source=backend|claude_native` 暴露当前来源；建议生成失败只记录结构化 warning，不改变主 Run 成功状态。
 - Claude Code 可能因缓存或模型条件不生成建议，缺失不表示本轮失败。客户端收到后应只提供“填入输入框”动作，不自动发起下一轮请求。
 - Suggestion 是临时 UI 辅助，不属于 Prompt 治理资产，也不进入正式会话消息、SQLite run、response retrieve 或 SDK transcript；刷新后无需恢复。
 
-#### 4.2.2 Runtime 原始事件调试 — OpenAPI tag `debug`
+#### 4.2.2 Claude SDK-native 受管事件 — OpenAPI tag `claude-sdk-events`
+
+- `POST /api/agent-runtime/sdk-events` 是正式的 managed turn 交互入口，`agent_id` 必填并受统一 API key 保护；Playground 的 live turn 只调用该入口。
+- 每个官方 `claude-agent-sdk` yield 原序输出一帧 `claude.sdk.<ClassName>`。`data` 是递归 dataclass → JSON 的机械序列化：不筛选、不改名、不合并、不调和快照，也没有 `str()` fallback。`StreamEvent.event`、ThinkingBlock signature、tool I/O、`SystemMessage:thinking_tokens` 和未来未知 SDK class 都保留。
+- AgentGov-owned 控制面使用 `agentgov.session`、`agentgov.confirmation.requested/resolved`、`agentgov.prompt_suggestion`、`agentgov.result/error/done`；heartbeat 使用 SSE comment。SDK `ResultMessage` 与 `agentgov.done` 的所有权和终态含义不同，客户端不能二选一替代。
+- 浏览器只把顶层 `text_delta` 放入回答；subagent text、thinking、工具 input delta/result 和未知消息进入运行证据。`thinking_tokens` 只显示为指标。block identity 使用 `parent_tool_use_id + message_start.message.id + index`，没有 message id 时才使用本地 message epoch，不能仅依赖每帧不同的 `StreamEvent.uuid`。
+- 收到 `agentgov.done` 后 UI 可解除“运行中”，但连接仍读到 EOF，以接收迟到的 Prompt Suggestion。后续异步写入必须绑定本轮 assistant message id/run token，不能按“最后一条消息”写入。完成后的 Trace 只有 `completeness=complete` 才替换 live evidence；不可用或请求失败时保留原生 live evidence。
+- 该接口跟随仓库锁定的 SDK 版本，不是 UI schema，也不是 CLI stdout byte stream。若调用方需要 OpenAI 标准事件或长期外部兼容，应使用 `/v1/responses`。
+
+#### 4.2.3 Runtime 原始事件调试 — OpenAPI tag `debug`
 
 - `POST /api/debug/agent-runtime/raw-events` 是 Runtime 中立的特权诊断入口，`agent_id` 必填；
   body 中 `stream=false` 缓冲响应，`stream=true` 流式刷新。两种模式消费同一个原始字节源。
@@ -128,7 +140,7 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
   不是 byte-exact CLI stdout；业务对话/语义 Trace 继续使用它们或 `/v1/responses`，不要把
   原始调试流直接渲染为业务时间线。
 
-#### 4.2.3 流式 Web HITL 人工确认卡
+#### 4.2.4 流式 Web HITL 人工确认卡
 
 `ENABLE_CLAUDE_WEB_HITL=true` 且目标业务 Agent 的 Claude Code 权限规则触发 `ask` 时，Web 人工确认通过 `/v1/responses` control mode 的流式 SSE 暴露。非流式 Responses 不承载在线确认卡。集成方必须把该 SSE 连接当成带暂停点的状态机，而不是普通文本流。
 

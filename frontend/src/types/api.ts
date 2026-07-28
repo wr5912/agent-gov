@@ -602,6 +602,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-runtime/sdk-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a managed Claude Agent SDK turn and stream native SDK messages
+         * @description Each official Claude Agent SDK yield is emitted once as claude.sdk.<ClassName> with a mechanical dataclass-to-JSON payload. AgentGov-owned lifecycle events use agentgov.*. This contract follows the pinned Claude Agent SDK; it is not a UI-shaped or byte-exact CLI stream.
+         */
+        post: operations["sdk_events_api_agent_runtime_sdk_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-test-assets": {
         parameters: {
             query?: never;
@@ -5028,7 +5048,7 @@ export interface components {
              */
             object: "response";
             /** Output */
-            output?: components["schemas"]["ResponseOutputMessage"][];
+            output?: (components["schemas"]["ResponseReasoningItem"] | components["schemas"]["ResponseOutputMessage"])[];
             /**
              * Status
              * @enum {string}
@@ -5043,12 +5063,20 @@ export interface components {
         ResponseOutputMessage: {
             /** Content */
             content?: components["schemas"]["ResponseOutputText"][];
+            /** Id */
+            id: string;
             /**
              * Role
              * @default assistant
              * @constant
              */
             role: "assistant";
+            /**
+             * Status
+             * @default completed
+             * @enum {string}
+             */
+            status: "completed" | "in_progress";
             /**
              * Type
              * @default message
@@ -5066,6 +5094,40 @@ export interface components {
              * @constant
              */
             type: "output_text";
+        };
+        /** ResponseReasoningItem */
+        ResponseReasoningItem: {
+            /** Content */
+            content?: components["schemas"]["ResponseReasoningText"][];
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @default completed
+             * @enum {string}
+             */
+            status: "completed" | "in_progress";
+            /** Summary */
+            summary?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /**
+             * Type
+             * @default reasoning
+             * @constant
+             */
+            type: "reasoning";
+        };
+        /** ResponseReasoningText */
+        ResponseReasoningText: {
+            /** Text */
+            text: string;
+            /**
+             * Type
+             * @default reasoning_text
+             * @constant
+             */
+            type: "reasoning_text";
         };
         /**
          * ResponsesRequest
@@ -7953,6 +8015,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    sdk_events_api_agent_runtime_sdk_events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Server-sent event stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Configured runtime or model/agent target is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
         };

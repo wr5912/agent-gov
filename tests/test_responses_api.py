@@ -92,6 +92,46 @@ def test_control_response_projection_shape(monkeypatch, tmp_path: Path) -> None:
     assert body["usage"] == {"input_tokens": 3, "output_tokens": 5, "total_tokens": 8}
 
 
+def test_control_response_projects_reasoning_before_message_with_stable_ids(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+
+    async def fake_run(req, *, profile=None, **kwargs):
+        return ChatResponse(
+            run_id="run-reasoning",
+            session_id="sess-reasoning",
+            answer="最终答案",
+            messages=[
+                {
+                    "event": "AssistantMessage",
+                    "content": [
+                        {"thinking": "完整推理", "signature": "signed"},
+                        {"text": "最终答案"},
+                    ],
+                }
+            ],
+        )
+
+    monkeypatch.setattr(module.runtime, "run", fake_run)
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        body = client.post(
+            "/v1/responses",
+            json={"input": "hi", "agentgov": {"agent_id": "soc-ops"}},
+        ).json()
+
+    assert [item["type"] for item in body["output"]] == ["reasoning", "message"]
+    assert [item["id"] for item in body["output"]] == [
+        "rs_run-reasoning",
+        "msg_run-reasoning",
+    ]
+    assert body["output"][0]["content"] == [
+        {"type": "reasoning_text", "text": "完整推理"}
+    ]
+
+
 def test_control_input_items_store_false_and_reserved_metadata(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     captured: dict = {}

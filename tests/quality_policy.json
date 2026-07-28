@@ -1018,10 +1018,11 @@
       "scenarios": [
         {
           "id": "responses_create_strict_and_control",
-          "description": "非流式 /v1/responses：control 映射 agentgov 字段并要求 agent_id（缺失 422、未知 404）、strict 用运营者出口 Agent 并拒绝 instructions（append-only 非 replace）、失效 503、previous_response_id 409/404、agentgov extra=forbid、保留 metadata key 剥离。",
+          "description": "非流式 /v1/responses：control 映射 agentgov 字段并要求 agent_id（缺失 422、未知 404）、strict 用运营者出口 Agent 并拒绝 instructions（append-only 非 replace）、失效 503、previous_response_id 409/404、agentgov extra=forbid、保留 metadata key 剥离；完整 ThinkingBlock 投影为 stable reasoning item，且顺序/ID 与流式和 retrieve 一致。",
           "pytest": [
             "tests/test_responses_api.py::test_control_runs_business_agent_and_maps_fields",
             "tests/test_responses_api.py::test_control_response_projection_shape",
+            "tests/test_responses_api.py::test_control_response_projects_reasoning_before_message_with_stable_ids",
             "tests/test_responses_api.py::test_control_input_items_store_false_and_reserved_metadata",
             "tests/test_responses_api.py::test_control_missing_agent_id_422",
             "tests/test_responses_api.py::test_control_unknown_agent_404",
@@ -1040,9 +1041,10 @@
         },
         {
           "id": "responses_retrieve_reconstruction",
-          "description": "GET /v1/responses/{id}：从持久化 run 重建 output（来自 messages 非截断 answer_summary）、status 由 errors 派生、store=false 公开 404、not-found 404、保留 metadata key 回显剥离。",
+          "description": "GET /v1/responses/{id}：从持久化 run 重建 output（来自 messages 非截断 answer_summary），保留 reasoning/message 的稳定 ID 与顺序；status 由 errors 派生、store=false 公开 404、not-found 404、保留 metadata key 回显剥离。",
           "pytest": [
             "tests/test_responses_retrieve.py::test_retrieve_reconstructs_output_from_messages",
+            "tests/test_responses_retrieve.py::test_retrieve_preserves_reasoning_item_ids_and_order",
             "tests/test_responses_retrieve.py::test_retrieve_status_failed_from_errors",
             "tests/test_responses_retrieve.py::test_retrieve_store_false_public_404",
             "tests/test_responses_retrieve.py::test_retrieve_not_found_404",
@@ -1098,9 +1100,12 @@
         },
         {
           "id": "responses_streaming_sse",
-          "description": "stream=true 的 Responses-style SSE 投影：SDK StreamEvent 文本增量只作传输、最终 AssistantMessage 快照为唯一事实源且偏差 fail-closed；response.* 标准通道两模式都发、agentgov.* 控制信封仅 control；Trace 仅由完整 SDK 消息投影，thinking_tokens 计数帧不进入语义时间线，完整 thinking、全部 tool/hook/task/result 保留，结束后可由 AgentRun 同源重放；前端按 RAF/32ms 批处理并以 response.completed 校准最终文本、Prompt Suggestion 使用后端权威 ID 且 strict 隔离、heartbeat 转 SSE comment、SDK Result/运行错误只产生一个 failed 终态并投影 UI 错误、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
+          "description": "stream=true 的独立 Responses projector 直接消费 managed SDK source：text/thinking delta 与最终 AssistantMessage 快照偏差 fail-closed；reasoning item 按标准 output_item/content_part/reasoning_text 生命周期输出，response.* 两模式都发、agentgov.* 仅 control；服务端执行工具只输出 agentgov.tool_call.* 观察事件并保留 agentgov.tool_step，不伪装客户端 function_call；thinking_tokens 仅是指标，Prompt Suggestion strict 隔离，heartbeat 为 SSE comment，Result/错误只产生一个终态，HITL requested 保 decision_token、resolved 不带。",
           "pytest": [
             "tests/test_responses_stream.py::test_control_stream_maps_core_events",
+            "tests/test_responses_sdk_projector.py::test_responses_projects_reasoning_lifecycle_and_stable_output_items",
+            "tests/test_responses_sdk_projector.py::test_responses_emits_server_tool_observations_without_function_call_items",
+            "tests/test_responses_sdk_projector.py::test_strict_responses_keeps_agentgov_tool_observations_out",
             "tests/test_claude_runtime.py::test_stream_enriches_langfuse_input_output",
             "tests/test_responses_stream.py::test_strict_stream_emits_no_agentgov",
             "tests/test_responses_stream.py::test_prompt_suggestion_control_uses_session_context_ids_and_precedes_done",
@@ -1138,13 +1143,24 @@
             "tests/test_responses_stream.py::test_stream_run_write_failure_rolls_back_session_completion",
             "tests/test_responses_stream.py::test_stream_persists_exactly_once",
             "tests/test_responses_stream.py::test_stream_error_path_persists_once_in_finally",
-            "tests/test_responses_stream.py::test_endpoint_sdk_result_error_is_failed_terminal_for_playground",
+            "tests/test_responses_stream.py::test_endpoint_sdk_result_error_is_failed_terminal_for_control_client",
             "tests/test_stream_text_projection.py::test_stream_event_text_delta_preserves_whitespace_and_rejects_other_events",
             "tests/test_stream_text_projection.py::test_delta_and_matching_snapshot_emit_exact_text_without_duplicate",
             "tests/test_stream_text_projection.py::test_snapshot_suffix_is_emitted_when_last_delta_was_not_observed",
             "tests/test_stream_text_projection.py::test_divergent_snapshot_fails_closed_with_stable_error_code",
             "tests/test_stream_text_projection.py::test_runtime_partial_events_are_transport_only_and_timings_reach_trace",
             "tests/test_stream_text_projection.py::test_runtime_divergence_never_emits_result_or_completes_turn"
+          ]
+        },
+        {
+          "id": "playground_native_sdk_stream",
+          "description": "Playground live turn 只调用 /api/agent-runtime/sdk-events：每个官方 SDK yield 原序一帧、dataclass 机械 JSON 且未知值 fail-loud；AgentGov control 独立命名。浏览器按 parent_tool_use_id + message id/epoch + block index 归并 thinking/tool evidence，thinking_tokens 只作指标，顶层 text 才进入回答，done 即完成但继续读迟到建议；trace 不完整时保留 live evidence，异步更新固定到本轮 message/run token，且不回退 /v1/responses 或 /api/chat/stream。",
+          "pytest": [
+            "tests/test_claude_sdk_native_stream.py::test_native_sdk_route_preserves_one_frame_per_sdk_yield",
+            "tests/test_claude_sdk_native_stream.py::test_native_sdk_route_requires_agent_id",
+            "tests/test_claude_sdk_native_stream.py::test_native_sdk_codec_fails_instead_of_stringifying_unknown_values",
+            "tests/test_claude_sdk_native_stream.py::test_chat_projector_streams_real_thinking_and_marks_token_counter_as_metric",
+            "tests/test_documentation_contracts.py::test_docs_separate_playground_sdk_native_from_chat_and_responses_projection"
           ],
           "ui_scripts": ["verify:message-actions-browser"]
         },

@@ -7,13 +7,13 @@
 分层:
 - 层① 适配器:claude_prompt_suggestions —— 把 CLI 的 raw `prompt_suggestion` 消息
   解析成 PromptSuggestionMessage。
-- 层② 后端 SSE 契约:openai_responses_stream —— 把 `prompt_suggestion` 帧投影成
+- 层② 后端 SSE 契约:openai_responses_stream —— 把 typed managed source 中的
+  `prompt_suggestion` 控制事件投影成
   `agentgov.prompt_suggestion` 信封;成功轮里可**晚于 done**(迟到帧),失败轮丢弃。
-- 端到端:真实 runtime.stream → 真实投影,证明「答案完成→done 提前→建议随后」这条真实
+- 端到端:真实 runtime.stream_events → 真实投影,证明「答案完成→done 提前→建议随后」这条真实
   时序下建议仍能到达前端。这一层此前缺失,正是它让「迟到建议被投影丢弃」的回归漏过。
 
-前端层(hook / 组件)**目前没有自动化单测** —— 仓库未引入 vitest;唯一的前端覆盖是
-Playwright `scripts/verify_message_actions_browser.mjs`。此处如实记录,不谎报覆盖。
+前端消费层由 Vitest reducer 测试和 Playwright 浏览器主流程共同覆盖。
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from app.runtime.claude_prompt_suggestions import (
     PromptSuggestionMessage,
     query_with_prompt_suggestions,
 )
+from app.runtime.managed_claude_events import AgentGovControlEvent, ManagedClaudeEvent
 from app.runtime.openai_responses_stream import iter_responses_sse
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from claude_agent_sdk import ClaudeAgentOptions
@@ -128,12 +129,12 @@ def test_layer1_adapter_skips_malformed_suggestion(monkeypatch) -> None:
 # ---------------------------------------------------------------- 层② 后端 SSE 契约
 
 
-def _sse_events(frames: list[dict]) -> list[tuple[str, dict]]:
-    """把帧序列过一遍 Responses 投影,返回 (事件名, data) 列表。"""
+def _sse_events(events: list[ManagedClaudeEvent]) -> list[tuple[str, dict]]:
+    """把 typed managed event 序列过一遍 Responses 投影,返回 (事件名, data)。"""
 
     async def _aiter():
-        for f in frames:
-            yield f
+        for event in events:
+            yield event
 
     async def go() -> str:
         chunks = []
@@ -165,15 +166,29 @@ def _sse_events(frames: list[dict]) -> list[tuple[str, dict]]:
     return out
 
 
-_SESSION = {
-    "event": "session",
-    "data": {"run_id": "run-9", "session_id": "sess-9", "sdk_session_id": "sdk-9", "agent_version_id": "ver-9", "agent_id": "soc-ops"},
-}
-_RESULT = {
-    "event": "result",
-    "data": {"run_id": "run-9", "session_id": "sess-9", "sdk_session_id": "sdk-9", "usage": {}, "stop_reason": "end_turn", "errors": [], "agent_activity": {}},
-}
-_DONE = {"event": "done", "data": "[DONE]"}
+_SESSION = AgentGovControlEvent(
+    name="session",
+    data={
+        "run_id": "run-9",
+        "session_id": "sess-9",
+        "sdk_session_id": "sdk-9",
+        "agent_version_id": "ver-9",
+        "agent_id": "soc-ops",
+    },
+)
+_RESULT = AgentGovControlEvent(
+    name="result",
+    data={
+        "run_id": "run-9",
+        "session_id": "sess-9",
+        "sdk_session_id": "sdk-9",
+        "usage": {},
+        "stop_reason": "end_turn",
+        "errors": [],
+        "agent_activity": {},
+    },
+)
+_DONE = AgentGovControlEvent(name="done", data={})
 
 
 def test_layer2_projects_suggestion_to_agentgov_envelope_before_done() -> None:
@@ -183,11 +198,11 @@ def test_layer2_projects_suggestion_to_agentgov_envelope_before_done() -> None:
     test_layer2_delivers_late_suggestion_after_done_on_success。两条一起覆盖修复后的契约:
     成功轮无论建议早于还是晚于 done 都送达,只有失败轮丢弃。
     """
-    suggestion_frame = {
-        "event": "prompt_suggestion",
-        "data": {"suggestion": "  接下来检查失败路径  ", "run_id": "run-9", "session_id": "sess-9"},
-    }
-    events = _sse_events([_SESSION, _RESULT, suggestion_frame, _DONE])
+    suggestion_event = AgentGovControlEvent(
+        name="prompt_suggestion",
+        data={"suggestion": "  接下来检查失败路径  ", "run_id": "run-9", "session_id": "sess-9"},
+    )
+    events = _sse_events([_SESSION, _RESULT, suggestion_event, _DONE])
     names = [n for n, _ in events]
 
     assert "agentgov.prompt_suggestion" in names, "建议未被投影成 SSE 信封"
@@ -206,7 +221,10 @@ def test_layer2_delivers_late_suggestion_after_done_on_success() -> None:
     `_project_prompt_suggestion` 原来带 `done_emitted / terminal_status is not None` 守卫,
     把成功轮 done 之后的建议丢掉 → 前端永远收不到。修复后只在**失败**时丢弃。
     """
-    late = {"event": "prompt_suggestion", "data": {"suggestion": "接下来检查失败路径", "session_id": "sess-9"}}
+    late = AgentGovControlEvent(
+        name="prompt_suggestion",
+        data={"suggestion": "接下来检查失败路径", "session_id": "sess-9"},
+    )
     events = _sse_events([_SESSION, _RESULT, _DONE, late])
     names = [n for n, _ in events]
     assert "agentgov.prompt_suggestion" in names, "成功轮 done 之后的迟到建议必须送达(修复点)"
@@ -216,8 +234,11 @@ def test_layer2_delivers_late_suggestion_after_done_on_success() -> None:
 
 def test_layer2_drops_late_suggestion_after_failure() -> None:
     """层② 负向:失败轮不应给建议(即便建议帧到达)。"""
-    result_err = {"event": "result", "data": {**_RESULT["data"], "errors": ["boom"]}}
-    late = {"event": "prompt_suggestion", "data": {"suggestion": "别在失败时建议", "session_id": "sess-9"}}
+    result_err = AgentGovControlEvent(name="result", data={**_RESULT.data, "errors": ["boom"]})
+    late = AgentGovControlEvent(
+        name="prompt_suggestion",
+        data={"suggestion": "别在失败时建议", "session_id": "sess-9"},
+    )
     events = _sse_events([_SESSION, result_err, _DONE, late])
     names = [n for n, _ in events]
     assert "agentgov.prompt_suggestion" not in names, "失败轮不应投影建议"
@@ -227,7 +248,7 @@ def test_layer2_drops_late_suggestion_after_failure() -> None:
 
 
 def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeypatch) -> None:
-    """**回归护栏**:真实 runtime.stream → 真实投影,迟到建议必须到达前端 SSE。
+    """**回归护栏**:真实 runtime.stream_events → 真实投影,迟到建议必须到达前端 SSE。
 
     复刻真实时序:答案完成 → runtime 提前发 done → 建议随后到(runtime 帧序里建议在
     done 之后)。此前投影会丢弃它,前端永远收不到;这条端到端断言 `agentgov.prompt_suggestion`
@@ -265,6 +286,7 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
         DATA_DIR=tmp_path / "docker" / "volume" / "data",
         GOVERNOR_CLAUDE_ROOT=tmp_path / "docker" / "volume" / "claude-roots" / "governor",
         RUNTIME_VOLUME_MODE="local-debug",
+        ENABLE_BACKEND_PROMPT_SUGGESTION=False,
     )
     workspace = settings.default_workspace_dir
     create_test_business_agent_workspace(
@@ -282,9 +304,10 @@ def test_endtoend_late_suggestion_reaches_sse_after_early_done(tmp_path, monkeyp
         raw_frames: list[str] = []
 
         async def source():
-            async for frame in runtime.stream(ChatRequest(message="hi")):
-                raw_frames.append(frame["event"])
-                yield frame
+            async for event in runtime.stream_events(ChatRequest(message="hi")):
+                if isinstance(event, AgentGovControlEvent):
+                    raw_frames.append(event.name)
+                yield event
 
         sse_events: list[str] = []
         async for chunk in iter_responses_sse(
@@ -312,15 +335,15 @@ def test_layer2_projects_full_candidate_list_with_compat_first_item() -> None:
     附加式形状的核心断言:老客户端只读 `suggestion` 就仍拿到最贴切的那条(不是最差的),
     新客户端读 `suggestions` 拿全部。逐条 strip。
     """
-    frame = {
-        "event": "prompt_suggestion",
-        "data": {
+    event = AgentGovControlEvent(
+        name="prompt_suggestion",
+        data={
             "suggestion": "  跑测试  ",
             "suggestions": ["  跑测试  ", "看日志", "  提交代码"],
             "session_id": "sess-9",
         },
-    }
-    events = _sse_events([_SESSION, _RESULT, frame, _DONE])
+    )
+    events = _sse_events([_SESSION, _RESULT, event, _DONE])
     body = dict(events)["agentgov.prompt_suggestion"]
     payload = body.get("payload", body)
 
@@ -330,8 +353,11 @@ def test_layer2_projects_full_candidate_list_with_compat_first_item() -> None:
 
 def test_layer2_tolerates_frame_without_suggestions_key() -> None:
     """层② 兼容:只带 `suggestion` 的旧帧(或未同步的 emitter)归一成单元素,不静默丢。"""
-    frame = {"event": "prompt_suggestion", "data": {"suggestion": "跑测试", "session_id": "sess-9"}}
-    events = _sse_events([_SESSION, _RESULT, frame, _DONE])
+    event = AgentGovControlEvent(
+        name="prompt_suggestion",
+        data={"suggestion": "跑测试", "session_id": "sess-9"},
+    )
+    events = _sse_events([_SESSION, _RESULT, event, _DONE])
     body = dict(events)["agentgov.prompt_suggestion"]
     payload = body.get("payload", body)
 

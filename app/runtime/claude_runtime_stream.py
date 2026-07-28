@@ -16,10 +16,15 @@ from .async_iterators import close_async_iterator
 from .claude_runtime import RuntimeQueryState, _require_profile
 from .claude_sdk_interactive import query_with_interactive_client
 from .json_types import JsonObject
+from .managed_claude_events import (
+    AgentGovControlEvent,
+    AgentGovHeartbeatEvent,
+    ClaudeSdkMessageEvent,
+    ManagedClaudeEvent,
+    stream_delta,
+)
 from .message_utils import (
     extract_assistant_text_snapshot,
-    extract_stream_text_delta,
-    message_event_name,
     reconcile_stream_snapshot,
     to_plain,
 )
@@ -89,7 +94,7 @@ async def stream_claude_runtime(
     *,
     profile: AgentRuntimeProfile | None = None,
     cli_path_override: Path | None = None,
-) -> AsyncIterator[JsonObject]:
+) -> AsyncIterator[ManagedClaudeEvent]:
     # profile 由上游解析（路由层 resolve_business_profile）。不回落预制 main：main 已是可删除的
     # 普通业务 Agent，回落会把「未解析出 profile」掩蔽成「跑在别的 Agent 上」。
     selected_profile = _require_profile(profile)
@@ -116,7 +121,7 @@ async def stream_claude_runtime(
             await close_async_iterator(source)
 
 
-async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject]:
+async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[ManagedClaudeEvent]:
     from claude_agent_sdk import ResultMessage
 
     runtime = stream_run.runtime
@@ -132,7 +137,8 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject
         ) as root_span:
             context.langfuse_trace_id, context.langfuse_trace_url = runtime.langfuse.current_trace_ref()
             runtime.langfuse.set_trace_attributes(root_span, **stream_run.propagation)
-            yield runtime._stream_session_event(req, context)
+            session_frame = runtime._stream_session_event(req, context)
+            yield AgentGovControlEvent(name="session", data=session_frame["data"])
             with runtime.langfuse.start_observation(
                 as_type="generation",
                 name=f"{selected_profile.langfuse_observation_name}.claude_sdk_query",
@@ -141,7 +147,7 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject
                 metadata=stream_run.root_metadata,
             ) as generation:
                 runtime.langfuse.set_trace_attributes(generation, **stream_run.propagation)
-                event_queue: asyncio.Queue[JsonObject | None] = asyncio.Queue()
+                event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None] = asyncio.Queue()
                 # 建议来源二选一:后端生成(受控特例,默认)走 SDK 原生 query/client——不加
                 # CLI 的 --prompt-suggestions、也没有 3 秒尾随窗口,建议由 _emit_query_events
                 # 在答案完成后自行派生;关掉后端开关则回退 CLI 原生 SUGGESTION MODE 路径。
@@ -173,14 +179,17 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject
     await asyncio.to_thread(runtime._flush_langfuse)
 
 
-def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObject | None]) -> Any:
+def _sdk_tool_callback(
+    stream_run: StreamRun,
+    event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None],
+) -> Any:
     from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
     async def sdk_can_use_tool(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
         service = stream_run.runtime.user_input_service
         if service is None or not stream_run.web_hitl_enabled:
             message = f"工具 {tool_name} 请求人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启或 HITL 服务不可用；请求已显式拒绝。"
-            await event_queue.put({"event": "error", "data": {"errors": [message]}})
+            await event_queue.put(AgentGovControlEvent(name="error", data={"errors": [message]}))
             return PermissionResultDeny(message=message)
         decision = await service.create_and_wait(
             event_queue=event_queue,
@@ -203,7 +212,7 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
 
 async def _emit_query_events(
     stream_run: StreamRun,
-    event_queue: asyncio.Queue[JsonObject | None],
+    event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None],
     query_func: Any,
     sdk_client_factory: Any,
     result_message_type: type,
@@ -258,10 +267,10 @@ async def _emit_query_events(
                     error=stream_run.query_state.mirror_errors[-1],
                 )
                 await event_queue.put(
-                    {
-                        "event": "error",
-                        "data": {"errors": list(stream_run.query_state.errors)},
-                    }
+                    AgentGovControlEvent(
+                        name="error",
+                        data={"errors": list(stream_run.query_state.errors)},
+                    )
                 )
                 continue
             # 落库先于 result 事件（-> response.completed），使 items/retrieve 在完成信号时刻即可查。
@@ -276,59 +285,43 @@ async def _emit_query_events(
 
 async def _emit_sdk_message_frame(
     stream_run: StreamRun,
-    event_queue: asyncio.Queue[JsonObject | None],
+    event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None],
     message: Any,
     result_message_type: type,
 ) -> tuple[bool, list[str]]:
     if isinstance(message, claude_prompt_suggestions.PromptSuggestionMessage):
-        # 原生 CLI 和后端生成路径共用唯一建议帧构造点，避免 schema 双轨。
-        await event_queue.put(_prompt_suggestion_frame(stream_run, [message.suggestion]))
+        # PromptSuggestionMessage 是 AgentGov 的 CLI 包装消息，不属于官方 SDK 消息契约。
+        await event_queue.put(_prompt_suggestion_event(stream_run, [message.suggestion]))
         return False, []
+    # SDK 每一次 yield 在任何接口投影之前先进入唯一的有类型事实流。
+    await event_queue.put(ClaudeSdkMessageEvent(message=message))
     if message.__class__.__name__ == "StreamEvent":
-        delta = extract_stream_text_delta(message)
-        if delta is not None:
-            stream_run.partial_text_segment += delta
+        delta = stream_delta(message)
+        if delta is not None and delta[0] == "text_delta":
+            stream_run.partial_text_segment += delta[1]
             if stream_run.first_text_delta_ms is None:
                 stream_run.first_text_delta_ms = _elapsed_ms(stream_run.started_at_monotonic)
-            await event_queue.put(
-                {
-                    "event": "message",
-                    "data": {"event": "StreamEvent", "text": delta, "text_kind": "delta", "raw": {}},
-                }
-            )
-        # 包括 thinking/message_start 在内的 StreamEvent 都只是传输帧，不进入事实层。
+        # StreamEvent 是传输事实，不进入持久化 message 事实层。
         return False, []
 
-    event_name = message_event_name(message)
     snapshot = extract_assistant_text_snapshot(message)
-    if event_name.startswith("AssistantMessage"):
+    if message.__class__.__name__.startswith("AssistantMessage"):
         if stream_run.partial_text_segment:
             reconcile_stream_snapshot(stream_run.partial_text_segment, snapshot)
         stream_run.partial_text_segment = ""
     elif isinstance(message, result_message_type) and stream_run.partial_text_segment:
         reconcile_stream_snapshot(stream_run.partial_text_segment, None)
-    event, text, plain, is_result, result_errors = stream_run.runtime._track_query_message(
+    _, _, _, is_result, result_errors = stream_run.runtime._track_query_message(
         message,
         stream_run.query_state,
         result_message_type,
-    )
-    await event_queue.put(
-        {
-            "event": "message",
-            "data": {
-                "event": event,
-                "text": snapshot if snapshot is not None else text,
-                "text_kind": "snapshot",
-                "raw": plain,
-            },
-        }
     )
     return is_result, result_errors
 
 
 async def _emit_backend_prompt_suggestion(
     stream_run: StreamRun,
-    event_queue: asyncio.Queue[JsonObject | None],
+    event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None],
 ) -> None:
     """答案完成后，后端对本轮对话做一次 LLM 派生，产出「用户下一句」建议并 emit。
 
@@ -345,27 +338,25 @@ async def _emit_backend_prompt_suggestion(
     suggestions = await asyncio.to_thread(runtime.prompt_suggestion_generator.generate, user_message, answer)
     if not suggestions:
         return
-    await event_queue.put(
-        _prompt_suggestion_frame(stream_run, suggestions),
-    )
+    await event_queue.put(_prompt_suggestion_event(stream_run, suggestions))
 
 
-def _prompt_suggestion_frame(stream_run: StreamRun, suggestions: list[str]) -> JsonObject:
+def _prompt_suggestion_event(stream_run: StreamRun, suggestions: list[str]) -> AgentGovControlEvent:
     """建议帧的**唯一**构造点 —— 后端生成与原生 CLI 两条路径共用,避免 schema 双轨。
 
     形状是**附加式**的:`suggestion` 保留且恒等于 `suggestions[0]`,老客户端(只读
     `suggestion`)零改动;`suggestions` 是新增的完整候选列表。一帧载完整批次 —— 不发多帧,
     否则客户端拿不到 batch key(投影层不透传 run_id)、跨轮竞态下会把旧批次与新批次混在一起。
     """
-    return {
-        "event": "prompt_suggestion",
-        "data": {
+    return AgentGovControlEvent(
+        name="prompt_suggestion",
+        data={
             "suggestion": suggestions[0],
             "suggestions": list(suggestions),
             "run_id": stream_run.request_context.run_id,
             "session_id": stream_run.request_context.session.session_id,
         },
-    }
+    )
 
 
 def _answer_text_from_state(query_state: RuntimeQueryState) -> str:
@@ -375,7 +366,7 @@ def _answer_text_from_state(query_state: RuntimeQueryState) -> str:
 
 async def _publish_result_event(
     stream_run: StreamRun,
-    event_queue: asyncio.Queue[JsonObject | None],
+    event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None],
     result_errors: list[str],
 ) -> None:
     runtime = stream_run.runtime
@@ -397,35 +388,30 @@ async def _publish_result_event(
         "stop_reason": state.stop_reason,
         "errors": result_errors,
     }
-    await event_queue.put(
-        {
-            "event": "result",
-            "data": data,
-        }
-    )
+    await event_queue.put(AgentGovControlEvent(name="result", data=data))
 
 
 async def _publish_missing_result_error(
     stream_run: StreamRun,
-    event_queue: asyncio.Queue[JsonObject | None],
+    event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None],
 ) -> None:
     missing_result_error = stream_run.runtime._ensure_query_terminal_error(stream_run.query_state)
     if missing_result_error is None:
         return
     await event_queue.put(
-        {
-            "event": "error",
-            "data": {
+        AgentGovControlEvent(
+            name="error",
+            data={
                 "error_code": "STREAM_TERMINATED_WITHOUT_RESULT",
                 "errors": list(stream_run.query_state.errors),
             },
-        }
+        )
     )
 
 
 async def _run_sdk_query(
     stream_run: StreamRun,
-    event_queue: asyncio.Queue[JsonObject | None],
+    event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None],
     root_span: Any,
     generation: Any,
     query_func: Any,
@@ -451,10 +437,10 @@ async def _run_sdk_query(
         except Exception as exc:
             if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
                 stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
-                await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
+                await event_queue.put(AgentGovControlEvent(name="error", data={"errors": list(stream_run.query_state.errors)}))
             if stream_run.runtime.user_input_service is not None:
                 stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
-        await event_queue.put({"event": "done", "data": "[DONE]"})
+        await event_queue.put(AgentGovControlEvent(name="done", data={}))
 
     try:
         await _emit_query_events(
@@ -488,7 +474,7 @@ async def _run_sdk_query(
                 raw_output_json = getattr(exc, "raw_output_json", None)
                 if isinstance(raw_output_json, dict):
                     error_data.update(raw_output_json)
-            await event_queue.put({"event": "error", "data": error_data})
+            await event_queue.put(AgentGovControlEvent(name="error", data=error_data))
     finally:
         if cancelled:
             if stream_run.runtime.user_input_service is not None:
@@ -619,9 +605,9 @@ def _stream_timing_metadata(stream_run: StreamRun) -> JsonObject:
 
 async def _drain_stream_queue(
     stream_run: StreamRun,
-    event_queue: asyncio.Queue[JsonObject | None],
+    event_queue: asyncio.Queue[ManagedClaudeEvent | JsonObject | None],
     sdk_task: asyncio.Task[None],
-) -> AsyncIterator[JsonObject]:
+) -> AsyncIterator[ManagedClaudeEvent]:
     try:
         while True:
             try:
@@ -631,13 +617,28 @@ async def _drain_stream_queue(
                     if not sdk_task.cancelled():
                         exc = sdk_task.exception()
                         if exc is not None:
-                            yield {"event": "error", "data": {"errors": [f"{exc.__class__.__name__}: {exc}"]}}
+                            yield AgentGovControlEvent(
+                                name="error",
+                                data={"errors": [f"{exc.__class__.__name__}: {exc}"]},
+                            )
                     break
-                yield {"event": "heartbeat", "data": {"run_id": stream_run.request_context.run_id, "timestamp": utc_now()}}
+                yield AgentGovHeartbeatEvent(
+                    run_id=stream_run.request_context.run_id,
+                    timestamp=utc_now(),
+                )
                 continue
             if item is None:
                 break
-            yield item
+            if isinstance(item, dict):
+                # ClaudeUserInputService still accepts a queue-like sink and publishes
+                # AgentGov-owned controls. Normalize them before they leave this module.
+                name = item.get("event")
+                data = item.get("data")
+                if not isinstance(name, str) or not isinstance(data, dict):
+                    raise TypeError("Managed Runtime control frame must contain string event and object data")
+                yield AgentGovControlEvent(name=name, data=data)
+            else:
+                yield item
     finally:
         await _cancel_stream_task(stream_run, sdk_task)
 

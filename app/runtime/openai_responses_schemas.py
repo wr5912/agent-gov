@@ -86,8 +86,23 @@ class ResponseOutputText(BaseModel):
 
 class ResponseOutputMessage(BaseModel):
     type: Literal["message"] = "message"
+    id: str
+    status: Literal["completed", "in_progress"] = "completed"
     role: Literal["assistant"] = "assistant"
     content: list[ResponseOutputText] = Field(default_factory=list)
+
+
+class ResponseReasoningText(BaseModel):
+    type: Literal["reasoning_text"] = "reasoning_text"
+    text: str
+
+
+class ResponseReasoningItem(BaseModel):
+    type: Literal["reasoning"] = "reasoning"
+    id: str
+    status: Literal["completed", "in_progress"] = "completed"
+    summary: list[JsonObject] = Field(default_factory=list)
+    content: list[ResponseReasoningText] = Field(default_factory=list)
 
 
 class AgentGovResponseExtension(BaseModel):
@@ -129,7 +144,7 @@ class ResponseObject(BaseModel):
     created_at: Optional[int] = None
     status: ResponseStatus
     model: Optional[str] = None
-    output: list[ResponseOutputMessage] = Field(default_factory=list)
+    output: list[ResponseReasoningItem | ResponseOutputMessage] = Field(default_factory=list)
     usage: Optional[JsonObject] = None
     metadata: JsonObject = Field(default_factory=dict)
     agentgov: AgentGovResponseExtension

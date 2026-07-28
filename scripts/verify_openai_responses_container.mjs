@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-// Real-container OpenAI Responses-first acceptance:
-// browser UI loads from the Compose UI container, Playground sends /v1/responses,
-// and hostile/boundary requests hit the Compose API container without mocks.
+// Real-container Responses + Playground SDK-native acceptance:
+// browser UI loads from Compose, Playground sends /api/agent-runtime/sdk-events,
+// while hostile/boundary/retrieve checks exercise /v1/responses without mocks.
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -138,7 +137,6 @@ async function main() {
 
   const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
   const page = await browser.newPage({ viewport: { width: 1440, height: 920 } });
-  const isolatedSessionId = randomUUID();
   const apiRequests = [];
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(String(error)));
@@ -149,11 +147,11 @@ async function main() {
   });
 
   try {
-    await page.addInitScript(({ base, key, sessionId }) => {
+    await page.addInitScript(({ base, key }) => {
       window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: base, apiKey: key }));
       window.localStorage.removeItem("playground-session-messages");
-      window.localStorage.setItem("playground-active-session", JSON.stringify(sessionId));
-    }, { base: browserApiBase, key: apiKey, sessionId: isolatedSessionId });
+      window.localStorage.removeItem("playground-active-session");
+    }, { base: browserApiBase, key: apiKey });
 
     await page.goto(uiBase, { waitUntil: "domcontentloaded" });
     await page.getByTestId("playground").waitFor({ timeout: 30000 });
@@ -179,7 +177,9 @@ async function main() {
     const messageActionsBefore = await page.getByTestId("message-actions").count();
     const requestPromise = page.waitForRequest((request) => {
       const url = new URL(request.url());
-      return apiOrigins.has(url.origin) && url.pathname === "/v1/responses" && request.method() === "POST";
+      return apiOrigins.has(url.origin)
+        && url.pathname === "/api/agent-runtime/sdk-events"
+        && request.method() === "POST";
     }, { timeout: 30000 });
     await page.getByTestId("chat-composer-input").fill(
       "请只回复一行：AGENTGOV_OPENAI_E2E_OK。不要使用工具；我下一步会继续询问你的核心能力。",
@@ -187,9 +187,11 @@ async function main() {
     await page.getByTestId("chat-send").click();
     const runRequest = await requestPromise;
     const runBody = JSON.parse(runRequest.postData() || "{}");
-    assert(runBody.stream === true, "Playground did not request stream=true");
-    assert(runBody.agentgov?.agent_id === selectedAgent, "Playground did not pass the selected business agent through agentgov.agent_id");
-    assert(runBody.conversation === `conv_${isolatedSessionId}`, "Playground did not keep the isolated conversation id");
+    assert(runBody.agent_id === selectedAgent, "Playground did not pass the selected business agent as agent_id");
+    assert(
+      typeof runBody.session_id === "string" && runBody.session_id.trim().length > 0,
+      "Playground did not create a session id for the isolated live turn",
+    );
 
     await waitForCondition(
       async () => await page.getByTestId("message-actions").count() > messageActionsBefore,
@@ -231,8 +233,8 @@ async function main() {
     assert(promptSuggestionCount > 0, "backend prompt suggestion frame rendered no candidate chips");
     const firstPromptSuggestion = (await promptSuggestionItems.first().innerText()).trim();
     assert(firstPromptSuggestion.length > 0, "backend prompt suggestion rendered an empty candidate");
-    const responseRequestsBeforeSuggestionClick = apiRequests.filter(
-      (item) => item.method === "POST" && item.path === "/v1/responses",
+    const sdkRequestsBeforeSuggestionClick = apiRequests.filter(
+      (item) => item.method === "POST" && item.path === "/api/agent-runtime/sdk-events",
     ).length;
     await promptSuggestionItems.first().click();
     await delay(100);
@@ -241,13 +243,13 @@ async function main() {
       "clicking a live prompt suggestion did not fill the composer",
     );
     assert(
-      apiRequests.filter((item) => item.method === "POST" && item.path === "/v1/responses").length
-        === responseRequestsBeforeSuggestionClick,
+      apiRequests.filter((item) => item.method === "POST" && item.path === "/api/agent-runtime/sdk-events").length
+        === sdkRequestsBeforeSuggestionClick,
       "clicking a live prompt suggestion unexpectedly sent a new request",
     );
     assert(await page.getByTestId("prompt-suggestion").count() === 0, "used prompt suggestion was not cleared");
 
-    const sessionId = runBody.conversation.slice("conv_".length);
+    const sessionId = runBody.session_id;
     const runs = await api(`/api/agent-runs?session_id=${encodeURIComponent(sessionId)}&limit=1`);
     const latestRun = Array.isArray(runs.data) ? runs.data[0] : null;
     assert(latestRun?.run_id, "persisted run did not expose a run id after response completion");
@@ -263,7 +265,8 @@ async function main() {
     assert(items.data?.object === "list", "conversation items did not return a list object");
 
     const paths = apiRequests.map((item) => `${item.method} ${item.path}`);
-    assert(paths.includes("POST /v1/responses"), "UI did not call POST /v1/responses");
+    assert(paths.includes("POST /api/agent-runtime/sdk-events"), "UI did not call POST /api/agent-runtime/sdk-events");
+    assert(!paths.includes("POST /v1/responses"), "Playground live turn still called POST /v1/responses");
     assert(!paths.includes("POST /api/chat/stream"), "UI still called legacy POST /api/chat/stream");
     assert(!paths.includes("GET /api/sessions"), "UI still called legacy GET /api/sessions for the session sidebar");
     assert(pageErrors.length === 0, `browser page errors: ${pageErrors.join("\n")}`);
@@ -275,7 +278,8 @@ async function main() {
       apiBase,
       browserApiBase,
       selectedAgent,
-      sawResponses: paths.includes("POST /v1/responses"),
+      sawNativeSdkStream: paths.includes("POST /api/agent-runtime/sdk-events"),
+      playgroundResponsesCalls: paths.filter((path) => path === "POST /v1/responses").length,
       promptSuggestionCount,
       promptSuggestionAttempt,
       promptSuggestionFilledComposer: true,

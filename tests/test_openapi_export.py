@@ -114,6 +114,7 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/agent-change-sets/{change_set_id}/publish",
         "/api/agent-releases/{release_id}/restore",
         "/api/claude-user-input-requests/{request_id}/decision",
+        "/api/agent-runtime/sdk-events",
         "/api/debug/agent-runtime/raw-events",
         "/v1/agentgov/confirmation-requests/{request_id}/decision",
         "/v1/chat/completions",
@@ -253,6 +254,9 @@ def test_openapi_documents_streaming_media_types():
 
     chat_stream = schema["paths"]["/api/chat/stream"]["post"]["responses"]["200"]["content"]
     assert set(chat_stream) == {"text/event-stream"}
+
+    sdk_events = schema["paths"]["/api/agent-runtime/sdk-events"]["post"]["responses"]["200"]["content"]
+    assert set(sdk_events) == {"text/event-stream"}
 
     responses_content = schema["paths"]["/v1/responses"]["post"]["responses"]["200"]["content"]
     assert {"application/json", "text/event-stream"} <= set(responses_content)

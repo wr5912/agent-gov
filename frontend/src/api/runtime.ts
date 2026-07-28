@@ -1,6 +1,7 @@
-import { authHeaders, makeUrl, readError, requestBlob, requestJson } from "./request";
-import { completedResponseText, createResponseDeltaBatcher } from "./responsesStream";
+import { requestBlob, requestJson } from "./request";
 import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
+export { streamClaudeSdkChat as streamChat } from "./claudeSdkStream";
+export type { StreamChatHandlers } from "./claudeSdkStream";
 export { defaultRuntimeConfig, isLegacyDockerApiBase } from "./request";
 export * from "./agentTesting";
 export * from "./feedback";
@@ -8,7 +9,6 @@ import type {
   AgentInfo,
   AgentPresentation,
   AgentSummary,
-  AgentTraceEvent,
   AgentDeleteResponse,
   AgentChangeSet,
   AgentChangeSetActionRequest,
@@ -28,7 +28,6 @@ import type {
   AgentRepositoryDiscardChangesRequest,
   AgentRepositorySnapshotRequest,
   AgentRepositoryStatus,
-  ChatRequest,
   ClaudeUserInputDecisionPayload,
   ClaudeUserInputDecisionResponse,
   ConfigMappingResponse,
@@ -39,16 +38,11 @@ import type {
   RuntimeHealth,
   SessionInfo,
   SkillInfo,
-  StreamEnvelope,
   WorkspaceImportResponse,
   WorkspaceRestoreRequest,
   WorkspaceRestoreResponse,
 } from "../types/runtime";
 import { isRecord } from "../utils/records";
-
-// 流式空闲超时：60s 对大提示词 + 翻译代理整段缓冲的 Qwen 推理太紧（init 后常 >60s 才吐首个增量），
-// 调大到 180s 容纳慢响应；根治需后端 SSE 心跳或代理增量转发（见 v2.8.1 验收记录）。
-const STREAM_IDLE_TIMEOUT_MS = 180_000;
 
 export function getHealth(config: RuntimeClientConfig) {
   return requestJson<RuntimeHealth>(config, "/health");
@@ -433,327 +427,4 @@ export function submitClaudeUserInputDecision(config: RuntimeClientConfig, reque
       body: JSON.stringify(payload),
     },
   );
-}
-
-export interface StreamChatHandlers {
-  onEnvelope?: (envelope: StreamEnvelope) => void;
-  onTraceEvent?: (event: AgentTraceEvent) => void;
-  onSession?: (sessionId: string, sdkSessionId?: string | null) => void;
-  onText?: (text: string, raw: unknown) => void;
-  onFinalText?: (text: string) => void;
-  onPromptSuggestion?: (suggestions: string[], sessionId: string) => void;
-  onResult?: (result: unknown) => void;
-  onError?: (message: string, raw?: unknown) => void;
-  onDone?: () => void;
-}
-
-export async function streamChat(
-  config: RuntimeClientConfig,
-  payload: ChatRequest,
-  handlers: StreamChatHandlers,
-  signal?: AbortSignal,
-): Promise<void> {
-  const controller = new AbortController();
-  let flushPendingDeltas = () => {};
-  let timedOut = false;
-  let idleMs = STREAM_IDLE_TIMEOUT_MS;  // 默认 180s；agentgov.session 到达后据后端下发 heartbeat_interval_s 派生
-  let timeoutId = window.setTimeout(() => {
-    timedOut = true;
-    flushPendingDeltas();
-    controller.abort("timeout");
-  }, idleMs);
-  const resetIdleTimeout = () => {
-    window.clearTimeout(timeoutId);
-    timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      flushPendingDeltas();
-      controller.abort("timeout");
-    }, idleMs);
-  };
-  const abortFromCaller = () => {
-    flushPendingDeltas();
-    controller.abort(signal?.reason || "aborted");
-  };
-  if (signal?.aborted) {
-    window.clearTimeout(timeoutId);
-    throw new Error("Stream request was aborted");
-  }
-  signal?.addEventListener("abort", abortFromCaller, { once: true });
-
-  try {
-    const res = await fetch(makeUrl(config, "/v1/responses"), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        ...authHeaders(config),
-      },
-      body: JSON.stringify(toResponsesRequest(payload)),
-      signal: controller.signal,
-    });
-
-    if (!res.ok || !res.body) {
-      const detail = await readError(res);
-      throw new Error(detail || "Failed to start stream");
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let buffer = "";
-    let terminalReceived = false;
-    let doneReceived = false;
-    let controlFailureReceived = false;
-    let standardFailure: unknown;
-    const consumeEvent = (parsed: StreamEnvelope) => {
-      if (parsed.event === "response.completed" || parsed.event === "response.failed") {
-        terminalReceived = true;
-      }
-      if (parsed.event === "response.completed") {
-        const finalText = completedResponseText(parsed.data);
-        if (finalText !== undefined) handlers.onFinalText?.(finalText);
-      }
-      if (parsed.event === "response.failed") {
-        standardFailure = isRecord(parsed.data) && "error" in parsed.data ? parsed.data.error : parsed.data;
-      }
-      if (parsed.event === "agentgov.error") controlFailureReceived = true;
-      idleMs = idleFromSessionFrame(parsed, idleMs);
-      const envelope = translateResponsesEnvelope(parsed);
-      if (!envelope) return;
-      if (envelope.event === "done") {
-        // done 到达即收尾，不等 HTTP 流关闭：后端在答案完成时就发 done，而流可能还要
-        // 为迟到的 prompt_suggestion 多开一会儿。若压到流关闭再派发，用户就要为一条
-        // 可能永远不来的建议白等整个尾随窗口（「停止」按钮挂着、发不出下一句）。
-        doneReceived = true;
-        dispatchEnvelope(envelope, handlers);
-        return;
-      }
-      dispatchEnvelope(envelope, handlers);
-    };
-    const deltaBatcher = createResponseDeltaBatcher(consumeEvent);
-    flushPendingDeltas = deltaBatcher.flush;
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        resetIdleTimeout();
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split("\n\n");
-        buffer = events.pop() || "";
-        for (const rawEvent of events) {
-          const parsed = parseSse(rawEvent);
-          if (!parsed) continue;
-          deltaBatcher.enqueue(parsed);
-        }
-      }
-
-      if (buffer.trim()) {
-        const parsed = parseSse(buffer);
-        if (parsed) deltaBatcher.enqueue(parsed);
-      }
-      deltaBatcher.flush();
-      if (standardFailure !== undefined && !controlFailureReceived) {
-        dispatchEnvelope({ event: "error", data: standardFailure }, handlers);
-      }
-      if (!terminalReceived) throw new Error("Stream ended before terminal event");
-      // done 已在到达时派发过；这里只校验它确实来过，不再重复派发（否则 onDone 触发两次）。
-      if (!doneReceived) throw new Error("Stream ended before agentgov.done");
-    } finally {
-      deltaBatcher.flush();
-      reader.releaseLock();
-    }
-  } catch (error) {
-    if (timedOut) {
-      throw new Error(`Stream request timed out after ${idleMs / 1000}s without data`);
-    }
-    if (signal?.aborted) {
-      throw new Error("Stream request was aborted");
-    }
-    throw error;
-  } finally {
-    flushPendingDeltas();
-    window.clearTimeout(timeoutId);
-    signal?.removeEventListener("abort", abortFromCaller);
-  }
-}
-
-// Playground 走 canonical /v1/responses（control 模式）；ChatRequest -> Responses 请求体。
-function toResponsesRequest(payload: ChatRequest): Record<string, unknown> {
-  const agentgov: Record<string, unknown> = {
-    agent_id: payload.agent_id,
-    include_trace: true,
-  };
-  if (payload.alert_id) agentgov.alert_id = payload.alert_id;
-  if (payload.case_id) agentgov.case_id = payload.case_id;
-  if (payload.max_turns != null) agentgov.max_turns = payload.max_turns;
-  const body: Record<string, unknown> = { input: payload.message, stream: true, agentgov };
-  if (payload.session_id) body.conversation = `conv_${payload.session_id}`;
-  if (payload.metadata) body.metadata = payload.metadata;
-  return body;
-}
-
-// 把 /v1/responses 的 SSE（response.* 标准通道 + agentgov.* 控制信封）翻译回内部事件模型，
-// 使 App.tsx / claudeUserInputState / 确认卡无需改动（迁移桥接：Playground 已切到 canonical 入口）。
-function translateResponsesEnvelope(env: StreamEnvelope): StreamEnvelope | null {
-  const data = env.data;
-  const payload = isRecord(data) && isRecord(data.payload) ? data.payload : data;
-  switch (env.event) {
-    case "agentgov.session":
-      return { event: "session", data: payload };
-    case "response.output_text.delta":
-      return { event: "message", data: { event: "AssistantMessage", text: isRecord(data) ? (data.delta ?? "") : "", raw: {} } };
-    case "agentgov.trace_event":
-      return { event: "trace_event", data: payload };
-    case "agentgov.tool_step":
-      return null; // include_trace=true already carries every tool block with stable identity.
-    case "agentgov.sdk_raw":
-      return { event: "message", data: { event: "AgentGovSdkRaw", text: "", raw: payload } };
-    case "agentgov.result":
-      return { event: "result", data: payload };
-    case "agentgov.error":
-      return { event: "error", data: payload };
-    case "agentgov.confirmation.requested":
-      return { event: "claude_user_input_required", data: payload };
-    case "agentgov.confirmation.resolved":
-      return { event: "claude_user_input_resolved", data: payload };
-    case "agentgov.prompt_suggestion":
-      return { event: "prompt_suggestion", data: payload };
-    case "agentgov.done":
-      return { event: "done", data: "[DONE]" };
-    default:
-      // response.created/completed/failed/in_progress 等标准通道事件：内部数据经 agentgov.* 已下发，
-      // 丢弃避免重复（error 统一由 agentgov.error 承载，避免 onError 双投递）。
-      return null;
-  }
-}
-
-// 据 agentgov.session 下发的 heartbeat_interval_s 派生 idle 超时（不硬编码；心跳*12 安全系数，floor 180s）。
-function idleFromSessionFrame(env: StreamEnvelope, current: number): number {
-  if (env.event !== "agentgov.session" || !isRecord(env.data)) return current;
-  const payload = isRecord(env.data.payload) ? env.data.payload : env.data;
-  const interval = payload.heartbeat_interval_s;
-  if (typeof interval !== "number" || interval <= 0) return current;
-  return Math.max(STREAM_IDLE_TIMEOUT_MS, interval * 1000 * 12);
-}
-
-function parseSse(rawEvent: string): StreamEnvelope | null {
-  let event = "message";
-  const dataLines: string[] = [];
-
-  for (const line of rawEvent.split("\n")) {
-    if (line.startsWith("event:")) {
-      event = line.slice("event:".length).trim() || "message";
-    } else if (line.startsWith("data:")) {
-      dataLines.push(line.slice("data:".length).trimStart());
-    }
-  }
-
-  if (!dataLines.length) return null;
-  const rawData = dataLines.join("\n");
-  let data: unknown = rawData;
-  try {
-    data = JSON.parse(rawData);
-  } catch {
-    // Keep plain text data.
-  }
-  return { event, data };
-}
-
-function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers) {
-  handlers.onEnvelope?.(envelope);
-
-  if (envelope.event === "session" && isRecord(envelope.data)) {
-    const sessionId = stringOrUndefined(envelope.data.session_id);
-    const sdkSessionId = stringOrUndefined(envelope.data.sdk_session_id) ?? null;
-    if (sessionId) handlers.onSession?.(sessionId, sdkSessionId);
-    return;
-  }
-
-  if (envelope.event === "message" && isRecord(envelope.data)) {
-    const text = stringOrUndefined(envelope.data.text) || "";
-    if (text && shouldAppendMessageText(envelope.data)) handlers.onText?.(text, envelope.data.raw ?? envelope.data);
-    return;
-  }
-
-  if (envelope.event === "trace_event" && isAgentTraceEvent(envelope.data)) {
-    handlers.onTraceEvent?.(envelope.data);
-    return;
-  }
-
-  if (envelope.event === "prompt_suggestion" && isRecord(envelope.data)) {
-    const suggestions = suggestionList(envelope.data);
-    const sessionId = stringOrUndefined(envelope.data.session_id);
-    if (suggestions.length && sessionId) handlers.onPromptSuggestion?.(suggestions, sessionId);
-    return;
-  }
-
-  if (envelope.event === "result") {
-    handlers.onResult?.(envelope.data);
-    return;
-  }
-
-  if (envelope.event === "error") {
-    const errors = formatStreamError(envelope.data);
-    handlers.onError?.(errors, envelope.data);
-    return;
-  }
-
-  if (envelope.event === "done") {
-    handlers.onDone?.();
-  }
-}
-
-function isAgentTraceEvent(value: unknown): value is AgentTraceEvent {
-  return isRecord(value)
-    && typeof value.event_id === "string"
-    && typeof value.run_id === "string"
-    && typeof value.sequence === "number"
-    && typeof value.kind === "string"
-    && typeof value.source_event === "string"
-    && isRecord(value.payload);
-}
-
-function formatStreamError(data: unknown): string {
-  if (!isRecord(data)) return JSON.stringify(data);
-  const errorCode = stringOrUndefined(data.error_code);
-  if (!errorCode) {
-    return Array.isArray(data.errors) ? data.errors.map(String).join("\n") : JSON.stringify(data);
-  }
-  const detail = stringOrUndefined(data.message) || stringOrUndefined(data.detail) || "Model-backed runtime request failed.";
-  const lines = [`${errorCode}: ${detail}`];
-  const probe = stringOrUndefined(data.probe);
-  const reason = stringOrUndefined(data.reason);
-  const endpoint = stringOrUndefined(data.endpoint);
-  if (probe || reason || endpoint) {
-    lines.push([
-      `probe=${probe || "unknown"}`,
-      `reason=${reason || "unknown"}`,
-      ...(endpoint ? [`endpoint=${endpoint}`] : []),
-    ].join(" "));
-  }
-  const action = stringOrUndefined(data.action);
-  if (action) lines.push(`action=${action}`);
-  return lines.join("\n");
-}
-
-function stringOrUndefined(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-// 建议帧取候选列表。容忍两种形状：新的 `suggestions: [...]`，以及只带 `suggestion` 的旧帧
-// （归一成单元素）——否则未同步的 emitter 或旧后端会让建议**静默消失**（类型系统抓不到）。
-function suggestionList(data: Record<string, unknown>): string[] {
-  const raw = Array.isArray(data.suggestions) ? data.suggestions : [data.suggestion];
-  const out: string[] = [];
-  for (const item of raw) {
-    const text = stringOrUndefined(item)?.trim();
-    if (text) out.push(text);
-  }
-  return out;
-}
-
-function shouldAppendMessageText(data: Record<string, unknown>): boolean {
-  const sdkEvent = stringOrUndefined(data.event);
-  if (!sdkEvent) return true;
-  return sdkEvent.startsWith("AssistantMessage");
 }

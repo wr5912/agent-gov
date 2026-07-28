@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.runtime.agent_profile_resolver import resolve_business_profile
+from app.runtime.chat_stream_projector import ChatStreamProjector
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.native_chat_stream import NativeChatSemanticProjector
 from app.runtime.schemas import ChatRequest, ChatResponse
@@ -63,13 +64,15 @@ def create_chat_router(
         profile = resolve_business_profile(settings, agent_registry_store, req.agent_id)
 
         async def event_stream():
-            projector = NativeChatSemanticProjector() if event_mode == "semantic" else None
-            async for item in runtime.stream(req, profile=profile):
-                projected = projector.project(item) if projector is not None else [item]
-                for frame in projected:
-                    event = frame.get("event", "message")
-                    data = json.dumps(frame.get("data"), ensure_ascii=False)
-                    yield f"event: {event}\ndata: {data}\n\n"
+            chat_projector = ChatStreamProjector()
+            semantic_projector = NativeChatSemanticProjector() if event_mode == "semantic" else None
+            async for managed_event in runtime.stream_events(req, profile=profile):
+                for item in chat_projector.project(managed_event):
+                    projected = semantic_projector.project(item) if semantic_projector is not None else [item]
+                    for frame in projected:
+                        event = frame.get("event", "message")
+                        data = json.dumps(frame.get("data"), ensure_ascii=False)
+                        yield f"event: {event}\ndata: {data}\n\n"
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 

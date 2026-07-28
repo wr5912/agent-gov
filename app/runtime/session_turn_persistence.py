@@ -325,21 +325,46 @@ def reconcile_expired_turns(
                 "type": "RuntimeInterruptedBeforeCommit",
                 "message": "SDK turn lease expired before transactional completion",
             }
-            _transition_running_intent(
+            interrupt_running_turn_in_transaction(
                 db,
+                session=session,
                 intent=intent,
-                terminal_status="interrupted",
-                now=cutoff,
                 error=error,
+                completed_at=cutoff,
             )
-            discard_staged_entries(db, run_id=run_id, discarded_at=cutoff)
-            upsert_agent_run_record(db, _interrupted_run_record(intent, error=error, completed_at=cutoff))
-            session.active_run_id = None
-            session.active_run_expires_at = None
-            session.active_run_generation = 0
-            session.updated_at = cutoff
             reconciled.append(run_id)
     return reconciled
+
+
+def interrupt_running_turn_in_transaction(
+    db: Any,
+    *,
+    session: SessionRecordModel,
+    intent: SessionTurnIntentModel,
+    error: JsonObject,
+    completed_at: str,
+) -> None:
+    """按统一状态机中断 running turn，并原子清理它的运行态投影。"""
+    _transition_running_intent(
+        db,
+        intent=intent,
+        terminal_status="interrupted",
+        now=completed_at,
+        error=error,
+    )
+    discard_staged_entries(db, run_id=intent.run_id, discarded_at=completed_at)
+    upsert_agent_run_record(
+        db,
+        _interrupted_run_record(
+            intent,
+            error=error,
+            completed_at=completed_at,
+        ),
+    )
+    session.active_run_id = None
+    session.active_run_expires_at = None
+    session.active_run_generation = 0
+    session.updated_at = completed_at
 
 
 def _lock_running_intent(

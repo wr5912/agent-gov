@@ -385,6 +385,15 @@
         "test_selectors": ["tests/test_state_machines.py", "tests/test_runtime_db*.py"]
       },
       {
+        "id": "runtime-session-lifecycle",
+        "changed_paths": ["app/runtime/session_store.py", "app/runtime/session_turn_*.py"],
+        "test_selectors": [
+          "tests/test_session_turn_persistence.py",
+          "tests/test_session_turn_recovery.py",
+          "tests/test_claude_runtime_session_resume.py"
+        ]
+      },
+      {
         "id": "improvement-loop",
         "changed_paths": ["app/services/improvement_*.py", "app/routers/improvements*.py"],
         "test_selectors": ["tests/test_improvement*.py", "tests/test_feedback*.py"]
@@ -1053,7 +1062,7 @@
         },
         {
           "id": "responses_session_owner_and_cas",
-          "description": "previous_response/conversation 只能由原业务 Agent 续接；session owner 首次原子认领后不可变；SDK opaque transcript 先按 run staging，Result 后与 session/run/intent 原子发布；active turn 由 run_id+generation fencing 的 lease 与 heartbeat 保护，过期 intent 可幂等对账。",
+          "description": "previous_response/conversation 只能由原业务 Agent 续接；session owner 首次原子认领后不可变；SDK opaque transcript 先按 run staging，Result 后与 session/run/intent 原子发布；active turn 由 run_id+generation fencing 的 lease 与 heartbeat 保护，过期 intent 可幂等对账；孤立 turn 的运维恢复默认只读，并以显式目标、状态摘要和 operation id 做事务 fencing。",
           "pytest": [
             "tests/test_responses_api.py::test_previous_response_id_rejects_cross_agent_owner_409",
             "tests/test_responses_api.py::test_previous_response_id_without_session_fails_closed_409",
@@ -1079,6 +1088,15 @@
             "tests/test_session_turn_persistence.py::test_complete_rejects_result_without_staged_sdk_transcript",
             "tests/test_session_turn_persistence.py::test_finalize_exception_rolls_back_every_projection",
             "tests/test_session_turn_persistence.py::test_expired_reconcile_is_idempotent_and_fences_late_completion",
+            "tests/test_session_turn_recovery.py::test_cli_dry_run_is_read_only_and_exposes_only_fenced_inputs",
+            "tests/test_session_turn_recovery.py::test_cli_apply_interrupts_expired_turn_and_exact_retry_is_idempotent",
+            "tests/test_session_turn_recovery.py::test_unexpired_turn_requires_explicit_force",
+            "tests/test_session_turn_recovery.py::test_state_digest_fences_concurrent_lease_renewal",
+            "tests/test_session_turn_recovery.py::test_state_digest_is_independent_of_preview_candidate_order",
+            "tests/test_session_turn_recovery.py::test_recovery_refuses_existing_terminal_or_hitl_facts",
+            "tests/test_session_turn_recovery.py::test_multi_target_recovery_preflight_is_all_or_nothing",
+            "tests/test_session_turn_recovery.py::test_explicit_run_id_cannot_cross_agent_owner_boundary",
+            "tests/test_session_turn_recovery.py::test_different_operation_cannot_reapply_recovered_turn",
             "tests/test_sdk_session_migration.py::test_legacy_import_promotes_official_sdk_transcript_once",
             "tests/test_sdk_session_migration.py::test_import_claim_is_cross_connection_fenced_and_expired_owner_cannot_finalize",
             "tests/test_sdk_session_migration.py::test_mapping_invalidation_discards_inflight_import_staging[clear]",

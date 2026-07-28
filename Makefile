@@ -39,6 +39,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/managed_agent_policy.py \
 	app/runtime/runtime_coordination.py \
 	app/runtime/runtime_initialization.py \
+	app/runtime/session_turn_recovery.py \
 	app/runtime/service_launcher.py \
 	app/services/agent_change_set_queries.py \
 	app/services/business_agent_presentation.py \

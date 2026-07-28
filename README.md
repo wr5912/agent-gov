@@ -629,6 +629,37 @@ ${HOME}/volume-agent-gov/data/runtime.sqlite3
 
 `${HOME}/volume-agent-gov/data/sessions/` 是历史兼容路径，不再是权威存储。下一次请求传入同一个 `session_id` 时，运行时会尝试使用 SDK `resume` 继续 Claude Code 会话。一个 session 同时只允许一个活动 turn；活动租约期间 `/api/sessions/{session_id}` 与 `/v1/conversations/{conversation_id}` 的删除请求返回 `409`，租约过期后可重新认领。Playground 会同步禁用活动会话的删除按钮。
 
+### 孤立 session turn 应急恢复
+
+Workspace 导入、恢复或导出报 `WORKSPACE_SESSION_INVALIDATION_CONFLICT`，且错误指向一个确认已无对应 SDK 进程或请求继续执行的 `active runtime turn` 时，可以使用受控恢复命令。不要直接修改 SQLite，也不要仅凭租约过期就判定进程已经退出。先暂停该 Agent 的上游请求并核对 API/SDK 日志、进程和 HITL 状态。
+
+命令默认只读扫描当前 Runtime 配置所选数据库，不接受任意数据库路径，也不会输出 request/transcript 内容：
+
+```bash
+docker compose --env-file docker/.env -f docker/docker-compose.yml \
+  run --rm --no-deps claude-agent-api \
+  run-tool python -m app.runtime.session_turn_recovery \
+  --agent-id <agent-id>
+```
+
+确认候选后，从扫描结果复制 `operation_id`、`state_digest` 和明确的 `run_id`。如果只恢复扫描结果中的一部分，先带选定的一个或多个 `--run-id` 重新执行 dry-run，并使用该次输出的 operation 与 digest。恢复会在一个事务内将 `running` 按状态机转为 `interrupted`、丢弃该 run 尚未提交的 SDK staging entry、补齐 AgentRun 审计投影，并清除 session 的活动 run fence；不会增加 `turns`，也不会清除已提交历史或 SDK session 映射。
+
+```bash
+docker compose --env-file docker/.env -f docker/docker-compose.yml \
+  run --rm --no-deps claude-agent-api \
+  run-tool python -m app.runtime.session_turn_recovery \
+  --agent-id <agent-id> \
+  --run-id <run-id> \
+  --operation-id <operation-id> \
+  --state-digest <state-digest> \
+  --reason "confirmed orphan after runtime process exit" \
+  --apply
+```
+
+多个目标必须逐个重复 `--run-id`，并在同一事务内全成或全不成。租约尚未过期时命令默认拒绝；只有已经确认原执行进程停止后才可追加 `--force-unexpired`。存在已提交 transcript、既有 AgentRun、等待中的 HITL，或扫描后 lease/owner/generation 等状态变化时，命令会拒绝执行并要求重新扫描。相同参数的 apply 可安全重试；不同 operation 不能重复覆盖已经恢复的 turn。
+
+完成后再次运行只读扫描，确认没有目标 `running` turn，再重试 Workspace 操作并恢复上游流量。若候选仍处于活动心跳、无法确认执行进程状态，或命令返回安全拒绝条件，应保留现场继续排查，不要使用 `--force-unexpired` 绕过。
+
 ## 生产化建议
 
 这个项目当前面向开发、验证和内部集成环境，不是完整企业平台。生产化前建议补充：

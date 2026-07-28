@@ -13,6 +13,27 @@ export type RuntimeRequestInit = RequestInit & {
   timeoutMs?: number;
 };
 
+export type RuntimeReadOptions = Pick<RuntimeRequestInit, "signal" | "timeoutMs">;
+export type ApiRequestErrorKind = "http" | "network" | "timeout" | "aborted" | "decode";
+
+export class ApiRequestError extends Error {
+  readonly kind: ApiRequestErrorKind;
+  readonly status?: number;
+  readonly errorCode?: string;
+
+  constructor(
+    kind: ApiRequestErrorKind,
+    message: string,
+    options: { status?: number; errorCode?: string } = {},
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.kind = kind;
+    this.status = options.status;
+    this.errorCode = options.errorCode;
+  }
+}
+
 export function defaultRuntimeConfig(): RuntimeClientConfig {
   return {
     apiBase: resolveRuntimeApiBase(DEFAULT_API_BASE),
@@ -65,58 +86,106 @@ export async function requestJson<T>(config: RuntimeClientConfig, path: string, 
   const method = (init?.method || "GET").toUpperCase();
   const maxAttempts = method === "GET" ? 2 : 1;
   const { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...fetchInit } = init || {};
-  let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort("timeout"), timeoutMs);
-    const abortFromCaller = () => controller.abort(fetchInit.signal?.reason || "aborted");
-    if (fetchInit.signal?.aborted) {
-      window.clearTimeout(timeoutId);
-      throw new Error("Request was aborted");
-    }
-    fetchInit.signal?.addEventListener("abort", abortFromCaller, { once: true });
     try {
-      const res = await fetch(makeUrl(config, path), {
-        ...fetchInit,
-        signal: controller.signal,
-        headers: {
-          Accept: "application/json",
-          ...authHeaders(config),
-          ...(fetchInit.headers || {}),
-        },
-      });
+      const res = await fetchWithTimeout(config, path, fetchInit, timeoutMs);
 
       if (!res.ok) {
-        const detail = await readError(res);
-        if (attempt < maxAttempts && RETRYABLE_STATUS.has(res.status)) {
-          await delay(250 * attempt);
-          continue;
-        }
-        throw new Error(detail || `${res.status} ${res.statusText}`);
+        const detail = await readErrorDetail(res);
+        throw new ApiRequestError(
+          "http",
+          detail.message || `${res.status} ${res.statusText}`,
+          { status: res.status, errorCode: detail.errorCode },
+        );
       }
 
       if (res.status === 204) return undefined as T;
-      return (await res.json()) as T;
+      try {
+        return (await res.json()) as T;
+      } catch {
+        throw new ApiRequestError("decode", `Invalid JSON response from ${path}`);
+      }
     } catch (error) {
-      lastError = error;
-      if (fetchInit.signal?.aborted) {
-        throw new Error("Request was aborted");
+      const requestError = asApiRequestError(error);
+      if (!shouldRetry(requestError, method, attempt, maxAttempts)) {
+        throw requestError;
       }
-      if (controller.signal.reason === "timeout") {
-        lastError = new Error(`Request timed out after ${timeoutMs / 1000}s`);
-      }
-      if (attempt >= maxAttempts) {
-        throw lastError instanceof Error ? lastError : new Error(String(lastError));
-      }
-      await delay(250 * attempt);
-    } finally {
-      window.clearTimeout(timeoutId);
-      fetchInit.signal?.removeEventListener("abort", abortFromCaller);
+      await abortableDelay(250 * attempt, fetchInit.signal);
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error("Request failed");
+  throw new ApiRequestError("network", "Request failed");
+}
+
+async function fetchWithTimeout(
+  config: RuntimeClientConfig,
+  path: string,
+  fetchInit: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const callerSignal = fetchInit.signal;
+  if (callerSignal?.aborted) throw abortedError();
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const abortFromCaller = () => controller.abort();
+  callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  try {
+    return await fetch(makeUrl(config, path), {
+      ...fetchInit,
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        ...authHeaders(config),
+        ...(fetchInit.headers || {}),
+      },
+    });
+  } catch (error) {
+    if (callerSignal?.aborted) throw abortedError();
+    if (timedOut) {
+      throw new ApiRequestError("timeout", `Request timed out after ${timeoutMs / 1000}s`);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ApiRequestError("network", message || "Network request failed");
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+function asApiRequestError(error: unknown): ApiRequestError {
+  if (error instanceof ApiRequestError) return error;
+  return new ApiRequestError("network", error instanceof Error ? error.message : String(error));
+}
+
+function shouldRetry(error: ApiRequestError, method: string, attempt: number, maxAttempts: number): boolean {
+  if (method !== "GET" || attempt >= maxAttempts) return false;
+  if (error.kind === "network" || error.kind === "timeout") return true;
+  return error.kind === "http" && error.status !== undefined && RETRYABLE_STATUS.has(error.status);
+}
+
+function abortedError(): ApiRequestError {
+  return new ApiRequestError("aborted", "Request was aborted");
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal | null): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortedError());
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timeoutId = globalThis.setTimeout(finish, ms);
+    const abort = () => {
+      globalThis.clearTimeout(timeoutId);
+      reject(abortedError());
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 export async function requestBlob(
@@ -158,17 +227,18 @@ export async function requestBlob(
   }
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+export async function readError(res: Response): Promise<string> {
+  return (await readErrorDetail(res)).message;
 }
 
-export async function readError(res: Response): Promise<string> {
+async function readErrorDetail(res: Response): Promise<{ message: string; errorCode?: string }> {
+  const fallback = res.clone();
   try {
     const json = await res.json();
     const errorCode = typeof json?.error_code === "string" ? json.error_code : undefined;
     const withCode = (detail: string) => errorCode ? `[${errorCode}] ${detail}` : detail;
-    if (typeof json?.detail === "string") return withCode(json.detail);
-    if (typeof json?.message === "string") return withCode(json.message);
+    if (typeof json?.detail === "string") return { message: withCode(json.detail), errorCode };
+    if (typeof json?.message === "string") return { message: withCode(json.message), errorCode };
     if (Array.isArray(json?.detail)) {
       // F11：FastAPI 校验错误 detail 是 [{loc, msg, type}, ...]，拼"字段名: msg"成可读句子而非吐原始 JSON。
       const parts = (json.detail as unknown[])
@@ -182,18 +252,21 @@ export async function readError(res: Response): Promise<string> {
           return null;
         })
         .filter(Boolean);
-      if (parts.length) return withCode(parts.join("；"));
+      if (parts.length) return { message: withCode(parts.join("；")), errorCode };
     }
     if (json?.detail && typeof json.detail === "object") {
-      if (typeof json.detail.message === "string") return withCode(json.detail.message);
-      if (typeof json.detail.error === "string") return withCode(json.detail.error);
+      if (typeof json.detail.message === "string") return { message: withCode(json.detail.message), errorCode };
+      if (typeof json.detail.error === "string") return { message: withCode(json.detail.error), errorCode };
     }
-    return withCode(`${res.status} ${res.statusText}`.trim() || JSON.stringify(json));
+    return {
+      message: withCode(`${res.status} ${res.statusText}`.trim() || JSON.stringify(json)),
+      errorCode,
+    };
   } catch {
     try {
-      return await res.text();
+      return { message: await fallback.text() };
     } catch {
-      return "";
+      return { message: "" };
     }
   }
 }

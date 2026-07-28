@@ -1,11 +1,12 @@
 // 改进事项 ImprovementItem API 客户端（四阶段改进治理 跨代重建：事项级单一领域实体）。
 // 统一术语：资源 /api/improvements、ID improvement_id、阶段 improvement_stage。无旧名/无双轨。
-import { requestJson } from "./request";
+import { requestJson, type RuntimeReadOptions } from "./request";
 import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
 import type { components } from "../types/api";
 import type { RuntimeClientConfig } from "../types/runtime";
 
 export type ImprovementItem = components["schemas"]["ImprovementItemResponse"];
+export type ImprovementArtifactPresence = components["schemas"]["ImprovementArtifactPresence"];
 export type ImprovementCreateRequest = components["schemas"]["ImprovementCreateRequest"];
 export type ImprovementStageTransitionRequest = components["schemas"]["ImprovementStageTransitionRequest"];
 export type ImprovementSimilarItem = components["schemas"]["ImprovementSimilarItem"];
@@ -14,8 +15,12 @@ export type NormalizedFeedback = components["schemas"]["NormalizedFeedbackRespon
 export type Attribution = components["schemas"]["AttributionResponse"];
 export type ImprovementFeedback = components["schemas"]["ImprovementFeedbackResponse"];
 
-export function listImprovementFeedbacks(config: RuntimeClientConfig, id: string) {
-  return requestJson<ImprovementFeedback[]>(config, `/api/improvements/${encodeURIComponent(id)}/feedbacks`);
+export function listImprovementFeedbacks(config: RuntimeClientConfig, id: string, readOptions?: RuntimeReadOptions) {
+  return requestJson<ImprovementFeedback[]>(
+    config,
+    `/api/improvements/${encodeURIComponent(id)}/feedbacks`,
+    readOptions,
+  );
 }
 export function addImprovementFeedback(config: RuntimeClientConfig, id: string, body: components["schemas"]["ImprovementFeedbackCreateRequest"]) {
   return requestJson<ImprovementFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/feedbacks`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -43,8 +48,12 @@ export function deleteImprovement(config: RuntimeClientConfig, id: string) {
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
-export function getNormalizedFeedback(config: RuntimeClientConfig, id: string) {
-  return requestJson<NormalizedFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/normalized-feedback`);
+export function getNormalizedFeedback(config: RuntimeClientConfig, id: string, readOptions?: RuntimeReadOptions) {
+  return requestJson<NormalizedFeedback>(
+    config,
+    `/api/improvements/${encodeURIComponent(id)}/normalized-feedback`,
+    readOptions,
+  );
 }
 export function upsertNormalizedFeedback(config: RuntimeClientConfig, id: string, body: components["schemas"]["NormalizedFeedbackUpsertRequest"]) {
   return requestJson<NormalizedFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/normalized-feedback`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(body) });
@@ -55,8 +64,12 @@ export function confirmNormalizedFeedback(config: RuntimeClientConfig, id: strin
 export function generateNormalizedFeedback(config: RuntimeClientConfig, id: string) {
   return requestJson<NormalizedFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/normalized-feedback/generate`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
 }
-export function getAttribution(config: RuntimeClientConfig, id: string) {
-  return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution`);
+export function getAttribution(config: RuntimeClientConfig, id: string, readOptions?: RuntimeReadOptions) {
+  return requestJson<Attribution>(
+    config,
+    `/api/improvements/${encodeURIComponent(id)}/attribution`,
+    readOptions,
+  );
 }
 export function upsertAttribution(config: RuntimeClientConfig, id: string, body: components["schemas"]["AttributionUpsertRequest"]) {
   return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(body) });
@@ -70,8 +83,12 @@ export function generateAttribution(config: RuntimeClientConfig, id: string) {
 
 export type OptimizationPlan = components["schemas"]["OptimizationPlanResponse"];
 export type ExecutionRecord = components["schemas"]["ExecutionResponse"];
-export function getOptimizationPlan(config: RuntimeClientConfig, id: string) {
-  return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan`);
+export function getOptimizationPlan(config: RuntimeClientConfig, id: string, readOptions?: RuntimeReadOptions) {
+  return requestJson<OptimizationPlan>(
+    config,
+    `/api/improvements/${encodeURIComponent(id)}/optimization-plan`,
+    readOptions,
+  );
 }
 export function upsertOptimizationPlan(config: RuntimeClientConfig, id: string, body: components["schemas"]["OptimizationPlanUpsertRequest"]) {
   return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(body) });
@@ -82,8 +99,12 @@ export function confirmOptimizationPlan(config: RuntimeClientConfig, id: string)
 export function generateOptimizationPlan(config: RuntimeClientConfig, id: string) {
   return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan/generate`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
 }
-export function getExecution(config: RuntimeClientConfig, id: string) {
-  return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution`);
+export function getExecution(config: RuntimeClientConfig, id: string, readOptions?: RuntimeReadOptions) {
+  return requestJson<ExecutionRecord>(
+    config,
+    `/api/improvements/${encodeURIComponent(id)}/execution`,
+    readOptions,
+  );
 }
 export function confirmExecution(config: RuntimeClientConfig, id: string) {
   return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution/confirm`, { method: "POST", headers: jsonHeaders });
@@ -93,8 +114,12 @@ export function applyExecution(config: RuntimeClientConfig, id: string) {
 }
 
 export type RegressionTestDesign = components["schemas"]["RegressionTestDesignResponse"];
-export function getRegressionTestDesign(config: RuntimeClientConfig, id: string) {
-  return requestJson<RegressionTestDesign>(config, `/api/improvements/${encodeURIComponent(id)}/regression-test-design`);
+export function getRegressionTestDesign(config: RuntimeClientConfig, id: string, readOptions?: RuntimeReadOptions) {
+  return requestJson<RegressionTestDesign>(
+    config,
+    `/api/improvements/${encodeURIComponent(id)}/regression-test-design`,
+    readOptions,
+  );
 }
 export function generateRegressionTestDesign(config: RuntimeClientConfig, id: string) {
   return requestJson<RegressionTestDesign>(config, `/api/improvements/${encodeURIComponent(id)}/regression-test-design/generate`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
@@ -103,12 +128,28 @@ export function confirmRegressionTestDesign(config: RuntimeClientConfig, id: str
   return requestJson<RegressionTestDesign>(config, `/api/improvements/${encodeURIComponent(id)}/regression-test-design/confirm`, { method: "POST", headers: jsonHeaders });
 }
 
-export function listImprovementLinks(config: RuntimeClientConfig, improvementId: string) {
-  return requestJson<ImprovementLink[]>(config, `/api/improvements/${encodeURIComponent(improvementId)}/links`);
+export function listImprovementLinks(
+  config: RuntimeClientConfig,
+  improvementId: string,
+  readOptions?: RuntimeReadOptions,
+) {
+  return requestJson<ImprovementLink[]>(
+    config,
+    `/api/improvements/${encodeURIComponent(improvementId)}/links`,
+    readOptions,
+  );
 }
 
-export function findSimilarImprovements(config: RuntimeClientConfig, improvementId: string) {
-  return requestJson<ImprovementSimilarItem[]>(config, `/api/improvements/${encodeURIComponent(improvementId)}/similar`);
+export function findSimilarImprovements(
+  config: RuntimeClientConfig,
+  improvementId: string,
+  readOptions?: RuntimeReadOptions,
+) {
+  return requestJson<ImprovementSimilarItem[]>(
+    config,
+    `/api/improvements/${encodeURIComponent(improvementId)}/similar`,
+    readOptions,
+  );
 }
 
 export function mergeImprovement(config: RuntimeClientConfig, targetId: string, sourceImprovementId: string) {
@@ -127,13 +168,17 @@ export function splitImprovement(config: RuntimeClientConfig, improvementId: str
   });
 }
 
-export function listImprovements(config: RuntimeClientConfig, agentId?: string) {
+export function listImprovements(config: RuntimeClientConfig, agentId?: string, readOptions?: RuntimeReadOptions) {
   const query = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
-  return requestJson<ImprovementItem[]>(config, `/api/improvements${query}`);
+  return requestJson<ImprovementItem[]>(config, `/api/improvements${query}`, readOptions);
 }
 
-export function getImprovement(config: RuntimeClientConfig, improvementId: string) {
-  return requestJson<ImprovementItem>(config, `/api/improvements/${encodeURIComponent(improvementId)}`);
+export function getImprovement(config: RuntimeClientConfig, improvementId: string, readOptions?: RuntimeReadOptions) {
+  return requestJson<ImprovementItem>(
+    config,
+    `/api/improvements/${encodeURIComponent(improvementId)}`,
+    readOptions,
+  );
 }
 
 export function createImprovement(config: RuntimeClientConfig, payload: ImprovementCreateRequest) {

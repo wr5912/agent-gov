@@ -540,9 +540,12 @@
       "scenarios": [
         {
           "id": "improvement_item_single_source_lifecycle",
-          "description": "创建改进事项、按业务 Agent scoping 列表、读取详情；业务产物成功后推进阶段，通用 lifecycle 只允许返工并拒绝前推。",
+          "description": "创建改进事项、按业务 Agent scoping 列表、读取详情；列表和详情用同一后端投影声明五类产物是否存在，空产物不改变严格子资源 404；业务产物成功后推进阶段，通用 lifecycle 只允许返工并拒绝前推。",
           "pytest": [
             "tests/test_improvement_api.py::test_improvement_item_single_source_lifecycle",
+            "tests/test_improvement_api.py::test_artifact_presence_false_keeps_strict_subresource_404",
+            "tests/test_improvement_store.py::test_list_projects_sparse_artifact_presence_with_one_select",
+            "tests/test_openapi_export.py::test_openapi_requires_typed_improvement_artifact_presence",
             "tests/test_improvement_content.py::test_failed_business_artifact_does_not_advance_stage",
             "tests/test_improvement_content.py::test_business_artifact_prerequisites_fail_closed",
             "tests/test_improvement_content.py::test_unapplied_execution_record_does_not_advance_or_unlock_regression",
@@ -829,7 +832,7 @@
         },
         {
           "id": "improvement_design_parity_and_message_actions",
-          "description": "Playground 从 SDK transcript 恢复所属 Agent 历史、切换业务 Agent 后进入结构化 Welcome Card 新会话、Runtime 版本展示、Prompt Suggestion 填入但不自动发送、单轮长回复与多轮会话滚动导航、Trace、HITL、四阶段改进事项工作台标题栏新建抽屉与范围对齐、非法返回动作清零、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
+          "description": "Playground 从 SDK transcript 恢复所属 Agent 历史、切换业务 Agent 后进入结构化 Welcome Card 新会话、Runtime 版本展示、Prompt Suggestion 填入但不自动发送、单轮长回复与多轮会话滚动导航、Trace、HITL、四阶段改进事项工作台标题栏新建抽屉与范围对齐、按 artifact_presence 稀疏读取和切换取消、GET/写请求重试矩阵、零非预期浏览器错误、非法返回动作清零、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
           "pytest": [
             "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
             "tests/test_claude_runtime_hitl.py::test_stream_hitl_consumes_prompt_eof_then_resumes_sdk_after_allow",
@@ -846,6 +849,8 @@
             "tests/test_claude_user_input.py::test_answer_cannot_overwrite_raw_input_structural_keys"
           ],
           "ui_scripts": [
+            "test:unit",
+            "test:browser-audit-unit",
             "verify:design-parity",
             "verify:improvement-decision",
             "verify:asset-registry",

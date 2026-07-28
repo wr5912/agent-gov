@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
     "generate:api-types": "../.venv/bin/python ../scripts/export_openapi.py --output /tmp/agent-gov-openapi.json && openapi-typescript /tmp/agent-gov-openapi.json -o src/types/api.ts",
+    "test:unit": "vitest run",
+    "test:browser-audit-unit": "cd .. && node --test scripts/improvement_ui_e2e/page_audit.test.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "verify:playwright-runtime": "cd .. && node scripts/verify_playwright_runtime.mjs",
@@ -43,6 +45,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "openapi-typescript": "^7.13.0",
-    "playwright": "^1.60.0"
+    "playwright": "^1.60.0",
+    "vitest": "^4.1.10"
   }
 }

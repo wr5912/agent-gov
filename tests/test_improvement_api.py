@@ -12,6 +12,14 @@ from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app as _load_app
 
+EMPTY_ARTIFACT_PRESENCE = {
+    "normalized_feedback": False,
+    "attribution": False,
+    "optimization_plan": False,
+    "execution": False,
+    "regression_test_design": False,
+}
+
 
 def test_improvement_item_single_source_lifecycle(monkeypatch, tmp_path: Path) -> None:
     """业务产物负责前推阶段，公开 lifecycle 只允许返工。"""
@@ -29,15 +37,18 @@ def test_improvement_item_single_source_lifecycle(monkeypatch, tmp_path: Path) -
         assert body["improvement_stage"] == "feedback_intake"
         assert body["improvement_status"] == "active"
         assert body["source_feedback_refs"] == ["fbs-1"]
+        assert body["artifact_presence"] == EMPTY_ARTIFACT_PRESENCE
 
         # 列表按业务 Agent scoping。
         scoped = client.get("/api/improvements", params={"agent_id": "soc-ops"})
         assert scoped.status_code == 200
         assert improvement_id in {item["improvement_id"] for item in scoped.json()}
+        assert scoped.json()[0]["artifact_presence"] == EMPTY_ARTIFACT_PRESENCE
 
         # 详情可读。
         detail = client.get(f"/api/improvements/{improvement_id}")
         assert detail.status_code == 200 and detail.json()["improvement_id"] == improvement_id
+        assert detail.json()["artifact_presence"] == EMPTY_ARTIFACT_PRESENCE
 
         # 通用 lifecycle 即使目标是相邻状态也不得前推。
         forward = client.post(f"/api/improvements/{improvement_id}/lifecycle", json={"stage": "triage"})
@@ -52,7 +63,12 @@ def test_improvement_item_single_source_lifecycle(monkeypatch, tmp_path: Path) -
             ).status_code
             == 200
         )
-        assert client.get(f"/api/improvements/{improvement_id}").json()["improvement_stage"] == "triage"
+        after_normalized = client.get(f"/api/improvements/{improvement_id}").json()
+        assert after_normalized["improvement_stage"] == "triage"
+        assert after_normalized["artifact_presence"] == {
+            **EMPTY_ARTIFACT_PRESENCE,
+            "normalized_feedback": True,
+        }
         assert client.post(f"/api/improvements/{improvement_id}/normalized-feedback/confirm").status_code == 200
         assert (
             client.put(
@@ -61,11 +77,21 @@ def test_improvement_item_single_source_lifecycle(monkeypatch, tmp_path: Path) -
             ).status_code
             == 200
         )
-        assert client.get(f"/api/improvements/{improvement_id}").json()["improvement_stage"] == "attribution"
+        after_attribution = client.get(f"/api/improvements/{improvement_id}").json()
+        assert after_attribution["improvement_stage"] == "attribution"
+        assert after_attribution["artifact_presence"] == {
+            **EMPTY_ARTIFACT_PRESENCE,
+            "normalized_feedback": True,
+            "attribution": True,
+        }
 
         # lifecycle 保留合法返工 attribution -> triage。
         refined = client.post(f"/api/improvements/{improvement_id}/lifecycle", json={"stage": "triage"})
         assert refined.status_code == 200 and refined.json()["improvement_stage"] == "triage"
+        assert refined.json()["artifact_presence"] == {
+            **EMPTY_ARTIFACT_PRESENCE,
+            "normalized_feedback": True,
+        }
 
         # 非法跨段转移被状态机拒绝（409）。
         rejected = client.post(f"/api/improvements/{improvement_id}/lifecycle", json={"stage": "release"})
@@ -89,10 +115,13 @@ def test_create_rejects_empty_and_unknown_is_404(monkeypatch, tmp_path: Path) ->
     with TestClient(module.app) as client:
         assert client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "  "}).status_code == 400
         assert client.post("/api/improvements", json={"agent_id": "  ", "title": "x"}).status_code == 400
-        assert client.post(
-            "/api/improvements",
-            json={"agent_id": "soc-ops", "title": "伪造归属", "source_feedback_refs": ["fbc-forged"]},
-        ).status_code == 400
+        assert (
+            client.post(
+                "/api/improvements",
+                json={"agent_id": "soc-ops", "title": "伪造归属", "source_feedback_refs": ["fbc-forged"]},
+            ).status_code
+            == 400
+        )
         assert client.get("/api/improvements/imp-unknown").status_code == 404
         assert client.post("/api/improvements/imp-unknown/lifecycle", json={"stage": "triage"}).status_code == 404
 
@@ -106,29 +135,45 @@ def test_archive_is_terminal_status_and_blocks_lifecycle(monkeypatch, tmp_path: 
             json={"agent_id": "soc-ops", "title": "待归档事项", "source_feedback_refs": ["feedback-1"]},
         )
         improvement_id = created.json()["improvement_id"]
-        assert client.put(
-            f"/api/improvements/{improvement_id}/normalized-feedback",
-            json={"problem": "归档前问题"},
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/api/improvements/{improvement_id}/normalized-feedback",
+                json={"problem": "归档前问题"},
+            ).status_code
+            == 200
+        )
         archived = client.post(f"/api/improvements/{improvement_id}/archive")
         assert archived.status_code == 200 and archived.json()["improvement_status"] == "archived"
-        assert client.post(
-            f"/api/improvements/{improvement_id}/lifecycle",
-            json={"stage": "feedback_intake"},
-        ).status_code == 409
-        assert client.put(
-            f"/api/improvements/{improvement_id}/normalized-feedback",
-            json={"problem": "归档后污染"},
-        ).status_code == 409
+        assert archived.json()["artifact_presence"]["normalized_feedback"] is True
+        assert (
+            client.post(
+                f"/api/improvements/{improvement_id}/lifecycle",
+                json={"stage": "feedback_intake"},
+            ).status_code
+            == 409
+        )
+        assert (
+            client.put(
+                f"/api/improvements/{improvement_id}/normalized-feedback",
+                json={"problem": "归档后污染"},
+            ).status_code
+            == 409
+        )
         assert client.post(f"/api/improvements/{improvement_id}/normalized-feedback/confirm").status_code == 409
-        assert client.post(
-            f"/api/improvements/{improvement_id}/feedbacks",
-            json={"summary": "归档后反馈"},
-        ).status_code == 409
-        assert client.post(
-            f"/api/improvements/{improvement_id}/split",
-            json={"feedback_ref": "feedback-1"},
-        ).status_code == 409
+        assert (
+            client.post(
+                f"/api/improvements/{improvement_id}/feedbacks",
+                json={"summary": "归档后反馈"},
+            ).status_code
+            == 409
+        )
+        assert (
+            client.post(
+                f"/api/improvements/{improvement_id}/split",
+                json={"feedback_ref": "feedback-1"},
+            ).status_code
+            == 409
+        )
         normalized = client.get(f"/api/improvements/{improvement_id}/normalized-feedback").json()
         unchanged = client.get(f"/api/improvements/{improvement_id}").json()
         assert normalized["problem"] == "归档前问题" and normalized["status"] == "draft"
@@ -148,13 +193,16 @@ def test_merge_split_and_similar_api(monkeypatch, tmp_path: Path) -> None:
         # 相似列表（同 Agent，含 b）。
         similar = client.get(f"/api/improvements/{a['improvement_id']}/similar").json()
         assert any(s["improvement"]["improvement_id"] == b["improvement_id"] for s in similar)
+        assert all(s["improvement"]["artifact_presence"] == EMPTY_ARTIFACT_PRESENCE for s in similar)
         # 归并 b 进 a：a 拿到 f1+f2，b 归档。
         merged = client.post(f"/api/improvements/{a['improvement_id']}/merge", json={"source_improvement_id": b["improvement_id"]})
         assert merged.status_code == 200 and set(merged.json()["source_feedback_refs"]) == {"f1", "f2"}
+        assert merged.json()["artifact_presence"] == EMPTY_ARTIFACT_PRESENCE
         assert client.get(f"/api/improvements/{b['improvement_id']}").json()["improvement_status"] == "archived"
         # 拆分 f2 出来为新事项。
         split = client.post(f"/api/improvements/{a['improvement_id']}/split", json={"feedback_ref": "f2"})
         assert split.status_code == 201 and split.json()["source_feedback_refs"] == ["f2"]
+        assert split.json()["artifact_presence"] == EMPTY_ARTIFACT_PRESENCE
         # 跨 Agent 归并被拒（400）。
         other = client.post("/api/improvements", json={"agent_id": "shop-bot", "title": "无关"}).json()
         assert client.post(f"/api/improvements/{a['improvement_id']}/merge", json={"source_improvement_id": other["improvement_id"]}).status_code == 400
@@ -206,6 +254,13 @@ def test_create_ignores_hostile_backend_owned_fields(monkeypatch, tmp_path: Path
                 "improvement_id": "hacked-id",
                 "improvement_stage": "release",
                 "improvement_status": "done",
+                "artifact_presence": {
+                    "normalized_feedback": True,
+                    "attribution": True,
+                    "optimization_plan": True,
+                    "execution": True,
+                    "regression_test_design": True,
+                },
                 "created_at": "1999-01-01T00:00:00Z",
             },
         )
@@ -215,4 +270,21 @@ def test_create_ignores_hostile_backend_owned_fields(monkeypatch, tmp_path: Path
     assert body["improvement_id"] != "hacked-id" and body["improvement_id"].startswith("imp-")
     assert body["improvement_stage"] == "feedback_intake"
     assert body["improvement_status"] == "active"
+    assert body["artifact_presence"] == EMPTY_ARTIFACT_PRESENCE
     assert body["created_at"] != "1999-01-01T00:00:00Z"
+
+
+def test_artifact_presence_false_keeps_strict_subresource_404(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        item = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "空产物事项"}).json()
+        improvement_id = item["improvement_id"]
+        assert item["artifact_presence"] == EMPTY_ARTIFACT_PRESENCE
+        for suffix in (
+            "normalized-feedback",
+            "attribution",
+            "optimization-plan",
+            "execution",
+            "regression-test-design",
+        ):
+            assert client.get(f"/api/improvements/{improvement_id}/{suffix}").status_code == 404

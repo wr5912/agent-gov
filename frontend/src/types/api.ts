@@ -4321,6 +4321,37 @@ export interface components {
              */
             error_code: string;
         };
+        /**
+         * ImprovementArtifactPresence
+         * @description Current row existence for each optional improvement business artifact.
+         */
+        ImprovementArtifactPresence: {
+            /**
+             * Attribution
+             * @description 是否存在归因产物行；不表示已确认。
+             */
+            attribution: boolean;
+            /**
+             * Execution
+             * @description 是否存在执行记录行；不表示已应用或成功。
+             */
+            execution: boolean;
+            /**
+             * Normalized Feedback
+             * @description 是否存在系统整理产物行；不表示已确认。
+             */
+            normalized_feedback: boolean;
+            /**
+             * Optimization Plan
+             * @description 是否存在优化方案产物行；不表示已确认。
+             */
+            optimization_plan: boolean;
+            /**
+             * Regression Test Design
+             * @description 是否存在回归测试设计行；不表示已确认或已运行。
+             */
+            regression_test_design: boolean;
+        };
         /** ImprovementCreateRequest */
         ImprovementCreateRequest: {
             /**
@@ -4475,6 +4506,8 @@ export interface components {
         ImprovementItemResponse: {
             /** Agent Id */
             agent_id: string;
+            /** @description 后端按持久化行实时投影的产物存在性；不得由阶段推导。 */
+            artifact_presence: components["schemas"]["ImprovementArtifactPresence"];
             /** Created At */
             created_at: string;
             /** Improvement Id */

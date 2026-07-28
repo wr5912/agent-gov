@@ -488,7 +488,7 @@ async function verifyResponsiveStates(browser, config, seed, flow, release) {
   const results = [];
   for (const viewport of VIEWPORTS) {
     const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } });
-    const diagnostics = attachDiagnostics(page, config.apiBase);
+    const diagnostics = attachDiagnostics(page, config.apiBase, config.uiBase);
     await configurePage(page, config);
     try {
       await openImprovement(page, config, seed);
@@ -535,7 +535,7 @@ async function verifyResponsiveStates(browser, config, seed, flow, release) {
 export async function runRealContainerAcceptance(browser, config) {
   const seed = await seedBaseImprovement(config);
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
-  const diagnostics = attachDiagnostics(page, config.apiBase);
+  const diagnostics = attachDiagnostics(page, config.apiBase, config.uiBase);
   await configurePage(page, config);
   let flow;
   let failureEvidence;

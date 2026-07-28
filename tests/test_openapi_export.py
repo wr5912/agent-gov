@@ -215,6 +215,28 @@ def test_openapi_contract_audit_passes_current_schema():
     assert audit_schema(schema, expected_version=expected_version) == []
 
 
+def test_openapi_requires_typed_improvement_artifact_presence() -> None:
+    schema = build_openapi_schema()
+    item = schema["components"]["schemas"]["ImprovementItemResponse"]
+    presence = schema["components"]["schemas"]["ImprovementArtifactPresence"]
+    expected_fields = {
+        "normalized_feedback",
+        "attribution",
+        "optimization_plan",
+        "execution",
+        "regression_test_design",
+    }
+
+    assert "artifact_presence" in item["required"]
+    assert item["properties"]["artifact_presence"] == {
+        "$ref": "#/components/schemas/ImprovementArtifactPresence",
+        "description": "后端按持久化行实时投影的产物存在性；不得由阶段推导。",
+    }
+    assert set(presence["properties"]) == expected_fields
+    assert set(presence["required"]) == expected_fields
+    assert all(presence["properties"][field]["type"] == "boolean" for field in expected_fields)
+
+
 def test_openapi_documents_auth_error_for_secured_operations():
     schema = build_openapi_schema()
     secured_operations = [(path, method, operation) for path, method, operation in operation_items(schema) if operation.get("security")]

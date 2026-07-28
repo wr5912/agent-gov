@@ -1,20 +1,10 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
-const OPTIONAL_ARTIFACT_404 = [
-  /\/api\/improvements\/[^/]+\/(attribution|optimization-plan|execution|regression-test-design)$/,
-];
-
 function responseRecord(response) {
   const request = response.request();
   const url = new URL(response.url());
-  return { method: request.method(), path: url.pathname, status: response.status() };
-}
-
-function isOptionalArtifact404(item) {
-  return item.method === "GET"
-    && item.status === 404
-    && OPTIONAL_ARTIFACT_404.some((pattern) => pattern.test(item.path));
+  return { method: request.method(), origin: url.origin, path: url.pathname, status: response.status() };
 }
 
 function isExpectedHttpError(item, expectedHttpErrors) {
@@ -25,9 +15,11 @@ function isExpectedHttpError(item, expectedHttpErrors) {
   ));
 }
 
-export function attachDiagnostics(page, apiBase) {
+export function attachDiagnostics(page, apiBase, uiBase = "") {
   const state = { consoleErrors: [], pageErrors: [], requestFailures: [], httpErrors: [], requests: [] };
   const apiOrigin = new URL(apiBase).origin;
+  const firstPartyOrigins = new Set([apiOrigin]);
+  if (uiBase) firstPartyOrigins.add(new URL(uiBase).origin);
   page.on("console", (message) => {
     if (message.type() === "error") {
       state.consoleErrors.push({ text: message.text(), url: message.location().url || "" });
@@ -45,20 +37,31 @@ export function attachDiagnostics(page, apiBase) {
   });
   page.on("response", (response) => {
     const url = new URL(response.url());
-    if (url.origin === apiOrigin && response.status() >= 400) state.httpErrors.push(responseRecord(response));
+    if (firstPartyOrigins.has(url.origin) && response.status() >= 400) state.httpErrors.push(responseRecord(response));
   });
   return state;
 }
 
 export function unexpectedDiagnostics(state, expectedHttpErrors = []) {
-  const optionalHttpPaths = new Set(state.httpErrors.filter(isOptionalArtifact404).map((item) => item.path));
-  const expectedHttpPaths = new Set(
-    state.httpErrors.filter((item) => isExpectedHttpError(item, expectedHttpErrors)).map((item) => item.path),
-  );
-  const ignoredHttpPaths = new Set([...optionalHttpPaths, ...expectedHttpPaths]);
-  const unexpectedHttp = state.httpErrors.filter((item) => (
-    !isOptionalArtifact404(item) && !isExpectedHttpError(item, expectedHttpErrors)
-  ));
+  const remainingExpected = expectedHttpErrors.map((expected) => ({
+    ...expected,
+    remaining: expected.count ?? 1,
+  }));
+  const consumedExpected = [];
+  const unexpectedHttp = [];
+  for (const item of state.httpErrors) {
+    const expected = remainingExpected.find((candidate) => candidate.remaining > 0 && isExpectedHttpError(item, [candidate]));
+    if (!expected) {
+      unexpectedHttp.push(item);
+      continue;
+    }
+    expected.remaining -= 1;
+    consumedExpected.push(item);
+  }
+  const missingExpected = remainingExpected
+    .filter((expected) => expected.remaining > 0)
+    .map(({ remaining, ...expected }) => ({ ...expected, missing: remaining }));
+  const ignoredHttpPaths = new Set(consumedExpected.map((item) => item.path));
   const unexpectedConsole = state.consoleErrors.filter((message) => {
     if (!/Failed to load resource: the server responded with a status of \d+/.test(message.text)) return true;
     if (!message.url) return true;
@@ -73,6 +76,7 @@ export function unexpectedDiagnostics(state, expectedHttpErrors = []) {
     pageErrors: state.pageErrors,
     requestFailures: state.requestFailures,
     httpErrors: unexpectedHttp,
+    missingExpectedHttpErrors: missingExpected,
   };
 }
 

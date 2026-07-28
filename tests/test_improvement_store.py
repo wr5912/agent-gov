@@ -10,10 +10,19 @@ from pathlib import Path
 
 import pytest
 from app.runtime.errors import BusinessRuleViolation, ConflictError, NotFoundError
+from app.runtime.improvement_db import (
+    AttributionModel,
+    ExecutionRecordModel,
+    ImprovementItemModel,
+    NormalizedFeedbackModel,
+    OptimizationPlanModel,
+    RegressionTestDesignModel,
+)
 from app.runtime.runtime_db import AgentChangeSetModel, make_session_factory, utc_now
 from app.runtime.state_machines import StateTransitionError
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
+from sqlalchemy import event
 
 from feedback_store_test_utils import _seed_execution_record
 
@@ -29,6 +38,7 @@ def test_create_assigns_backend_owned_identity_and_initial_stage(tmp_path: Path)
     assert record.agent_id == "soc-ops"
     assert record.improvement_stage == "feedback_intake"
     assert record.improvement_status == "active"
+    assert not any(vars(record.artifact_presence).values())
     assert record.created_at and record.updated_at
 
 
@@ -55,6 +65,83 @@ def test_list_is_scoped_by_agent(tmp_path: Path) -> None:
     assert {r.improvement_id for r in store.list_improvements()} == {a.improvement_id, b.improvement_id}
 
 
+def test_list_projects_sparse_artifact_presence_with_one_select(tmp_path: Path) -> None:
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    store = ImprovementStore(factory)
+    empty = store.create_improvement(agent_id="agent-a", title="release without artifacts")
+    early = store.create_improvement(agent_id="agent-a", title="early no-action artifacts")
+    prefix = store.create_improvement(agent_id="agent-a", title="historical prefix")
+    with factory.begin() as db:
+        empty_row = db.get(ImprovementItemModel, empty.improvement_id)
+        empty_row.improvement_stage = "release"
+        empty_row.improvement_status = "done"
+        db.add_all(
+            [
+                ExecutionRecordModel(
+                    execution_id="exec-early",
+                    improvement_id=early.improvement_id,
+                    summary="no action",
+                    changes_applied_json=[],
+                    agent_version="",
+                    status="draft",
+                ),
+                RegressionTestDesignModel(
+                    regression_test_design_id="reg-early",
+                    improvement_id=early.improvement_id,
+                    summary="no tests",
+                    tests_json=[],
+                    no_action_reason="无需新增测试",
+                    status="draft",
+                ),
+                NormalizedFeedbackModel(
+                    normalized_feedback_id="nf-prefix",
+                    improvement_id=prefix.improvement_id,
+                    problem="p",
+                ),
+                AttributionModel(
+                    attribution_id="attr-prefix",
+                    improvement_id=prefix.improvement_id,
+                    summary="a",
+                ),
+                OptimizationPlanModel(
+                    optimization_plan_id="opt-prefix",
+                    improvement_id=prefix.improvement_id,
+                    summary="o",
+                ),
+            ]
+        )
+
+    engine = factory.kw["bind"]
+    select_statements: list[str] = []
+
+    def capture_select(_conn, _cursor, statement, _parameters, _context, _executemany) -> None:
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_select)
+    try:
+        records = {record.improvement_id: record for record in store.list_improvements(agent_id="agent-a")}
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_select)
+
+    assert len(select_statements) == 1
+    assert not any(vars(records[empty.improvement_id].artifact_presence).values())
+    assert vars(records[early.improvement_id].artifact_presence) == {
+        "normalized_feedback": False,
+        "attribution": False,
+        "optimization_plan": False,
+        "execution": True,
+        "regression_test_design": True,
+    }
+    assert vars(records[prefix.improvement_id].artifact_presence) == {
+        "normalized_feedback": True,
+        "attribution": True,
+        "optimization_plan": True,
+        "execution": False,
+        "regression_test_design": False,
+    }
+
+
 def test_get_returns_none_for_unknown(tmp_path: Path) -> None:
     store = _store(tmp_path)
     assert store.get_improvement("imp-nope") is None
@@ -77,6 +164,13 @@ def test_rework_backward_transition_is_allowed(tmp_path: Path) -> None:
     back = store.refine_stage(record.improvement_id, stage="attribution")
     assert back.improvement_stage == "attribution"
     assert back.improvement_status == "active"
+    assert vars(back.artifact_presence) == {
+        "normalized_feedback": True,
+        "attribution": True,
+        "optimization_plan": False,
+        "execution": False,
+        "regression_test_design": False,
+    }
 
 
 def test_public_refinement_rejects_forward_and_unknown_transition(tmp_path: Path) -> None:
@@ -104,6 +198,7 @@ def test_archive_sets_terminal_status_and_blocks_transition(tmp_path: Path) -> N
     content.upsert_normalized_feedback(record.improvement_id, problem="p", advance_to_stage="triage")
     archived = store.archive_improvement(record.improvement_id)
     assert archived.improvement_status == "archived"
+    assert archived.artifact_presence.normalized_feedback is True
     # 归档后阶段转移被拒（终态状态）。
     with pytest.raises(ConflictError):
         store.refine_stage(record.improvement_id, stage="feedback_intake")

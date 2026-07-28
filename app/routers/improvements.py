@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.runtime.errors import NotFoundError
 from app.runtime.improvement_schemas import (
+    ImprovementArtifactPresence,
     ImprovementCreateRequest,
     ImprovementItemResponse,
     ImprovementLinkResponse,
@@ -37,6 +38,13 @@ def _response(record: ImprovementItemRecord) -> ImprovementItemResponse:
         source_feedback_refs=list(record.source_feedback_refs),
         improvement_stage=record.improvement_stage,
         improvement_status=record.improvement_status,
+        artifact_presence=ImprovementArtifactPresence(
+            normalized_feedback=record.artifact_presence.normalized_feedback,
+            attribution=record.artifact_presence.attribution,
+            optimization_plan=record.artifact_presence.optimization_plan,
+            execution=record.artifact_presence.execution,
+            regression_test_design=record.artifact_presence.regression_test_design,
+        ),
         created_at=record.created_at,
         updated_at=record.updated_at,
     )

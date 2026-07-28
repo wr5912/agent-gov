@@ -389,7 +389,9 @@ const RULES = [
     return { ok: open && state === "input", detail: `drawer 可见=${open} data-state=${state}` };
   } },
   { id: "context-4types", phase: "P2", desc: "获取上下文四类型 + 下载", async fn(page) {
-    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项可打开上下文（需种子数据）" };
+    if (!(await openImprovementById(page, stageTarget("testRelease", "imp-demo04")))) {
+      return { ok: false, detail: "无完整证据链改进事项可打开上下文（需种子数据）" };
+    }
     await page.getByTestId("open-context-drawer").click().catch(() => {});
     await page.getByTestId("context-drawer").waitFor({ timeout: 8000 }).catch(() => {});
     const drawerSize = await page.getByTestId("context-drawer").getAttribute("data-size").catch(() => null);
@@ -407,6 +409,7 @@ const RULES = [
     const download = await has(page, "context-download");
     await page.getByTestId("context-drawer").getByLabel("关闭").click().catch(() => {});
     await page.getByTestId("context-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    await page.getByTestId("nav-playground").click();
     return { ok: drawerSize === "medium" && found.length === 4 && download && rich, detail: `size=${drawerSize} 类型 ${found.length}/4，下载=${download}，证据链JSON=${rich}` };
   } },
   { id: "release-workbench-target-binding", phase: "P2", desc: "发布工作台按选中待发布变更绑定 Workspace pytest、精确 commit 发布、反馈发布不可绕过测试和清理动作", async fn(page) {

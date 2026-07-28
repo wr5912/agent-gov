@@ -5,15 +5,22 @@ const AGENTS = [
   { agent_id: "soc-ops", name: "安全运营助手", category: "", workspace_dir: "/w/soc", created_at: ts, status: "active" },
   { agent_id: "shop-bot", name: "电商客服", category: "", workspace_dir: "/w/shop", created_at: ts, status: "active" },
 ];
+const artifactPresence = (...present) => ({
+  normalized_feedback: present.includes("normalized_feedback"),
+  attribution: present.includes("attribution"),
+  optimization_plan: present.includes("optimization_plan"),
+  execution: present.includes("execution"),
+  regression_test_design: present.includes("regression_test_design"),
+});
 const IMPROVEMENTS = [
-  { improvement_id: "imp-demo01", agent_id: "soc-ops", title: "时间窗口误判治理", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "triage", improvement_status: "active", created_at: ts, updated_at: ts },
-  { improvement_id: "imp-demo02", agent_id: "soc-ops", title: "时间窗口误判治理 · 归因", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "attribution", improvement_status: "active", created_at: ts, updated_at: ts },
-  { improvement_id: "imp-demo03", agent_id: "soc-ops", title: "时间窗口误判治理 · 优化", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "optimization", improvement_status: "active", created_at: ts, updated_at: ts },
-  { improvement_id: "imp-demo04", agent_id: "soc-ops", title: "时间窗口误判治理 · 测试", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "regression", improvement_status: "active", created_at: ts, updated_at: ts },
-  { improvement_id: "imp-demo05", agent_id: "soc-ops", title: "时间窗口误判重复反馈", summary: "事件时间不一致的重复反馈", source_feedback_refs: ["fb-2", "fb-3"], improvement_stage: "triage", improvement_status: "active", created_at: ts, updated_at: ts },
-  { improvement_id: "imp-demo06", agent_id: "soc-ops", title: "时间窗口误判治理 · 待执行", summary: "已有优化方案，等待执行优化", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "optimization", improvement_status: "active", created_at: ts, updated_at: ts },
-  { improvement_id: "imp-demo07", agent_id: "soc-ops", title: "时间窗口误判治理 · 执行中", summary: "执行产物已生成", source_feedback_refs: ["fb-1"], improvement_stage: "execution", improvement_status: "active", created_at: ts, updated_at: ts },
-  { improvement_id: "imp-demo08", agent_id: "soc-ops", title: "时间窗口误判治理 · 已发布", summary: "发布条件已满足", source_feedback_refs: ["fb-1"], improvement_stage: "release", improvement_status: "done", created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo01", agent_id: "soc-ops", title: "时间窗口误判治理", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "triage", improvement_status: "active", artifact_presence: artifactPresence("normalized_feedback"), created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo02", agent_id: "soc-ops", title: "时间窗口误判治理 · 归因", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "attribution", improvement_status: "active", artifact_presence: artifactPresence("normalized_feedback", "attribution"), created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo03", agent_id: "soc-ops", title: "时间窗口误判治理 · 优化", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "optimization", improvement_status: "active", artifact_presence: artifactPresence("normalized_feedback", "attribution", "optimization_plan", "execution"), created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo04", agent_id: "soc-ops", title: "时间窗口误判治理 · 测试", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "regression", improvement_status: "active", artifact_presence: artifactPresence("normalized_feedback", "attribution", "optimization_plan", "execution", "regression_test_design"), created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo05", agent_id: "soc-ops", title: "时间窗口误判重复反馈", summary: "事件时间不一致的重复反馈", source_feedback_refs: ["fb-2", "fb-3"], improvement_stage: "triage", improvement_status: "active", artifact_presence: artifactPresence("normalized_feedback"), created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo06", agent_id: "soc-ops", title: "时间窗口误判治理 · 待执行", summary: "已有优化方案，等待执行优化", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "optimization", improvement_status: "active", artifact_presence: artifactPresence("normalized_feedback", "attribution", "optimization_plan"), created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo07", agent_id: "soc-ops", title: "时间窗口误判治理 · 执行中", summary: "执行产物已生成", source_feedback_refs: ["fb-1"], improvement_stage: "execution", improvement_status: "active", artifact_presence: artifactPresence("normalized_feedback", "attribution", "optimization_plan", "execution"), created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo08", agent_id: "soc-ops", title: "时间窗口误判治理 · 已发布", summary: "发布条件已满足", source_feedback_refs: ["fb-1"], improvement_stage: "release", improvement_status: "done", artifact_presence: artifactPresence("normalized_feedback", "attribution", "optimization_plan", "execution", "regression_test_design"), created_at: ts, updated_at: ts },
 ];
 const internalTraceUrl = (traceId) => `http://langfuse-web:3000/project/agent-gov/traces/${traceId}`;
 const REGRESSION_TESTS = [
@@ -123,10 +130,13 @@ function mockConversationItems(sessionId) {
   }).flat();
 }
 
-function advanceMockImprovement(path, stage) {
+function advanceMockImprovement(path, stage, artifact) {
   const improvementId = decodeURIComponent(path.split("/")[3] || "");
   const item = IMPROVEMENTS.find((row) => row.improvement_id === improvementId);
-  if (item) item.improvement_stage = stage;
+  if (item) {
+    item.improvement_stage = stage;
+    if (artifact) item.artifact_presence[artifact] = true;
+  }
 }
 
 const UNHANDLED = Symbol("unhandled");
@@ -404,8 +414,9 @@ function assetPayload(path, request) {
         title: body.title || "未命名改进事项",
         summary: body.summary || "",
         source_feedback_refs: body.source_feedback_refs || [],
-        improvement_stage: "intake",
+        improvement_stage: "feedback_intake",
         improvement_status: "active",
+        artifact_presence: artifactPresence(),
         created_at: ts,
         updated_at: ts,
       };
@@ -496,18 +507,18 @@ function improvementPayload(path, request) {
     }
     return [{ feedback_id: "fb-1", improvement_id: "imp-demo01", agent_id: "soc-ops", summary: "这个告警其实是误报", source: "playground_run", status: "merged", raw_text: "", run_id: "run-1", session_id: "s-1", agent_version_id: "v1.2.0", scenario: "alert-triage", task_id: "task-1", alert_id: "alert-001", case_id: "case-001", created_at: ts }];
   }
-  if (/^\/api\/improvements\/[^/]+\/normalized-feedback\/confirm$/.test(path)) { advanceMockImprovement(path, "triage"); return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "生成归因分析", user_quote: "这个告警其实是误报", status: "confirmed", created_at: ts, updated_at: ts }; }
-  if (/^\/api\/improvements\/[^/]+\/normalized-feedback$/.test(path)) { if (request.method !== "GET") advanceMockImprovement(path, "triage"); return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "生成归因分析", user_quote: "这个告警其实是误报", status: "draft", created_at: ts, updated_at: ts }; }
-  if (/^\/api\/improvements\/[^/]+\/attribution\/generate$/.test(path)) { advanceMockImprovement(path, "attribution"); return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts }; }
+  if (/^\/api\/improvements\/[^/]+\/normalized-feedback\/confirm$/.test(path)) { advanceMockImprovement(path, "triage", "normalized_feedback"); return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "生成归因分析", user_quote: "这个告警其实是误报", status: "confirmed", created_at: ts, updated_at: ts }; }
+  if (/^\/api\/improvements\/[^/]+\/normalized-feedback$/.test(path)) { if (request.method !== "GET") advanceMockImprovement(path, "triage", "normalized_feedback"); return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "生成归因分析", user_quote: "这个告警其实是误报", status: "draft", created_at: ts, updated_at: ts }; }
+  if (/^\/api\/improvements\/[^/]+\/attribution\/generate$/.test(path)) { advanceMockImprovement(path, "attribution", "attribution"); return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts }; }
   if (/^\/api\/improvements\/[^/]+\/attribution\/confirm$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "confirmed", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/attribution$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/optimization-plan\/generate$/.test(path)) { advanceMockImprovement(path, "optimization"); return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增时间校验指令" }], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts }; }
+  if (/^\/api\/improvements\/[^/]+\/optimization-plan\/generate$/.test(path)) { advanceMockImprovement(path, "optimization", "optimization_plan"); return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增时间校验指令" }], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts }; }
   if (/^\/api\/improvements\/[^/]+\/optimization-plan\/confirm$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) { advanceMockImprovement(path, "execution"); return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts }; }
+  if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) { advanceMockImprovement(path, "execution", "execution"); return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts }; }
   if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "confirmed", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/regression-test-design\/generate$/.test(path)) {
-    advanceMockImprovement(path, "regression");
+    advanceMockImprovement(path, "regression", "regression_test_design");
     const improvementId = decodeURIComponent(path.split("/")[3] || "imp-demo01");
     return { regression_test_design_id: "reg-1", improvement_id: improvementId, summary: "治理 Agent 生成 3 个 pytest 测试文件候选。", tests: REGRESSION_TESTS, no_action_reason: "", status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts, generated_test_files: [], candidate_commit_sha: "", test_run: null };
   }
@@ -523,7 +534,8 @@ function improvementPayload(path, request) {
   const executionRecord = path.match(/^\/api\/improvements\/([^/]+)\/execution$/);
   if (executionRecord) {
     const improvementId = decodeURIComponent(executionRecord[1] || "");
-    if (improvementId === "imp-demo06") return { __status: 404, detail: "not found" };
+    const item = IMPROVEMENTS.find((row) => row.improvement_id === improvementId);
+    if (!item?.artifact_presence.execution) return { __status: 404, detail: "not found" };
     return { execution_id: "exec-1", improvement_id: improvementId || "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
   }
   const lifecycle = path.match(/^\/api\/improvements\/([^/]+)\/lifecycle$/);

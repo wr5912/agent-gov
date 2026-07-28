@@ -36,9 +36,18 @@ class ImprovementLinkResponse(BaseModel):
 
 class ImprovementStageTransitionRequest(BaseModel):
     stage: str = Field(
-        description="目标阶段：feedback_intake/triage/attribution/optimization/execution/regression/release；"
-        "非法转移由后端状态机拒绝（409）。",
+        description="目标阶段：feedback_intake/triage/attribution/optimization/execution/regression/release；非法转移由后端状态机拒绝（409）。",
     )
+
+
+class ImprovementArtifactPresence(BaseModel):
+    """Current row existence for each optional improvement business artifact."""
+
+    normalized_feedback: bool = Field(description="是否存在系统整理产物行；不表示已确认。")
+    attribution: bool = Field(description="是否存在归因产物行；不表示已确认。")
+    optimization_plan: bool = Field(description="是否存在优化方案产物行；不表示已确认。")
+    execution: bool = Field(description="是否存在执行记录行；不表示已应用或成功。")
+    regression_test_design: bool = Field(description="是否存在回归测试设计行；不表示已确认或已运行。")
 
 
 class ImprovementItemResponse(BaseModel):
@@ -49,6 +58,9 @@ class ImprovementItemResponse(BaseModel):
     source_feedback_refs: list[str] = Field(default_factory=list)
     improvement_stage: str = Field(description="事项阶段（后端状态机管理）。")
     improvement_status: str = Field(default="active", description="派生状态：active/done/archived。")
+    artifact_presence: ImprovementArtifactPresence = Field(
+        description="后端按持久化行实时投影的产物存在性；不得由阶段推导。",
+    )
     created_at: str
     updated_at: str
 

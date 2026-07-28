@@ -9,6 +9,11 @@ import { scrollNavigationMetrics, seedPlaygroundMessages } from "./playground_sc
 import { createFoundationRules } from "./improvement_ui_e2e/design_parity_foundation_rules.mjs";
 import { createWorkbenchRules } from "./improvement_ui_e2e/design_parity_workbench_rules.mjs";
 import { defaultPayload, DESIGN_PARITY_TS as ts } from "./improvement_ui_e2e/design_parity_mock_backend.mjs";
+import {
+  assertNoForbiddenUiRequests,
+  attachDiagnostics,
+  unexpectedDiagnostics,
+} from "./improvement_ui_e2e/page_audit.mjs";
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
@@ -216,6 +221,7 @@ async function main() {
     await waitForVite();
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
+    const diagnostics = attachDiagnostics(page, apiBase, uiBase);
     page.on("request", (request) => {
       try {
         const url = new URL(request.url());
@@ -273,6 +279,14 @@ async function main() {
     }
     const passed = results.filter((result) => result.ok).length;
     const baselineFail = results.filter((result) => BASELINE_RULES.has(result.id) && !result.ok);
+    assertNoForbiddenUiRequests(diagnostics.requests);
+    const unexpected = unexpectedDiagnostics(diagnostics, [{
+      method: "POST",
+      path: "/api/improvements",
+      status: 422,
+      count: 1,
+    }]);
+    const diagnosticsPassed = !Object.values(unexpected).some((items) => items.length);
     console.log(JSON.stringify({
       mode: "mock",
       ui_base: uiBase,
@@ -281,10 +295,15 @@ async function main() {
       total: results.length,
       baseline: [...BASELINE_RULES],
       baseline_fail: baselineFail.map((result) => result.id),
+      browser_diagnostics: {
+        passed: diagnosticsPassed,
+        unexpected,
+        all_http_errors: diagnostics.httpErrors,
+      },
       rules: results,
     }, null, 2));
     console.log(`\nDESIGN_PARITY ${passed}/${results.length} passed (mock); baseline ${BASELINE_RULES.size - baselineFail.length}/${BASELINE_RULES.size} held`);
-    return baselineFail.length === 0 ? 0 : 1;
+    return baselineFail.length === 0 && diagnosticsPassed ? 0 : 1;
   } finally {
     await stopChild(server);
   }

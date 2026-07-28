@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import update
+from sqlalchemy import exists, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import sessionmaker
 
@@ -37,6 +37,17 @@ class ImprovementLinkRecord:
 
 
 @dataclass(frozen=True)
+class ImprovementArtifactPresenceRecord:
+    """Backend-owned projection of whether each optional business artifact row exists."""
+
+    normalized_feedback: bool
+    attribution: bool
+    optimization_plan: bool
+    execution: bool
+    regression_test_design: bool
+
+
+@dataclass(frozen=True)
 class ImprovementItemRecord:
     """改进事项事项级领域记录（四阶段改进治理 跨代重建的单一事实来源）。"""
 
@@ -47,6 +58,7 @@ class ImprovementItemRecord:
     source_feedback_refs: list[str]
     improvement_stage: str
     improvement_status: str
+    artifact_presence: ImprovementArtifactPresenceRecord
     created_at: str
     updated_at: str
 
@@ -116,6 +128,39 @@ class ImprovementStore:
         self._session_factory = session_factory
 
     @staticmethod
+    def _projected_improvements_query(db: Any) -> Any:
+        """Project items and artifact presence in one SELECT without stage inference."""
+        return db.query(
+            ImprovementItemModel,
+            exists()
+            .where(NormalizedFeedbackModel.improvement_id == ImprovementItemModel.improvement_id)
+            .correlate(ImprovementItemModel)
+            .label("has_normalized_feedback"),
+            exists().where(AttributionModel.improvement_id == ImprovementItemModel.improvement_id).correlate(ImprovementItemModel).label("has_attribution"),
+            exists()
+            .where(OptimizationPlanModel.improvement_id == ImprovementItemModel.improvement_id)
+            .correlate(ImprovementItemModel)
+            .label("has_optimization_plan"),
+            exists().where(ExecutionRecordModel.improvement_id == ImprovementItemModel.improvement_id).correlate(ImprovementItemModel).label("has_execution"),
+            exists()
+            .where(RegressionTestDesignModel.improvement_id == ImprovementItemModel.improvement_id)
+            .correlate(ImprovementItemModel)
+            .label("has_regression_test_design"),
+        )
+
+    @classmethod
+    def _project_improvement(cls, db: Any, improvement_id: str) -> ImprovementItemRecord | None:
+        projected = cls._projected_improvements_query(db).filter(ImprovementItemModel.improvement_id == improvement_id).one_or_none()
+        return _projected_record(projected) if projected is not None else None
+
+    @classmethod
+    def _require_projected_improvement(cls, db: Any, improvement_id: str) -> ImprovementItemRecord:
+        record = cls._project_improvement(db, improvement_id)
+        if record is None:
+            raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+        return record
+
+    @staticmethod
     def _lock_mutable_improvement(db: Any, improvement_id: str) -> ImprovementItemModel:
         locked = db.execute(
             update(ImprovementItemModel)
@@ -139,16 +184,15 @@ class ImprovementStore:
 
     def list_improvements(self, *, agent_id: str | None = None) -> list[ImprovementItemRecord]:
         with self._session_factory.begin() as db:
-            query = db.query(ImprovementItemModel)
+            query = self._projected_improvements_query(db)
             if agent_id:
                 query = query.filter(ImprovementItemModel.agent_id == agent_id)
-            rows = query.order_by(ImprovementItemModel.created_at.desc(), ImprovementItemModel.improvement_id).all()
-            return [_record(row) for row in rows]
+            projected = query.order_by(ImprovementItemModel.created_at.desc(), ImprovementItemModel.improvement_id).all()
+            return [_projected_record(row) for row in projected]
 
     def get_improvement(self, improvement_id: str) -> ImprovementItemRecord | None:
         with self._session_factory.begin() as db:
-            row = db.get(ImprovementItemModel, improvement_id)
-            return _record(row) if row is not None else None
+            return self._project_improvement(db, improvement_id)
 
     def assigned_feedback_case_ids(self) -> set[str]:
         """FeedbackCase assignment relation is authoritative; item refs are its UI projection."""
@@ -193,17 +237,8 @@ class ImprovementStore:
                     updated_at=now,
                 )
             )
-        return ImprovementItemRecord(
-            improvement_id=improvement_id,
-            agent_id=clean_agent,
-            title=clean_title,
-            summary=summary or "",
-            source_feedback_refs=refs,
-            improvement_stage="feedback_intake",
-            improvement_status="active",
-            created_at=now,
-            updated_at=now,
-        )
+            db.flush()
+            return self._require_projected_improvement(db, improvement_id)
 
     def refine_stage(self, improvement_id: str, *, stage: str) -> ImprovementItemRecord:
         """执行用户请求的返工转移；公开 lifecycle 不得用于前推。"""
@@ -222,7 +257,8 @@ class ImprovementStore:
             row.improvement_stage = stage
             row.improvement_status = derive_improvement_status(stage)
             row.updated_at = utc_now()
-            return _record(row)
+            db.flush()
+            return self._require_projected_improvement(db, improvement_id)
 
     @staticmethod
     def _invalidate_artifacts_after_stage(db: Any, improvement_id: str, *, target_index: int) -> None:
@@ -283,7 +319,8 @@ class ImprovementStore:
                     existing.append(ref)
             row.source_feedback_refs_json = existing
             row.updated_at = utc_now()
-            return _record(row)
+            db.flush()
+            return self._require_projected_improvement(db, improvement_id)
 
     def merge_improvements(self, target_id: str, *, source_id: str) -> ImprovementItemRecord:
         """把 source 改进事项归并进 target：来源反馈并入 target，source 置 archived（被归并）。"""
@@ -313,7 +350,8 @@ class ImprovementStore:
             )
             source.improvement_status = "archived"
             source.updated_at = utc_now()
-            return _record(target)
+            db.flush()
+            return self._require_projected_improvement(db, target_id)
 
     def split_improvement(self, improvement_id: str, *, feedback_ref: str) -> ImprovementItemRecord:
         """把某条来源反馈从改进事项拆出为一个新的改进事项（同 Agent，回到 feedback_intake）。"""
@@ -353,7 +391,8 @@ class ImprovementStore:
                     updated_at=now,
                 )
             )
-        return self.get_improvement(new_id)  # type: ignore[return-value]
+            db.flush()
+            return self._require_projected_improvement(db, new_id)
 
     def add_link(self, improvement_id: str, *, kind: str, ref_id: str) -> ImprovementLinkRecord:
         """幂等建立轻引用；唯一身份是 improvement_id + kind + ref_id。"""
@@ -421,12 +460,13 @@ class ImprovementStore:
             if row is None:
                 raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
             if row.improvement_status == "archived":
-                return _record(row)
+                return self._require_projected_improvement(db, improvement_id)
             row = self._lock_mutable_improvement(db, improvement_id)
             self._assert_execution_settled(db, improvement_id, action="archive")
             row.improvement_status = "archived"
             row.updated_at = utc_now()
-            return _record(row)
+            db.flush()
+            return self._require_projected_improvement(db, improvement_id)
 
     def update_title(self, improvement_id: str, *, title: str) -> ImprovementItemRecord:
         """回填/更新事项标题（反馈整理生成的简洁 title 取代前端截断的自动标题）。"""
@@ -437,7 +477,8 @@ class ImprovementStore:
             row = self._lock_mutable_improvement(db, improvement_id)
             row.title = clean
             row.updated_at = utc_now()
-            return _record(row)
+            db.flush()
+            return self._require_projected_improvement(db, improvement_id)
 
     def deletion_impact(self, improvement_id: str) -> ImprovementDeletionImpact:
         """删除前影响面（dry-run，区别于归档）：将随删的反馈/链接/内容计数 + 退回未归属池的来源反馈引用数。"""
@@ -486,7 +527,15 @@ class ImprovementStore:
             db.delete(row)
 
 
-def _record(row: ImprovementItemModel) -> ImprovementItemRecord:
+def _projected_record(projected: Any) -> ImprovementItemRecord:
+    (
+        row,
+        has_normalized_feedback,
+        has_attribution,
+        has_optimization_plan,
+        has_execution,
+        has_regression_test_design,
+    ) = projected
     return ImprovementItemRecord(
         improvement_id=row.improvement_id,
         agent_id=row.agent_id,
@@ -495,6 +544,13 @@ def _record(row: ImprovementItemModel) -> ImprovementItemRecord:
         source_feedback_refs=list(row.source_feedback_refs_json or []),
         improvement_stage=row.improvement_stage or "feedback_intake",
         improvement_status=row.improvement_status or "active",
+        artifact_presence=ImprovementArtifactPresenceRecord(
+            normalized_feedback=bool(has_normalized_feedback),
+            attribution=bool(has_attribution),
+            optimization_plan=bool(has_optimization_plan),
+            execution=bool(has_execution),
+            regression_test_design=bool(has_regression_test_design),
+        ),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

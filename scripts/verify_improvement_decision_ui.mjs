@@ -8,6 +8,12 @@ import { join } from "node:path";
 import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import process from "node:process";
 
+import {
+  assertNoForbiddenUiRequests,
+  attachDiagnostics,
+  unexpectedDiagnostics,
+} from "./improvement_ui_e2e/page_audit.mjs";
+
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
 
@@ -39,6 +45,13 @@ function json(route, payload, status = 200) {
 }
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const artifactPresence = (...present) => ({
+  normalized_feedback: present.includes("normalized_feedback"),
+  attribution: present.includes("attribution"),
+  optimization_plan: present.includes("optimization_plan"),
+  execution: present.includes("execution"),
+  regression_test_design: present.includes("regression_test_design"),
+});
 
 function startVite() {
   const child = spawn("pnpm", ["--dir", "frontend", "exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
@@ -134,7 +147,18 @@ async function seedRealData() {
 }
 
 function mockState() {
-  const target = { improvement_id: "imp-decision01", agent_id: "soc-ops", title: "sec-ops-data 时间窗口误判治理", summary: "sec-ops-data 时间窗口不一致导致同类告警误判。", source_feedback_refs: ["fb-1"], improvement_stage: "triage", improvement_status: "active", created_at: ts, updated_at: ts };
+  const target = {
+    improvement_id: "imp-decision01",
+    agent_id: "soc-ops",
+    title: "sec-ops-data 时间窗口误判治理",
+    summary: "sec-ops-data 时间窗口不一致导致同类告警误判。",
+    source_feedback_refs: ["fb-1"],
+    improvement_stage: "triage",
+    improvement_status: "active",
+    artifact_presence: artifactPresence("normalized_feedback", "execution"),
+    created_at: ts,
+    updated_at: ts,
+  };
   return {
     target,
     agents: [{ agent_id: "soc-ops", name: "安全运营助手", category: "business", workspace_dir: "/w/soc", created_at: ts, status: "active" }],
@@ -193,6 +217,7 @@ async function installMockRoutes(page, state) {
       await delay(1500);
       state.attribution = { attribution_id: "attr-1", improvement_id: state.target.improvement_id, summary: "sec-ops-data MCP 返回的数据时间与告警时间窗口不一致。", responsibility_boundary: ["主要是外部数据时间窗口问题"], evidence: ["来源反馈指向同一时间窗口误判问题"], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
       state.target.improvement_stage = "attribution";
+      state.target.artifact_presence.attribution = true;
       return json(route, state.attribution);
     }
     if (/^\/api\/improvements\/[^/]+\/attribution\/confirm$/.test(path)) {
@@ -223,6 +248,7 @@ async function installMockRoutes(page, state) {
         updated_at: ts,
       };
       state.target.improvement_stage = "optimization";
+      state.target.artifact_presence.optimization_plan = true;
       return json(route, state.optimizationPlan);
     }
     if (/^\/api\/improvements\/[^/]+\/optimization-plan\/confirm$/.test(path)) {
@@ -250,6 +276,7 @@ async function installMockRoutes(page, state) {
         updated_at: ts,
       };
       state.target.improvement_stage = "execution";
+      state.target.artifact_presence.execution = true;
       return json(route, state.execution);
     }
     if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) {
@@ -295,6 +322,7 @@ async function installMockRoutes(page, state) {
         updated_at: ts,
       };
       state.target.improvement_stage = "regression";
+      state.target.artifact_presence.regression_test_design = true;
       return json(route, state.regressionTestDesign);
     }
     if (/^\/api\/improvements\/[^/]+\/regression-test-design$/.test(path)) return state.regressionTestDesign ? json(route, state.regressionTestDesign) : json(route, { detail: "not found" }, 404);
@@ -321,6 +349,26 @@ async function assertVisible(page, testId) {
   return locator;
 }
 
+function assertPresenceDrivenInitialRequests(requests, improvementId) {
+  const getCount = (suffix) => requests.filter((request) => (
+    request.method === "GET"
+    && request.path === `/api/improvements/${improvementId}/${suffix}`
+  )).length;
+  const expected = {
+    "normalized-feedback": 1,
+    attribution: 0,
+    "optimization-plan": 0,
+    execution: 1,
+    "regression-test-design": 0,
+  };
+  for (const [suffix, count] of Object.entries(expected)) {
+    const actual = getCount(suffix);
+    if (actual !== count) {
+      throw new Error(`presence-driven initial GET ${suffix}: expected ${count}, got ${actual}`);
+    }
+  }
+}
+
 async function main() {
   const state = REAL ? null : mockState();
   const target = REAL ? await seedRealData() : state.target;
@@ -329,6 +377,7 @@ async function main() {
     if (!REAL) await waitForVite();
     const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const diagnostics = attachDiagnostics(page, apiBase, uiBase);
     await page.addInitScript(({ apiBaseValue, apiKeyValue }) => {
       window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: apiBaseValue, apiKey: apiKeyValue }));
     }, { apiBaseValue: apiBase, apiKeyValue: apiKey });
@@ -354,6 +403,7 @@ async function main() {
     const renderedImprovementId = await page.getByTestId("improvement-id-value").innerText();
     if (renderedImprovementId !== targetId) throw new Error(`rendered improvement id mismatch: ${renderedImprovementId} !== ${targetId}`);
     await assertVisible(page, "copy-improvement-id");
+    if (!REAL) assertPresenceDrivenInitialRequests(diagnostics.requests, targetId);
 
     await assertVisible(page, "improvement-list-decision");
     await assertVisible(page, "current-decision-card");
@@ -530,6 +580,14 @@ async function main() {
       await assertVisible(page, "regression-test-code-coverage");
     }
 
+    assertNoForbiddenUiRequests(diagnostics.requests);
+    const unexpected = unexpectedDiagnostics(diagnostics);
+    if (Object.values(unexpected).some((items) => items.length)) {
+      throw new Error(`browser diagnostics failed: ${JSON.stringify({
+        unexpected,
+        allHttpErrors: diagnostics.httpErrors,
+      })}`);
+    }
     await browser.close();
     console.log(JSON.stringify({ mode: REAL ? "real-container" : "mock", ui_base: uiBase, api_base: apiBase, improvement_id: target.id || target.improvement_id, rows_before: rowsBefore, rows_after: rowsAfter, screenshots: screenshotDir }, null, 2));
   } finally {

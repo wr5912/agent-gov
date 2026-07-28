@@ -15,6 +15,7 @@ def load_test_app(
     *,
     api_key: str = "",
     extra_agent_ids: Sequence[str] = (),
+    raw_events_enabled: bool = False,
 ):
     root = tmp_path / "docker" / "volume"
     data = root / "data"
@@ -63,6 +64,8 @@ def load_test_app(
     monkeypatch.setenv("MODEL_PROVIDER_API_URL", "http://model-provider.test")
     monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "test-provider-key")
     monkeypatch.setenv("API_KEY", api_key)
+    monkeypatch.setenv("ENABLE_AGENT_RUNTIME_RAW_EVENTS", "true" if raw_events_enabled else "false")
+    monkeypatch.setenv("AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES", "67108864")
     monkeypatch.delenv("RESPONSE_ORCHESTRATOR_API_KEY", raising=False)
     monkeypatch.setenv("AGENT_GIT_REPOSITORY_DIR", str(default_workspace))
     monkeypatch.setenv("AGENT_GIT_WORKTREES_DIR", str(agent_worktrees))

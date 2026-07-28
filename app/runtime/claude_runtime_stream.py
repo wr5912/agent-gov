@@ -6,6 +6,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import claude_prompt_suggestions
@@ -53,9 +54,16 @@ class StreamRun:
     sdk_init_ms: int | None = None
     first_text_delta_ms: int | None = None
     partial_text_segment: str = ""
+    cli_path_override: Path | None = None
 
 
-async def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: AgentRuntimeProfile) -> StreamRun:
+async def _new_stream_run(
+    runtime: ClaudeRuntime,
+    req: ChatRequest,
+    profile: AgentRuntimeProfile,
+    *,
+    cli_path_override: Path | None = None,
+) -> StreamRun:
     context = await runtime._new_runtime_request_context(req, profile=profile, agent_id=profile.agent_id)
     web_hitl_enabled = bool(runtime.settings.enable_claude_web_hitl and runtime.user_input_service is not None)
     context.telemetry_input["claude_web_hitl_enabled"] = web_hitl_enabled
@@ -71,6 +79,7 @@ async def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: Age
         root_metadata=runtime._runtime_observation_metadata(context, "stream", profile=profile),
         propagation=runtime._langfuse_propagation_attributes(req, context, "stream", profile=profile),
         started_at_monotonic=time.monotonic(),
+        cli_path_override=cli_path_override,
     )
 
 
@@ -79,11 +88,17 @@ async def stream_claude_runtime(
     req: ChatRequest,
     *,
     profile: AgentRuntimeProfile | None = None,
+    cli_path_override: Path | None = None,
 ) -> AsyncIterator[JsonObject]:
     # profile 由上游解析（路由层 resolve_business_profile）。不回落预制 main：main 已是可删除的
     # 普通业务 Agent，回落会把「未解析出 profile」掩蔽成「跑在别的 Agent 上」。
     selected_profile = _require_profile(profile)
-    stream_run = await _new_stream_run(runtime, req, selected_profile)
+    stream_run = await _new_stream_run(
+        runtime,
+        req,
+        selected_profile,
+        cli_path_override=cli_path_override,
+    )
     context = stream_run.request_context
     heartbeat = SessionTurnLeaseHeartbeat(
         runtime.session_store,
@@ -208,6 +223,7 @@ async def _emit_query_events(
         profile=stream_run.profile,
         can_use_tool=can_use_tool,
         include_partial_messages=runtime.settings.include_partial_messages,
+        cli_path_override=stream_run.cli_path_override,
     )
     sdk_started = time.monotonic()
     messages = (

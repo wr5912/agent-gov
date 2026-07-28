@@ -376,6 +376,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
         profile: AgentRuntimeProfile | None = None,
         can_use_tool: Any = None,
         include_partial_messages: bool = False,
+        cli_path_override: Path | None = None,
     ) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
@@ -398,7 +399,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
             "env": env,
             "include_hook_events": self.settings.include_hook_events,
             "include_partial_messages": include_partial_messages,
-            "cli_path": self.settings.claude_cli_path,
+            "cli_path": cli_path_override or self.settings.claude_cli_path,
             "betas": self.settings.claude_betas,
             "max_buffer_size": self.settings.max_buffer_size,
             "user": self.settings.claude_user,
@@ -740,11 +741,22 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
         profile = candidate_profile(self.settings, agent_id=agent_id, workspace_dir=worktree_path, candidate_id=change_set_id)
         return await self.run(req, profile=profile, agent_version_id_override=candidate_commit_sha)
 
-    async def stream(self, req: ChatRequest, *, profile: AgentRuntimeProfile | None = None) -> AsyncIterator[JsonObject]:
+    async def stream(
+        self,
+        req: ChatRequest,
+        *,
+        profile: AgentRuntimeProfile | None = None,
+        cli_path_override: Path | None = None,
+    ) -> AsyncIterator[JsonObject]:
         from .claude_runtime_stream import stream_claude_runtime
 
         selected_profile = await asyncio.to_thread(self._resolve_runtime_profile, req, profile)
-        source = stream_claude_runtime(self, req, profile=selected_profile)
+        source = stream_claude_runtime(
+            self,
+            req,
+            profile=selected_profile,
+            cli_path_override=cli_path_override,
+        )
         try:
             async for event in source:
                 yield event

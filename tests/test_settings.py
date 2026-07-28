@@ -8,6 +8,7 @@ from app.runtime.settings import (
     runtime_settings_log_message,
     settings_env_file_for_mode,
     validate_hitl_single_api_process,
+    validate_raw_events_security,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,8 @@ _PROFILE_ENV_KEYS = (
     "AGENT_TEST_RUN_TIMEOUT_SECONDS",
     "DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS",
     "HITL_TIMEOUT_SECONDS",
+    "ENABLE_AGENT_RUNTIME_RAW_EVENTS",
+    "AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES",
 )
 
 
@@ -185,6 +188,8 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "prompt_suggestion_source": "backend",
         "claude_web_hitl_enabled": False,
         "hitl_timeout_seconds": 300,
+        "agent_runtime_raw_events_enabled": False,
+        "agent_runtime_raw_events_max_bytes": 67108864,
         "api_host": "0.0.0.0",
         "api_port": 8080,
         "workspace_dir": f"/tmp/local-debug-volume-agent-gov/data/business-agents/{DEFAULT_BUSINESS_AGENT_ID}/workspace",
@@ -194,6 +199,29 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
     }
     assert fields["provider_api_key_configured"] is False
     assert not any("secret" in name.lower() for name in fields)
+
+
+def test_raw_events_are_disabled_by_default_and_require_api_auth_when_enabled() -> None:
+    disabled = AppSettings(_env_file=None)
+    enabled = AppSettings(
+        _env_file=None,
+        API_KEY="debug-api-key",
+        ENABLE_AGENT_RUNTIME_RAW_EVENTS=True,
+        AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES=1024,
+    )
+
+    assert disabled.enable_agent_runtime_raw_events is False
+    assert disabled.agent_runtime_raw_events_max_bytes == 67_108_864
+    validate_raw_events_security(disabled)
+    validate_raw_events_security(enabled)
+    with pytest.raises(RuntimeError, match="requires a non-empty API_KEY"):
+        validate_raw_events_security(
+            AppSettings(
+                _env_file=None,
+                API_KEY="",
+                ENABLE_AGENT_RUNTIME_RAW_EVENTS=True,
+            )
+        )
 
 
 def test_runtime_settings_log_exposes_prompt_suggestion_source(monkeypatch):

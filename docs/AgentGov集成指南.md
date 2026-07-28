@@ -25,7 +25,7 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 
 - **部署形态**：Docker 容器对外提供 HTTP API，供 Web UI、业务系统、Agent 平台控制面调用。**Base URL 由部署方提供**：外部 / 同主机默认 `http://<host>:58080`（宿主暴露端口 `HOST_PORT`；默认遵循 `50000 + 容器端口`；本机调试常见 `http://localhost:58080`），同 Docker 网络内的服务用 `http://claude-agent-api:8080`；容器内 app 端口是 `8080`，生产可能在反向代理 / TLS 之后。
 - **认证**：所有 `/api/*` 与 `/v1/*` 走 `Authorization: Bearer <API_KEY>`。`API_KEY` 为空表示不鉴权（仅限可信内网）；配置后缺失/错误 token 返回 `401`。
-- **错误语义**：`400/422` 入参非法；`401` 未鉴权；`403` 权限拒绝；`404` 资源不存在；`409` 状态冲突（如重复创建、并发发布）；`413/415` 可编辑配置文件大小或编码不符合要求；`500` 服务端/数据完整性异常；`503` 运行时、模型或配置的出口 Agent 暂不可用。路由主动抛出的 HTTP / 领域错误统一返回 `{detail, error_code}`，领域错误可能带额外诊断字段；FastAPI 请求体验证失败的 `422` 仍可能是标准 validation error 形态。失败即报错，不静默降级为 offline/raw 结果。
+- **错误语义**：`400/422` 入参非法；`401` 未鉴权；`403` 权限拒绝；`404` 资源不存在；`409` 状态冲突（如重复创建、并发发布）；`413/415` payload 大小或编码不符合要求；`500` 服务端/数据完整性异常；`501` 当前宿主平台不支持请求的原生 Runtime 捕获；`503` 运行时、模型或配置的出口 Agent 暂不可用。路由主动抛出的 HTTP / 领域错误统一返回 `{detail, error_code}`，领域错误可能带额外诊断字段；FastAPI 请求体验证失败的 `422` 仍可能是标准 validation error 形态。失败即报错，不静默降级为 offline/raw 结果。
 - **离线不变量**：底座不依赖公网远程服务；模型经 `MODEL_PROVIDER_BACKEND` 显式选择的本地/内网网关接入。集成方不应假设任何公网回调。
 - **契约真相源**：以容器 `/openapi.json`、`/docs` 为准；前端/客户端类型应由 OpenAPI 生成，不要绕过 OpenAPI 自造 schema（见 §6）。OpenAPI `info.version` 即 AgentGov 的发布版本（与 git release tag、docker 镜像 tag 同源于仓库根 `VERSION`），可据此判断对接的是哪个 release。
 
@@ -103,7 +103,32 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - Claude Code 可能因缓存或模型条件不生成建议，缺失不表示本轮失败。客户端收到后应只提供“填入输入框”动作，不自动发起下一轮请求。
 - Suggestion 是临时 UI 辅助，不属于 Prompt 治理资产，也不进入正式会话消息、SQLite run、response retrieve 或 SDK transcript；刷新后无需恢复。
 
-#### 4.2.2 流式 Web HITL 人工确认卡
+#### 4.2.2 Runtime 原始事件调试 — OpenAPI tag `debug`
+
+- `POST /api/debug/agent-runtime/raw-events` 是 Runtime 中立的特权诊断入口，`agent_id` 必填；
+  body 中 `stream=false` 缓冲响应，`stream=true` 流式刷新。两种模式消费同一个原始字节源。
+- 该调用仍是正常 managed Agent turn：业务 Agent profile、SessionStore、session lease、
+  权限/HITL、hooks、MCP、Langfuse 和 run 持久化均不绕过。响应体只改变对外投影方式。
+- Claude Code driver 使用透明 CLI tee，在 `claude-agent-sdk` 解码/解析之前复制 stdout。
+  响应为 `application/octet-stream`，不包含 SSE 信封、AgentGov heartbeat/done/error，
+  不做 JSON parse、重序列化、脱敏或未知事件过滤。HTTP chunk 只代表传输切片；集成方必须按序
+  拼接字节，不能把 chunk 当事件。
+- `X-AgentGov-Run-Id`、`X-AgentGov-Session-Id`、`X-AgentGov-Agent-Id`、
+  `X-AgentGov-Runtime-Kind`、`X-AgentGov-Execution-Origin`、
+  `X-AgentGov-Native-Protocol`、`X-AgentGov-Runtime-Version` 与
+  `X-AgentGov-Raw-Fidelity` 是 backend-owned 来源证明，请求 payload/metadata 不能覆盖。
+- 安全边界：原始流可能携带完整 prompt、tool I/O、控制帧和 transcript mirror，不能在
+  byte-exact 前提下脱敏。接口默认关闭；只有同时设置非空 `API_KEY` 和
+  `ENABLE_AGENT_RUNTIME_RAW_EVENTS=true` 才能启动为可用状态。单次上限由
+  `AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES` 控制，默认 64 MiB。
+- 当前实现的 Runtime kind 是 `claude-code`。Claude Code 后面的模型出口即使是 Qwen/Kimi，
+  Runtime kind 也不变；未来直接接 Qwen Code/Kimi CLI 时新增 driver 并继续使用同一路径。
+  此接口不是 Anthropic-compatible provider HTTP wire。
+- `/api/chat/stream?event_mode=raw` 和 `agentgov.debug.sdk_raw` 是历史的已解析 SDK 投影，
+  不是 byte-exact CLI stdout；业务对话/语义 Trace 继续使用它们或 `/v1/responses`，不要把
+  原始调试流直接渲染为业务时间线。
+
+#### 4.2.3 流式 Web HITL 人工确认卡
 
 `ENABLE_CLAUDE_WEB_HITL=true` 且目标业务 Agent 的 Claude Code 权限规则触发 `ask` 时，Web 人工确认通过 `/v1/responses` control mode 的流式 SSE 暴露。非流式 Responses 不承载在线确认卡。集成方必须把该 SSE 连接当成带暂停点的状态机，而不是普通文本流。
 
@@ -142,7 +167,7 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - 页面刷新或客户端丢失 `decision_token` 后，不应伪造决策；提示用户重新运行当前任务。
 - 用户断开 SSE 时，底座会取消当前 run 的等待请求；上层系统应把卡片标为已中断或失效。
 
-#### 4.2.3 Workspace 权限与 Agent 专属流程
+#### 4.2.4 Workspace 权限与 Agent 专属流程
 
 所有注册业务 Agent 使用同一套运行、会话和治理接口。平台不按 Agent ID 注入工具、权限或业务流程，也不为某个 Agent 建立专用授权分支。
 

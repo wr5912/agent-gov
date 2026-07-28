@@ -395,6 +395,23 @@
         "test_selectors": ["tests/test_claude*.py", "tests/test_model_provider*.py"]
       },
       {
+        "id": "runtime-raw-events",
+        "changed_paths": [
+          "app/routers/runtime_raw_events.py",
+          "app/runtime/runtime_raw_events.py",
+          "app/runtime/claude_cli*.py",
+          "app/runtime/claude_runtime_raw_events.py"
+        ],
+        "test_selectors": [
+          "tests/test_claude_cli_raw_capture.py",
+          "tests/test_health_endpoints.py",
+          "tests/test_runtime_raw_events.py",
+          "tests/test_openapi*.py",
+          "tests/test_settings.py",
+          "tests/test_repository_env_policy.py"
+        ]
+      },
+      {
         "id": "openai-contract",
         "changed_paths": ["app/runtime/openai_*.py", "app/routers/responses.py", "app/routers/conversations.py"],
         "test_selectors": ["tests/test_responses*.py", "tests/test_conversations*.py", "tests/test_openapi*.py"]
@@ -958,6 +975,34 @@
           ],
           "ui_scripts": [
             "verify:agent-workspace-settings"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "runtime_raw_event_debug_surface",
+      "description": "Runtime 中立的特权原始事件接口复用 managed Agent 生命周期，并对 Claude Code CLI stdout 做 byte-exact、无 SSE/JSON 重写的流式或缓冲透传。",
+      "scenarios": [
+        {
+          "id": "byte_exact_cli_tee_and_runtime_neutral_http_contract",
+          "description": "透明 CLI tee 的 version probe 不入捕获通道，未知 JSON、重复 key、非 JSON、控制字节和非 UTF-8 原样复制给 SDK 与 HTTP；公开路径不绑定 Claude，stream 两种模式同源，来源 header 后端所有，功能默认关闭且要求 API_KEY。",
+          "pytest": [
+            "tests/test_claude_cli_raw_capture.py::test_cli_tee_preserves_stdout_bytes_and_bypasses_version_probe",
+            "tests/test_runtime_raw_events.py::test_runtime_neutral_raw_endpoint_streams_and_buffers_exact_bytes",
+            "tests/test_runtime_raw_events.py::test_raw_endpoint_is_feature_gated_authenticated_and_agent_scoped",
+            "tests/test_runtime_raw_events.py::test_enabling_raw_endpoint_without_api_key_fails_application_startup",
+            "tests/test_runtime_raw_events.py::test_prepared_raw_events_collects_one_exact_source_and_enforces_limit",
+            "tests/test_runtime_raw_events.py::test_prepared_raw_events_returns_structured_error_before_first_byte",
+            "tests/test_runtime_raw_events.py::test_stream_closes_without_platform_frames_after_first_raw_byte_failure",
+            "tests/test_runtime_raw_events.py::test_stream_limit_cancels_blocked_managed_runtime",
+            "tests/test_runtime_raw_events.py::test_claude_backend_uses_execution_local_cli_override_and_managed_stream",
+            "tests/test_runtime_raw_events.py::test_claude_backend_reports_unsupported_host_before_starting_runtime",
+            "tests/test_claude_runtime_session_resume.py::test_build_options_applies_raw_cli_path_only_to_the_requested_execution",
+            "tests/test_settings.py::test_raw_events_are_disabled_by_default_and_require_api_auth_when_enabled",
+            "tests/test_openapi_export.py::test_openapi_documents_streaming_media_types",
+            "tests/test_repository_env_policy.py::test_official_env_examples_keep_privileged_raw_events_disabled",
+            "tests/test_repository_env_policy.py::test_api_compose_propagates_raw_event_security_settings",
+            "tests/test_documentation_contracts.py::test_runtime_raw_event_docs_distinguish_byte_stream_from_legacy_sdk_projection"
           ]
         }
       ]

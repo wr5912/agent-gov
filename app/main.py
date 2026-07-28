@@ -43,6 +43,7 @@ from app.routers.improvements import create_improvement_relations_router, create
 from app.routers.langfuse_traces import create_langfuse_traces_router
 from app.routers.openai import create_openai_router
 from app.routers.responses import create_responses_router
+from app.routers.runtime_raw_events import create_runtime_raw_events_router
 from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
@@ -50,13 +51,20 @@ from app.runtime.agent_job_types import AgentJobType
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.agent_profiles import agents_requiring_web_hitl, build_profiles, discover_business_agents
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.claude_runtime_raw_events import ClaudeRuntimeRawEventsBackend
 from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
+from app.runtime.runtime_raw_events import RAW_EVENT_RESPONSE_HEADER_NAMES
 from app.runtime.runtime_recovery import RUNTIME_RECOVERY_INTERVAL_SECONDS
 from app.runtime.session_store import LocalSessionStore
-from app.runtime.settings import get_settings, runtime_settings_log_message, validate_hitl_single_api_process
+from app.runtime.settings import (
+    get_settings,
+    runtime_settings_log_message,
+    validate_hitl_single_api_process,
+    validate_raw_events_security,
+)
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.asset_store import AssetStore
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
@@ -108,6 +116,7 @@ runtime = ClaudeRuntime(
     user_input_service=claude_user_input_service,
     runtime_env=runtime_env,
 )
+runtime_raw_events_backend = ClaudeRuntimeRawEventsBackend(runtime, settings)
 feedback_store.set_langfuse_trace_fetcher(runtime.fetch_langfuse_trace)
 agent_governance = AgentGovernanceService(
     feedback_store=feedback_store,
@@ -242,6 +251,7 @@ async def _refresh_runtime_dependency_snapshot() -> None:
 async def lifespan(_: FastAPI):
     logger.info(runtime_settings_log_message(settings))
     validate_hitl_single_api_process(settings)
+    validate_raw_events_security(settings)
     cancelled = claude_user_input_service.cancel_orphan_waiting_requests(reason="service_restarted")
     if cancelled:
         logger.info("cancelled orphan Claude user-input requests: %s", len(cancelled))
@@ -315,6 +325,7 @@ app = FastAPI(
     openapi_tags=[
         {"name": "health", "description": "Service status and documentation discovery."},
         {"name": "chat", "description": "Claude Agent task execution endpoints."},
+        {"name": "debug", "description": "Privileged Runtime diagnostics disabled by default."},
         {"name": "catalog", "description": "Discover configured subagents and skills."},
         {"name": "agents", "description": "List registered business agents (governance objects)."},
         {"name": "improvements", "description": "Improvement items: the event-level governance work unit (四阶段改进治理)."},
@@ -384,6 +395,7 @@ app.add_middleware(
         "X-Agent-Commit-SHA",
         "X-Workspace-Package-SHA256",
         "X-Workspace-Tree-SHA256",
+        *RAW_EVENT_RESPONSE_HEADER_NAMES,
     ],
 )
 
@@ -407,6 +419,14 @@ app.include_router(
 app.include_router(
     create_chat_router(
         runtime=runtime,
+        settings=settings,
+        agent_registry_store=agent_registry_store,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_runtime_raw_events_router(
+        backend=runtime_raw_events_backend,
         settings=settings,
         agent_registry_store=agent_registry_store,
         require_api_key=require_api_key,

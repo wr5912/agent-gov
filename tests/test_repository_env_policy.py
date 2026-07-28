@@ -349,6 +349,23 @@ def test_official_env_examples_explicitly_enable_backend_prompt_suggestions() ->
         assert {key: values.get(key) for key in expected} == expected
 
 
+def test_official_env_examples_keep_privileged_raw_events_disabled() -> None:
+    expected = {
+        "ENABLE_AGENT_RUNTIME_RAW_EVENTS": "false",
+        "AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES": "67108864",
+    }
+    for env_file in ("docker/.env.example", "docker/.env.local-debug.example"):
+        values = {}
+        for line in (REPO_ROOT / env_file).read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            values[key] = value
+
+        assert {key: values.get(key) for key in expected} == expected
+
+
 def test_official_env_examples_do_not_define_claude_config_takeover_keys() -> None:
     forbidden = {
         "CLAUDE_MCP_CONFIG_PATH=",
@@ -504,6 +521,14 @@ def test_litellm_sidecar_does_not_receive_full_runtime_env_file() -> None:
     assert "ports" not in sidecar
     assert "LANGFUSE_SECRET_KEY" not in sidecar_text
     assert "\n      API_KEY:" not in sidecar_text
+
+
+def test_api_compose_propagates_raw_event_security_settings() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
+    environment = compose["services"]["claude-agent-api"]["environment"]
+
+    assert "ENABLE_AGENT_RUNTIME_RAW_EVENTS" in environment
+    assert "AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES" in environment
 
 
 def test_litellm_sidecar_keeps_provider_and_proxy_credentials_separate(tmp_path: Path) -> None:

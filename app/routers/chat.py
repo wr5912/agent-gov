@@ -53,7 +53,10 @@ def create_chat_router(
         req: ChatRequest,
         event_mode: Literal["raw", "semantic"] = Query(
             default="raw",
-            description="raw preserves the legacy SDK-message stream; semantic adds complete trace_event facts and suppresses transport noise.",
+            description=(
+                "raw preserves the legacy AgentGov SSE projection of parsed SDK messages; it is not byte-exact Runtime stdout. "
+                "semantic adds complete trace_event facts and suppresses transport noise."
+            ),
         ),
     ) -> StreamingResponse:
         _require_agent_id(req)

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 from importlib.metadata import PackageNotFoundError, version
-from importlib.util import find_spec
-from pathlib import Path
 from threading import Lock
 
 from fastapi import APIRouter, FastAPI, Response, status
 
+from app.runtime.claude_cli import bundled_claude_cli_path, command_version
 from app.runtime.model_provider import ModelProviderRouter
 from app.runtime.schemas import (
     RuntimeDependencyVersions,
@@ -172,25 +170,4 @@ def refresh_runtime_dependency_versions() -> RuntimeDependencyVersions:
 
 
 def bundled_claude_code_cli_version() -> str | None:
-    spec = find_spec("claude_agent_sdk")
-    if spec is None or spec.origin is None:
-        return None
-    bundled = Path(spec.origin).resolve().parent / "_bundled" / "claude"
-    if not bundled.exists():
-        return None
-    return command_version(str(bundled))
-
-
-def command_version(command: str | None) -> str | None:
-    if not command:
-        return None
-    try:
-        output = subprocess.check_output(
-            [command, "--version"],
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=5,
-        )
-    except Exception:
-        return None
-    return output.strip() or None
+    return command_version(bundled_claude_cli_path())

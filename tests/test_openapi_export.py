@@ -114,6 +114,7 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/agent-change-sets/{change_set_id}/publish",
         "/api/agent-releases/{release_id}/restore",
         "/api/claude-user-input-requests/{request_id}/decision",
+        "/api/debug/agent-runtime/raw-events",
         "/v1/agentgov/confirmation-requests/{request_id}/decision",
         "/v1/chat/completions",
         "/v1/responses",
@@ -234,6 +235,29 @@ def test_openapi_documents_streaming_media_types():
     responses_content = schema["paths"]["/v1/responses"]["post"]["responses"]["200"]["content"]
     assert {"application/json", "text/event-stream"} <= set(responses_content)
     assert responses_content["application/json"]["schema"] == {"$ref": "#/components/schemas/ResponseObject"}
+
+    raw_operation = schema["paths"]["/api/debug/agent-runtime/raw-events"]["post"]
+    raw_success = raw_operation["responses"]["200"]
+    assert raw_success["content"] == {
+        "application/octet-stream": {
+            "schema": {
+                "type": "string",
+                "format": "binary",
+                "description": "Unparsed native Runtime stdout bytes.",
+            }
+        }
+    }
+    assert {
+        "X-AgentGov-Run-Id",
+        "X-AgentGov-Session-Id",
+        "X-AgentGov-Agent-Id",
+        "X-AgentGov-Runtime-Kind",
+        "X-AgentGov-Execution-Origin",
+        "X-AgentGov-Native-Protocol",
+        "X-AgentGov-Runtime-Version",
+        "X-AgentGov-Raw-Fidelity",
+    } == set(raw_success["headers"])
+    assert {"401", "403", "404", "409", "413", "422", "501", "503"} <= set(raw_operation["responses"])
 
 
 def test_openapi_documents_ownerless_session_conflicts() -> None:

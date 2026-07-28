@@ -5,6 +5,8 @@ from http import HTTPStatus
 
 from fastapi import FastAPI
 
+from app.runtime.runtime_raw_events import RAW_EVENT_RESPONSE_HEADER_DESCRIPTIONS
+
 OpenApiObject = dict[str, object]
 OpenApiMapping = Mapping[str, object]
 OpenApiMutableMapping = MutableMapping[str, object]
@@ -15,6 +17,7 @@ DOMAIN_ERROR_COMPONENT = "DomainErrorResponse"
 VALIDATION_ERROR_COMPONENT = "HTTPValidationError"
 SECURITY_SCHEME_NAME = "HTTPBearer"
 CHAT_STREAM_PATH = "/api/chat/stream"
+RAW_EVENTS_PATH = "/api/debug/agent-runtime/raw-events"
 RESPONSES_PATH = "/v1/responses"
 
 _HTTP_ERROR_SCHEMA: OpenApiObject = {
@@ -51,6 +54,7 @@ _ERROR_DESCRIPTIONS = {
     415: "Requested editable payload uses an unsupported media or text encoding.",
     422: "Request validation error or route-level semantic validation error.",
     500: "AgentGov data integrity error returned through the HTTP error envelope.",
+    501: "The host platform cannot provide byte-exact native Runtime capture.",
     503: "Configured runtime or model/agent target is temporarily unavailable.",
 }
 
@@ -149,6 +153,8 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
         return {404}
     if path == CHAT_STREAM_PATH or path == "/api/chat":
         return {400, 404, 422, 503}
+    if path == RAW_EVENTS_PATH:
+        return {403, 404, 409, 413, 422, 501, 503}
     if path == "/v1/chat/completions":
         return {400, 404, 422, 503}
     if path == RESPONSES_PATH:
@@ -182,7 +188,7 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
 
 
 def _can_return_runtime_unavailable(path: str) -> bool:
-    if path in {"/api/chat", CHAT_STREAM_PATH, "/v1/chat/completions", RESPONSES_PATH}:
+    if path in {"/api/chat", CHAT_STREAM_PATH, RAW_EVENTS_PATH, "/v1/chat/completions", RESPONSES_PATH}:
         return True
     if any(path.startswith(prefix) for prefix in _RUNTIME_OR_RELEASE_PREFIXES):
         return any(part in path for part in _RUNTIME_OR_RELEASE_PATH_PARTS)
@@ -217,6 +223,25 @@ def _fix_streaming_success_response(path: str, operation: OpenApiMutableMapping)
     if path == CHAT_STREAM_PATH:
         success["description"] = "Server-sent event stream."
         success["content"] = {"text/event-stream": _sse_media_type("Claude Agent SSE events")}
+        return
+    if path == RAW_EVENTS_PATH:
+        success["description"] = "Byte-exact native Runtime stdout. stream=false buffers the body; stream=true flushes the same byte sequence incrementally."
+        success["content"] = {
+            "application/octet-stream": {
+                "schema": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Unparsed native Runtime stdout bytes.",
+                }
+            }
+        }
+        success["headers"] = {
+            name: {
+                "description": description,
+                "schema": {"type": "string"},
+            }
+            for name, description in RAW_EVENT_RESPONSE_HEADER_DESCRIPTIONS.items()
+        }
         return
     if path == RESPONSES_PATH:
         success["description"] = "JSON response when stream=false; server-sent events when stream=true."

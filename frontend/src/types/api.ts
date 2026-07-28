@@ -919,6 +919,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/debug/agent-runtime/raw-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a managed Agent and return byte-exact native Runtime events
+         * @description Starts a normal managed Agent turn, but returns the selected Runtime's native stdout bytes without JSON parsing, re-serialization, SSE framing, redaction, or AgentGov control events. HTTP chunk boundaries are not native event boundaries; concatenate response bytes for the exact stream. This privileged debug surface is disabled by default and requires API_KEY when enabled.
+         */
+        post: operations["runtime_raw_events_api_debug_agent_runtime_raw_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/evidence-packages/{evidence_package_id}": {
         parameters: {
             query?: never;
@@ -5173,6 +5193,66 @@ export interface components {
              */
             status: "ok";
         };
+        /**
+         * RuntimeRawEventsRequest
+         * @example {
+         *       "agent_id": "security-operations-expert",
+         *       "message": "请输出本轮 Runtime 原生事件",
+         *       "stream": true
+         *     }
+         */
+        RuntimeRawEventsRequest: {
+            /**
+             * Agent Id
+             * @description Registered business agent to run. The Runtime implementation is selected by the server.
+             */
+            agent_id: string;
+            /**
+             * Alert Id
+             * @description Optional SOC alert id used by the feedback loop.
+             */
+            alert_id?: string | null;
+            /**
+             * Case Id
+             * @description Optional SOC case id used by the feedback loop.
+             */
+            case_id?: string | null;
+            /**
+             * Max Turns
+             * @description Per-request turn cap. Defaults to MAX_TURNS.
+             */
+            max_turns?: number | null;
+            /**
+             * Message
+             * @description User message or task prompt.
+             */
+            message: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Model
+             * @description Per-request model override. Defaults to AGENT_MODEL.
+             */
+            model?: string | null;
+            /**
+             * Session Id
+             * @description Client-visible session id. If omitted, the API creates one.
+             */
+            session_id?: string | null;
+            /**
+             * Stream
+             * @description When true, flush raw Runtime stdout bytes as they arrive; otherwise buffer the same bytes into one response.
+             * @default false
+             */
+            stream: boolean;
+            /**
+             * System Append
+             * @description Extra instruction appended to the Claude Code preset prompt.
+             */
+            system_append?: string | null;
+        };
         /** RuntimeReadinessResponse */
         RuntimeReadinessResponse: {
             model_provider: components["schemas"]["ModelProviderReadiness"];
@@ -8790,7 +8870,7 @@ export interface operations {
     chat_stream_api_chat_stream_post: {
         parameters: {
             query?: {
-                /** @description raw preserves the legacy SDK-message stream; semantic adds complete trace_event facts and suppresses transport noise. */
+                /** @description raw preserves the legacy AgentGov SSE projection of parsed SDK messages; it is not byte-exact Runtime stdout. semantic adds complete trace_event facts and suppresses transport noise. */
                 event_mode?: "raw" | "semantic";
             };
             header?: never;
@@ -9013,6 +9093,118 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    runtime_raw_events_api_debug_agent_runtime_raw_events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeRawEventsRequest"];
+            };
+        };
+        responses: {
+            /** @description Byte-exact native Runtime stdout. stream=false buffers the body; stream=true flushes the same byte sequence incrementally. */
+            200: {
+                headers: {
+                    /** @description Backend-resolved registered business Agent id. */
+                    "X-AgentGov-Agent-Id"?: string;
+                    /** @description Execution origin; managed means the normal AgentGov lifecycle ran. */
+                    "X-AgentGov-Execution-Origin"?: string;
+                    /** @description Native stdout protocol carried by the response body. */
+                    "X-AgentGov-Native-Protocol"?: string;
+                    /** @description Raw fidelity guarantee; byte-exact means no decode or re-serialization occurred. */
+                    "X-AgentGov-Raw-Fidelity"?: string;
+                    /** @description Backend-owned managed run id. */
+                    "X-AgentGov-Run-Id"?: string;
+                    /** @description Native Runtime implementation that produced the body. */
+                    "X-AgentGov-Runtime-Kind"?: string;
+                    /** @description Native Runtime executable version, or unknown when unavailable. */
+                    "X-AgentGov-Runtime-Version"?: string;
+                    /** @description Backend-owned AgentGov session id. */
+                    "X-AgentGov-Session-Id"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Authenticated client is not allowed to access the requested resource. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Requested editable payload is too large. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description The host platform cannot provide byte-exact native Runtime capture. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Configured runtime or model/agent target is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
         };

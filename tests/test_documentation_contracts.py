@@ -34,6 +34,22 @@ def test_readme_api_index_uses_current_improvement_and_agent_routes():
         assert route in readme
 
 
+def test_runtime_raw_event_docs_distinguish_byte_stream_from_legacy_sdk_projection():
+    readme = _read_repo_text("README.md")
+    guide = _read_repo_text("docs/AgentGov集成指南.md")
+
+    for text in (readme, guide):
+        assert "/api/debug/agent-runtime/raw-events" in text
+        assert "ENABLE_AGENT_RUNTIME_RAW_EVENTS" in text
+        assert "AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES" in text
+        assert "application/octet-stream" in text
+        assert "byte-exact" in text
+        assert "event_mode=raw" in text
+        assert "不是 Anthropic-compatible provider HTTP wire" in text
+    assert "这里的 `raw` 是历史命名，不是 Claude Code CLI stdout" in readme
+    assert "`agentgov.debug.sdk_raw` 是历史的已解析 SDK 投影" in guide
+
+
 def test_openapi_exposes_current_improvement_trace_routes_and_hides_legacy_optimization_chain():
     paths = set(build_openapi_schema()["paths"])
 

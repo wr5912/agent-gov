@@ -388,12 +388,46 @@ curl -N -X POST "$API_BASE/api/chat/stream" \
   -d '{"message":"你好，先介绍你的能力", "agent_id":"your-business-agent"}'
 ```
 
-该兼容入口默认 `event_mode=raw`，继续输出旧 SDK message 快照。需要保留文本流式输出、同时把运行
+该兼容入口默认 `event_mode=raw`，继续输出旧的 **AgentGov SSE + 已解析 SDK message 快照**；
+这里的 `raw` 是历史命名，不是 Claude Code CLI stdout，也不保证字节级保真。需要保留文本流式输出、同时把运行
 证据收敛为完整语义事件时，使用
 `POST /api/chat/stream?event_mode=semantic`：文本 delta/snapshot 仍输出，完整 SDK 消息改为
 `event: trace_event`；`SystemMessage:thinking_tokens` 计数帧不进入 Trace，完整 ThinkingBlock、
 全部工具调用/结果、hooks、tasks、ResultMessage 和 subagent 归属仍保留。运行结束或页面刷新后，
 使用 `GET /api/agent-runs/{run_id}/trace` 从已持久化 AgentRun 重放同一 Trace。
+
+需要直接调试 Runtime 原生协议时，使用独立的 Runtime 中立接口：
+
+```bash
+curl --no-buffer -X POST "$API_BASE/api/debug/agent-runtime/raw-events" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{
+    "message": "执行一次原生 Runtime 调试",
+    "agent_id": "your-business-agent",
+    "stream": true
+  }'
+```
+
+`POST /api/debug/agent-runtime/raw-events` 仍启动一个正常的 managed Agent turn，复用相同的
+Agent profile、SessionStore、session lease、权限/HITL、hooks、MCP、Langfuse 和 run 持久化；
+区别只在响应边界。Claude Code 首期实现通过一次性私有 CLI tee，在
+`claude-agent-sdk` 解析 stdout **之前**复制字节，因此响应体是
+`application/octet-stream` 承载的 `cli-stream-json-stdout` 原始字节：不 decode、不 JSON parse/重序列化、不加 SSE
+`event/data` 信封，也不混入 AgentGov heartbeat/done/error。HTTP chunk 边界不等于原生事件边界，
+客户端应按顺序拼接全部响应字节。`stream=false`（默认）缓冲同一字节源并返回确定的
+`Content-Length`；`stream=true` 边到边刷新。来源和保真度通过
+`X-AgentGov-Run-Id`、`X-AgentGov-Session-Id`、`X-AgentGov-Agent-Id`、
+`X-AgentGov-Runtime-Kind`、`X-AgentGov-Native-Protocol` 和
+`X-AgentGov-Raw-Fidelity` 等 backend-owned header 返回，请求 metadata 不能覆盖。
+
+该接口可能包含完整 prompt、tool input/output、控制帧、transcript mirror 以及未来未知事件，
+无法在保持 byte-exact 的同时脱敏。因此默认 `ENABLE_AGENT_RUNTIME_RAW_EVENTS=false`；开启时
+必须同时配置非空 `API_KEY`，否则 API 启动失败。单次响应上限由
+`AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES` 控制，默认 64 MiB。当前 driver 是 Claude Code；
+即使其模型出口接到 Qwen/Kimi，`X-AgentGov-Runtime-Kind` 仍是 `claude-code`。未来直接接入
+Qwen Code/Kimi CLI 时复用同一路径并新增 driver，不能把模型 provider 名冒充 Runtime。
+该响应也不是 Anthropic-compatible provider HTTP wire body。
 
 流式业务对话会尽力生成下一轮建议（每轮**至多 N 条**候选，默认 3，由 `BACKEND_PROMPT_SUGGESTION_COUNT` 配置；模型给不满就少给，不凑数）。`AppSettings` 默认关闭后端派生这一受控特例，官方 `docker/.env.example` 与 `docker/.env.local-debug.example` 通过 `ENABLE_BACKEND_PROMPT_SUGGESTION=true` 显式开启；关闭时回退 Claude Code 原生 `--prompt-suggestions`，但该路径可能受上游 feature gate 或 cache 状态抑制。启动日志的 `prompt_suggestion_source` 会显示当前使用 `backend` 还是 `claude_native`。原生 `/api/chat/stream` 以 `event: prompt_suggestion` 输出 `{suggestion, suggestions, run_id, session_id}`；canonical `/v1/responses` 仅在 control 模式以 `event: agentgov.prompt_suggestion` 输出统一信封，`payload` 为 `{suggestion, suggestions, session_id}`，strict 模式不输出 AgentGov 扩展事件。`suggestions` 是完整候选列表；`suggestion` 恒等于 `suggestions[0]`，为向后兼容保留，只读它的客户端无需改动。整批候选在**一帧**内下发。建议生成失败或模型明确返回空时不影响正式回答，也不进入消息历史、SQLite run、response retrieve 或 SDK transcript；失败会记录不含异常正文的结构化 warning。
 

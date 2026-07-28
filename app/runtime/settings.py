@@ -73,6 +73,8 @@ class RuntimeSettingsLogFields(TypedDict):
     prompt_suggestion_source: Literal["backend", "claude_native"]
     claude_web_hitl_enabled: bool
     hitl_timeout_seconds: int
+    agent_runtime_raw_events_enabled: bool
+    agent_runtime_raw_events_max_bytes: int
     api_host: str
     api_port: int
     workspace_dir: str
@@ -215,6 +217,13 @@ class AppSettings(BaseSettings):
     # 仅流式 Playground/Responses 请求使用；非流式调用仍由 runtime 显式关闭，避免把
     # StreamEvent 写入会话事实、反馈证据或治理任务输入。
     include_partial_messages: bool = Field(default=True, alias="INCLUDE_PARTIAL_MESSAGES")
+    enable_agent_runtime_raw_events: bool = Field(default=False, alias="ENABLE_AGENT_RUNTIME_RAW_EVENTS")
+    agent_runtime_raw_events_max_bytes: int = Field(
+        default=67_108_864,
+        ge=1,
+        le=1_073_741_824,
+        alias="AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES",
+    )
     max_turns: int = Field(default=16, alias="MAX_TURNS")
     max_budget_usd: Optional[float] = Field(default=None, alias="MAX_BUDGET_USD")
     max_buffer_size: Optional[int] = Field(default=None, alias="MAX_BUFFER_SIZE")
@@ -411,6 +420,8 @@ def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFiel
         "prompt_suggestion_source": ("backend" if settings.enable_backend_prompt_suggestion else "claude_native"),
         "claude_web_hitl_enabled": settings.enable_claude_web_hitl,
         "hitl_timeout_seconds": settings.hitl_timeout_seconds,
+        "agent_runtime_raw_events_enabled": settings.enable_agent_runtime_raw_events,
+        "agent_runtime_raw_events_max_bytes": settings.agent_runtime_raw_events_max_bytes,
         "api_host": settings.api_host,
         "api_port": settings.api_port,
         "workspace_dir": settings.workspace_dir.as_posix(),
@@ -439,3 +450,8 @@ def validate_hitl_single_api_process(settings: AppSettings, env: Mapping[str, st
             raise RuntimeError(f"{key} must be an integer when ENABLE_CLAUDE_WEB_HITL=true") from exc
         if count > 1:
             raise RuntimeError(f"ENABLE_CLAUDE_WEB_HITL=true requires a single API process; {key}={count} would break pending HITL decisions")
+
+
+def validate_raw_events_security(settings: AppSettings) -> None:
+    if settings.enable_agent_runtime_raw_events and not settings.api_key:
+        raise RuntimeError("ENABLE_AGENT_RUNTIME_RAW_EVENTS=true requires a non-empty API_KEY")

@@ -8,7 +8,7 @@ from urllib.error import URLError
 from app.routers import core
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.core import create_core_router
-from app.runtime import model_provider
+from app.runtime import claude_cli, model_provider
 from app.runtime.model_provider import VLLM_VERSION_PROBE_FAILED, ModelProviderRouter
 from app.runtime.schemas import RuntimeDependencyVersions
 from app.runtime.settings import AppSettings
@@ -57,14 +57,14 @@ def _vllm_router() -> ModelProviderRouter:
 
 
 def test_command_version_without_command_is_deterministic() -> None:
-    assert core.command_version(None) is None
+    assert claude_cli.command_version(None) is None
 
 
 def test_health_views_have_no_provider_or_subprocess_side_effects(monkeypatch) -> None:
     router = _vllm_router()
     client = _health_app(monkeypatch, router)
     monkeypatch.setattr(model_provider, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network")))
-    monkeypatch.setattr(core.subprocess, "check_output", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("subprocess")))
+    monkeypatch.setattr(claude_cli.subprocess, "check_output", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("subprocess")))
 
     live = client.get("/health/live")
     ready = client.get("/health/ready")

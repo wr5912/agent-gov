@@ -516,6 +516,40 @@ def test_build_options_does_not_reuse_api_session_id_after_resume_is_cleared(tmp
     assert second_options.include_partial_messages is False
 
 
+def test_build_options_applies_raw_cli_path_only_to_the_requested_execution(tmp_path):
+    settings = _settings(tmp_path)
+    store = LocalSessionStore(settings.session_dir)
+    runtime = _runtime(settings, store)
+    session = store.get_or_create_owned(str(uuid.uuid4()), agent_id=DEFAULT_BUSINESS_AGENT_ID)
+    profile = build_business_agent_profile(
+        settings,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        workspace_dir=settings.default_workspace_dir,
+    )
+    wrapper_path = tmp_path / "private-raw-wrapper"
+
+    regular = runtime._build_options(
+        ChatRequest(message="regular"),
+        session,
+        profile=profile,
+    )
+    raw = runtime._build_options(
+        ChatRequest(message="raw"),
+        session,
+        profile=profile,
+        cli_path_override=wrapper_path,
+    )
+    regular_again = runtime._build_options(
+        ChatRequest(message="regular again"),
+        session,
+        profile=profile,
+    )
+
+    assert regular.cli_path == settings.claude_cli_path
+    assert raw.cli_path == wrapper_path
+    assert regular_again.cli_path == settings.claude_cli_path
+
+
 def test_run_retries_once_when_saved_sdk_session_is_missing(tmp_path, monkeypatch):
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 

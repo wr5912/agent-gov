@@ -40,6 +40,9 @@ def create_runtime_raw_events_router(
             "Starts a normal managed Agent turn, but returns the selected Runtime's native stdout bytes "
             "without JSON parsing, re-serialization, SSE framing, redaction, or AgentGov control events. "
             "HTTP chunk boundaries are not native event boundaries; concatenate response bytes for the exact stream. "
+            "Profile and admission failures before headers use HTTP errors, including 400 for a non-runnable Agent. "
+            "After streaming headers are sent, a late Runtime failure terminates the byte stream and cannot be "
+            "reframed as an AgentGov JSON/SSE terminal event. "
             "This privileged debug surface is disabled by default and requires API_KEY when enabled."
         ),
     )

@@ -35,6 +35,22 @@ from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
 ConversationItemRunContexts: TypeAlias = dict[str, AgentGovConversationItemExtension]
 
+_CREATE_DESCRIPTION = (
+    "Creates an AgentGov session mapping and returns its conv_<session_id> projection. Unknown request fields "
+    "are rejected; metadata is observational and backend-reserved keys are removed."
+)
+_LIST_DESCRIPTION = "Lists conversation projections derived from AgentGov SDK session mappings; no parallel message store is created."
+_RETRIEVE_DESCRIPTION = "Retrieves one conv_<session_id> projection. Returns 404 when the underlying AgentGov session does not exist."
+_DELETE_DESCRIPTION = (
+    "Deletes the underlying AgentGov session mapping. An active turn is protected and returns 409; deletion does "
+    "not invent a separate Conversations persistence layer."
+)
+_ITEMS_DESCRIPTION = (
+    "Projects messages from the owning Agent's committed Claude SDK transcript. Ownership is resolved from the "
+    "persisted session; missing owners or an active/migrating transcript return explicit errors rather than "
+    "falling back to another Agent."
+)
+
 
 def _conversation(session: LocalSession) -> Conversation:
     return Conversation(
@@ -188,7 +204,12 @@ def create_conversations_router(
 
     router = APIRouter(prefix="/v1", tags=["openai-conversations"], dependencies=[Depends(require_api_key)])
 
-    @router.post("/conversations", response_model=Conversation, summary="Create a conversation")
+    @router.post(
+        "/conversations",
+        response_model=Conversation,
+        summary="Create a conversation",
+        description=_CREATE_DESCRIPTION,
+    )
     async def create_conversation(req: Optional[ConversationCreateRequest] = None) -> Conversation:
         metadata = public_metadata(req.metadata) if req else {}
         return _conversation(session_store.create(metadata=metadata))
@@ -197,6 +218,7 @@ def create_conversations_router(
         "/conversations",
         response_model=ConversationList,
         summary="List conversations (AgentGov extension for the session sidebar)",
+        description=_LIST_DESCRIPTION,
     )
     async def list_conversations() -> ConversationList:
         return ConversationList(data=[_conversation(session) for session in session_store.list()])
@@ -205,6 +227,7 @@ def create_conversations_router(
         "/conversations/{conversation_id}",
         response_model=Conversation,
         summary="Retrieve a conversation",
+        description=_RETRIEVE_DESCRIPTION,
     )
     async def get_conversation(conversation_id: str) -> Conversation:
         session_id = session_id_from_conversation(conversation_id)
@@ -217,6 +240,7 @@ def create_conversations_router(
         "/conversations/{conversation_id}",
         response_model=ConversationDeleted,
         summary="Delete a conversation mapping",
+        description=_DELETE_DESCRIPTION,
     )
     async def delete_conversation(conversation_id: str) -> ConversationDeleted:
         session_id = session_id_from_conversation(conversation_id)
@@ -227,6 +251,7 @@ def create_conversations_router(
         "/conversations/{conversation_id}/items",
         response_model=ConversationItemList,
         summary="List conversation items (projected from the SDK transcript; cursor-style after/limit/order/include)",
+        description=_ITEMS_DESCRIPTION,
     )
     async def list_conversation_items(
         conversation_id: str,

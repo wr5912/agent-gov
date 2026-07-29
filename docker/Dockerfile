@@ -66,6 +66,7 @@ COPY docker/vendor/A2UI /app/vendor/A2UI
 RUN set -eux; \
     uv pip install --system --no-cache \
         --index-url https://mirrors.aliyun.com/pypi/simple/ \
+        --constraints /app/requirements.txt \
         -r /app/docker/a2ui-requirements.txt \
         /app/vendor/A2UI/agent_sdks/python; \
     LITELLM_LOCAL_MODEL_COST_MAP=True python -c "import importlib; [importlib.import_module(name) for name in ('a2a', 'google.adk', 'google.genai', 'litellm', 'jsonschema', 'dotenv', 'click', 'a2ui')]"

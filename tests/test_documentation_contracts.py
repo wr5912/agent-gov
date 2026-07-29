@@ -63,6 +63,34 @@ def test_docs_separate_playground_sdk_native_from_chat_and_responses_projection(
     assert "不继承或包装 Responses projector" in adr
 
 
+def test_public_integration_docs_expose_transitional_responses_and_single_hitl_surface():
+    readme = _read_repo_text("README.md")
+    guide = _read_repo_text("docs/AgentGov集成指南.md")
+    adr = _read_repo_text("docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md")
+    skill = _read_repo_text("integrations/agentgov-integration/SKILL.md")
+
+    for text in (readme, guide, adr, skill):
+        assert "/api/agent-runtime/sdk-events" in text
+        assert "/v1/conversations" in text
+        assert "/v1/agentgov/confirmation-requests/{request_id}/decision" in text
+        assert "过渡" in text
+
+    for text in (readme, guide, adr):
+        assert "id=null" in text
+        assert "metadata" in text
+        assert "下一次确认的破坏性版本" in text
+
+    for stale_claim in ("≤16 对", "value≤512", "instructions 尽力回显"):
+        assert stale_claim not in adr
+    for stale_route in (
+        "POST /api/claude-user-input-requests/{request_id}/decision",
+        "/api/claude-hitl-requests",
+        "/api/test-datasets",
+        "/regression-runs",
+    ):
+        assert stale_route not in skill
+
+
 def test_openapi_exposes_current_improvement_trace_routes_and_hides_legacy_optimization_chain():
     paths = set(build_openapi_schema()["paths"])
 

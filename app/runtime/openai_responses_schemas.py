@@ -1,4 +1,4 @@
-"""OpenAI Responses-first 契约模型（AgentGov canonical Chat 接口）。
+"""OpenAI Responses-first 过渡契约模型。
 
 严格按 ``docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md``：
 
@@ -6,10 +6,11 @@
   ``conversation`` / ``previous_response_id`` / ``metadata``）+ 顶层 ``agentgov`` 强类型扩展。
 - ``agentgov`` 是唯一承载「OpenAI 标准字段无法表达的控制面」的地方（业务 Agent 选择、
   turn cap、raw 调试）；``extra="forbid"`` 堵未知字段。
-- ``metadata`` 只放后端不解释、原样回显的观测标签；``alert_id``/``case_id`` 是 backend-owned
-  路由输入，走 ``agentgov``（不寄生 opaque metadata）。
+- ``metadata`` 接受后端不路由的任意 JSON 对象；公开投影移除 backend-reserved keys。
+  ``alert_id``/``case_id`` 是 backend-owned 路由输入，走 ``agentgov``。
 
 本模块只放 pydantic 契约；请求→ChatRequest 映射与响应投影在 ``openai_responses_adapter.py``。
+当前 stream/non-stream/retrieve 的已知投影偏差由 OpenAPI operation 扩展声明。
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.runtime.json_types import JsonObject
+from app.runtime.schemas import NON_BLANK_TEXT_PATTERN
 
 
 class AgentGovDebug(BaseModel):
@@ -32,9 +34,11 @@ class AgentGovRequestExtension(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    agent_id: Optional[str] = Field(
-        default=None,
-        description="Business agent to run. Required in control mode; missing -> 422 (no silent main).",
+    agent_id: str = Field(
+        ...,
+        min_length=1,
+        pattern=NON_BLANK_TEXT_PATTERN,
+        description="Business agent to run in control mode. Must contain at least one non-whitespace character.",
     )
     alert_id: Optional[str] = Field(default=None, description="Feedback-loop routing input (backend-owned).")
     case_id: Optional[str] = Field(default=None, description="Feedback-loop routing input (backend-owned).")
@@ -54,7 +58,7 @@ class ResponsesInputText(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["input_text"] = "input_text"
-    text: str = Field(min_length=1)
+    text: str = Field(min_length=1, pattern=NON_BLANK_TEXT_PATTERN)
 
     @field_validator("text")
     @classmethod
@@ -69,7 +73,7 @@ class ResponsesInputMessage(BaseModel):
 
     type: Literal["message"] = "message"
     role: Literal["developer", "system", "user", "assistant"]
-    content: str | Annotated[list[ResponsesInputText], Field(min_length=1)]
+    content: Annotated[str, Field(min_length=1, pattern=NON_BLANK_TEXT_PATTERN)] | Annotated[list[ResponsesInputText], Field(min_length=1)]
 
     @field_validator("content")
     @classmethod
@@ -87,10 +91,48 @@ class ResponsesInputMessage(BaseModel):
 class ResponsesRequest(BaseModel):
     """``POST /v1/responses`` 请求。无 ``agentgov`` = strict 模式；有 = control 模式。"""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "oneOf": [
+                {
+                    "title": "Strict Responses request",
+                    "properties": {
+                        "agentgov": {"type": "null"},
+                        "instructions": {"type": "null"},
+                    },
+                },
+                {
+                    "title": "AgentGov control Responses request",
+                    "required": ["agentgov"],
+                    "properties": {
+                        "agentgov": {
+                            "type": "object",
+                            "required": ["agent_id"],
+                        },
+                    },
+                },
+            ],
+            "allOf": [
+                {
+                    "if": {
+                        "required": ["agentgov"],
+                        "properties": {
+                            "agentgov": {
+                                "type": "object",
+                                "required": ["with_speech_summary"],
+                                "properties": {"with_speech_summary": {"const": True}},
+                            }
+                        },
+                    },
+                    "then": {"properties": {"stream": {"const": True}}},
+                }
+            ],
+        },
+    )
 
     model: Optional[str] = Field(default=None, description="Per-request LLM override only; never an agent handle.")
-    input: str | Annotated[list[ResponsesInputMessage], Field(min_length=1)] = Field(
+    input: Annotated[str, Field(min_length=1, pattern=NON_BLANK_TEXT_PATTERN)] | Annotated[list[ResponsesInputMessage], Field(min_length=1)] = Field(
         ...,
         description="Non-empty prompt string, or typed text message items containing a current user message.",
     )
@@ -111,7 +153,10 @@ class ResponsesRequest(BaseModel):
     )
     metadata: JsonObject = Field(
         default_factory=dict,
-        description="Flat observability tags only (source/client_run_label); backend does not route on these.",
+        description=(
+            "AgentGov transitional metadata object. Values may be nested JSON; backend-reserved keys are removed "
+            "before public echo and the backend does not route on remaining entries."
+        ),
     )
     agentgov: Optional[AgentGovRequestExtension] = Field(default=None, description="Presence selects control mode; carries the non-standard control plane.")
 
@@ -204,7 +249,12 @@ class ResponseObject(BaseModel):
 
 
 class ConversationCreateRequest(BaseModel):
-    metadata: JsonObject = Field(default_factory=dict, description="Flat observability tags (backend does not route on these).")
+    model_config = ConfigDict(extra="forbid")
+
+    metadata: JsonObject = Field(
+        default_factory=dict,
+        description="Observability metadata; backend-reserved keys are removed and the backend does not route on remaining entries.",
+    )
 
 
 class AgentGovConversationExtension(BaseModel):

@@ -894,27 +894,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Claude SDK HITL requests for Playground Web confirmation */
+        /**
+         * List Claude SDK HITL requests for Playground Web confirmation
+         * @description Lists HITL requests visible to the authenticated Playground client. A waiting request includes its one-time decision_token only when queried by the exact run_id with status=waiting; broad queries never return the token. Bearer API-key authentication is always required.
+         */
         get: operations["list_requests_api_claude_user_input_requests_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/claude-user-input-requests/{request_id}/decision": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Resolve one active Claude SDK HITL request */
-        post: operations["decide_api_claude_user_input_requests__request_id__decision_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -952,7 +938,7 @@ export interface paths {
         put?: never;
         /**
          * Run a managed Agent and return byte-exact native Runtime events
-         * @description Starts a normal managed Agent turn, but returns the selected Runtime's native stdout bytes without JSON parsing, re-serialization, SSE framing, redaction, or AgentGov control events. HTTP chunk boundaries are not native event boundaries; concatenate response bytes for the exact stream. This privileged debug surface is disabled by default and requires API_KEY when enabled.
+         * @description Starts a normal managed Agent turn, but returns the selected Runtime's native stdout bytes without JSON parsing, re-serialization, SSE framing, redaction, or AgentGov control events. HTTP chunk boundaries are not native event boundaries; concatenate response bytes for the exact stream. Profile and admission failures before headers use HTTP errors, including 400 for a non-runnable Agent. After streaming headers are sent, a late Runtime failure terminates the byte stream and cannot be reframed as an AgentGov JSON/SSE terminal event. This privileged debug surface is disabled by default and requires API_KEY when enabled.
          */
         post: operations["runtime_raw_events_api_debug_agent_runtime_raw_events_post"];
         delete?: never;
@@ -1674,7 +1660,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List API session mappings */
+        /**
+         * List API session mappings
+         * @deprecated
+         * @description Deprecated compatibility view of AgentGov sessions. Migrate to GET /v1/conversations.
+         */
         get: operations["list_sessions_api_sessions_get"];
         put?: never;
         post?: never;
@@ -1694,7 +1684,11 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete one API session mapping */
+        /**
+         * Delete one API session mapping
+         * @deprecated
+         * @description Deprecated session deletion surface. Migrate to DELETE /v1/conversations/{conversation_id}; an active turn returns 409.
+         */
         delete: operations["delete_session_api_sessions__session_id__delete"];
         options?: never;
         head?: never;
@@ -1708,7 +1702,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read a session's conversation history (projected from the SDK session transcript) */
+        /**
+         * Read a session's conversation history (projected from the SDK session transcript)
+         * @deprecated
+         * @description Deprecated offset-based history projection. Migrate to GET /v1/conversations/{conversation_id}/items. The owning Agent is resolved from persisted session facts; ambiguous ownership returns 409.
+         */
         get: operations["get_session_messages_api_sessions__session_id__messages_get"];
         put?: never;
         post?: never;
@@ -1849,7 +1847,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Resolve one active HITL confirmation (canonical; authz = request_id + decision_token) */
+        /**
+         * Resolve one active HITL confirmation
+         * @description Requires Bearer API-key authentication plus the request-specific one-time decision_token. The request_id selects the pending confirmation; the token authorizes that single decision and is not a substitute for endpoint authentication. Replays or an invalid token return a conflict.
+         */
         post: operations["decide_v1_agentgov_confirmation_requests__request_id__decision_post"];
         delete?: never;
         options?: never;
@@ -1867,9 +1868,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run a non-streaming OpenAI-compatible chat completion
+         * Run the deprecated minimal text-only chat-completion shim
          * @deprecated
-         * @description Maps OpenAI-style messages into one Claude Agent prompt. OpenAI requests carry no agent_id; the target agent is operator-configured via /api/settings/openai-compat-agent (defaults to the main agent).
+         * @description Maps string chat messages into one non-streaming Claude Agent task. This is not full OpenAI Chat Completions compatibility: stream=true, tools, multimodal content, and streaming chunks are unsupported. Requests carry no agent_id; the target is operator-configured via /api/settings/openai-compat-agent, falling back to the platform default business Agent when unset.
          */
         post: operations["openai_chat_completions_v1_chat_completions_post"];
         delete?: never;
@@ -1885,10 +1886,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List conversations (AgentGov extension for the session sidebar) */
+        /**
+         * List conversations (AgentGov extension for the session sidebar)
+         * @description Lists conversation projections derived from AgentGov SDK session mappings; no parallel message store is created.
+         */
         get: operations["list_conversations_v1_conversations_get"];
         put?: never;
-        /** Create a conversation */
+        /**
+         * Create a conversation
+         * @description Creates an AgentGov session mapping and returns its conv_<session_id> projection. Unknown request fields are rejected; metadata is observational and backend-reserved keys are removed.
+         */
         post: operations["create_conversation_v1_conversations_post"];
         delete?: never;
         options?: never;
@@ -1903,11 +1910,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Retrieve a conversation */
+        /**
+         * Retrieve a conversation
+         * @description Retrieves one conv_<session_id> projection. Returns 404 when the underlying AgentGov session does not exist.
+         */
         get: operations["get_conversation_v1_conversations__conversation_id__get"];
         put?: never;
         post?: never;
-        /** Delete a conversation mapping */
+        /**
+         * Delete a conversation mapping
+         * @description Deletes the underlying AgentGov session mapping. An active turn is protected and returns 409; deletion does not invent a separate Conversations persistence layer.
+         */
         delete: operations["delete_conversation_v1_conversations__conversation_id__delete"];
         options?: never;
         head?: never;
@@ -1921,7 +1934,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List conversation items (projected from the SDK transcript; cursor-style after/limit/order/include) */
+        /**
+         * List conversation items (projected from the SDK transcript; cursor-style after/limit/order/include)
+         * @description Projects messages from the owning Agent's committed Claude SDK transcript. Ownership is resolved from the persisted session; missing owners or an active/migrating transcript return explicit errors rather than falling back to another Agent.
+         */
         get: operations["list_conversation_items_v1_conversations__conversation_id__items_get"];
         put?: never;
         post?: never;
@@ -2385,9 +2401,9 @@ export interface components {
         AgentGovRequestExtension: {
             /**
              * Agent Id
-             * @description Business agent to run. Required in control mode; missing -> 422 (no silent main).
+             * @description Business agent to run in control mode. Must contain at least one non-whitespace character.
              */
-            agent_id?: string | null;
+            agent_id: string;
             /**
              * Alert Id
              * @description Feedback-loop routing input (backend-owned).
@@ -2949,6 +2965,61 @@ export interface components {
             status: string;
             /** Workspace Dir */
             workspace_dir: string;
+        };
+        /**
+         * AgentTargetedChatRequest
+         * @description Public native Chat request that always names the business Agent.
+         * @example {
+         *       "agent_id": "security-operations-expert",
+         *       "max_turns": 8,
+         *       "message": "请说明当前 workspace 中有哪些 subagents 和 skills"
+         *     }
+         */
+        AgentTargetedChatRequest: {
+            /**
+             * Agent Id
+             * @description Registered business agent to run. Must contain at least one non-whitespace character.
+             */
+            agent_id: string;
+            /**
+             * Alert Id
+             * @description Optional SOC alert id used by the feedback loop.
+             */
+            alert_id?: string | null;
+            /**
+             * Case Id
+             * @description Optional SOC case id used by the feedback loop.
+             */
+            case_id?: string | null;
+            /**
+             * Max Turns
+             * @description Per-request turn cap. Defaults to MAX_TURNS.
+             */
+            max_turns?: number | null;
+            /**
+             * Message
+             * @description User message or task prompt. Must contain at least one non-whitespace character.
+             */
+            message: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Model
+             * @description Per-request model override. Defaults to AGENT_MODEL.
+             */
+            model?: string | null;
+            /**
+             * Session Id
+             * @description Client-visible session id. If omitted, the API creates one.
+             */
+            session_id?: string | null;
+            /**
+             * System Append
+             * @description Extra instruction appended to the Claude Code preset prompt.
+             */
+            system_append?: string | null;
         };
         /** AgentTestAssetSummaryResponse */
         AgentTestAssetSummaryResponse: {
@@ -3546,60 +3617,6 @@ export interface components {
              */
             summary: string;
         };
-        /**
-         * ChatRequest
-         * @example {
-         *       "agent_id": "security-operations-expert",
-         *       "max_turns": 8,
-         *       "message": "请说明当前 workspace 中有哪些 subagents 和 skills"
-         *     }
-         */
-        ChatRequest: {
-            /**
-             * Agent Id
-             * @description Registered business agent to run. Required by /api/chat and /api/chat/stream; requests without it are rejected with 422.
-             */
-            agent_id?: string | null;
-            /**
-             * Alert Id
-             * @description Optional SOC alert id used by the feedback loop.
-             */
-            alert_id?: string | null;
-            /**
-             * Case Id
-             * @description Optional SOC case id used by the feedback loop.
-             */
-            case_id?: string | null;
-            /**
-             * Max Turns
-             * @description Per-request turn cap. Defaults to MAX_TURNS.
-             */
-            max_turns?: number | null;
-            /**
-             * Message
-             * @description User message or task prompt.
-             */
-            message: string;
-            /** Metadata */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /**
-             * Model
-             * @description Per-request model override. Defaults to AGENT_MODEL.
-             */
-            model?: string | null;
-            /**
-             * Session Id
-             * @description Client-visible session id. If omitted, the API creates one.
-             */
-            session_id?: string | null;
-            /**
-             * System Append
-             * @description Extra instruction appended to the Claude Code preset prompt.
-             */
-            system_append?: string | null;
-        };
         /** ChatResponse */
         ChatResponse: {
             /** Agent Activity */
@@ -3650,9 +3667,9 @@ export interface components {
         ChatStreamRequest: {
             /**
              * Agent Id
-             * @description Registered business agent to run. Required by /api/chat and /api/chat/stream; requests without it are rejected with 422.
+             * @description Registered business agent to run. Must contain at least one non-whitespace character.
              */
-            agent_id?: string | null;
+            agent_id: string;
             /**
              * Alert Id
              * @description Optional SOC alert id used by the feedback loop.
@@ -3670,7 +3687,7 @@ export interface components {
             max_turns?: number | null;
             /**
              * Message
-             * @description User message or task prompt.
+             * @description User message or task prompt. Must contain at least one non-whitespace character.
              */
             message: string;
             /** Metadata */
@@ -3711,9 +3728,9 @@ export interface components {
         ClaudeSdkEventsRequest: {
             /**
              * Agent Id
-             * @description Registered business agent to run. Required by /api/chat and /api/chat/stream; requests without it are rejected with 422.
+             * @description Registered business agent to run. Must contain at least one non-whitespace character.
              */
-            agent_id?: string | null;
+            agent_id: string;
             /**
              * Alert Id
              * @description Optional SOC alert id used by the feedback loop.
@@ -3731,7 +3748,7 @@ export interface components {
             max_turns?: number | null;
             /**
              * Message
-             * @description User message or task prompt.
+             * @description User message or task prompt. Must contain at least one non-whitespace character.
              */
             message: string;
             /** Metadata */
@@ -3948,7 +3965,7 @@ export interface components {
         ConversationCreateRequest: {
             /**
              * Metadata
-             * @description Flat observability tags (backend does not route on these).
+             * @description Observability metadata; backend-reserved keys are removed and the backend does not route on remaining entries.
              */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -4974,10 +4991,11 @@ export interface components {
             model?: string | null;
             /**
              * Stream
-             * @description This compatibility endpoint is non-streaming; true is rejected with 422.
+             * @description This minimal compatibility endpoint is non-streaming; only false is accepted.
              * @default false
+             * @constant
              */
-            stream: boolean;
+            stream: false;
         };
         /** OpenAIChatCompletionResponse */
         OpenAIChatCompletionResponse: {
@@ -5355,7 +5373,7 @@ export interface components {
          * ResponsesRequest
          * @description ``POST /v1/responses`` 请求。无 ``agentgov`` = strict 模式；有 = control 模式。
          */
-        ResponsesRequest: {
+        ResponsesRequest: ({
             /** @description Presence selects control mode; carries the non-standard control plane. */
             agentgov?: components["schemas"]["AgentGovRequestExtension"] | null;
             /**
@@ -5375,7 +5393,7 @@ export interface components {
             instructions?: string | null;
             /**
              * Metadata
-             * @description Flat observability tags only (source/client_run_label); backend does not route on these.
+             * @description AgentGov transitional metadata object. Values may be nested JSON; backend-reserved keys are removed before public echo and the backend does not route on remaining entries.
              */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -5401,7 +5419,12 @@ export interface components {
              * @default false
              */
             stream: boolean;
-        };
+        } & unknown) & ({
+            agentgov?: null;
+            instructions?: null;
+        } | {
+            agentgov: Record<string, never>;
+        });
         /** RuntimeDependencyVersions */
         RuntimeDependencyVersions: {
             /** Bundled Claude Code Cli */
@@ -5539,7 +5562,7 @@ export interface components {
             max_turns?: number | null;
             /**
              * Message
-             * @description User message or task prompt.
+             * @description User message or task prompt. Must contain at least one non-whitespace character.
              */
             message: string;
             /** Metadata */
@@ -6496,13 +6519,6 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description Successful Response */
             202: {
                 headers: {
@@ -8426,13 +8442,6 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Successful Response */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -8672,13 +8681,6 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Successful Response */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -8736,13 +8738,6 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description Successful Response */
             204: {
                 headers: {
@@ -9026,13 +9021,6 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Successful Response */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -9144,13 +9132,6 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Successful Response */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -9215,7 +9196,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ChatRequest"];
+                "application/json": components["schemas"]["AgentTargetedChatRequest"];
             };
         };
         responses: {
@@ -9248,6 +9229,15 @@ export interface operations {
             };
             /** @description Requested AgentGov resource was not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9391,68 +9381,6 @@ export interface operations {
             };
         };
     };
-    decide_api_claude_user_input_requests__request_id__decision_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                request_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClaudeUserInputDecisionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClaudeUserInputDecisionResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
     config_mapping_api_config_get: {
         parameters: {
             query?: {
@@ -9541,6 +9469,15 @@ export interface operations {
                 };
                 content: {
                     "application/octet-stream": string;
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
             /** @description Invalid or missing Bearer API key. */
@@ -10387,13 +10324,6 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Successful Response */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -10500,13 +10430,6 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description Successful Response */
             204: {
                 headers: {
@@ -10643,13 +10566,6 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description Successful Response */
             201: {
                 headers: {
@@ -11323,13 +11239,6 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description Successful Response */
             201: {
                 headers: {
@@ -12432,13 +12341,6 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Successful Response */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -12713,6 +12615,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
             /** @description Request validation error or route-level semantic validation error. */
@@ -13465,6 +13376,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
             /** @description Request validation error or route-level semantic validation error. */

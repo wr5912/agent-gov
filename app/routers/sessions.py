@@ -52,6 +52,8 @@ def create_sessions_router(
         "/sessions",
         response_model=list[SessionInfo],
         summary="List API session mappings",
+        description="Deprecated compatibility view of AgentGov sessions. Migrate to GET /v1/conversations.",
+        deprecated=True,
     )
     async def list_sessions() -> list[SessionInfo]:
         return [SessionInfo(**session.__dict__) for session in session_store.list()]
@@ -60,6 +62,11 @@ def create_sessions_router(
         "/sessions/{session_id}/messages",
         response_model=SessionMessagesResponse,
         summary="Read a session's conversation history (projected from the SDK session transcript)",
+        description=(
+            "Deprecated offset-based history projection. Migrate to GET /v1/conversations/{conversation_id}/items. "
+            "The owning Agent is resolved from persisted session facts; ambiguous ownership returns 409."
+        ),
+        deprecated=True,
     )
     async def get_session_messages(
         session_id: str,
@@ -93,6 +100,8 @@ def create_sessions_router(
         "/sessions/{session_id}",
         response_model=SessionDeleteResponse,
         summary="Delete one API session mapping",
+        description=("Deprecated session deletion surface. Migrate to DELETE /v1/conversations/{conversation_id}; an active turn returns 409."),
+        deprecated=True,
     )
     async def delete_session(session_id: str) -> SessionDeleteResponse:
         deleted = session_store.delete(session_id)

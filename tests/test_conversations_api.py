@@ -100,6 +100,19 @@ def test_create_strips_reserved_metadata(monkeypatch, tmp_path: Path) -> None:
     assert body["metadata"] == {"source": "s"}
 
 
+def test_create_rejects_unknown_agent_selection_and_extra_fields(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        response = client.post(
+            "/v1/conversations",
+            json={"agent_id": "not-a-conversation-field", "unexpected": True},
+        )
+
+    assert response.status_code == 422
+    locations = {tuple(error["loc"]) for error in response.json()["detail"]}
+    assert {("body", "agent_id"), ("body", "unexpected")} <= locations
+
+
 def test_single_api_key_authorizes_all_conversation_operations(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path, api_key="general-secret")
     general_headers = {"Authorization": "Bearer general-secret"}

@@ -4,7 +4,7 @@
 
 ## agentgov-integration/
 
-面向用 Claude Code / Codex 或其他开发 Agent 开发的上层业务系统：把 `agentgov-integration/SKILL.md` 复制到你们项目的 `.claude/skills/agentgov-integration/SKILL.md`（或 Codex 对应 `.codex/skills/...`），集成方的开发 Agent 即可掌握集成 AgentGov 的旅程、Web HITL 确认卡机制与硬边界。
+面向用 Claude Code / Codex 或其他开发 Agent 开发的上层业务系统：把 `agentgov-integration/SKILL.md` 复制到你们项目的 `.claude/skills/agentgov-integration/SKILL.md`（或 Codex 对应 `.codex/skills/...`），集成方的开发 Agent 即可掌握 SDK-native 运行事实源、过渡 Responses 边界、Conversations、唯一 Web HITL 决策路径与治理硬边界。
 
 ## 单一真相源
 

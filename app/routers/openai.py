@@ -35,8 +35,13 @@ def create_openai_router(
     @router.post(
         "/chat/completions",
         response_model=OpenAIChatCompletionResponse,
-        summary="Run a non-streaming OpenAI-compatible chat completion",
-        description="Maps OpenAI-style messages into one Claude Agent prompt. OpenAI requests carry no agent_id; the target agent is operator-configured via /api/settings/openai-compat-agent (defaults to the main agent).",
+        summary="Run the deprecated minimal text-only chat-completion shim",
+        description=(
+            "Maps string chat messages into one non-streaming Claude Agent task. This is not full OpenAI Chat "
+            "Completions compatibility: stream=true, tools, multimodal content, and streaming chunks are unsupported. "
+            "Requests carry no agent_id; the target is operator-configured via /api/settings/openai-compat-agent, "
+            "falling back to the platform default business Agent when unset."
+        ),
         deprecated=True,
     )
     async def openai_chat_completions(req: OpenAIChatCompletionRequest) -> OpenAIChatCompletionResponse | JSONResponse:
@@ -49,7 +54,7 @@ def create_openai_router(
             max_turns=req.max_turns,
             metadata=req.metadata,
         )
-        # /v1 出口 Agent 由运营者配置；未配置 -> main；配置了但已失效 -> fail-loud（不静默回 main）。
+        # /v1 出口 Agent 由运营者配置；未配置 -> 平台默认业务 Agent；配置失效 -> fail-loud。
         configured_agent_id = runtime_settings_store.get_openai_compat_agent_id()
         try:
             profile = resolve_business_profile(settings, agent_registry_store, configured_agent_id)

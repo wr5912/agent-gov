@@ -44,12 +44,14 @@ from app.runtime.openai_responses_tools import (
 )
 from app.runtime.schemas import ChatResponse
 from app.runtime.speech_summary import build_speech_summary_envelope
+from app.sse_contracts import RESPONSES_PATH, require_registered_sse_event
 
 HEARTBEAT_INTERVAL_S = 15
 _ENVELOPE_VERSION = 1
 
 
 def _sse(event_name: str, data: JsonObject, *, event_id: Optional[int] = None) -> str:
+    require_registered_sse_event(RESPONSES_PATH, event_name)
     lines: list[str] = []
     if event_id is not None:
         lines.append(f"id: {event_id}")

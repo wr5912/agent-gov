@@ -6,6 +6,8 @@ from pydantic.types import JsonValue
 from app.runtime.json_types import JsonObject
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 
+NON_BLANK_TEXT_PATTERN = r"[\s\S]*\S[\s\S]*"
+
 
 class ExtensibleResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -25,7 +27,12 @@ class ChatRequest(BaseModel):
         },
     )
 
-    message: str = Field(..., description="User message or task prompt.")
+    message: str = Field(
+        ...,
+        min_length=1,
+        pattern=NON_BLANK_TEXT_PATTERN,
+        description="User message or task prompt. Must contain at least one non-whitespace character.",
+    )
     session_id: Optional[str] = Field(default=None, description="Client-visible session id. If omitted, the API creates one.")
     alert_id: Optional[str] = Field(default=None, description="Optional SOC alert id used by the feedback loop.")
     case_id: Optional[str] = Field(default=None, description="Optional SOC case id used by the feedback loop.")
@@ -514,7 +521,7 @@ class OpenAIChatMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: Literal["developer", "system", "user", "assistant"]
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, pattern=NON_BLANK_TEXT_PATTERN)
 
     @field_validator("content")
     @classmethod
@@ -529,16 +536,12 @@ class OpenAIChatCompletionRequest(BaseModel):
 
     model: Optional[str] = Field(default=None, description="Model override. Defaults to AGENT_MODEL.")
     messages: list[OpenAIChatMessage] = Field(min_length=1, description="OpenAI-compatible text chat messages.")
-    stream: bool = Field(default=False, description="This compatibility endpoint is non-streaming; true is rejected with 422.")
+    stream: Literal[False] = Field(
+        default=False,
+        description="This minimal compatibility endpoint is non-streaming; only false is accepted.",
+    )
     max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Claude Agent turn cap for this request.")
     metadata: JsonObject = Field(default_factory=dict)
-
-    @field_validator("stream")
-    @classmethod
-    def _non_stream_only(cls, value: bool) -> bool:
-        if value:
-            raise ValueError("/v1/chat/completions does not support stream=true; use /v1/responses")
-        return value
 
 
 class OpenAIChatCompletionChoice(BaseModel):

@@ -484,11 +484,11 @@ def test_decision_api_rejects_allow_modified_and_updated_input_for_ordinary_requ
     base = {"decision_token": request["decision_token"]}
 
     allow_modified = client.post(
-        f"/api/claude-user-input-requests/{request['request_id']}/decision",
+        f"/v1/agentgov/confirmation-requests/{request['request_id']}/decision",
         json={**base, "action": "allow_modified"},
     )
     updated_input = client.post(
-        f"/api/claude-user-input-requests/{request['request_id']}/decision",
+        f"/v1/agentgov/confirmation-requests/{request['request_id']}/decision",
         json={**base, "action": "allow_once", "updated_input": {"command": "rm -rf /"}},
     )
 
@@ -514,15 +514,31 @@ def test_decision_api_rejects_unknown_request_and_wrong_token(tmp_path):
     request = asyncio.run(create_request())
     base = {"action": "allow_once", "decision_token": request["decision_token"]}
 
-    missing = client.post("/api/claude-user-input-requests/cur-missing/decision", json=base)
+    missing = client.post("/v1/agentgov/confirmation-requests/cur-missing/decision", json=base)
     wrong_token = client.post(
-        f"/api/claude-user-input-requests/{request['request_id']}/decision",
+        f"/v1/agentgov/confirmation-requests/{request['request_id']}/decision",
         json={**base, "decision_token": "wrong-token"},
     )
 
     assert missing.status_code == 404
     assert wrong_token.status_code == 409
     assert "token is invalid" in wrong_token.json()["detail"]
+
+
+def test_redundant_hitl_aliases_are_removed(tmp_path):
+    service = _service(tmp_path)
+    app = FastAPI()
+    app.include_router(
+        create_claude_user_input_router(
+            service=service,
+            require_api_key=lambda: None,
+        )
+    )
+    client = TestClient(app)
+
+    assert client.get("/api/claude-hitl-requests").status_code == 404
+    assert client.post("/api/claude-hitl-requests/cur-any/decision", json={}).status_code == 404
+    assert client.post("/api/claude-user-input-requests/cur-any/decision", json={}).status_code == 404
 
 
 def test_requested_carries_token_resolved_does_not(tmp_path):

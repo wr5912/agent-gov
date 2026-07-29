@@ -36,7 +36,7 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 ```
 
 - **Agent**：集成方编排的是**业务 Agent**（被治理的长期对象，经 `/api/agent-registry` 查询）。`security-operations-expert` 是当前唯一内置、默认且受保护的业务 Agent，这三个属性彼此独立；`main-agent` 只是普通历史示例。治理 Agent `governor` 治理所有业务 Agent，不对集成方暴露为可编排对象。
-- **conversation**：新集成使用 `conversation_id`（`conv_*`）作为对外会话标识，通过 `/v1/conversations` 创建、查询和恢复。Responses control 响应中的 `agentgov.session_id` 是 AgentGov 内部关联 ID，`sdk_session_id` 是更底层的 SDK resume id；两者都不应替代 `conversation_id` 作为新集成的会话 URL 参数。
+- **conversation**：新集成使用 `conversation_id`（`conv_*`）作为对外会话标识，通过 `/v1/conversations` 创建、查询和恢复。过渡 Responses control 响应中的 `agentgov.session_id` 是 AgentGov 内部关联 ID，`sdk_session_id` 是更底层的 SDK resume id；两者都不应替代 `conversation_id` 作为新集成的会话 URL 参数。
 - **run**：一次运行，带 `run_id`，是反馈与归因的归属锚点。
 - **会话正文**：权威源是 agent 自己的 SDK session transcript；底座按需投影，**不另存副本**。集成方也不应缓存一份并行会话存储（会双轨漂移）。
 - **所有权（重要）**：
@@ -51,11 +51,12 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - 目标：拿到要运行的业务 Agent。
 - 最短路径：`GET /api/agent-registry` 列出。创建普通业务 Agent 时，先准备包含单个顶层 `workspace/` 的 `.tar.gz`，再以 `multipart/form-data` 调用 `POST /api/agent-registry/{agent_id}/workspace/import`；新 ID 必须同时提供非空 `name`。平台不提供直接创建 API、模板列表或来源选择字段。`POST /api/agent-registry/{agent_id}/lifecycle` 切换生命周期；`GET /api/agents`、`GET /api/skills` 查能力目录。
 - 创建一致性：Workspace 包只有在安全解包、Workspace 落盘、Git 初始化并完成注册表 finalize 后才返回成功；内部 `provisioning` reservation 不会被 list/get/chat 看见。文件或 finalize 失败会补偿注册表并只清理本次创建的文件；路径穿越、symlink、特殊 tar 成员、重复冲突、`.git`、资源超限与已知 JSON 语法错误均 fail closed。reservation 使用 heartbeat 租约；重启恢复只处理已过期任务，不抢占仍在落盘的创建。
-- 边界：`security-operations-expert` 在空运行卷中由运行卷初始化源提供，无需在线创建。新集成通过 `/v1/responses` control mode 的 `agentgov.agent_id` 显式选择任一注册业务 Agent（含 `main-agent`）；缺失返回 `422`，未知或不可运行 Agent 返回对应领域错误。
+- 边界：`security-operations-expert` 在空运行卷中由运行卷初始化源提供，无需在线创建。SDK-native 请求通过顶层 `agent_id` 选择任一注册业务 Agent；过渡 `/v1/responses` control mode 通过 `agentgov.agent_id` 选择，缺失返回 `422`。未知或不可运行 Agent 返回对应领域错误。
 
-### 4.2 运行一次对话 — OpenAPI tag `openai-responses`
+### 4.2 运行一次对话 — OpenAPI tag `claude-sdk-events` / `openai-responses`
 - 目标：让 Agent 处理一条消息/任务。
-- 外部 OpenAI 风格集成主路径：`POST /v1/responses`。同一个 endpoint 通过 `stream` 统一非流式 JSON 与流式 SSE：
+- 受管运行事实源：`POST /api/agent-runtime/sdk-events`。第一方 Playground 已直接消费该入口；后续独立 OpenAI 适配服务也应从这条 SDK-native 流转换，避免把平台内的过渡 projector 当成长期协议核心。
+- 过渡 OpenAI 风格投影：`POST /v1/responses`。同一个 endpoint 通过 `stream` 选择非流式 JSON 或流式 SSE，但 operation 已以 `x-agentgov-contract-status: transitional` 标记，不能宣称是完整 OpenAI Responses drop-in replacement：
   - **control mode（AgentGov 集成首选）**：请求包含 `agentgov`，且 `agentgov.agent_id` 必填；可同时传标准字段 `conversation`，以及 `agentgov.alert_id`、`agentgov.case_id`、`agentgov.max_turns` 等 OpenAPI 已声明扩展字段。
   - **strict mode（标准 OpenAI 客户端）**：请求不含 `agentgov`，运行运营者配置的 OpenAI-compatible 出口 Agent；不下发 `agentgov.*` 私有 SSE 事件。由于 AgentGov 的 `instructions` 是 append-only 而非 OpenAI replace/swap 语义，strict mode 传 `instructions` 返回 `422`。
 - 最小 control 请求以 OpenAPI 为准，典型形态如下：
@@ -73,8 +74,9 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 ```
 
 - `stream=false` 返回 Responses 对象；权威文本位于 `output[].content[].text`，运行关联位于 `agentgov.run_id`、`agentgov.conversation_id`、`agentgov.session_id`、`agentgov.trace_id` 等扩展字段。默认 `store=true` 时可通过 `GET /v1/responses/{response_id}` 取回已完成响应；`store=false` 只关闭公开取回，不关闭内部治理审计。
-- `stream=true` 返回 Responses-style SSE：标准通道除 `response.created`、`response.output_text.delta`、`response.completed`、`response.failed` 外，还按 `response.output_item.*`、`response.content_part.*`、`response.reasoning_text.delta/done` 输出 reasoning 生命周期。control mode 另有 `agentgov.session`、`agentgov.tool_step`、`agentgov.tool_call.started`、`agentgov.tool_call.arguments.delta/done`、`agentgov.tool_call.result`、`agentgov.confirmation.*`、`agentgov.result`、`agentgov.error`、`agentgov.done`，以及显式开启后的 `agentgov.speech_summary`。这些工具事件只是服务端 agent loop 的执行观察，绝不输出标准 `function_call` 让客户端重复执行。显式传 `agentgov.include_trace=true` 时还会收到 `agentgov.trace_event`。`agentgov.session.payload` 在运行开始时下发 `run_id`、会话/版本关联以及可用的 `langfuse_trace_id`、`langfuse_trace_url`，因此即使后续运行失败、取消或没有 `agentgov.result`，客户端仍可保留本次 Trace 入口。heartbeat 使用 SSE comment 保活，不应写入业务时间线。所有 control 与派生事件均在标准终态前收口；`response.completed` 或 `response.failed` 恰好一次并始终是最后一个业务事件。
-- 流式、非流式与 retrieve 的 `output[]` 都使用同一稳定顺序和 ID：存在 ThinkingBlock 时先是 `reasoning`（`rs_<run_id>`），随后是 assistant `message`（`msg_<run_id>`）。
+- `stream=true` 返回 Responses-style SSE。完整事件名、payload schema、出现条件、phase 与 terminal 标记以该 operation 的 `x-agentgov-sse-events` 为准；服务端工具事件只用于观察已经由 agent loop 执行的工具，绝不要求客户端重复执行标准 `function_call`。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
+- 当前过渡偏差由 OpenAPI `x-agentgov-known-deviations` 机器声明：即时非流式的 `trace_id` 可能与 retrieve 不一致；`response.completed.response.metadata` 当前不会回显请求 metadata；session 前源异常可能产生 `response.created.response.id=null` 后再失败；流式 headers 可能早于 session turn admission。客户端必须把没有声明终态的 EOF 当作失败，不能从 HTTP `200` 推导运行成功。
+- 正常进入投影终态的流以 `response.completed` 或 `response.failed` 收口；在偏差修复前，不承诺流式完成对象、即时非流式响应与 retrieve 的所有字段完全同构。
 - 产品内置 Playground 是有意的例外：live turn 直接消费下节的 SDK-native 入口，不经 `/v1/responses` 或 `/api/chat/stream`；会话列表和历史恢复仍使用 `/v1/conversations*`。
 - 边界：工具权限、MCP、skills、subagents、hooks 和 sandbox 以业务 Agent workspace 的 Claude Code 项目配置为准；Runtime 只选择 project discovery，`can_use_tool` 只桥接原生 `ask`。旧 Chat 字段 `agent`、`skills`、`skills_mode`、`allowed_tools`、`disallowed_tools`、`permission_mode` 已删除，传入返回 `422`。续聊复用同一 `conversation_id`，或使用 `previous_response_id` 让底座解析其所属会话；两种方式都会校验所选业务 Agent 与既有会话 owner 一致，不允许把 Agent A 的 SDK transcript 交给 Agent B 续接。若 `previous_response_id` 对应 run 没有 `session_id`，或其 conversation mapping 已被删除，底座返回 `409`，不会把“续接”静默降级成新会话。
 
@@ -132,12 +134,14 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - 每个官方 `claude-agent-sdk` yield 原序输出一帧 `claude.sdk.<ClassName>`。`data` 是递归 dataclass → JSON 的机械序列化：不筛选、不改名、不合并、不调和快照，也没有 `str()` fallback。`StreamEvent.event`、ThinkingBlock signature、tool I/O、`SystemMessage:thinking_tokens` 和未来未知 SDK class 都保留。
 - AgentGov-owned 控制面使用 `agentgov.session`、`agentgov.confirmation.requested/resolved`、`agentgov.prompt_suggestion`、可选 `agentgov.speech_summary`、`agentgov.result/error/done`；heartbeat 使用 SSE comment。`agentgov.result` 只投影 SDK `ResultMessage` 已到达的进度事实，之后仍可能排空 transcript mirror 和派生任务；只有 `agentgov.done` 才表示 managed turn 已持久化并收尾，客户端不能把两者当作可互换终态。
 - 浏览器只把顶层 `text_delta` 放入回答；subagent text、thinking、工具 input delta/result 和未知消息进入运行证据。`thinking_tokens` 只显示为指标。block identity 使用 `parent_tool_use_id + message_start.message.id + index`，没有 message id 时才使用本地 message epoch，不能仅依赖每帧不同的 `StreamEvent.uuid`。
-- Prompt Suggestion 与 Speech Summary 都在终态前完成或有界排空；`agentgov.done` 是最后一个
-  业务事件。UI 收到后可解除“运行中”，并继续读到 EOF 以正常关闭连接，但不得期待迟到业务
+- 正常进入 managed 收口的流会在终态前完成或有界排空 Prompt Suggestion 与 Speech
+  Summary，并以 `agentgov.done` 作为最后一个业务事件。UI 收到后可解除“运行中”，并继续
+  读到 EOF 以正常关闭连接，但不得期待迟到业务
   事件。后续异步写入必须绑定本轮 assistant message id/run token，不能按“最后一条消息”
   写入。完成后的 Trace 只有 `completeness=complete` 才替换 live evidence；不可用或请求失败时
   保留原生 live evidence。
-- 该接口跟随仓库锁定的 SDK 版本，不是 UI schema，也不是 CLI stdout byte stream。若调用方需要 OpenAI 标准事件或长期外部兼容，应使用 `/v1/responses`。
+- 该接口跟随仓库锁定的 SDK 版本，不是 UI schema，也不是 CLI stdout byte stream。需要长期 OpenAI 兼容时，由独立适配服务消费该流并完成 Responses 转换；当前内置 `/v1/responses` 仅供过渡。
+- session turn admission 当前仍可能晚于 SSE headers。源在首个受管事件前失败时，HTTP 可能已是 `200` 且连接直接 EOF；只有收到 `agentgov.done` 才表示 managed turn 成功完成持久化和收尾。
 
 #### 4.2.3 Runtime 原始事件调试 — OpenAPI tag `debug`
 
@@ -172,15 +176,20 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 
 最短集成流程：
 
-1. `POST /v1/responses`，传 `stream=true` 和 `agentgov.agent_id`，保持 SSE 连接直到最后的
-   `response.completed` 或 `response.failed`；control 流中的 `agentgov.done` 会先于该标准
-   终态出现。
+1. 过渡期调用 `POST /v1/responses`，传 `stream=true` 和 `agentgov.agent_id`，保持 SSE
+   连接直到 `response.completed` 或 `response.failed`；若 EOF 前未收到二者，按流失败处理。
 2. 渲染标准 Responses 事件；control mode 同时处理 `agentgov.session`、`agentgov.tool_step`
    和可选的 `agentgov.prompt_suggestion`、`agentgov.speech_summary` 等事件。收到 SSE comment
    heartbeat 时只刷新连接存活时间。
 3. 收到 `agentgov.confirmation.requested` 时，从其 `payload` 读取 `request_id`、`decision_token`、请求类型、工具或问题信息并渲染内联确认卡；不要关闭原 SSE 连接。
 4. 用户决策后调用 `POST /v1/agentgov/confirmation-requests/{request_id}/decision`。请求体只使用 OpenAPI 的 `action`、`decision_token`、`answer`、`message`；不得回传 `run_id`、`session_id`、`business_agent_id`，也不得使用顶层 `answers`、`response`、`updated_input` 或 `allow_modified`。
 5. 继续读取原 SSE 流；收到 `agentgov.confirmation.resolved` 后更新同一张卡片，最终按标准 Responses 完成或失败事件收口。
+
+HITL 查询只保留 `GET /api/claude-user-input-requests`。只有按精确 `run_id` 且
+`status=waiting` 查询时才可能返回一次性 `decision_token`；宽泛列表不会返回 token。查询与
+decision 都要求 Bearer API key，`decision_token` 是 API key 之外的单请求授权因子。历史
+`/api/claude-hitl-requests*` 以及
+`POST /api/claude-user-input-requests/{request_id}/decision` 已删除，不得探测或回退使用。
 
 决策请求示例：
 
@@ -228,6 +237,7 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 - 最短路径：`POST /v1/conversations` 可预创建会话；`GET /v1/conversations` 列出会话；`GET /v1/conversations/{conversation_id}` 读取元数据；`DELETE /v1/conversations/{conversation_id}` 删除会话映射；`GET /v1/conversations/{conversation_id}/items` 从 SDK transcript 投影历史。
 - items 返回 `data[]`，每项包含 `id`、`role`、`parent_tool_use_id`、`content`；内容块保留 `thinking`、`text`、`tool_use`、`tool_result` 等 SDK 事实。若 transcript message UUID 能通过已提交的 SessionStore entry 确定性关联 `AgentRun`，该 item 还包含可选的 `agentgov` 扩展：`run_id`、`sdk_session_id`、`agent_version_id`、`langfuse_trace_id`、`langfuse_trace_url`。分页使用 cursor 风格 `after`、`limit`、`order`、`include`，不使用 offset。
 - 边界：只传 `conversation_id`，不传 `agent_id`；归属由底座解析。会话尚无 transcript 时 `data` 为空；读取未知会话或其 items 返回 `404`，删除未知映射返回 `deleted=false`。历史数据若 `agent_id` 为空但已经存在 `turns` 或 `sdk_session_id`，底座无法从该映射唯一证明 owner，会 fail-closed 返回 `409`；集成方应新建会话，不得指定 Agent 抢占，也不得依赖底座猜测或静默迁移。item 无 `agentgov` 表示旧 transcript 无法确定性关联 run；扩展存在但 Trace 字段为空表示该 run 未记录 Langfuse Trace。底座不按文本或时间猜测，也不伪造 Trace URL。会话正文继续来自 SDK transcript；失败、取消或中断 run 的气泡/状态可由 `GET /api/agent-runs?session_id=...` 补齐，Trace 一律按 `run_id` 调专用 Trace API，不能从 conversation content block 猜测。
+- 旧 `/api/sessions*` 已在 OpenAPI 标记 deprecated，只为存量 offset 客户端保留；完成消费者迁移后，将在下一次确认的破坏性版本中删除。
 
 ### 4.4 提交反馈并驱动闭环 — OpenAPI tag `feedback` / `improvements`
 - 目标：把用户/系统反馈喂回闭环，产出归因、优化、执行改动和回归测试设计。
@@ -274,10 +284,12 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 
 ## 5. 契约稳定性与版本
 
-- **新集成稳定主路径**：`POST /v1/responses`、`GET /v1/responses/{response_id}`、`/v1/conversations*`、`POST /v1/agentgov/confirmation-requests/{request_id}/decision`；反馈闭环、Agent 注册、版本治理等领域能力继续使用 OpenAPI 声明的 `/api/*` 资源接口。
-- **演进中**（接入需关注变更）：业务 Agent 多租与隔离、审批外移细化、改进治理工作台的用户主流程术语。
+- **受管运行事实源**：`POST /api/agent-runtime/sdk-events`；未来独立 OpenAI 适配服务从这里转换。客户端仍必须遵守“无 `agentgov.done` 的 EOF 即失败”的当前晚期错误边界。
+- **稳定资源路径**：`/v1/conversations*`、`GET /api/claude-user-input-requests`、`POST /v1/agentgov/confirmation-requests/{request_id}/decision`；反馈闭环、Agent 注册、版本治理等领域能力继续使用 OpenAPI 声明的 `/api/*` 资源接口。
+- **过渡契约**：`POST /v1/responses` 与 `GET /v1/responses/{response_id}`。消费者必须读取 OpenAPI 的 transitional 标记和已知偏差，不能据路径名推断完整 OpenAI 兼容。
+- **演进中**（接入需关注变更）：外置 OpenAI adapter、流式 admission 前置、Responses 三种投影一致性、业务 Agent 多租与隔离、审批外移细化。
 - OpenAPI 与生成类型是契约边界；底座变更公开 API 时会同步 OpenAPI 与迁移说明。集成方应以 OpenAPI 版本为对接基线，并对 `4xx/5xx` 做稳健处理。
-- `POST /v1/responses` 是单 endpoint 双响应媒体类型：`stream=false` 返回 `application/json` 的 Responses 对象；`stream=true` 返回 `text/event-stream` 的 Responses-style SSE。
+- `POST /v1/responses` 是过渡单 endpoint 双响应媒体类型：`stream=false` 返回 `application/json`；`stream=true` 返回 `text/event-stream`。
 - 运维验收应同时检查运行容器 `/openapi.json` 的 `info.version` 与仓库 `VERSION` / 镜像 tag 一致；版本不一致优先按部署镜像或容器未 recreate 的漂移处理。仓库内的真实 Compose 验收只使用公开 Make 入口；入口基于当前工作树重建本地镜像、加载 `COMPOSE_ENV_FILE` 选择的完整配置、`--force-recreate` 服务并校验本轮 freshness 后才执行检查，不会自动拉取远端代码。纯宿主机测试不需要刷新容器。
 
 ## 6. 集成反模式（请不要这么做）
@@ -296,12 +308,12 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 
 | 兼容接口 | 新集成替代路径 | 说明 |
 | --- | --- | --- |
-| `POST /api/chat` | `POST /v1/responses`，`stream=false` | 旧非流式 ChatRequest/ChatResponse 包装；不支持 Speech Summary。 |
-| `POST /api/chat/stream` | `POST /v1/responses`，`stream=true` | 默认 `event_mode=raw` 保旧 SSE；`?event_mode=semantic` 保文本流并输出 `trace_event`；两模式可显式开启 Speech Summary。 |
+| `POST /api/chat` | `POST /api/agent-runtime/sdk-events`，或过渡 `/v1/responses` | 旧非流式 ChatRequest/ChatResponse 包装；不支持 Speech Summary。 |
+| `POST /api/chat/stream` | `POST /api/agent-runtime/sdk-events` | 默认 `event_mode=raw` 保旧 SSE；`?event_mode=semantic` 保文本流并输出 `trace_event`；两模式可显式开启 Speech Summary。 |
 | `/api/sessions*` | `/v1/conversations*` | 旧 session/offset 历史读取契约。 |
-| `POST /v1/chat/completions` | `POST /v1/responses` strict mode | 仅面向既有 OpenAI Chat Completions 客户端；不支持 Speech Summary。 |
+| `POST /v1/chat/completions` | 规划中的外置 OpenAI adapter；过渡期可评估 `/v1/responses` strict mode | 仅支持字符串消息和非流式文本；`stream=true`、tools、multimodal 均不支持。 |
 
-兼容接口当前仍由 OpenAPI 或运行时提供，但新客户端不得以它们建立新的控制面依赖。迁移后使用 `conversation_id`、Responses 标准事件和 canonical HITL decision 路径；旧接口的删除需另行完成消费者确认与迁移公告。
+兼容接口当前仍由 OpenAPI 或运行时提供，但新客户端不得以它们建立新的控制面依赖。迁移后使用 `conversation_id`、SDK-native 受管事件和唯一 HITL decision 路径；旧 Chat 接口删除仍需消费者确认与迁移公告，旧 Sessions 则计划在完成迁移后的下一次确认破坏性版本中删除。
 
 ## 8. AI 辅助集成（可选）
 

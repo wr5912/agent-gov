@@ -41,7 +41,7 @@ type OpenApiAgentRepositoryStatusResponse = components["schemas"]["AgentReposito
 type OpenApiWorkspaceImportResponse = components["schemas"]["WorkspaceImportResponse"];
 type OpenApiWorkspaceRestoreRequest = components["schemas"]["WorkspaceRestoreRequest"];
 type OpenApiWorkspaceRestoreResponse = components["schemas"]["WorkspaceRestoreResponse"];
-type OpenApiChatRequest = components["schemas"]["ChatRequest"];
+type OpenApiClaudeSdkEventsRequest = components["schemas"]["ClaudeSdkEventsRequest"];
 type OpenApiClaudeUserInputDecisionRequest = components["schemas"]["ClaudeUserInputDecisionRequest"];
 type OpenApiClaudeUserInputDecisionResponse = components["schemas"]["ClaudeUserInputDecisionResponse"];
 type OpenApiClaudeUserInputRequestResponse = components["schemas"]["ClaudeUserInputRequestResponse"];
@@ -121,7 +121,7 @@ export type WorkspaceImportResponse = OpenApiWorkspaceImportResponse;
 export type WorkspaceRestoreRequest = OpenApiWorkspaceRestoreRequest;
 export type WorkspaceRestoreResponse = OpenApiWorkspaceRestoreResponse;
 
-export type ChatRequest = OpenApiChatRequest;
+export type ClaudeSdkEventsRequest = OpenApiClaudeSdkEventsRequest;
 
 export interface AgentActivity {
   tool_names: string[];

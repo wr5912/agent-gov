@@ -173,6 +173,7 @@ async function executeTurn(
       agent_id: options.selectedBusinessAgentId,
       max_turns: options.maxTurns,
       metadata: { client: "agent-gov-ui" },
+      with_speech_summary: false,
     },
     createStreamHandlers(options, refs, turn),
     turn.controller.signal,

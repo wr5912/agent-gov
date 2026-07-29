@@ -202,7 +202,7 @@ http://localhost:55173
 
 Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat`、`/api/chat/stream`、`/api/agent-runtime/sdk-events` 或 `/v1/responses` 受管运行都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；用户在“改进事项”中把反馈归并为事项后，按反馈整理、归因分析、优化执行、测试发布四个工作面板推进。治理 Agent 生成的归因、优化方案、执行记录和回归测试设计都写入事项级内容子资源，并保存 `generation_trace_id` / `generation_trace_url`。
 
-完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 导出临时 OpenAPI JSON。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
+完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 导出临时 OpenAPI JSON。OpenAPI 直接声明公共请求的 required/非空约束、条件分支、精确状态码、deprecated 标记以及各 SSE surface 的完整事件、payload schema、出现条件和终态；`scripts/audit_openapi_contract.py` 会深比较本地与运行态的完整 schema，而不只比较路径集合。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
 
 前端 OpenAPI 类型由运行时 schema 临时导出后生成，命令为：
 
@@ -211,6 +211,7 @@ pnpm --dir frontend generate:api-types
 ```
 
 - 业务 Agent 与 Workspace：`GET /api/agent-registry`、`POST /api/agent-registry/{agent_id}/workspace/export`、`POST /api/agent-registry/{agent_id}/workspace/import`、`POST /api/agent-registry/{agent_id}/workspace/restore`。Workspace 包导入是创建普通业务 Agent 的唯一入口；新 ID 必须提供 `name`，已有 ID 覆盖必须携带预期当前提交版本。两种导入都要求包根目录 `agent.yaml.agent.id` 有效，并与 URL 中的目标 ID 完全一致；缺失、无效或来源 ID 不一致会在任何 Workspace、注册表、Git 或会话变更前被明确拒绝。live Workspace 包可包含真实 endpoint 和私有运行配置，导出包应按敏感运行资产保管；导入、恢复和导出快照都绑定 per-Agent Git commit，并在下一 turn 生效。live Workspace 纳入仓库内置初始化源前必须在仓库外形成候选，并通过 `make runtime-bootstrap-scan` 准入检查。
+- 运行、会话与 HITL：受管运行事实源是 `POST /api/agent-runtime/sdk-events`；内置 `POST /v1/responses` 是带明确已知偏差的过渡 OpenAI 风格投影；会话使用 `/v1/conversations*`；HITL 查询使用 `GET /api/claude-user-input-requests`，决策只使用 `POST /v1/agentgov/confirmation-requests/{request_id}/decision`。旧 `/api/sessions*` 已 deprecated，计划在下一次确认的破坏性版本中删除。
 - 反馈采集与处置单：`GET /api/agent-runs`、`POST/GET /api/feedback-signals`、`GET /api/feedback-signals/{signal_id}`、`POST/GET /api/soc-events`、`GET /api/soc-events/{event_id}`、`GET /api/pending-correlations`、`POST /api/pending-correlations/{pending_id}/resolve`、`POST/GET /api/feedback-cases`、`GET /api/feedback-cases/{feedback_case_id}`。`AgentRunResponse` 会返回 `langfuse_trace_id` / `langfuse_trace_url`，用于运行证据面板定位具体 Langfuse Trace。
 - Agent job 历史：`GET /api/agent-jobs`、`GET /api/agent-jobs/{job_id}` 仅查询升级前保留的历史记录；没有创建、领取或重试队列入口。
 - 证据包与分析任务：`POST /api/feedback-cases/{feedback_case_id}/evidence-packages`、`GET /api/evidence-packages/{evidence_package_id}`、`GET /api/evidence-packages/{evidence_package_id}/files/{file_name}`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate`。
@@ -357,9 +358,10 @@ OTEL_LOG_RAW_API_BODIES=1
 ## 聊天 API（兼容入口）
 
 `POST /api/chat` 与 `POST /api/chat/stream` 当前继续可用，但已在 OpenAPI 标记
-`deprecated: true`，不再作为新集成入口，也没有在本阶段设置 sunset 日期。新集成使用
-`POST /v1/responses`；第一方 Playground live turn 使用
-`POST /api/agent-runtime/sdk-events`。
+`deprecated: true`，不再作为新集成入口，也没有日历 sunset 日期。第一方 Playground 与
+新的受管运行集成直接使用 `POST /api/agent-runtime/sdk-events`；内置
+`POST /v1/responses` 只作为过渡 OpenAI 风格投影，不能作为稳定、完整的 OpenAI Responses
+公开契约发布。后续独立适配服务将消费 SDK-native 事件并负责 OpenAI Responses 转换。
 
 ```bash
 export API_BASE=http://localhost:58080
@@ -433,10 +435,13 @@ session、HITL、result、error、done、Prompt Suggestion 与可选 Speech Summ
 `agentgov.*` 事件；
 heartbeat 是 SSE comment。SDK `ResultMessage` 只表示 SDK 终态，
 `agentgov.result` 只投影该进度事实；Runtime 随后仍会排空 SDK transcript mirror 和派生任务。
-只有 `agentgov.done` 才表示 managed turn 已完成持久化和收尾。
+只有收到 `agentgov.done` 才表示 managed turn 已完成持久化和收尾。当前 session turn
+admission 仍可能发生在 SSE headers 发送之后；若源在首个受管事件前失败，连接可能以 HTTP
+`200` 提前 EOF 而没有 `agentgov.error/done`。客户端必须把“未收到 `agentgov.done` 的 EOF”
+当作失败，不能把 HTTP 状态本身当作运行成功。
 Speech Summary 的 `source_kind` 只会是顶层 `thinking` 或
-`assistant_response`；`ResultMessage` 不作为一次模型响应的摘要来源。派生事件会在终态前
-有界排空，`agentgov.done` 始终是最后一个业务事件。
+`assistant_response`；`ResultMessage` 不作为一次模型响应的摘要来源。正常进入 managed
+收口的流会在终态前有界排空派生事件，并以 `agentgov.done` 作为最后一个业务事件。
 该契约跟随仓库锁定的 `claude-agent-sdk` 版本，不是 UI shape，也不是 Claude CLI
 stdout 的 byte-exact 副本。
 
@@ -476,13 +481,26 @@ Qwen Code/Kimi CLI 时复用同一路径并新增 driver，不能把模型 provi
 
 流式业务对话会尽力生成下一轮建议（每轮**至多 N 条**候选，默认 3，由 `BACKEND_PROMPT_SUGGESTION_COUNT` 配置；模型给不满就少给，不凑数）。`AppSettings` 默认关闭后端派生这一受控特例，官方 `docker/.env.example` 与 `docker/.env.local-debug.example` 通过 `ENABLE_BACKEND_PROMPT_SUGGESTION=true` 显式开启；关闭时回退 Claude Code 原生 `--prompt-suggestions`，但该路径可能受上游 feature gate 或 cache 状态抑制。启动日志的 `prompt_suggestion_source` 会显示当前使用 `backend` 还是 `claude_native`。`/api/chat/stream` 以 `event: prompt_suggestion` 输出 `{suggestion, suggestions, run_id, session_id}`；SDK-native 入口以 `event: agentgov.prompt_suggestion` 输出同一 data；`/v1/responses` 仅在 control 模式输出统一信封，`payload` 为 `{suggestion, suggestions, session_id}`，strict 模式不输出 AgentGov 扩展事件。`suggestions` 是完整候选列表；`suggestion` 恒等于 `suggestions[0]`，为向后兼容保留，只读它的客户端无需改动。整批候选在**一帧**内下发。建议在终态前进行有界排空；超时、失败或模型明确返回空时静默跳过，不改变正式回答，也不进入消息历史、SQLite run、response retrieve 或 SDK transcript。
 
-### Responses 与 Speech Summary
+### Responses 过渡投影与 Speech Summary
 
-新集成使用 `/v1/responses`。Speech Summary 只允许在 control mode、`stream=true` 时通过
+`/v1/responses` 是当前内置的过渡投影，不是完整或稳定的 OpenAI Responses 实现。其
+OpenAPI operation 以 `x-agentgov-contract-status: transitional` 标记，并在
+`x-agentgov-known-deviations` 中机器声明以下已知偏差：
+
+- 非流式即时响应、流式完成对象和 retrieve 尚未共用全部字段投影；即时非流式
+  `trace_id` 可能缺失，流式 `response.completed.response.metadata` 当前为空对象。
+- session 事件之前的源异常可能先合成 `response.created`，其中 `response.id=null`，
+  再输出 `response.failed`。该 nullable 形状只为如实描述现状，不是目标 OpenAI 语义。
+- 流式 headers 可能早于 session turn admission；任何未收到 `response.completed` 或
+  `response.failed` 的 EOF 都必须视为失败。
+
+后续稳定 OpenAI 对接由独立适配服务消费 `/api/agent-runtime/sdk-events` 后转换；在上述偏差
+消除前，不应让生成客户端把内置 Responses 投影当作完整 OpenAI SDK drop-in replacement。
+Speech Summary 只允许在 control mode、`stream=true` 时通过
 `agentgov.with_speech_summary=true` 开启；非流式开启返回 `422`，strict mode 不接受也不输出
 AgentGov Speech 事件。control 流可在标准终态前输出
-`event: agentgov.speech_summary`，随后完成其余 control 收口；`response.completed` 或
-`response.failed` 恰好一次且始终是最后一个业务事件。
+`event: agentgov.speech_summary`，随后完成其余 control 收口；正常进入 Responses
+投影终态的流以 `response.completed` 或 `response.failed` 结束。
 
 摘要边界由 `SPEECH_SUMMARY_BOUNDARIES` 控制，可选择顶层 ThinkingBlock 的原生
 `content_block_stop` 与完整顶层 AssistantMessage。默认超时/终态排空为 15/5 秒；只处理主
@@ -511,9 +529,13 @@ curl -X POST "$API_BASE/v1/chat/completions" \
   }'
 ```
 
-注意：这是已标记 deprecated 的兼容 shim，不是完整 OpenAI API 实现，本阶段继续保留且没有
-sunset 日期。新集成使用 `/v1/responses` 的 `agentgov.agent_id` 显式选择业务 Agent；原生
-`/api/chat*` 同样要求 `agent_id`。`agent`、`skills`、`skills_mode`、`allowed_tools`、
+注意：这是已标记 deprecated 的最小文本、非流式兼容 shim，不是完整 OpenAI API 实现，本阶段
+继续保留且没有日历 sunset 日期。OpenAPI 将 `stream` 机器约束为常量 `false`；tools、函数
+调用、multimodal content 和 streaming chunks 均不支持。请求不接受 `agent_id`，目标由
+`/api/settings/openai-compat-agent` 配置，未配置时使用平台默认业务 Agent
+`security-operations-expert`。需要显式选择业务 Agent 时使用 SDK-native 入口，或在过渡期使用
+`/v1/responses` control mode 的 `agentgov.agent_id`；原生 `/api/chat*` 同样要求
+`agent_id`。`agent`、`skills`、`skills_mode`、`allowed_tools`、
 `disallowed_tools`、`permission_mode` 和 Speech Summary 扩展均不属于该请求契约，传入会返回
 `422`。工具权限、MCP、skills、subagents 和 hooks 以业务 Agent workspace 的 Claude Code
 项目配置为准。
@@ -524,7 +546,7 @@ sunset 日期。新集成使用 `/v1/responses` 的 `agentgov.agent_id` 显式�
 curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/agents"
 curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/skills"
 curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/config"
-curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/sessions"
+curl -H "Authorization: Bearer $API_KEY" "$API_BASE/v1/conversations"
 ```
 
 ## 配置挂载说明
@@ -673,7 +695,7 @@ ${HOME}/volume-agent-gov/data/runtime.sqlite3
 - title 和 metadata
 - 当前活动 `run_id` 及其过期时间租约
 
-`${HOME}/volume-agent-gov/data/sessions/` 是历史兼容路径，不再是权威存储。下一次请求传入同一个 `session_id` 时，运行时会尝试使用 SDK `resume` 继续 Claude Code 会话。一个 session 同时只允许一个活动 turn；活动租约期间 `/api/sessions/{session_id}` 与 `/v1/conversations/{conversation_id}` 的删除请求返回 `409`，租约过期后可重新认领。Playground 会同步禁用活动会话的删除按钮。
+`${HOME}/volume-agent-gov/data/sessions/` 是历史兼容路径，不再是权威存储。下一次请求传入同一个 `session_id` 时，运行时会尝试使用 SDK `resume` 继续 Claude Code 会话。一个 session 同时只允许一个活动 turn；活动租约期间 `/api/sessions/{session_id}` 与 `/v1/conversations/{conversation_id}` 的删除请求返回 `409`，租约过期后可重新认领。Playground 会同步禁用活动会话的删除按钮。`/api/sessions*` 已在 OpenAPI 标记 deprecated；新调用方只使用 `/v1/conversations*`，旧接口将在完成消费者迁移后的下一次确认破坏性版本中删除。
 
 ### 孤立 session turn 应急恢复
 

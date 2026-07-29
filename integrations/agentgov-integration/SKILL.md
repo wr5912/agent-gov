@@ -1,65 +1,76 @@
 ---
 name: agentgov-integration
-description: Use when integrating AgentGov (the agent runtime governance backend) from an upper-layer business system through its HTTP API, including agent runs, SSE chat streaming, Web HITL confirmation cards, session replay, feedback loops, evaluation/regression, assets, and version releases. Encodes integration journeys, auth, ownership boundaries, and anti-patterns without binding to Claude-only clients.
+description: Use when an upper-layer system integrates AgentGov through HTTP APIs for managed Agent runs, SDK-native SSE, transitional Responses projection, Conversations, Web HITL, feedback improvement, testing, and releases. Encodes contract discovery, auth, ownership, terminal handling, and deprecated-surface boundaries.
 ---
 
 # 集成 AgentGov 运行治理底座
 
-AgentGov 是 agent 运行治理底座，被上层业务系统通过 HTTP API 集成。本 skill 给出最短集成路径与硬边界。契约真相源是 AgentGov 容器的 OpenAPI（`/openapi.json`、`/docs`）；具体字段、状态码和 schema 以 OpenAPI 为准，不要照搬本文自造类型。
+AgentGov 被上层业务系统通过 HTTP API 集成。本 skill 只给选择路径与硬边界；容器
+`/openapi.json` 是 request/response、required、状态码、deprecated 和 SSE 事件的唯一 wire
+真相源。先生成客户端类型，不在集成方手写平行 DTO 或事件枚举。
 
-## 接入前提
+## 先做契约发现
 
-- Base URL 由 AgentGov 部署方提供。外部 / 同主机常见 `http://<host>:58080`（宿主暴露端口 `HOST_PORT`；默认遵循 `50000 + 容器端口`），同 Docker 网络内服务用 `http://claude-agent-api:8080`。
-- 所有 `/api/*`、`/v1/*` 带 `Authorization: Bearer <API_KEY>`；缺失或错误 token 返回 `401`。
-- 先 `GET /health` 探活，再拉取 `/openapi.json` 作为对接基线。
-- 原生 `/api/chat` 与 `/api/chat/stream` 都要求显式有效 `agent_id`（如 `main-agent` 或已注册业务 Agent）。
+1. 从部署方取得 Base URL；先检查 `GET /health`，再保存同一实例的 `/openapi.json` 和
+   `info.version`。
+2. 部署启用 API key 时，所有 `/api/*`、`/v1/*` 请求都发送
+   `Authorization: Bearer <API_KEY>`；不要把 key 写入源码、日志或前端持久存储。
+3. 读取 operation 的 `description`、responses、request schema 与扩展。SSE 必须从
+   `x-agentgov-sse-events` 生成解析分支，不能维护本文副本。
 
-## 集成旅程
+## 选择正确入口
 
-1. 选 / 建业务 Agent：`GET|POST /api/agent-registry`；`main-agent` 是预制业务 Agent，但 chat 仍要显式传 `agent_id`。
-2. 跑对话：`POST /api/chat` 返回完整结果；`POST /api/chat/stream` 返回 SSE；`POST /v1/chat/completions` 走 OpenAI 兼容出口 Agent。
-3. 回放历史：`GET /api/sessions`、`GET /api/sessions/{session_id}/messages`；只传 `session_id`。
-4. 提交反馈：先创建或识别 `signal`、`soc_event` 或已解析的 `pending_correlation`，再以至少一个 `source_refs: [{source_kind, source_id}]` 调用 `POST /api/feedback-cases`，且所有来源必须归属同一业务 Agent。`run_id`/`session_id` 等运行字段从来源投影，不直接放入 FeedbackCase 请求；归因、优化、回归由 AgentGov 内部治理链路处理。
-5. 评估 / 回归：确认 RegressionAssessment 后调用 `POST /api/improvements/{improvement_id}/test-dataset/adopt`；通过 `/api/test-datasets` 管理 typed 数据集。候选 ChangeSet 调用 `/regression-runs`；自然语言语义待复核时调用绑定当前 EvalRun 的 `/regression-runs/{eval_run_id}/review`，提交幂等 review ID、操作人、原因、固定 scope 和全部 case 决策。不要提交全局用例 ID、客户端执行结果或 backend-owned run/change set 绑定。
-6. 版本发布 / 回滚：使用 `/api/agent-change-sets/...`、`/api/agent-releases/...`。
-7. 资产复用：`/api/assets` 只承载 `methodology`、`execution`、`audit` 通用资产及继承；TestDataset 使用专用 typed API，不创建旧 `regression` 资产。
+- 新 managed turn 或协议 adapter：`POST /api/agent-runtime/sdk-events`。请求中的非空
+  `message`、`agent_id` 都是必填字段；该流是第一方 Playground 和未来外置 OpenAI adapter
+  的事实输入。
+- 会话创建、列表、读取、删除和历史：`/v1/conversations*`。URL 使用
+  `conversation_id`，读取历史不传 `agent_id`。
+- 现有 OpenAI 风格调用方可过渡使用 `/v1/responses`，但必须检查
+  `x-agentgov-contract-status` 与 `x-agentgov-known-deviations`。它不是完整 OpenAI
+  Responses drop-in replacement。
+- byte-exact Runtime 诊断只用 `/api/debug/agent-runtime/raw-events`；它不是业务 SSE。
+- `/api/chat`、`/api/chat/stream`、`/v1/chat/completions`、`/api/sessions*` 均是
+  deprecated 兼容面。不要为新系统建立依赖；Sessions 计划在下一次确认的破坏性版本删除。
 
-## SSE + Web HITL 确认卡
+## 业务 Agent 与受管流
 
-需要人工确认卡时使用 `/api/chat/stream`，并确认 AgentGov 侧 `ENABLE_CLAUDE_WEB_HITL=true`。非流式 `/api/chat` 不承载 Web HITL。
+1. `GET /api/agent-registry` 选择 Agent。新 Agent 通过
+   `POST /api/agent-registry/{agent_id}/workspace/import` 导入单顶层 `workspace/` 包；平台
+   没有通用模板创建 API。
+2. 建立 SDK-native SSE，机械保留 `claude.sdk.*`，并处理 OpenAPI 声明的
+   `agentgov.session`、confirmation、result、error、done 等控制事件。
+3. `agentgov.result` 只是 SDK ResultMessage 到达；只有 `agentgov.done` 表示 managed turn
+   已持久化收口。HTTP `200` 后若 EOF 前没有 `agentgov.done`，按运行失败处理。
+4. 当前 session admission 可能晚于 SSE headers。不要因 HTTP `200` 自动重试或记成功；
+   先按 `run_id`/conversation 事实判断是否已创建运行，避免重复副作用。
 
-实现流程：
+## Web HITL
 
-1. 建立 `/api/chat/stream` SSE 连接，持续读取到 `done`。
-2. 正常处理 `session`、`message`、`result`、`done`；忽略但保留连接活性的 `heartbeat`。
-3. 遇到 `claude_user_input_required`，按 `request_id` 渲染内联确认卡，并保留其中的 `decision_token` 在内存中。
-4. 用户决策后，调用 `POST /api/claude-user-input-requests/{request_id}/decision`。
-5. 遇到 `claude_user_input_resolved`，把同一张卡片更新为已处理。
+1. 收到 `agentgov.confirmation.requested` 后保持原 SSE，按 `request_id` 渲染卡片，把
+   `decision_token` 只放内存。
+2. 提交
+   `POST /v1/agentgov/confirmation-requests/{request_id}/decision`。Bearer API key 与一次性
+   `decision_token` 都必需；body 只使用 OpenAPI 声明字段。
+3. 需要刷新等待态时，只调用 `GET /api/claude-user-input-requests`；仅精确
+   `run_id + status=waiting` 查询可能返回 token，宽泛列表不返回。
+4. 收到 `agentgov.confirmation.resolved` 更新原卡片。断流或 token 丢失时标为中断，不伪造
+   决策、不探测历史 HITL aliases。
 
-确认类型：
+## 反馈、测试与发布
 
-- `tool_permission`：动作是 `allow_once`、`allow_for_run`、`deny`。只有事件中 `risk.run_allow_eligible=true` 的低风险类别才能显示并提交 `allow_for_run`；授权只作用于同一 `business_agent_id + run_id + run_allow_category`，不跨 run、不写入永久权限。MCP 写操作等高风险请求只能 `allow_once` 或 `deny`。
-- `ask_user_question`：动作是 `answer_question`，可提交结构化选项，也可提交自然语言 `response`。
+- 以 typed `source_refs` 创建 `/api/feedback-cases`，再通过 `/api/improvements` 的四阶段
+  operation 生成/确认归因、优化、执行和回归测试设计；不要提交 backend-owned run/change
+  set 绑定。
+- 测试内容只来自业务 Agent 精确 Git commit 的 `workspace/tests/`；运行使用
+  `/api/agent-test-runs` 或 change-set test-run operation。
+- 发布/回滚使用 `/api/agent-change-sets/*` 与 `/api/agent-releases/*`，并遵守 OpenAPI
+  暴露的状态冲突和测试门禁。
 
-HITL 硬边界：
+## 不变量与验收
 
-- 不要关闭 SSE 连接再等用户决策；Claude SDK 正在原 stream 里等待确认。
-- `decision_token` 是一次性敏感 token，只放内存；不要写入 localStorage、日志、埋点或服务端会话副本。
-- 页面刷新或 token 丢失后，不要伪造决策；提示用户重新运行当前任务。
-- 用户断开 stream 时，把等待卡片标为中断或失效。
-
-## 硬边界
-
-- 产品对话 id 用 `session_id`，不要用响应里的 `sdk_session_id`。
-- 读会话历史只传 `session_id`，不传 `agent_id`；归属由 AgentGov 按会话事实解析。
-- 上层业务系统负责渲染 AgentGov/Claude 工具卡并提交用户本人决策；AgentGov 负责把决策桥接回等待中的 Claude SDK 调用并记录审计，不额外建立业务 Agent ID 白名单或改写工具输入。
-- 客户端类型由 OpenAPI 生成，不要自造 schema；也不要在上层系统并行存储会话/消息副本。
-- 工具、MCP、skills、subagents 由 AgentGov 侧 Claude Code 官方配置管理，不通过 chat 入参接管。
-
-## 验证
-
-- 用 `/health` + 最小 `POST /api/chat` 打通鉴权与运行。
-- 用 `/api/chat/stream` 验证 SSE 解析、`heartbeat` 容忍、`done` 收尾。
-- 用一次会触发工具确认的 stream 验证 `claude_user_input_required -> decision POST -> claude_user_input_resolved -> done`。
-- 用返回的 `session_id` 调 `/api/sessions/{id}/messages` 验证回放。
-- 对 `4xx/5xx` 做稳健处理，不要把 `404`/`500` 当空数据吞掉。
+- 会话/消息事实来自 Agent/SDK transcript；集成方不另建并行消息副本。
+- 工具、MCP、skills、subagents、hooks 与权限由业务 Agent Workspace 配置，不通过请求参数接管。
+- 对 `4xx/5xx` 和无 terminal EOF fail closed；不要把 `404` 当空列表或把截断流当成功。
+- 最小验收覆盖：鉴权失败、必填/空白字段、SDK-native 正常终态、首事件前失败、HITL
+  requested→decision→resolved→done、conversation 刷新回放、活动会话删除 `409`、所有
+  deprecated 路径未被新客户端调用。

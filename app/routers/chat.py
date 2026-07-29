@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from app.runtime.agent_profile_resolver import resolve_business_profile
@@ -12,22 +12,14 @@ from app.runtime.chat_stream_projector import ChatStreamProjector
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.managed_claude_events import AgentGovControlEvent
 from app.runtime.native_chat_stream import NativeChatSemanticProjector
-from app.runtime.schemas import ChatRequest, ChatResponse
+from app.runtime.schemas import ChatResponse
 from app.runtime.settings import AppSettings
 from app.runtime.speech_summary import build_speech_summary_envelope
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
-from app.runtime.stream_request_schemas import ChatStreamRequest
+from app.runtime.stream_request_schemas import AgentTargetedChatRequest, ChatStreamRequest
+from app.sse_contracts import CHAT_STREAM_PATH, require_registered_sse_event
 
 from .runtime_preflight import require_non_stream_hitl_free, require_stream_hitl_available
-
-
-def _require_agent_id(req: ChatRequest) -> None:
-    """两个原生 chat 入口都要求显式有效 agent_id，不使用默认业务 Agent。"""
-    if not (req.agent_id and req.agent_id.strip()):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="agent_id is required and must identify a registered business agent",
-        )
 
 
 def create_chat_router(
@@ -46,8 +38,7 @@ def create_chat_router(
         description="Runs one Claude Agent SDK query. Requires a registered business agent_id.",
         deprecated=True,
     )
-    async def chat(req: ChatRequest) -> ChatResponse:
-        _require_agent_id(req)
+    async def chat(req: AgentTargetedChatRequest) -> ChatResponse:
         profile = resolve_business_profile(settings, agent_registry_store, req.agent_id)
         require_non_stream_hitl_free(profile, surface="/api/chat")
         return await runtime.run(req, profile=profile)
@@ -68,7 +59,6 @@ def create_chat_router(
             ),
         ),
     ) -> StreamingResponse:
-        _require_agent_id(req)
         profile = resolve_business_profile(settings, agent_registry_store, req.agent_id)
         require_stream_hitl_available(profile, settings, surface="/api/chat/stream")
 
@@ -83,6 +73,7 @@ def create_chat_router(
             ):
                 if isinstance(managed_event, AgentGovControlEvent) and managed_event.name == "speech_summary":
                     data_frame_seq += 1
+                    require_registered_sse_event(CHAT_STREAM_PATH, "agentgov.speech_summary")
                     envelope = build_speech_summary_envelope(
                         managed_event.data,
                         seq=data_frame_seq,
@@ -94,6 +85,7 @@ def create_chat_router(
                     for frame in projected:
                         data_frame_seq += 1
                         event = frame.get("event", "message")
+                        require_registered_sse_event(CHAT_STREAM_PATH, str(event))
                         data = json.dumps(frame.get("data"), ensure_ascii=False)
                         yield f"event: {event}\ndata: {data}\n\n"
 

@@ -188,6 +188,21 @@ def test_dockerfile_installs_claude_code_sandbox_dependencies_when_builtin_sandb
     assert "socat" in packages
 
 
+def test_a2ui_install_keeps_project_runtime_dependency_constraints() -> None:
+    dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+    project_requirements = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")
+    a2ui_requirements = (REPO_ROOT / "docker/a2ui-requirements.txt").read_text(encoding="utf-8")
+    a2ui_install = dockerfile.split("COPY docker/a2ui-requirements.txt", 1)[1].split(
+        "ENV LITELLM_LOCAL_MODEL_COST_MAP",
+        1,
+    )[0]
+
+    assert "--constraints /app/requirements.txt" in a2ui_install
+    assert "fastapi==0.124.1" in project_requirements.splitlines()
+    assert "starlette==0.50.0" in project_requirements.splitlines()
+    assert "google-adk==2.1.0" in a2ui_requirements.splitlines()
+
+
 def test_compose_does_not_grant_unconfined_or_namespace_capabilities() -> None:
     compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]

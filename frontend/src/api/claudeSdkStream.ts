@@ -1,7 +1,7 @@
 import type {
   AgentActivity,
   AgentTraceEvent,
-  ChatRequest,
+  ClaudeSdkEventsRequest,
   RuntimeClientConfig,
   StreamEnvelope,
 } from "../types/runtime";
@@ -421,7 +421,7 @@ export class ClaudeSdkEvidenceReducer {
 
 export async function streamClaudeSdkChat(
   config: RuntimeClientConfig,
-  payload: ChatRequest,
+  payload: ClaudeSdkEventsRequest,
   handlers: StreamChatHandlers,
   signal?: AbortSignal,
 ): Promise<void> {

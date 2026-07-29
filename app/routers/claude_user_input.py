@@ -60,13 +60,11 @@ def create_claude_user_input_router(
         response_model=ClaudeUserInputRequestListResponse,
         response_model_exclude_none=True,
         summary="List Claude SDK HITL requests for Playground Web confirmation",
-    )
-    @router.get(
-        "/api/claude-hitl-requests",
-        response_model=ClaudeUserInputRequestListResponse,
-        response_model_exclude_none=True,
-        summary="List Claude SDK HITL requests for Playground Web confirmation",
-        include_in_schema=False,
+        description=(
+            "Lists HITL requests visible to the authenticated Playground client. A waiting request includes its "
+            "one-time decision_token only when queried by the exact run_id with status=waiting; broad queries never "
+            "return the token. Bearer API-key authentication is always required."
+        ),
     )
     async def list_requests(
         session_id: str | None = Query(default=None),
@@ -102,18 +100,12 @@ def create_claude_user_input_router(
     @router.post(
         "/v1/agentgov/confirmation-requests/{request_id}/decision",
         response_model=ClaudeUserInputDecisionResponse,
-        summary="Resolve one active HITL confirmation (canonical; authz = request_id + decision_token)",
-    )
-    @router.post(
-        "/api/claude-user-input-requests/{request_id}/decision",
-        response_model=ClaudeUserInputDecisionResponse,
-        summary="Resolve one active Claude SDK HITL request",
-    )
-    @router.post(
-        "/api/claude-hitl-requests/{request_id}/decision",
-        response_model=ClaudeUserInputDecisionResponse,
-        summary="Resolve one active Claude SDK HITL request",
-        include_in_schema=False,
+        summary="Resolve one active HITL confirmation",
+        description=(
+            "Requires Bearer API-key authentication plus the request-specific one-time decision_token. The request_id "
+            "selects the pending confirmation; the token authorizes that single decision and is not a substitute for "
+            "endpoint authentication. Replays or an invalid token return a conflict."
+        ),
     )
     async def decide(request_id: str, req: ClaudeUserInputDecisionRequest) -> ClaudeUserInputDecisionResponse:
         return _submit_decision(service, request_id, req)

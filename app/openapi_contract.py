@@ -7,6 +7,14 @@ from fastapi import FastAPI
 
 from app.runtime.runtime_raw_events import RAW_EVENT_RESPONSE_HEADER_DESCRIPTIONS
 from app.runtime.speech_summary import AgentGovSpeechSummaryEnvelope
+from app.sse_contracts import (
+    CHAT_STREAM_PATH,
+    CLAUDE_SDK_EVENTS_PATH,
+    RESPONSES_PATH,
+    SSE_COMMENTS,
+    SSE_EXAMPLES,
+    sse_event_contract,
+)
 
 OpenApiObject = dict[str, object]
 OpenApiMapping = Mapping[str, object]
@@ -18,10 +26,7 @@ DOMAIN_ERROR_COMPONENT = "DomainErrorResponse"
 OPENAI_ERROR_COMPONENT = "OpenAIErrorResponse"
 VALIDATION_ERROR_COMPONENT = "HTTPValidationError"
 SECURITY_SCHEME_NAME = "HTTPBearer"
-CHAT_STREAM_PATH = "/api/chat/stream"
-CLAUDE_SDK_EVENTS_PATH = "/api/agent-runtime/sdk-events"
 RAW_EVENTS_PATH = "/api/debug/agent-runtime/raw-events"
-RESPONSES_PATH = "/v1/responses"
 CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 
 _HTTP_ERROR_SCHEMA: OpenApiObject = {
@@ -115,6 +120,36 @@ _RUNTIME_OR_RELEASE_PREFIXES = (
 )
 _RUNTIME_OR_RELEASE_PATH_PARTS = ("/generate", "/execution/apply", "/test-runs", "/publish", "/restore", "/rollback")
 
+_EXPLICIT_ERROR_STATUSES: dict[tuple[str, str], frozenset[int]] = {
+    ("/api/chat", "post"): frozenset({400, 404, 409, 422, 503}),
+    (CHAT_STREAM_PATH, "post"): frozenset({400, 404, 422, 503}),
+    (CLAUDE_SDK_EVENTS_PATH, "post"): frozenset({400, 404, 422, 503}),
+    (RAW_EVENTS_PATH, "post"): frozenset({400, 403, 404, 409, 413, 422, 501, 503}),
+    (CHAT_COMPLETIONS_PATH, "post"): frozenset({400, 404, 422, 502, 503}),
+    (RESPONSES_PATH, "post"): frozenset({400, 404, 409, 422, 503}),
+    ("/v1/responses/{response_id}", "get"): frozenset({404}),
+    ("/v1/conversations/{conversation_id}", "get"): frozenset({404}),
+    ("/v1/conversations/{conversation_id}", "delete"): frozenset({409}),
+    ("/v1/conversations/{conversation_id}/items", "get"): frozenset({404, 409}),
+    ("/api/sessions/{session_id}/messages", "get"): frozenset({404, 409}),
+    ("/api/sessions/{session_id}", "delete"): frozenset({409}),
+    ("/v1/agentgov/confirmation-requests/{request_id}/decision", "post"): frozenset({404, 409, 422}),
+}
+
+NON_200_SUCCESS_CODES: dict[tuple[str, str], str] = {
+    ("/api/agent-test-runs", "post"): "202",
+    ("/api/agent-change-sets/{change_set_id}/test-runs", "post"): "202",
+    ("/api/agent-test-sessions", "post"): "201",
+    ("/api/agent-test-sessions/{test_session_id}", "delete"): "204",
+    ("/api/improvements", "post"): "201",
+    ("/api/improvements/{improvement_id}", "delete"): "204",
+    ("/api/improvements/{improvement_id}/split", "post"): "201",
+    ("/api/improvements/{improvement_id}/feedbacks", "post"): "201",
+    ("/api/improvements/{improvement_id}/attach-feedback-case", "post"): "201",
+    ("/api/assets", "post"): "201",
+    ("/api/assets/{asset_id}/inherit", "post"): "201",
+}
+
 
 def install_openapi_contract(app: FastAPI) -> None:
     """Install the AgentGov OpenAPI contract post-processor."""
@@ -156,14 +191,18 @@ def expected_error_statuses(path: str, method: str, operation: OpenApiMapping) -
         statuses.add(401)
     if "422" in _mapping(operation.get("responses", {})):
         statuses.add(422)
-    statuses.update(_special_error_statuses(path, method))
-    if any(path.startswith(prefix) for prefix in _DOMAIN_PREFIXES):
-        if "{" in path:
-            statuses.add(404)
-        if method in _MUTATING_METHODS:
-            statuses.update({400, 409})
-    if _can_return_runtime_unavailable(path):
-        statuses.add(503)
+    explicit = _EXPLICIT_ERROR_STATUSES.get((path, method))
+    if explicit is not None:
+        statuses.update(explicit)
+    else:
+        statuses.update(_special_error_statuses(path, method))
+        if any(path.startswith(prefix) for prefix in _DOMAIN_PREFIXES):
+            if "{" in path:
+                statuses.add(404)
+            if method in _MUTATING_METHODS:
+                statuses.update({400, 409})
+        if _can_return_runtime_unavailable(path):
+            statuses.add(503)
     return statuses
 
 
@@ -178,27 +217,6 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
         return {404}
     if method == "post" and path == "/api/feedback-cases":
         return {404}
-    if path == CHAT_STREAM_PATH or path == "/api/chat":
-        return {400, 404, 422, 503}
-    if path == CLAUDE_SDK_EVENTS_PATH:
-        return {400, 404, 422, 503}
-    if path == RAW_EVENTS_PATH:
-        return {403, 404, 409, 413, 422, 501, 503}
-    if path == CHAT_COMPLETIONS_PATH:
-        return {400, 404, 422, 502, 503}
-    if path == RESPONSES_PATH:
-        return {400, 404, 409, 422, 503}
-    if path == "/v1/responses/{response_id}":
-        return {404}
-    if path == "/v1/conversations/{conversation_id}/items":
-        return {404, 409}
-    if path == "/v1/conversations/{conversation_id}" and method != "delete":
-        return {404}
-    if path in {
-        "/api/claude-user-input-requests/{request_id}/decision",
-        "/v1/agentgov/confirmation-requests/{request_id}/decision",
-    }:
-        return {404, 409, 422}
     if path in {"/api/config", "/api/agents", "/api/skills"}:
         return {404, 422}
     if path == "/api/agent-config-file":
@@ -211,8 +229,6 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
         return {413, 503}
     if path == "/api/settings/openai-compat-agent" and method == "put":
         return {400, 404, 422}
-    if path == "/api/sessions/{session_id}/messages":
-        return {404, 409}
     return set()
 
 
@@ -255,12 +271,19 @@ def _apply_operation_contract(path: str, method: str, operation: OpenApiMutableM
 
 
 def _fix_streaming_success_response(path: str, operation: OpenApiMutableMapping) -> None:
+    if path not in {
+        CHAT_STREAM_PATH,
+        CLAUDE_SDK_EVENTS_PATH,
+        RAW_EVENTS_PATH,
+        RESPONSES_PATH,
+    }:
+        return
     responses = _mapping(operation.setdefault("responses", {}))
     success = _mapping(responses.setdefault("200", {"description": "Successful Response"}))
     if path in {CHAT_STREAM_PATH, CLAUDE_SDK_EVENTS_PATH}:
         success["description"] = "Server-sent event stream."
         description = "Claude Agent SDK-native SSE events" if path == CLAUDE_SDK_EVENTS_PATH else "Claude Agent Chat SSE events"
-        success["content"] = {"text/event-stream": _sse_media_type(description)}
+        success["content"] = {"text/event-stream": _sse_media_type(path, description)}
         return
     if path == RAW_EVENTS_PATH:
         success["description"] = "Byte-exact native Runtime stdout. stream=false buffers the body; stream=true flushes the same byte sequence incrementally."
@@ -284,7 +307,7 @@ def _fix_streaming_success_response(path: str, operation: OpenApiMutableMapping)
     if path == RESPONSES_PATH:
         success["description"] = "JSON response when stream=false; server-sent events when stream=true."
         content = _mapping(success.setdefault("content", {}))
-        content.setdefault("text/event-stream", _sse_media_type("OpenAI Responses-style SSE events"))
+        content.setdefault("text/event-stream", _sse_media_type(path, "Transitional OpenAI Responses-shaped SSE events"))
 
 
 def _add_error_response(path: str, operation: OpenApiMutableMapping, status_code: int) -> None:
@@ -320,43 +343,33 @@ def _extend_422_response(response: OpenApiMutableMapping) -> None:
     json_content["schema"] = {"anyOf": refs}
 
 
-def _sse_media_type(description: str) -> OpenApiObject:
+def _sse_media_type(path: str, description: str) -> OpenApiObject:
     return {
         "schema": {"type": "string", "description": description},
         "examples": {
             "event": {
-                "summary": "SSE event",
-                "value": 'event: message\ndata: {"type":"message"}\n\n',
+                "summary": "Surface-specific SSE event",
+                "value": SSE_EXAMPLES[path],
             }
         },
     }
 
 
 def _document_sse_events(path: str, operation: OpenApiMutableMapping) -> None:
-    speech = {
-        "event": "agentgov.speech_summary",
-        "schema": {"$ref": "#/components/schemas/AgentGovSpeechSummaryEnvelope"},
-    }
-    if path == CLAUDE_SDK_EVENTS_PATH:
-        operation["x-agentgov-sse-events"] = [
-            {
-                "event": "claude.sdk.*",
-                "schema": {
-                    "type": "object",
-                    "additionalProperties": True,
-                    "description": "Open event family following the pinned Claude Agent SDK dataclass.",
-                },
-            },
-            speech,
-        ]
-    elif path == CHAT_STREAM_PATH:
-        operation["x-agentgov-sse-events"] = [speech]
-    elif path == RESPONSES_PATH:
-        operation["x-agentgov-sse-events"] = [
-            {
-                **speech,
-                "condition": "control mode and stream=true and agentgov.with_speech_summary=true",
-            }
+    events = sse_event_contract(path)
+    if not events:
+        return
+    operation["x-agentgov-sse-events"] = events
+    comments = SSE_COMMENTS.get(path)
+    if comments:
+        operation["x-agentgov-sse-comments"] = list(comments)
+    if path == RESPONSES_PATH:
+        operation["x-agentgov-contract-status"] = "transitional"
+        operation["x-agentgov-known-deviations"] = [
+            "This in-process adapter is Responses-shaped, not full OpenAI Responses compatibility.",
+            "stream, non-stream, and retrieve do not guarantee identical metadata or trace projection.",
+            "A source failure before session identity may produce response.created with id=null.",
+            "Turn admission occurs during body iteration; some early stream failures are reported in-stream after HTTP 200.",
         ]
 
 

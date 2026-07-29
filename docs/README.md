@@ -80,7 +80,7 @@
   `docs/engineering/Agent运行时语义事件与SpeechSummary整改方案.md`，定义 3.0.3 的主 Agent
   作用域、Speech Summary typed output、派生事件终态、Responses/兼容接口/raw/HITL 契约和真实容器验收
 - [vLLM 模型网关与 Sidecar 整改方案](./engineering/vLLM模型网关与Sidecar整改优化方案.md)：`docs/engineering/vLLM模型网关与Sidecar整改优化方案.md`
-- [OpenAI 兼容接口能否替代原生 Chat 端点评估](./engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)：`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`，已落地的外部 Responses 契约、第一方 Playground SDK-native 流与独立 Chat 兼容投影边界；`/v1/conversations` 继续承载会话恢复
+- [OpenAI 兼容接口能否替代原生 Chat 端点评估](./engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)：`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`，Responses-first 目标、仓内过渡投影的已知偏差、SDK-native 事实源与未来外置 adapter 边界；`/v1/conversations` 承载会话恢复
 
 ## 评审与复盘
 

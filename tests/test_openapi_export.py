@@ -1,11 +1,19 @@
+import copy
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-from app.openapi_contract import expected_error_statuses, operation_items
-from scripts.audit_openapi_contract import audit_schema
+import pytest
+from app.openapi_contract import NON_200_SUCCESS_CODES, expected_error_statuses, operation_items
+from app.sse_contracts import (
+    CHAT_STREAM_PATH,
+    CLAUDE_SDK_EVENTS_PATH,
+    RESPONSES_PATH,
+    require_registered_sse_event,
+)
+from scripts.audit_openapi_contract import audit_live_matches_local, audit_schema
 from scripts.export_openapi import (
     CONTAINER_RUNTIME_VOLUME_ROOT,
     LOCAL_DEBUG_RUNTIME_VOLUME_ROOT,
@@ -113,7 +121,7 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/agent-config-file",
         "/api/agent-change-sets/{change_set_id}/publish",
         "/api/agent-releases/{release_id}/restore",
-        "/api/claude-user-input-requests/{request_id}/decision",
+        "/api/claude-user-input-requests",
         "/api/agent-runtime/sdk-events",
         "/api/debug/agent-runtime/raw-events",
         "/v1/agentgov/confirmation-requests/{request_id}/decision",
@@ -137,6 +145,9 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/feedback-cases/{feedback_case_id}/proposal-jobs",
         "/api/optimization-proposals",
         "/api/optimization-tasks/{task_id}/execution-jobs",
+        "/api/claude-hitl-requests",
+        "/api/claude-hitl-requests/{request_id}/decision",
+        "/api/claude-user-input-requests/{request_id}/decision",
     }
     assert set(schema["paths"]).isdisjoint(legacy_paths)
     assert not any(path.startswith(("/api/regression-assets", "/api/scenario-packs", "/api/test-datasets")) for path in schema["paths"])
@@ -286,19 +297,19 @@ def test_openapi_documents_streaming_media_types():
     assert {"401", "403", "404", "409", "413", "422", "501", "503"} <= set(raw_operation["responses"])
 
 
-def test_openapi_documents_speech_summary_without_polluting_raw_or_shared_chat() -> None:
+def test_openapi_documents_complete_per_surface_sse_contracts() -> None:
     schema = build_openapi_schema()
     components = schema["components"]["schemas"]
 
     sdk_properties = components["ClaudeSdkEventsRequest"]["properties"]
     chat_stream_properties = components["ChatStreamRequest"]["properties"]
-    shared_chat_properties = components["ChatRequest"]["properties"]
+    targeted_chat_properties = components["AgentTargetedChatRequest"]["properties"]
     raw_properties = components["RuntimeRawEventsRequest"]["properties"]
     response_extension = components["AgentGovRequestExtension"]["properties"]
     assert sdk_properties["with_speech_summary"]["default"] is False
     assert chat_stream_properties["with_speech_summary"]["default"] is False
     assert response_extension["with_speech_summary"]["default"] is False
-    assert "with_speech_summary" not in shared_chat_properties
+    assert "with_speech_summary" not in targeted_chat_properties
     assert "with_speech_summary" not in raw_properties
 
     envelope = components["AgentGovSpeechSummaryEnvelope"]
@@ -312,12 +323,69 @@ def test_openapi_documents_speech_summary_without_polluting_raw_or_shared_chat()
     assert envelope["properties"]["v"]["const"] == 1
     assert envelope["properties"]["type"]["const"] == "agentgov.speech_summary"
 
-    sdk_events = schema["paths"]["/api/agent-runtime/sdk-events"]["post"]["x-agentgov-sse-events"]
-    chat_events = schema["paths"]["/api/chat/stream"]["post"]["x-agentgov-sse-events"]
-    responses_events = schema["paths"]["/v1/responses"]["post"]["x-agentgov-sse-events"]
-    assert sdk_events[-1]["event"] == "agentgov.speech_summary"
-    assert chat_events == [sdk_events[-1]]
-    assert responses_events[0]["condition"].startswith("control mode and stream=true")
+    event_names = {
+        path: {item["event"] for item in schema["paths"][path]["post"]["x-agentgov-sse-events"]}
+        for path in (CHAT_STREAM_PATH, CLAUDE_SDK_EVENTS_PATH, RESPONSES_PATH)
+    }
+    assert event_names[CHAT_STREAM_PATH] == {
+        "session",
+        "message",
+        "trace_event",
+        "prompt_suggestion",
+        "claude_user_input_required",
+        "claude_user_input_resolved",
+        "heartbeat",
+        "result",
+        "error",
+        "agentgov.speech_summary",
+        "done",
+    }
+    assert event_names[CLAUDE_SDK_EVENTS_PATH] == {
+        "claude.sdk.*",
+        "agentgov.session",
+        "agentgov.prompt_suggestion",
+        "agentgov.confirmation.requested",
+        "agentgov.confirmation.resolved",
+        "agentgov.speech_summary",
+        "agentgov.result",
+        "agentgov.error",
+        "agentgov.done",
+    }
+    assert {
+        "response.created",
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.reasoning_text.delta",
+        "response.reasoning_text.done",
+        "response.output_text.delta",
+        "response.output_text.done",
+        "response.content_part.done",
+        "response.output_item.done",
+        "agentgov.session",
+        "agentgov.sdk_raw",
+        "agentgov.trace_event",
+        "agentgov.tool_step",
+        "agentgov.tool_call.started",
+        "agentgov.tool_call.arguments.delta",
+        "agentgov.tool_call.arguments.done",
+        "agentgov.tool_call.result",
+        "agentgov.prompt_suggestion",
+        "agentgov.confirmation.requested",
+        "agentgov.confirmation.resolved",
+        "agentgov.speech_summary",
+        "agentgov.result",
+        "agentgov.error",
+        "agentgov.done",
+        "response.completed",
+        "response.failed",
+    } == event_names[RESPONSES_PATH]
+    assert schema["paths"][RESPONSES_PATH]["post"]["x-agentgov-contract-status"] == "transitional"
+    assert schema["paths"][RESPONSES_PATH]["post"]["x-agentgov-known-deviations"]
+    for path in (CHAT_STREAM_PATH, CLAUDE_SDK_EVENTS_PATH, RESPONSES_PATH):
+        example = schema["paths"][path]["post"]["responses"]["200"]["content"]["text/event-stream"]["examples"]["event"]["value"]
+        assert "\n" in example
+        assert "\\n" not in example
+    assert "event: message" not in schema["paths"][RESPONSES_PATH]["post"]["responses"]["200"]["content"]["text/event-stream"]["examples"]["event"]["value"]
 
     for path in (
         "/api/chat",
@@ -327,6 +395,108 @@ def test_openapi_documents_speech_summary_without_polluting_raw_or_shared_chat()
         assert schema["paths"][path]["post"]["deprecated"] is True
     completion_failure = schema["paths"]["/v1/chat/completions"]["post"]["responses"]["502"]
     assert completion_failure["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/OpenAIErrorResponse"}
+
+
+def test_openapi_public_request_models_express_runtime_validation() -> None:
+    components = build_openapi_schema()["components"]["schemas"]
+
+    for name in ("AgentTargetedChatRequest", "ChatStreamRequest", "ClaudeSdkEventsRequest"):
+        component = components[name]
+        assert {"message", "agent_id"} <= set(component["required"])
+        for field in ("message", "agent_id"):
+            assert component["properties"][field]["minLength"] == 1
+            assert component["properties"][field]["pattern"]
+
+    assert "agent_id" in components["AgentGovRequestExtension"]["required"]
+    responses_request = components["ResponsesRequest"]
+    assert responses_request["oneOf"] and responses_request["allOf"]
+    assert components["OpenAIChatCompletionRequest"]["properties"]["stream"]["const"] is False
+    assert components["ConversationCreateRequest"]["additionalProperties"] is False
+
+
+def test_openapi_reviewed_operations_have_descriptions_deprecation_and_statuses() -> None:
+    schema = build_openapi_schema()
+    reviewed = (
+        ("/v1/conversations", "post"),
+        ("/v1/conversations", "get"),
+        ("/v1/conversations/{conversation_id}", "get"),
+        ("/v1/conversations/{conversation_id}", "delete"),
+        ("/v1/conversations/{conversation_id}/items", "get"),
+        ("/api/sessions", "get"),
+        ("/api/sessions/{session_id}/messages", "get"),
+        ("/api/sessions/{session_id}", "delete"),
+        ("/api/claude-user-input-requests", "get"),
+        ("/v1/agentgov/confirmation-requests/{request_id}/decision", "post"),
+    )
+    for path, method in reviewed:
+        assert schema["paths"][path][method]["description"].strip()
+
+    for path, method in reviewed[5:8]:
+        assert schema["paths"][path][method]["deprecated"] is True
+
+    assert "409" in schema["paths"]["/api/chat"]["post"]["responses"]
+    assert "409" in schema["paths"]["/v1/conversations/{conversation_id}"]["delete"]["responses"]
+    assert "409" in schema["paths"]["/api/sessions/{session_id}"]["delete"]["responses"]
+    assert "400" in schema["paths"]["/api/debug/agent-runtime/raw-events"]["post"]["responses"]
+    decision_description = schema["paths"]["/v1/agentgov/confirmation-requests/{request_id}/decision"]["post"]["description"]
+    assert "Bearer" in decision_description and "decision_token" in decision_description
+
+
+def test_openapi_non_200_success_operations_do_not_gain_fake_200() -> None:
+    schema = build_openapi_schema()
+    for (path, method), expected in NON_200_SUCCESS_CODES.items():
+        statuses = {status for status in schema["paths"][path][method]["responses"] if status.startswith("2")}
+        assert statuses == {expected}
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_fragment"),
+    [
+        (
+            lambda schema: schema["components"]["schemas"]["AgentTargetedChatRequest"].update(required=["message"]),
+            "must require message and agent_id",
+        ),
+        (
+            lambda schema: schema["components"]["schemas"]["OpenAIChatCompletionRequest"]["properties"]["stream"].pop("const"),
+            "stream must declare const=false",
+        ),
+        (
+            lambda schema: schema["paths"]["/api/sessions"]["get"].pop("description"),
+            "missing non-empty description",
+        ),
+        (
+            lambda schema: schema["paths"]["/api/sessions"]["get"].update(deprecated=False),
+            "must be deprecated",
+        ),
+        (
+            lambda schema: schema["paths"][RESPONSES_PATH]["post"].pop("x-agentgov-sse-events"),
+            "differs from the typed per-surface registry",
+        ),
+    ],
+)
+def test_openapi_audit_rejects_semantic_contract_mutations(mutation, expected_fragment) -> None:
+    schema = copy.deepcopy(build_openapi_schema())
+    mutation(schema)
+
+    assert any(expected_fragment in issue for issue in audit_schema(schema))
+
+
+def test_live_local_audit_deep_compares_components_and_operation_metadata() -> None:
+    local = dict(build_openapi_schema())
+    live = copy.deepcopy(local)
+    live["components"]["schemas"]["AgentTargetedChatRequest"]["required"] = ["message"]
+    live["paths"]["/api/sessions"]["get"]["description"] = "drifted"
+
+    issues = audit_live_matches_local(live, local)
+
+    assert any("/components/schemas/AgentTargetedChatRequest/required" in issue for issue in issues)
+    assert any("/paths/~1api~1sessions/get/description" in issue for issue in issues)
+
+
+def test_sse_registry_rejects_unregistered_events_and_accepts_sdk_family() -> None:
+    require_registered_sse_event(CLAUDE_SDK_EVENTS_PATH, "claude.sdk.AssistantMessage")
+    with pytest.raises(ValueError, match="Unregistered SSE event"):
+        require_registered_sse_event(RESPONSES_PATH, "agentgov.undocumented")
 
 
 def test_openapi_documents_ownerless_session_conflicts() -> None:

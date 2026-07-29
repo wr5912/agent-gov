@@ -41,7 +41,9 @@ class _FakeInfo:
 def test_frontend_history_loader_does_not_restart_for_equivalent_session_refreshes() -> None:
     source = (Path(__file__).resolve().parents[1] / "frontend/src/App.tsx").read_text(encoding="utf-8")
 
-    assert "const activeBackendSessionTurns = useMemo" in source
+    assert "const activeBackendSession = useMemo" in source
+    assert "const activeBackendSessionTurns = activeBackendSession?.turns ?? 0" in source
+    assert "const activeBackendRunId = activeBackendSession?.active_run_id || undefined" in source
     assert "streaming || activeBackendSessionTurns <= 0" in source
     assert ("[activeBackendSessionTurns, activeMessageCount, activeSessionId, effectiveClientConfig, setMessagesBySession, streaming]") in source
 

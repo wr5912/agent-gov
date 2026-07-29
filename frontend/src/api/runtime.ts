@@ -25,6 +25,7 @@ import type {
   AgentReleaseRollbackRequest,
   AgentReleaseRestoreRequest,
   AgentReleaseRestoreResponse,
+  AgentRunCancelResponse,
   AgentRepositoryDiscardChangesRequest,
   AgentRepositorySnapshotRequest,
   AgentRepositoryStatus,
@@ -60,6 +61,22 @@ export function deleteSession(config: RuntimeClientConfig, sessionId: string) {
     config,
     `/v1/conversations/${encodeURIComponent(`conv_${sessionId}`)}`,
     { method: "DELETE" },
+  );
+}
+
+export function cancelAgentRun(
+  config: RuntimeClientConfig,
+  runId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson<AgentRunCancelResponse>(
+    config,
+    `/api/agent-runs/${encodeURIComponent(runId)}/cancel`,
+    {
+      method: "POST",
+      signal,
+      timeoutMs: 15_000,
+    },
   );
 }
 

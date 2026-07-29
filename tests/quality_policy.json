@@ -421,6 +421,38 @@
         "test_selectors": ["tests/test_claude*.py", "tests/test_model_provider*.py"]
       },
       {
+        "id": "runtime-run-cancellation",
+        "changed_paths": [
+          "app/routers/agent_run_control.py",
+          "app/routers/chat.py",
+          "app/routers/claude_sdk_events.py",
+          "app/routers/openai.py",
+          "app/routers/responses.py",
+          "app/routers/runtime_raw_events.py",
+          "app/runtime/active_run_coordinator.py",
+          "app/runtime/claude_runtime_session_persistence.py",
+          "app/runtime/http_disconnect.py",
+          "app/runtime/managed_runtime_execution.py",
+          "app/runtime/managed_streaming_response.py",
+          "app/runtime/prepared_managed_stream.py",
+          "app/runtime/run_control.py",
+          "frontend/src/App.tsx",
+          "frontend/src/api/claudeSdkStream.ts",
+          "frontend/src/hooks/usePlaygroundRun.ts",
+          "frontend/src/playgroundRunState.ts",
+          "scripts/verify_message_actions_browser.mjs",
+          "scripts/verify_playground_cancel.mjs"
+        ],
+        "test_selectors": [
+          "tests/test_runtime_run_cancellation.py",
+          "tests/test_claude_sdk_native_stream.py",
+          "tests/test_chat_stream_agent_id.py",
+          "tests/test_responses_stream.py",
+          "tests/test_runtime_raw_events.py",
+          "tests/test_openapi_export.py"
+        ]
+      },
+      {
         "id": "speech-summary-runtime",
         "changed_paths": [
           "app/runtime/speech_summary.py",
@@ -1199,9 +1231,10 @@
         },
         {
           "id": "responses_streaming_sse",
-          "description": "stream=true 的独立过渡 projector 直接消费 managed SDK source；逐 surface typed registry 完整声明真实事件、payload/条件与 transport comment。已建立 session 后的 managed 终态保持 exactly-once；前置 admission 和 identity 缺口作为 known deviation 明确公开，不宣称完整 OpenAI conformant。",
+          "description": "stream=true 的独立过渡 Responses projector 直接消费 managed SDK source；逐 surface typed registry 完整声明真实事件、payload/条件与 transport comment。text/thinking delta 与最终 AssistantMessage 快照偏差 fail-closed；reasoning item 按标准 output_item/content_part/reasoning_text 生命周期输出，response.* 两模式都发、agentgov.* 仅 control；服务端工具只输出观察事件，不伪装客户端 function_call；thinking_tokens 仅作指标，派生事件在终态前有界排空。受管流在 headers 前完成 admission 并暴露 backend-owned run/session 句柄；成功、失败、取消分别以 response.completed/failed/incomplete 恰好一次收口且最后，取消保留部分 output，不伪装 response.failed；前置 identity 失败作为 known deviation 明确公开，不宣称完整 OpenAI conformant。",
           "pytest": [
             "tests/test_responses_stream.py::test_control_stream_maps_core_events",
+            "tests/test_responses_stream.py::test_cancelled_stream_preserves_partial_output_and_emits_incomplete_terminal",
             "tests/test_responses_sdk_projector.py::test_responses_projects_reasoning_lifecycle_and_stable_output_items",
             "tests/test_responses_sdk_projector.py::test_responses_emits_server_tool_observations_without_function_call_items",
             "tests/test_responses_sdk_projector.py::test_strict_responses_keeps_agentgov_tool_observations_out",
@@ -1273,15 +1306,26 @@
         },
         {
           "id": "playground_native_sdk_stream",
-          "description": "Playground live turn 只调用 /api/agent-runtime/sdk-events：每个官方 SDK yield 原序一帧、dataclass 机械 JSON 且未知值 fail-loud；AgentGov control 独立命名。浏览器按 parent_tool_use_id + message id/epoch + block index 归并 thinking/tool evidence，thinking_tokens 只作指标，顶层 text 才进入回答，Prompt/Speech 派生事件在 done 前有界排空且 done 为最后业务帧；trace 不完整时保留 live evidence，异步更新固定到本轮 message/run token，且不回退 /v1/responses 或 /api/chat/stream。",
+          "description": "Playground live turn 只调用 /api/agent-runtime/sdk-events：每个官方 SDK yield 原序一帧、dataclass 机械 JSON 且未知值 fail-loud；AgentGov control 独立命名。浏览器按 parent_tool_use_id + message id/epoch + block index 归并 thinking/tool evidence，thinking_tokens 只作指标，顶层 text 才进入回答，Prompt/Speech 派生事件在 done 前有界排空且 done 为最后业务帧。所有 managed stream 在响应头先暴露 backend-owned run/session 句柄；停止按钮调用精确 run 取消并等待持久化终态，在等待句柄、取消中或终态待核对期间禁止第二次发送和会话切换；取消保留部分输出但不渲染为运行失败。ASGI 断连显式关闭嵌套 source，流式与非流式 owner 共用取消协调器，重启即时中断前一进程 running intent；trace 不完整时保留 live evidence，异步更新固定到本轮 message/run token，且不回退 /v1/responses 或 /api/chat/stream。",
           "pytest": [
+            "tests/test_runtime_run_cancellation.py::test_cancel_waits_for_durable_terminal_and_allows_immediate_same_session_retry",
+            "tests/test_runtime_run_cancellation.py::test_non_stream_owner_is_cancellable_through_the_same_run_coordinator",
+            "tests/test_runtime_run_cancellation.py::test_non_stream_owner_failure_aborts_turn_and_releases_session_fence",
+            "tests/test_runtime_run_cancellation.py::test_cancellation_during_threaded_turn_admission_cannot_leave_a_session_fence",
+            "tests/test_runtime_run_cancellation.py::test_cancel_api_is_idempotent_and_running_without_owner_fails_closed",
+            "tests/test_runtime_run_cancellation.py::test_cancel_times_out_when_owner_does_not_reach_durable_terminal",
+            "tests/test_runtime_run_cancellation.py::test_startup_reconciliation_interrupts_previous_process_turn_immediately",
+            "tests/test_runtime_run_cancellation.py::test_managed_streaming_response_closes_nested_source_on_asgi_23_send_disconnect",
+            "tests/test_runtime_run_cancellation.py::test_non_stream_http_disconnect_cancels_and_drains_owned_operation",
             "tests/test_claude_sdk_native_stream.py::test_native_sdk_route_preserves_one_frame_per_sdk_yield",
             "tests/test_claude_sdk_native_stream.py::test_native_sdk_route_requires_agent_id",
             "tests/test_claude_sdk_native_stream.py::test_native_sdk_codec_fails_instead_of_stringifying_unknown_values",
             "tests/test_claude_sdk_native_stream.py::test_chat_projector_streams_real_thinking_and_marks_token_counter_as_metric",
+            "tests/test_responses_stream.py::test_cancelled_stream_preserves_partial_output_and_emits_incomplete_terminal",
+            "tests/test_openapi_export.py::test_openapi_documents_exact_run_cancellation_contract",
             "tests/test_documentation_contracts.py::test_docs_separate_playground_sdk_native_from_chat_and_responses_projection"
           ],
-          "ui_scripts": ["verify:message-actions-browser"]
+          "ui_scripts": ["verify:message-actions-browser", "verify:playground-cancel"]
         },
         {
           "id": "conversations_surface",

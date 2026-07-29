@@ -5,7 +5,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -66,6 +66,7 @@ class StreamRun:
     speech_summary_coordinator: SpeechSummaryCoordinator | None = None
     prompt_suggestion_task: asyncio.Task[None] | None = None
     derived_events_drained: bool = False
+    cancellation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 async def _new_stream_run(
@@ -129,6 +130,13 @@ async def stream_claude_runtime(
                 yield event
         finally:
             await close_async_iterator(source)
+            if not context.finalized:
+                await asyncio.to_thread(
+                    _abort_stream_run,
+                    stream_run,
+                    terminal_status="cancelled",
+                    error="Managed stream closed before the Runtime owner reached a terminal state",
+                )
 
 
 async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[ManagedClaudeEvent]:
@@ -147,8 +155,6 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[ManagedCla
         ) as root_span:
             context.langfuse_trace_id, context.langfuse_trace_url = runtime.langfuse.current_trace_ref()
             runtime.langfuse.set_trace_attributes(root_span, **stream_run.propagation)
-            session_frame = runtime._stream_session_event(req, context)
-            yield AgentGovControlEvent(name="session", data=session_frame["data"])
             with runtime.langfuse.start_observation(
                 as_type="generation",
                 name=f"{selected_profile.langfuse_observation_name}.claude_sdk_query",
@@ -189,10 +195,19 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[ManagedCla
                 )
                 source = _drain_stream_queue(stream_run, event_queue, sdk_task)
                 try:
+                    runtime.active_runs.register(
+                        run_id=context.run_id,
+                        session_id=context.session.session_id,
+                        owner_task=sdk_task,
+                        cancel_callback=lambda: _cancel_stream_task(stream_run, sdk_task),
+                    )
+                    session_frame = runtime._stream_session_event(req, context)
+                    yield AgentGovControlEvent(name="session", data=session_frame["data"])
                     async for event in source:
                         yield event
                 finally:
                     await close_async_iterator(source)
+                    await _cancel_stream_task(stream_run, sdk_task)
     await asyncio.to_thread(runtime._flush_langfuse)
 
 
@@ -495,7 +510,6 @@ async def _run_sdk_query(
             terminal_status="cancelled",
             error=exc,
         )
-        raise
     except Exception as exc:
         if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
             stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
@@ -516,6 +530,17 @@ async def _run_sdk_query(
             await _cancel_derived_events(stream_run)
             if stream_run.runtime.user_input_service is not None:
                 stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
+            await event_queue.put(
+                AgentGovControlEvent(
+                    name="cancelled",
+                    data={
+                        "run_id": stream_run.request_context.run_id,
+                        "session_id": stream_run.request_context.session.session_id,
+                        "turn_status": "cancelled",
+                    },
+                )
+            )
+            await event_queue.put(AgentGovControlEvent(name="done", data={}))
         else:
             await _drain_derived_events(stream_run)
             await finalize()
@@ -739,13 +764,14 @@ async def _drain_stream_queue(
 
 
 async def _cancel_stream_task(stream_run: StreamRun, sdk_task: asyncio.Task[None]) -> None:
-    if sdk_task.done():
-        return
-    service = stream_run.runtime.user_input_service
-    try:
-        if service is not None:
-            await service.cancel_run(stream_run.request_context.run_id, decision="client_cancelled")
-    finally:
-        sdk_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await sdk_task
+    async with stream_run.cancellation_lock:
+        if sdk_task.done():
+            return
+        service = stream_run.runtime.user_input_service
+        try:
+            if service is not None:
+                await service.cancel_run(stream_run.request_context.run_id, decision="client_cancelled")
+        finally:
+            sdk_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sdk_task

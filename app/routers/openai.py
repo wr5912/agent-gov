@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.errors import BusinessRuleViolation, NotFoundError
+from app.runtime.http_disconnect import run_while_request_connected
 from app.runtime.schemas import (
     ChatRequest,
     OpenAIChatCompletionChoice,
@@ -44,7 +45,10 @@ def create_openai_router(
         ),
         deprecated=True,
     )
-    async def openai_chat_completions(req: OpenAIChatCompletionRequest) -> OpenAIChatCompletionResponse | JSONResponse:
+    async def openai_chat_completions(
+        req: OpenAIChatCompletionRequest,
+        request: Request,
+    ) -> OpenAIChatCompletionResponse | JSONResponse:
         prompt_parts = []
         for msg in req.messages:
             prompt_parts.append(f"{msg.role}: {msg.content}")
@@ -64,7 +68,10 @@ def create_openai_router(
                 detail=f"Configured OpenAI-compat agent is unavailable: {exc}. Reconfigure via /api/settings/openai-compat-agent.",
             ) from exc
         require_non_stream_hitl_free(profile, surface="/v1/chat/completions")
-        result = await runtime.run(chat_req, profile=profile)
+        result = await run_while_request_connected(
+            request,
+            runtime.run(chat_req, profile=profile),
+        )
         if result.errors or not (result.answer or "").strip():
             return JSONResponse(
                 status_code=status.HTTP_502_BAD_GATEWAY,

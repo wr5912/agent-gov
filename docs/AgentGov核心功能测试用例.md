@@ -1287,6 +1287,9 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 7. 在 Playground 记录 live evidence：block key 不依赖每帧 `StreamEvent.uuid`，顶层 text 才进入回答，subagent text 只进证据，thinking_tokens 只作指标；完成后调用 `GET /api/agent-runs/{run_id}/trace`，仅在 `completeness=complete` 时校准替换，刷新后再次打开同一 run 的 Trace。
 8. 分别制造 failed、cancelled、interrupted 终态，确认运行列表和 Trace API 返回持久化终态/错误；制造缺失 `messages` 的旧 run，确认明确返回 `completeness=unavailable`。
 9. 调用旧 `/api/chat/stream` 默认 raw 与 `?event_mode=semantic`，确认 raw 兼容、semantic 保留文本流且只把完整 SDK 事实投影为 `trace_event`。
+10. 在 Playground 的 SDK-native 流出现部分文本后点击“停止”，立即用快捷键和发送按钮尝试第二次发送；确认 UI 在等待 `run_id`、取消中和状态待核对三个阶段都保持锁定，取消请求精确命中响应头中的 `run_id`，直到后端返回持久化终态才允许下一轮。
+11. 取消完成后立即在同一 session 发送第二条消息，确认成功且不出现 `SESSION_CONFLICT`；第一条的部分输出仍显示“已取消”，不显示“运行失败”。对 `/api/chat/stream`、流式 `/v1/responses` 和 raw debug stream 断开消费，确认嵌套 source 均关闭；对非流式 `/api/chat`、`/v1/responses`、`/v1/chat/completions` 取消请求任务，确认共用 owner 协调和持久化收口。
+12. 构造前一 API 进程留下的 running intent 后启动新进程，确认启动阶段立即写入 `interrupted` AgentRun、丢弃 staging、释放 session fence；取消 API 对重复终态返回 `200`，对未知 run 返回 `404`，对无本进程 owner 的 running run 返回 `409`，超时返回 `504`。
 
 成功标准：
 
@@ -1297,10 +1300,11 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 - `/v1/chat/completions` 保持兼容入口定位，不作为 HITL、会话治理或工具时间线主控制面。
 - Trace 不出现 `SystemMessage:thinking_tokens` 洪水；每个完整 ThinkingBlock 只形成一条 thinking 事件，同消息全部工具调用/结果、hook、task、result 和 subagent 归属无遗漏。
 - live 与刷新后的 Trace 由同一投影器生成并一致；失败、取消、中断可重放，旧数据不可用时明确降级而不是展示几个 conversation block 冒充完整 Trace。
+- 三类 managed SSE 响应都暴露 backend-owned run/session header；Stop 不以客户端 abort 冒充后端取消，取消未确认时不会开放第二次发送。取消、断连、非流式任务取消、关闭和重启均释放持久化 session fence，允许同会话立即安全重试。
 
 证据要求：OpenAPI/pytest 契约、前端网络请求、真实容器 Playwright 截图、API 响应、容器健康状态。
 
-自动验收：核心 API 契约已绑定到 `tests/quality_policy.json` 的 `openai_responses_first_surface`、`responses_streaming_sse` 与 `playground_native_sdk_stream` 场景，覆盖 `tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_sdk_projector.py`、`tests/test_responses_retrieve.py`、`tests/test_claude_sdk_native_stream.py`、`tests/test_conversations_api.py`、`tests/test_trace_projection.py`、`tests/test_trace_stream_contract.py` 和 `tests/test_agent_runs_api.py`；旧 Chat raw/semantic 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收统一使用 `make ui-openai-responses-smoke`：公开入口先基于当前工作树重建镜像、recreate Compose UI/API，再运行 Responses API 验收与消息动作浏览器脚本，验证 UI live turn 只请求 SDK-native endpoint、会话走 `/v1/conversations`、Trace 刷新重放、Responses retrieve 可用，并执行 hostile / boundary 请求。
+自动验收：核心 API 契约已绑定到 `tests/quality_policy.json` 的 `openai_responses_first_surface`、`responses_streaming_sse` 与 `playground_native_sdk_stream` 场景，覆盖 `tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_sdk_projector.py`、`tests/test_responses_retrieve.py`、`tests/test_claude_sdk_native_stream.py`、`tests/test_runtime_run_cancellation.py`、`tests/test_conversations_api.py`、`tests/test_trace_projection.py`、`tests/test_trace_stream_contract.py` 和 `tests/test_agent_runs_api.py`；旧 Chat raw/semantic 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收使用 `make ui-openai-responses-smoke` 与 `make ui-playground-cancel-smoke`：公开入口先基于当前工作树重建镜像、recreate Compose UI/API，再运行 Responses API、消息动作和“发送→停止→同会话立即再发送”浏览器验收，验证 UI live turn 只请求 SDK-native endpoint、取消命中精确 run、会话走 `/v1/conversations`、Trace 刷新重放、Responses retrieve 可用，并执行 hostile / boundary 请求。
 
 ## 开发推进规则
 

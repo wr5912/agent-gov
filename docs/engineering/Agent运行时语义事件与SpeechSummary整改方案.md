@@ -294,9 +294,11 @@ fencing 拒绝并产生 `MirrorErrorMessage`。持久化失败可在 `agentgov.r
 
 - SDK SSE：`agentgov.done` 是最后一个业务 data frame。
 - Chat Stream：兼容 `done` 是最后一个业务 data frame。
-- Responses strict：`response.completed` 或 `response.failed` 恰好一次并且最后。
+- Responses strict：`response.completed`、`response.failed` 或取消态
+  `response.incomplete` 恰好一次并且最后。
 - Responses control：先输出 `agentgov.done`，再输出恰好一次
-  `response.completed` 或 `response.failed`；标准终态始终是连接最后一个业务事件。
+  `response.completed`、`response.failed` 或 `response.incomplete`；取消时在
+  `agentgov.done` 前输出 `agentgov.cancelled`，标准终态始终是连接最后一个业务事件。
 
 任何接口都不得在上述终态后再输出 Prompt Suggestion、Speech Summary、error、result 或 SDK 消息。
 

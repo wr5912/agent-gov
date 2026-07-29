@@ -93,7 +93,7 @@ GOVERNANCE_BASE_REF_ARG := $(if $(strip $(GOVERNANCE_BASE_REF)),--base-ref $(GOV
 CONTAINER_ACCEPTANCE := $(PYTHON_RUN) scripts/run_container_acceptance.py --env-file "$(COMPOSE_ENV_FILE)"
 REQUIRE_CONTAINER_ACCEPTANCE = [ "$$AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE" = "1" ] && [ -n "$$AGENT_GOV_ACCEPTANCE_RUN_ID" ] || { echo "Use the public container acceptance Make target." >&2; exit 1; }
 
-.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check container-core-smoke container-openapi-check container-live-test container-speech-summary-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke ui-openai-responses-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts _container-core-smoke _container-openapi-check _container-live-test _container-speech-summary-test _container-health-e2e _smoke _ui-smoke _ui-feedback-smoke _ui-openai-responses-smoke _langfuse-smoke
+.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check container-core-smoke container-openapi-check container-live-test container-speech-summary-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke ui-openai-responses-smoke ui-playground-cancel-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts _container-core-smoke _container-openapi-check _container-live-test _container-speech-summary-test _container-health-e2e _smoke _ui-smoke _ui-feedback-smoke _ui-openai-responses-smoke _ui-playground-cancel-smoke _langfuse-smoke
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -168,6 +168,20 @@ _ui-feedback-smoke:
 
 ui-openai-responses-smoke:
 	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _ui-openai-responses-smoke
+
+ui-playground-cancel-smoke:
+	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _ui-playground-cancel-smoke
+
+_ui-playground-cancel-smoke:
+	@$(REQUIRE_CONTAINER_ACCEPTANCE)
+	@frontend_port=$${FRONTEND_HOST_PORT:-$$(awk -F= '$$1 == "FRONTEND_HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
+	api_key=$$(awk -F= '$$1 == "FRONTEND_RUNTIME_API_KEY" || $$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null); \
+	RUNTIME_UI_BASE="http://localhost:$${frontend_port:-55173}" \
+	RUNTIME_API_BASE="http://localhost:$${host_port:-58080}" \
+	RUNTIME_API_KEY="$$api_key" \
+	VERIFY_SCREENSHOT_DIR="$${VERIFY_SCREENSHOT_DIR:-/tmp/agentgov-ui-playground-cancel}" \
+	pnpm --dir frontend run verify:playground-cancel
 
 _ui-openai-responses-smoke:
 	@$(REQUIRE_CONTAINER_ACCEPTANCE)

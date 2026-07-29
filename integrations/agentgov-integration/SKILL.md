@@ -38,11 +38,12 @@ AgentGov 被上层业务系统通过 HTTP API 集成。本 skill 只给选择路
    `POST /api/agent-registry/{agent_id}/workspace/import` 导入单顶层 `workspace/` 包；平台
    没有通用模板创建 API。
 2. 建立 SDK-native SSE，机械保留 `claude.sdk.*`，并处理 OpenAPI 声明的
-   `agentgov.session`、confirmation、result、error、done 等控制事件。
+   `agentgov.session`、confirmation、result、error、cancelled、done 等控制事件。
 3. `agentgov.result` 只是 SDK ResultMessage 到达；只有 `agentgov.done` 表示 managed turn
    已持久化收口。HTTP `200` 后若 EOF 前没有 `agentgov.done`，按运行失败处理。
-4. 当前 session admission 可能晚于 SSE headers。不要因 HTTP `200` 自动重试或记成功；
-   先按 `run_id`/conversation 事实判断是否已创建运行，避免重复副作用。
+4. session admission 与 backend-owned run/session 句柄在 SSE headers 前完成。主动停止使用
+   `POST /api/agent-runs/{run_id}/cancel`，只有其确认持久化终态并释放 session fence 后才能续发；
+   identity 建立前的源异常不暴露伪造句柄，并以受管错误终态收口。
 
 ## Web HITL
 

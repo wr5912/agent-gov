@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import Response, StreamingResponse
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import Response
 
 from app.runtime.agent_profile_resolver import resolve_business_profile
+from app.runtime.agent_profiles import AgentRuntimeProfile
+from app.runtime.http_disconnect import run_while_request_connected
+from app.runtime.managed_streaming_response import ManagedStreamingResponse
 from app.runtime.runtime_raw_events import (
     RAW_EVENTS_MEDIA_TYPE,
     RuntimeRawEventsBackend,
@@ -46,7 +49,10 @@ def create_runtime_raw_events_router(
             "This privileged debug surface is disabled by default and requires API_KEY when enabled."
         ),
     )
-    async def runtime_raw_events(req: RuntimeRawEventsRequest) -> Response:
+    async def runtime_raw_events(
+        req: RuntimeRawEventsRequest,
+        request: Request,
+    ) -> Response:
         if not settings.enable_agent_runtime_raw_events:
             raise RuntimeRawEventsDisabledError("Raw Agent Runtime events are disabled; set ENABLE_AGENT_RUNTIME_RAW_EVENTS=true with API_KEY configured")
 
@@ -55,22 +61,34 @@ def create_runtime_raw_events_router(
             require_stream_hitl_available(profile, settings, surface="/api/debug/agent-runtime/raw-events")
         else:
             require_non_stream_hitl_free(profile, surface="/api/debug/agent-runtime/raw-events")
+        if not req.stream:
+            return await run_while_request_connected(
+                request,
+                _collect_raw_response(backend, req, profile),
+            )
         prepared = await backend.start(req, profile=profile)
         headers = raw_event_response_headers(prepared.metadata)
-        if req.stream:
-            return StreamingResponse(
-                prepared.iter_bytes(),
-                media_type=RAW_EVENTS_MEDIA_TYPE,
-                headers=headers,
-            )
-        try:
-            content = await prepared.collect()
-        finally:
-            await prepared.aclose()
-        return Response(
-            content=content,
+        return ManagedStreamingResponse(
+            prepared.iter_bytes(),
             media_type=RAW_EVENTS_MEDIA_TYPE,
             headers=headers,
         )
 
     return router
+
+
+async def _collect_raw_response(
+    backend: RuntimeRawEventsBackend,
+    req: RuntimeRawEventsRequest,
+    profile: AgentRuntimeProfile,
+) -> Response:
+    prepared = await backend.start(req, profile=profile)
+    try:
+        content = await prepared.collect()
+    finally:
+        await prepared.aclose()
+    return Response(
+        content=content,
+        media_type=RAW_EVENTS_MEDIA_TYPE,
+        headers=raw_event_response_headers(prepared.metadata),
+    )

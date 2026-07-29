@@ -5,6 +5,13 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+function optionalRunOutcome(value: unknown): ChatMessage["runOutcome"] {
+  if (value === "succeeded" || value === "failed" || value === "cancelled" || value === "interrupted") {
+    return value;
+  }
+  return undefined;
+}
+
 export function mergeChatMessageRunContext(message: ChatMessage, source: unknown): ChatMessage {
   if (!isRecord(source)) return message;
 
@@ -16,6 +23,10 @@ export function mergeChatMessageRunContext(message: ChatMessage, source: unknown
     runId
     || optionalString(source.sdk_session_id)
     || optionalString(source.agent_version_id),
+  );
+  const runOutcome = optionalRunOutcome(source.turn_status) || message.runOutcome;
+  const sourceHasPartialAnswer = Boolean(
+    optionalString(source.answer) || optionalString(source.answer_summary),
   );
 
   return {
@@ -33,6 +44,10 @@ export function mergeChatMessageRunContext(message: ChatMessage, source: unknown
         : message.langfuseTraceStatus,
     alertId: optionalString(source.alert_id) || message.alertId,
     caseId: optionalString(source.case_id) || message.caseId,
+    runOutcome,
+    partial: runOutcome && runOutcome !== "succeeded"
+      ? sourceHasPartialAnswer || message.partial
+      : message.partial,
   };
 }
 

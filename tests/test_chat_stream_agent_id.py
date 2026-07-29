@@ -74,6 +74,10 @@ def test_chat_stream_projects_prompt_suggestion_event(monkeypatch, tmp_path: Pat
 
     async def fake_stream(req, *, profile=None, **kwargs):
         yield AgentGovControlEvent(
+            name="session",
+            data={"run_id": "run-1", "session_id": "session-1"},
+        )
+        yield AgentGovControlEvent(
             name="prompt_suggestion",
             data={"suggestion": "继续检查边界条件", "run_id": "run-1", "session_id": "session-1"},
         )
@@ -84,6 +88,8 @@ def test_chat_stream_projects_prompt_suggestion_event(monkeypatch, tmp_path: Pat
         response = client.post("/api/chat/stream", json={"message": "hi", "agent_id": DEFAULT_BUSINESS_AGENT_ID})
 
     assert response.status_code == 200
+    assert response.headers["x-agentgov-run-id"] == "run-1"
+    assert response.headers["x-agentgov-session-id"] == "session-1"
     assert "event: prompt_suggestion" in response.text
     assert '"suggestion": "继续检查边界条件"' in response.text
 
@@ -138,6 +144,8 @@ def test_chat_stream_semantic_mode_suppresses_thinking_counter_and_keeps_tools(m
         )
 
     assert semantic.status_code == 200
+    assert semantic.headers["x-agentgov-run-id"] == "run-semantic"
+    assert semantic.headers["x-agentgov-session-id"] == "session-1"
     assert semantic.text.count("event: trace_event") == 3
     assert '"kind": "thinking"' in semantic.text
     assert '"kind": "tool_use"' in semantic.text

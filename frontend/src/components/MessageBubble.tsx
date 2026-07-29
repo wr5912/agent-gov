@@ -14,6 +14,7 @@ interface Props {
   onRerun?: (message: ChatMessage) => void;
   userInputErrors?: Record<string, string>;
   submittingUserInputRequests?: Set<string>;
+  userInputDisabled?: boolean;
   onSubmitUserInput?: (request: ClaudeUserInputRequest, input: Omit<ClaudeUserInputDecisionPayload, "decision_token">) => void;
 }
 
@@ -27,6 +28,7 @@ export function MessageBubble({
   onRerun,
   userInputErrors = {},
   submittingUserInputRequests,
+  userInputDisabled = false,
   onSubmitUserInput,
 }: Props) {
   const isUser = message.role === "user";
@@ -56,6 +58,7 @@ export function MessageBubble({
                 request={request}
                 error={userInputErrors[request.request_id]}
                 submitting={submittingUserInputRequests?.has(request.request_id)}
+                disabled={userInputDisabled}
                 onSubmit={(item, input) => onSubmitUserInput?.(item, input)}
               />
             ))}
@@ -65,6 +68,14 @@ export function MessageBubble({
           <div className="message-stream-indicator" role="status" aria-label="正在生成">
             <Loader2 size={16} className="spin" />
           </div>
+        ) : null}
+        {message.role === "assistant" && message.runOutcome && message.runOutcome !== "succeeded" ? (
+          <div className="message-run-outcome" data-outcome={message.runOutcome}>
+            {runOutcomeLabel(message)}
+          </div>
+        ) : null}
+        {message.role === "assistant" && message.controlError ? (
+          <div className="message-run-control-error" role="status">{message.controlError}</div>
         ) : null}
         {message.role === "assistant" && !isActiveStreaming && hasContent ? (
           <div className="message-detail-actions" data-testid="message-actions">
@@ -94,6 +105,12 @@ export function MessageBubble({
       </div>
     </article>
   );
+}
+
+function runOutcomeLabel(message: ChatMessage): string {
+  if (message.runOutcome === "cancelled") return message.partial ? "已取消 · 已保留部分输出" : "已取消";
+  if (message.runOutcome === "interrupted") return message.partial ? "已中断 · 已保留部分输出" : "已中断";
+  return message.partial ? "运行失败 · 已保留部分输出" : "运行失败";
 }
 
 function FormattedText({ text }: { text: string }) {

@@ -1,6 +1,97 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ClaudeSdkEvidenceReducer, formatStreamError } from "./claudeSdkStream";
+import {
+  ClaudeSdkEvidenceReducer,
+  formatStreamError,
+  managedRunHandleFromHeaders,
+  streamClaudeSdkChat,
+} from "./claudeSdkStream";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("managedRunHandleFromHeaders", () => {
+  it("returns the run handle exposed before the first stream body event", () => {
+    const headers = new Headers({
+      "X-AgentGov-Run-Id": "run-1",
+      "X-AgentGov-Session-Id": "session-1",
+    });
+
+    expect(managedRunHandleFromHeaders(headers)).toEqual({
+      runId: "run-1",
+      sessionId: "session-1",
+    });
+  });
+
+  it("rejects a partial run identity", () => {
+    const headers = new Headers({ "X-AgentGov-Run-Id": "run-1" });
+
+    expect(() => managedRunHandleFromHeaders(headers)).toThrow(
+      "incomplete managed run identity",
+    );
+  });
+});
+
+describe("streamClaudeSdkChat managed lifecycle", () => {
+  it("publishes the response run handle before body events and recognizes cancellation", async () => {
+    const order: string[] = [];
+    const body = [
+      'event: agentgov.session\ndata: {"run_id":"run-1","session_id":"session-1"}\n\n',
+      'event: agentgov.cancelled\ndata: {"run_id":"run-1"}\n\n',
+      'event: agentgov.done\ndata: {"run_id":"run-1"}\n\n',
+    ].join("");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "X-AgentGov-Run-Id": "run-1",
+        "X-AgentGov-Session-Id": "session-1",
+      },
+    })));
+
+    await streamClaudeSdkChat(
+      { apiBase: "http://runtime.test", apiKey: "" },
+      { message: "hello", agent_id: "main", with_speech_summary: false },
+      {
+        onRunStarted: () => order.push("handle"),
+        onEnvelope: (event) => order.push(event.event),
+        onCancelled: () => order.push("cancelled"),
+        onDone: () => order.push("done"),
+      },
+    );
+
+    expect(order).toEqual([
+      "handle",
+      "agentgov.session",
+      "agentgov.cancelled",
+      "cancelled",
+      "agentgov.done",
+      "done",
+    ]);
+  });
+
+  it("rejects a body session identity that differs from the response handle", async () => {
+    const body = [
+      'event: agentgov.session\ndata: {"run_id":"run-other","session_id":"session-1"}\n\n',
+      'event: agentgov.done\ndata: {}\n\n',
+    ].join("");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "X-AgentGov-Run-Id": "run-1",
+        "X-AgentGov-Session-Id": "session-1",
+      },
+    })));
+
+    await expect(streamClaudeSdkChat(
+      { apiBase: "http://runtime.test", apiKey: "" },
+      { message: "hello", agent_id: "main", with_speech_summary: false },
+      {},
+    )).rejects.toThrow("does not match response headers");
+  });
+});
 
 describe("ClaudeSdkEvidenceReducer", () => {
   it("keys block deltas by message identity and index instead of StreamEvent uuid", () => {

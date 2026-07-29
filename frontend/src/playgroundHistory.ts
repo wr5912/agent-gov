@@ -108,9 +108,9 @@ function appendUnrepresentedRuns(
 function runDisplayText(run: FeedbackRunRecord): string {
   if (typeof run.answer === "string" && run.answer.trim()) return run.answer;
   if (typeof run.answer_summary === "string" && run.answer_summary.trim()) return run.answer_summary;
-  if (Array.isArray(run.errors) && run.errors.length) return `运行失败：\n${run.errors.map(String).join("\n")}`;
   if (run.turn_status === "cancelled") return "运行已取消。";
   if (run.turn_status === "interrupted") return "运行被中断。";
+  if (Array.isArray(run.errors) && run.errors.length) return `运行失败：\n${run.errors.map(String).join("\n")}`;
   if (run.turn_status === "failed") return "运行失败，未返回文本结果。";
   return "运行已完成，未返回文本结果。";
 }

@@ -585,6 +585,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel one exact managed Agent run and wait for durable termination
+         * @description Returns only after the target run is terminal and no longer owns its session fence. Repeated cancellation is idempotent.
+         */
+        post: operations["cancel_agent_run_api_agent_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-runs/{run_id}/trace": {
         parameters: {
             query?: never;
@@ -2812,6 +2832,24 @@ export interface components {
             worktrees_dir: string;
         } & {
             [key: string]: unknown;
+        };
+        /** AgentRunCancelResponse */
+        AgentRunCancelResponse: {
+            /** Cancelled */
+            cancelled: boolean;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Run Id */
+            run_id: string;
+            /** Session Active Run Id */
+            session_active_run_id?: string | null;
+            /** Session Id */
+            session_id: string;
+            /**
+             * Turn Status
+             * @enum {string}
+             */
+            turn_status: "succeeded" | "failed" | "cancelled" | "interrupted";
         };
         /** AgentRunResponse */
         AgentRunResponse: {
@@ -8230,6 +8268,67 @@ export interface operations {
             };
         };
     };
+    cancel_agent_run_api_agent_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunCancelResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description The persisted Agent run does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The running turn has no owner in this API process or its fence is inconsistent. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Cancellation continues, but durable termination was not confirmed before the timeout. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_agent_run_trace_api_agent_runs__run_id__trace_get: {
         parameters: {
             query?: never;
@@ -8295,6 +8394,10 @@ export interface operations {
             /** @description Server-sent event stream. */
             200: {
                 headers: {
+                    /** @description Backend-owned run id used by the exact-run cancellation endpoint. */
+                    "X-AgentGov-Run-Id"?: string;
+                    /** @description Backend-owned AgentGov session id that owns the run. */
+                    "X-AgentGov-Session-Id"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -9284,6 +9387,10 @@ export interface operations {
             /** @description Server-sent event stream. */
             200: {
                 headers: {
+                    /** @description Backend-owned run id used by the exact-run cancellation endpoint. */
+                    "X-AgentGov-Run-Id"?: string;
+                    /** @description Backend-owned AgentGov session id that owns the run. */
+                    "X-AgentGov-Session-Id"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -13479,6 +13586,10 @@ export interface operations {
             /** @description JSON response when stream=false; server-sent events when stream=true. */
             200: {
                 headers: {
+                    /** @description Backend-owned run id used by the exact-run cancellation endpoint. */
+                    "X-AgentGov-Run-Id"?: string;
+                    /** @description Backend-owned AgentGov session id that owns the run. */
+                    "X-AgentGov-Session-Id"?: string;
                     [name: string]: unknown;
                 };
                 content: {

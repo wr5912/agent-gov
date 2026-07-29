@@ -24,6 +24,7 @@ from app.openapi_contract import install_openapi_contract
 from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
+from app.routers.agent_run_control import create_agent_run_control_router
 from app.routers.agent_workspace_packages import create_agent_workspace_packages_router
 from app.routers.agents import create_agents_router
 from app.routers.assets import create_assets_router
@@ -55,7 +56,9 @@ from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.claude_runtime_raw_events import ClaudeRuntimeRawEventsBackend
 from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.runtime.logging_config import configure_runtime_logging
+from app.runtime.prepared_managed_stream import MANAGED_RUN_RESPONSE_HEADER_NAMES
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+from app.runtime.run_control import RunCancellationService
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.runtime_raw_events import RAW_EVENT_RESPONSE_HEADER_NAMES
 from app.runtime.runtime_recovery import RUNTIME_RECOVERY_INTERVAL_SECONDS
@@ -118,6 +121,10 @@ runtime = ClaudeRuntime(
     runtime_env=runtime_env,
 )
 runtime_raw_events_backend = ClaudeRuntimeRawEventsBackend(runtime, settings)
+run_cancellation_service = RunCancellationService(
+    session_store=session_store,
+    coordinator=runtime.active_runs,
+)
 feedback_store.set_langfuse_trace_fetcher(runtime.fetch_langfuse_trace)
 agent_governance = AgentGovernanceService(
     feedback_store=feedback_store,
@@ -270,6 +277,14 @@ async def lifespan(_: FastAPI):
         "business agent registry synced: %s",
         sorted(agent_id for agent_id, profile in profiles.items() if profile.category == "business"),
     )
+    restarted_turn_count = 0
+    while batch := session_store.reconcile_running_turns_after_restart(limit=100):
+        restarted_turn_count += len(batch)
+    if restarted_turn_count:
+        logger.warning(
+            "event=runtime.startup_turn_recovery interrupted_turns=%s",
+            restarted_turn_count,
+        )
     _reconcile_runtime_orphans()
     test_recovery = agent_testing_service.recover()
     if any(test_recovery.values()):
@@ -305,6 +320,14 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        incomplete_runtime_runs = await runtime.active_runs.cancel_all(
+            timeout_seconds=10.0,
+        )
+        if incomplete_runtime_runs:
+            logger.warning(
+                "event=runtime.shutdown_turn_cleanup_incomplete count=%s",
+                len(incomplete_runtime_runs),
+            )
         for task in (provider_probe_task, dependency_probe_task, recovery_task, test_schedule_task):
             task.cancel()
         for task in (provider_probe_task, dependency_probe_task, recovery_task, test_schedule_task):
@@ -326,6 +349,7 @@ app = FastAPI(
     openapi_tags=[
         {"name": "health", "description": "Service status and documentation discovery."},
         {"name": "chat", "description": "Claude Agent task execution endpoints."},
+        {"name": "agent-run-control", "description": "Durable cancellation for exact managed Agent runs."},
         {"name": "debug", "description": "Privileged Runtime diagnostics disabled by default."},
         {"name": "catalog", "description": "Discover configured subagents and skills."},
         {"name": "agents", "description": "List registered business agents (governance objects)."},
@@ -391,13 +415,18 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=[
-        "Content-Disposition",
-        "X-Agent-Commit-SHA",
-        "X-Workspace-Package-SHA256",
-        "X-Workspace-Tree-SHA256",
-        *RAW_EVENT_RESPONSE_HEADER_NAMES,
-    ],
+    expose_headers=list(
+        dict.fromkeys(
+            [
+                "Content-Disposition",
+                "X-Agent-Commit-SHA",
+                "X-Workspace-Package-SHA256",
+                "X-Workspace-Tree-SHA256",
+                *MANAGED_RUN_RESPONSE_HEADER_NAMES,
+                *RAW_EVENT_RESPONSE_HEADER_NAMES,
+            ]
+        )
+    ),
 )
 
 register_error_handlers(app)
@@ -422,6 +451,12 @@ app.include_router(
         runtime=runtime,
         settings=settings,
         agent_registry_store=agent_registry_store,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_agent_run_control_router(
+        cancellation_service=run_cancellation_service,
         require_api_key=require_api_key,
     )
 )

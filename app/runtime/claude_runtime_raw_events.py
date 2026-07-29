@@ -68,7 +68,7 @@ class ClaudeRuntimeRawEventsBackend:
             )
             await prepared.prepare()
             return prepared
-        except Exception:
+        except BaseException:
             await close_async_iterator(source)
             await capture.aclose()
             raise

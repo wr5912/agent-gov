@@ -336,6 +336,54 @@ def reconcile_expired_turns(
     return reconciled
 
 
+def reconcile_running_turns_after_restart(
+    session_factory: Any,
+    *,
+    now: str | None = None,
+    limit: int = 100,
+) -> list[str]:
+    """Interrupt running intents left by the previous singleton API process."""
+    completed_at = now or utc_now()
+    statement = (
+        select(SessionTurnIntentModel.run_id)
+        .join(
+            SessionRecordModel,
+            SessionRecordModel.session_id == SessionTurnIntentModel.session_id,
+        )
+        .where(
+            SessionTurnIntentModel.status == "running",
+            SessionRecordModel.active_run_id == SessionTurnIntentModel.run_id,
+        )
+        .order_by(SessionTurnIntentModel.created_at)
+        .limit(max(1, limit))
+    )
+    with session_factory() as db:
+        candidates = list(db.scalars(statement).all())
+
+    reconciled: list[str] = []
+    for run_id in candidates:
+        with session_factory.begin() as db:
+            intent = db.get(SessionTurnIntentModel, run_id)
+            if intent is None or intent.status != "running":
+                continue
+            session = db.get(SessionRecordModel, intent.session_id)
+            if session is None or session.active_run_id != run_id:
+                continue
+            error: JsonObject = {
+                "type": "RuntimeServiceRestarted",
+                "message": "The singleton API process restarted before the SDK turn completed",
+            }
+            interrupt_running_turn_in_transaction(
+                db,
+                session=session,
+                intent=intent,
+                error=error,
+                completed_at=completed_at,
+            )
+            reconciled.append(run_id)
+    return reconciled
+
+
 def interrupt_running_turn_in_transaction(
     db: Any,
     *,

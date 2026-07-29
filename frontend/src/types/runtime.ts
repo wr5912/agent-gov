@@ -29,6 +29,7 @@ type OpenApiAgentReleaseResponse = components["schemas"]["AgentReleaseResponse"]
 type OpenApiAgentReleaseRollbackRequest = components["schemas"]["AgentReleaseRollbackRequest"];
 type OpenApiAgentReleaseRestoreRequest = components["schemas"]["AgentReleaseRestoreRequest"];
 type OpenApiAgentReleaseRestoreResponse = components["schemas"]["AgentReleaseRestoreResponse"];
+type OpenApiAgentRunCancelResponse = components["schemas"]["AgentRunCancelResponse"];
 type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
 type OpenApiAgentRunTraceResponse = components["schemas"]["AgentRunTraceResponse"];
 type OpenApiAgentTraceEvent = components["schemas"]["AgentTraceEvent"];
@@ -111,6 +112,7 @@ export type AgentChangeSetActionRequest = OpenApiAgentChangeSetActionRequest;
 export type AgentChangeSetPublishRequest = OpenApiAgentChangeSetPublishRequest;
 export type AgentReleaseRollbackRequest = OpenApiAgentReleaseRollbackRequest;
 export type AgentReleaseRestoreRequest = OpenApiAgentReleaseRestoreRequest;
+export type AgentRunCancelResponse = OpenApiAgentRunCancelResponse;
 export type AgentRunRecord = OpenApiAgentRunResponse;
 export type AgentRunTrace = OpenApiAgentRunTraceResponse;
 export type AgentTraceEvent = OpenApiAgentTraceEvent;
@@ -147,6 +149,9 @@ export interface ChatMessage {
   langfuseTraceStatus?: LangfuseTraceStatus;
   alertId?: string;
   caseId?: string;
+  runOutcome?: "succeeded" | "failed" | "cancelled" | "interrupted";
+  partial?: boolean;
+  controlError?: string;
   agentActivity?: AgentActivity;
   userInputRequests?: ClaudeUserInputRequest[];
   traceState?: "live" | "calibrating" | "ready" | "unavailable" | "error";

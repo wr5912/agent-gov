@@ -1,9 +1,7 @@
 import { useCallback, useState } from "react";
 
-// 后端每轮一帧下发整批候选，这里就**整批覆盖**，不累积。
-// 覆盖是有意的：done 提前发出后、建议还要等一整个模型推理才到，这期间用户可以发下一轮
-// （App.tsx onDone 已 setStreaming(false)）。两轮共用 sessionId 且客户端拿不到 batch key，
-// 若改成累积，上一轮的候选会和这一轮的混在一起且不收敛；覆盖则天然自愈。
+// 后端在本轮终态前用一帧下发整批候选，这里整批覆盖、不累积；新一轮开始时会先清空。
+// 这样即使同一 session 连续运行，也不会把不同 run 的候选混在一起。
 const MAX_SUGGESTIONS = 5;
 
 export function usePromptSuggestion(activeSessionId: string | undefined, setInput: (value: string) => void) {

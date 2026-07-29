@@ -35,6 +35,50 @@ class RuntimeSessionPersistenceMixin:
         agent_version_id_override: Optional[str] = None,
         agent_id: str,
     ) -> RuntimeRequestContext:
+        acquisition = asyncio.create_task(
+            self._acquire_runtime_request_context(
+                req,
+                profile=profile,
+                agent_version_id_override=agent_version_id_override,
+                agent_id=agent_id,
+            ),
+            name="runtime-turn-admission",
+        )
+        try:
+            return await asyncio.shield(acquisition)
+        except asyncio.CancelledError:
+            await self._abort_cancelled_context_acquisition(acquisition, req)
+            raise
+
+    async def _abort_cancelled_context_acquisition(
+        self,
+        acquisition: asyncio.Task[RuntimeRequestContext],
+        req: ChatRequest,
+    ) -> None:
+        from .claude_runtime import RuntimeQueryState
+
+        try:
+            context = await acquisition
+        except (Exception, asyncio.CancelledError):
+            return
+        state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
+        await asyncio.to_thread(
+            self._abort_runtime_request,
+            req,
+            context,
+            state,
+            terminal_status="cancelled",
+            error=asyncio.CancelledError("Runtime request cancelled during durable admission"),
+        )
+
+    async def _acquire_runtime_request_context(
+        self,
+        req: ChatRequest,
+        *,
+        profile: AgentRuntimeProfile,
+        agent_version_id_override: Optional[str],
+        agent_id: str,
+    ) -> RuntimeRequestContext:
         from .claude_runtime import RuntimeRequestContext
 
         await asyncio.to_thread(self._raise_if_version_maintenance, agent_id)

@@ -6,6 +6,7 @@ import { isRecord } from "../utils/records";
 interface ClaudeUserInputCardProps {
   request: ClaudeUserInputRequest;
   submitting?: boolean;
+  disabled?: boolean;
   error?: string;
   onSubmit: (request: ClaudeUserInputRequest, input: Omit<ClaudeUserInputDecisionPayload, "decision_token">) => void;
 }
@@ -18,7 +19,7 @@ type Question = {
   multiSelect: boolean;
 };
 
-export function ClaudeUserInputCard({ request, submitting = false, error, onSubmit }: ClaudeUserInputCardProps) {
+export function ClaudeUserInputCard({ request, submitting = false, disabled = false, error, onSubmit }: ClaudeUserInputCardProps) {
   const [denyMessage, setDenyMessage] = useState("");
   const [otherResponse, setOtherResponse] = useState("");
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
@@ -50,7 +51,7 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
                         type={question.multiSelect ? "checkbox" : "radio"}
                         name={`${request.request_id}-${index}`}
                         value={option.label}
-                        disabled={!waiting || submitting}
+                        disabled={disabled || !waiting || submitting}
                         checked={isSelected(answers[String(index)], option.label)}
                         onChange={(event) => setAnswers((current) => updateAnswer(current, String(index), option.label, question.multiSelect, event.currentTarget.checked))}
                       />
@@ -67,7 +68,7 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
           className="claude-user-input-textarea"
           data-testid="claude-user-input-other"
           value={otherResponse}
-          disabled={!waiting || submitting}
+          disabled={disabled || !waiting || submitting}
           placeholder="其他回答..."
           onChange={(event) => setOtherResponse(event.target.value)}
         />
@@ -76,7 +77,7 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
             type="button"
             className="primary-button"
             data-testid="claude-user-input-submit-answer"
-            disabled={!waiting || submitting || (!Object.keys(answers).length && !otherResponse.trim())}
+            disabled={disabled || !waiting || submitting || (!Object.keys(answers).length && !otherResponse.trim())}
             onClick={() => onSubmit(request, { action: "answer_question", answer: buildAnswer(answers, otherResponse) })}
           >
             <Check size={15} /> 提交回答
@@ -111,12 +112,12 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
             className="claude-user-input-textarea"
             data-testid="claude-user-input-deny-message"
             value={denyMessage}
-            disabled={submitting}
+            disabled={disabled || submitting}
             placeholder="拒绝原因（可选）"
             onChange={(event) => setDenyMessage(event.target.value)}
           />
           <div className="claude-user-input-actions">
-            <button type="button" className="primary-button" data-testid="claude-user-input-allow" disabled={submitting} onClick={() => onSubmit(request, { action: "allow_once" })}>
+            <button type="button" className="primary-button" data-testid="claude-user-input-allow" disabled={disabled || submitting} onClick={() => onSubmit(request, { action: "allow_once" })}>
               <Check size={15} /> 允许一次
             </button>
             {request.risk.run_allow_eligible === true ? (
@@ -124,13 +125,13 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
                 type="button"
                 className="secondary-button"
                 data-testid="claude-user-input-allow-run"
-                disabled={submitting}
+                disabled={disabled || submitting}
                 onClick={() => onSubmit(request, { action: "allow_for_run" })}
               >
                 <CheckCheck size={15} /> 本次运行允许
               </button>
             ) : null}
-            <button type="button" className="secondary-button" data-testid="claude-user-input-deny" disabled={submitting} onClick={() => onSubmit(request, { action: "deny", message: denyMessage.trim() || undefined })}>
+            <button type="button" className="secondary-button" data-testid="claude-user-input-deny" disabled={disabled || submitting} onClick={() => onSubmit(request, { action: "deny", message: denyMessage.trim() || undefined })}>
               <X size={15} /> 拒绝
             </button>
           </div>

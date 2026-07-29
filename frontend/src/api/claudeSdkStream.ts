@@ -9,8 +9,16 @@ import { isRecord } from "../utils/records";
 import { authHeaders, makeUrl, readError } from "./request";
 
 const STREAM_IDLE_TIMEOUT_MS = 180_000;
+const RUN_ID_HEADER = "x-agentgov-run-id";
+const SESSION_ID_HEADER = "x-agentgov-session-id";
+
+export interface ManagedRunHandle {
+  runId: string;
+  sessionId: string;
+}
 
 export interface StreamChatHandlers {
+  onRunStarted?: (handle: ManagedRunHandle) => void;
   onEnvelope?: (envelope: StreamEnvelope) => void;
   onTraceEvent?: (event: AgentTraceEvent) => void;
   onSession?: (sessionId: string, sdkSessionId?: string | null) => void;
@@ -18,6 +26,7 @@ export interface StreamChatHandlers {
   onFinalText?: (text: string) => void;
   onPromptSuggestion?: (suggestions: string[], sessionId: string) => void;
   onResult?: (result: unknown) => void;
+  onCancelled?: () => void;
   onError?: (message: string, raw?: unknown) => void;
   onDone?: () => void;
 }
@@ -428,7 +437,7 @@ export async function streamClaudeSdkChat(
   const controller = new AbortController();
   const reducer = new ClaudeSdkEvidenceReducer();
   let timedOut = false;
-  let timeoutId = window.setTimeout(onTimeout, STREAM_IDLE_TIMEOUT_MS);
+  let timeoutId = globalThis.setTimeout(onTimeout, STREAM_IDLE_TIMEOUT_MS);
   const abortFromCaller = () => controller.abort(signal?.reason || "aborted");
 
   function onTimeout() {
@@ -436,12 +445,12 @@ export async function streamClaudeSdkChat(
     controller.abort("timeout");
   }
   function resetIdleTimeout() {
-    window.clearTimeout(timeoutId);
-    timeoutId = window.setTimeout(onTimeout, STREAM_IDLE_TIMEOUT_MS);
+    globalThis.clearTimeout(timeoutId);
+    timeoutId = globalThis.setTimeout(onTimeout, STREAM_IDLE_TIMEOUT_MS);
   }
 
   if (signal?.aborted) {
-    window.clearTimeout(timeoutId);
+    globalThis.clearTimeout(timeoutId);
     throw new Error("Stream request was aborted");
   }
   signal?.addEventListener("abort", abortFromCaller, { once: true });
@@ -460,6 +469,11 @@ export async function streamClaudeSdkChat(
     if (!response.ok || !response.body) {
       throw new Error((await readError(response)) || "Failed to start Claude SDK stream");
     }
+    const managedRun = managedRunHandleFromHeaders(response.headers);
+    if (managedRun) {
+      reducer.setRunId(managedRun.runId);
+      handlers.onRunStarted?.(managedRun);
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
@@ -475,12 +489,16 @@ export async function streamClaudeSdkChat(
         buffer = blocks.pop() || "";
         for (const block of blocks) {
           const envelope = parseSse(block);
-          if (envelope) doneReceived = dispatchNativeEnvelope(envelope, reducer, handlers) || doneReceived;
+          if (envelope) {
+            doneReceived = dispatchNativeEnvelope(envelope, reducer, handlers, managedRun) || doneReceived;
+          }
         }
       }
       if (buffer.trim()) {
         const envelope = parseSse(buffer);
-        if (envelope) doneReceived = dispatchNativeEnvelope(envelope, reducer, handlers) || doneReceived;
+        if (envelope) {
+          doneReceived = dispatchNativeEnvelope(envelope, reducer, handlers, managedRun) || doneReceived;
+        }
       }
       if (!doneReceived) throw new Error("Stream ended before agentgov.done");
     } finally {
@@ -493,7 +511,7 @@ export async function streamClaudeSdkChat(
     if (signal?.aborted) throw new Error("Stream request was aborted");
     throw error;
   } finally {
-    window.clearTimeout(timeoutId);
+    globalThis.clearTimeout(timeoutId);
     signal?.removeEventListener("abort", abortFromCaller);
   }
 }
@@ -502,15 +520,23 @@ function dispatchNativeEnvelope(
   envelope: StreamEnvelope,
   reducer: ClaudeSdkEvidenceReducer,
   handlers: StreamChatHandlers,
+  managedRun: ManagedRunHandle | undefined,
 ): boolean {
-  handlers.onEnvelope?.(envelope);
   if (envelope.event === "agentgov.session" && isRecord(envelope.data)) {
     const runId = stringValue(envelope.data.run_id);
     const sessionId = stringValue(envelope.data.session_id);
+    if (
+      managedRun
+      && (runId !== managedRun.runId || sessionId !== managedRun.sessionId)
+    ) {
+      throw new Error("Stream run identity does not match response headers");
+    }
+    handlers.onEnvelope?.(envelope);
     if (runId) reducer.setRunId(runId);
     if (sessionId) handlers.onSession?.(sessionId, stringValue(envelope.data.sdk_session_id) || null);
     return false;
   }
+  handlers.onEnvelope?.(envelope);
   if (envelope.event === "agentgov.prompt_suggestion" && isRecord(envelope.data)) {
     const suggestions = suggestionList(envelope.data);
     const sessionId = stringValue(envelope.data.session_id);
@@ -525,6 +551,10 @@ function dispatchNativeEnvelope(
     handlers.onError?.(formatStreamError(envelope.data), envelope.data);
     return false;
   }
+  if (envelope.event === "agentgov.cancelled") {
+    handlers.onCancelled?.();
+    return false;
+  }
   if (envelope.event === "agentgov.done") {
     handlers.onDone?.();
     return true;
@@ -536,6 +566,16 @@ function dispatchNativeEnvelope(
   if (effects.textDelta) handlers.onText?.(effects.textDelta, envelope.data);
   if (effects.finalText !== undefined) handlers.onFinalText?.(effects.finalText);
   return false;
+}
+
+export function managedRunHandleFromHeaders(headers: Headers): ManagedRunHandle | undefined {
+  const runId = headers.get(RUN_ID_HEADER)?.trim() || "";
+  const sessionId = headers.get(SESSION_ID_HEADER)?.trim() || "";
+  if (!runId && !sessionId) return undefined;
+  if (!runId || !sessionId) {
+    throw new Error("Stream response exposed an incomplete managed run identity");
+  }
+  return { runId, sessionId };
 }
 
 function parseSse(rawEvent: string): StreamEnvelope | null {

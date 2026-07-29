@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from .active_run_coordinator import ActiveRunCoordinator
 from .agent_git_store import AgentVersionProvider
 from .agent_job_runner import AgentJobRunner, ClaudeCodeResultError
 from .agent_job_types import FormatterOutputModel
@@ -140,6 +141,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
         self.agent_version_maintenance_provider = agent_version_maintenance_provider
         self.business_profile_resolver = business_profile_resolver
         self.user_input_service = user_input_service
+        self.active_runs = ActiveRunCoordinator()
         self.runtime_env = dict(runtime_env) if runtime_env is not None else dict(os.environ)
         self.profiles = build_profiles(settings)
         self.activity_extractor = RuntimeActivityExtractor()
@@ -700,26 +702,14 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin):
         profile: AgentRuntimeProfile | None = None,
         agent_version_id_override: Optional[str] = None,
     ) -> ChatResponse:
-        profile = await asyncio.to_thread(self._resolve_runtime_profile, req, profile)
-        context = await self._new_runtime_request_context(
+        from .managed_runtime_execution import run_managed_claude_runtime
+
+        return await run_managed_claude_runtime(
+            self,
             req,
             profile=profile,
             agent_version_id_override=agent_version_id_override,
-            agent_id=profile.agent_id,
         )
-        heartbeat = SessionTurnLeaseHeartbeat(
-            self.session_store,
-            session_id=context.session.session_id,
-            run_id=context.run_id,
-            run_generation=context.run_generation,
-        )
-        async with heartbeat:
-            return await self._run_claimed(
-                req,
-                context=context,
-                profile=profile,
-                heartbeat=heartbeat,
-            )
 
     async def _run_claimed(
         self,

@@ -37,6 +37,9 @@ from .session_turn_persistence import (
 from .session_turn_persistence import (
     reconcile_expired_turns as reconcile_expired_turn_transactions,
 )
+from .session_turn_persistence import (
+    reconcile_running_turns_after_restart as reconcile_running_turns_after_restart_transactions,
+)
 from .session_turn_persistence import recover_persisted_turn_finalization as recover_persisted_turn_finalization_transaction
 
 
@@ -416,6 +419,9 @@ class LocalSessionStore:
 
     def reconcile_expired_turns(self, *, session_id: str | None = None, limit: int = 100) -> list[str]:
         return reconcile_expired_turn_transactions(self.Session, session_id=session_id, limit=limit)
+
+    def reconcile_running_turns_after_restart(self, *, limit: int = 100) -> list[str]:
+        return reconcile_running_turns_after_restart_transactions(self.Session, limit=limit)
 
     def begin_sdk_store_import(
         self,

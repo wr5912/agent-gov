@@ -115,6 +115,7 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/agent-change-sets/{change_set_id}/test-runs",
         "/api/agent-test-runs/{test_run_id}",
         "/api/agent-test-runs/{test_run_id}/cancel",
+        "/api/agent-runs/{run_id}/cancel",
         "/api/agent-test-sessions",
         "/api/agent-test-sessions/{test_session_id}/messages",
         "/api/langfuse/traces/{trace_id}",
@@ -272,6 +273,13 @@ def test_openapi_documents_streaming_media_types():
     responses_content = schema["paths"]["/v1/responses"]["post"]["responses"]["200"]["content"]
     assert {"application/json", "text/event-stream"} <= set(responses_content)
     assert responses_content["application/json"]["schema"] == {"$ref": "#/components/schemas/ResponseObject"}
+    for path in (
+        "/api/chat/stream",
+        "/api/agent-runtime/sdk-events",
+        "/v1/responses",
+    ):
+        headers = schema["paths"][path]["post"]["responses"]["200"]["headers"]
+        assert {"X-AgentGov-Run-Id", "X-AgentGov-Session-Id"} <= set(headers)
 
     raw_operation = schema["paths"]["/api/debug/agent-runtime/raw-events"]["post"]
     raw_success = raw_operation["responses"]["200"]
@@ -337,6 +345,7 @@ def test_openapi_documents_complete_per_surface_sse_contracts() -> None:
         "heartbeat",
         "result",
         "error",
+        "cancelled",
         "agentgov.speech_summary",
         "done",
     }
@@ -349,6 +358,7 @@ def test_openapi_documents_complete_per_surface_sse_contracts() -> None:
         "agentgov.speech_summary",
         "agentgov.result",
         "agentgov.error",
+        "agentgov.cancelled",
         "agentgov.done",
     }
     assert {
@@ -375,9 +385,11 @@ def test_openapi_documents_complete_per_surface_sse_contracts() -> None:
         "agentgov.speech_summary",
         "agentgov.result",
         "agentgov.error",
+        "agentgov.cancelled",
         "agentgov.done",
         "response.completed",
         "response.failed",
+        "response.incomplete",
     } == event_names[RESPONSES_PATH]
     assert schema["paths"][RESPONSES_PATH]["post"]["x-agentgov-contract-status"] == "transitional"
     assert schema["paths"][RESPONSES_PATH]["post"]["x-agentgov-known-deviations"]
@@ -497,6 +509,28 @@ def test_sse_registry_rejects_unregistered_events_and_accepts_sdk_family() -> No
     require_registered_sse_event(CLAUDE_SDK_EVENTS_PATH, "claude.sdk.AssistantMessage")
     with pytest.raises(ValueError, match="Unregistered SSE event"):
         require_registered_sse_event(RESPONSES_PATH, "agentgov.undocumented")
+
+
+def test_openapi_documents_exact_run_cancellation_contract() -> None:
+    schema = build_openapi_schema()
+    operation = schema["paths"]["/api/agent-runs/{run_id}/cancel"]["post"]
+
+    assert "requestBody" not in operation
+    assert {"200", "401", "404", "409", "422", "504"} <= set(operation["responses"])
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AgentRunCancelResponse"}
+    response = schema["components"]["schemas"]["AgentRunCancelResponse"]
+    assert set(response["required"]) == {
+        "run_id",
+        "session_id",
+        "turn_status",
+        "cancelled",
+    }
+    assert response["properties"]["turn_status"]["enum"] == [
+        "succeeded",
+        "failed",
+        "cancelled",
+        "interrupted",
+    ]
 
 
 def test_openapi_documents_ownerless_session_conflicts() -> None:

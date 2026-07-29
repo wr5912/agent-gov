@@ -25,7 +25,8 @@
     "verify:provider-health-container": "cd .. && make container-health-e2e",
     "verify:provider-health-container:impl": "cd .. && node scripts/verify_provider_health_container.mjs",
     "verify:playground-agent-scope": "cd .. && node scripts/verify_playground_agent_scope.mjs",
-    "verify:message-actions-browser": "cd .. && node scripts/verify_message_actions_browser.mjs"
+    "verify:message-actions-browser": "cd .. && node scripts/verify_message_actions_browser.mjs",
+    "verify:playground-cancel": "cd .. && node scripts/verify_playground_cancel.mjs"
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",

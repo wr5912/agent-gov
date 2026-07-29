@@ -4,14 +4,15 @@ import time
 from collections.abc import Callable
 from typing import NamedTuple, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.agent_profiles import AgentRuntimeProfile
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.errors import BusinessRuleViolation, NotFoundError
+from app.runtime.http_disconnect import run_while_request_connected
 from app.runtime.json_types import JsonObject
+from app.runtime.managed_streaming_response import ManagedStreamingResponse
 from app.runtime.openai_responses_adapter import (
     build_chat_request,
     public_metadata,
@@ -23,6 +24,10 @@ from app.runtime.openai_responses_adapter import (
 )
 from app.runtime.openai_responses_schemas import ResponseObject, ResponsesRequest
 from app.runtime.openai_responses_stream import iter_responses_sse
+from app.runtime.prepared_managed_stream import (
+    managed_run_response_headers,
+    prepare_managed_event_stream,
+)
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
@@ -203,7 +208,8 @@ async def _create_response_impl(
     agent_registry_store: AgentRegistryStore,
     runtime_settings_store: RuntimeSettingsStore,
     feedback_store: FeedbackStore,
-) -> ResponseObject | StreamingResponse:
+    http_request: Request,
+) -> ResponseObject | ManagedStreamingResponse:
     plan = _prepare_run(
         req,
         settings=settings,
@@ -213,14 +219,16 @@ async def _create_response_impl(
         session_store=runtime.session_store,
     )
     if req.stream:
-        source = runtime.stream_events(
-            plan.chat_req,
-            profile=plan.profile,
-            with_speech_summary=plan.with_speech_summary,
+        prepared = await prepare_managed_event_stream(
+            runtime.stream_events(
+                plan.chat_req,
+                profile=plan.profile,
+                with_speech_summary=plan.with_speech_summary,
+            )
         )
-        return StreamingResponse(
+        return ManagedStreamingResponse(
             iter_responses_sse(
-                source,
+                prepared.iter_events(),
                 model=req.model,
                 effective_agent_id=plan.effective_agent_id,
                 control=plan.control,
@@ -228,12 +236,12 @@ async def _create_response_impl(
                 include_trace=plan.include_trace,
             ),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-store",
-                "X-Accel-Buffering": "no",
-            },
+            headers=managed_run_response_headers(prepared.metadata),
         )
-    result = await runtime.run(plan.chat_req, profile=plan.profile)
+    result = await run_while_request_connected(
+        http_request,
+        runtime.run(plan.chat_req, profile=plan.profile),
+    )
     return response_from_chat_response(
         result,
         model=req.model,
@@ -276,7 +284,10 @@ def create_responses_router(
             "(`response.*`; plus `agentgov.*` control envelope, including optional `agentgov.prompt_suggestion`, in control mode)."
         ),
     )
-    async def create_response(req: ResponsesRequest) -> ResponseObject | StreamingResponse:
+    async def create_response(
+        req: ResponsesRequest,
+        request: Request,
+    ) -> ResponseObject | ManagedStreamingResponse:
         return await _create_response_impl(
             req,
             settings=settings,
@@ -284,6 +295,7 @@ def create_responses_router(
             agent_registry_store=agent_registry_store,
             runtime_settings_store=runtime_settings_store,
             feedback_store=feedback_store,
+            http_request=request,
         )
 
     @router.get(

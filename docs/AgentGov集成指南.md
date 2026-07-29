@@ -74,9 +74,10 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 ```
 
 - `stream=false` 返回 Responses 对象；权威文本位于 `output[].content[].text`，运行关联位于 `agentgov.run_id`、`agentgov.conversation_id`、`agentgov.session_id`、`agentgov.trace_id` 等扩展字段。默认 `store=true` 时可通过 `GET /v1/responses/{response_id}` 取回已完成响应；`store=false` 只关闭公开取回，不关闭内部治理审计。
-- `stream=true` 返回 Responses-style SSE。完整事件名、payload schema、出现条件、phase 与 terminal 标记以该 operation 的 `x-agentgov-sse-events` 为准；服务端工具事件只用于观察已经由 agent loop 执行的工具，绝不要求客户端重复执行标准 `function_call`。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
-- 当前过渡偏差由 OpenAPI `x-agentgov-known-deviations` 机器声明：即时非流式的 `trace_id` 可能与 retrieve 不一致；`response.completed.response.metadata` 当前不会回显请求 metadata；session 前源异常可能产生 `response.created.response.id=null` 后再失败；流式 headers 可能早于 session turn admission。客户端必须把没有声明终态的 EOF 当作失败，不能从 HTTP `200` 推导运行成功。
-- 正常进入投影终态的流以 `response.completed` 或 `response.failed` 收口；在偏差修复前，不承诺流式完成对象、即时非流式响应与 retrieve 的所有字段完全同构。
+- `stream=true` 返回 Responses-style SSE。完整事件名、payload schema、出现条件、phase 与 terminal 标记以该 operation 的 `x-agentgov-sse-events` 为准；其中取消会输出 `agentgov.cancelled`（control mode）并以 `response.incomplete` 保留部分 output。服务端工具事件只用于观察已经由 agent loop 执行的工具，绝不要求客户端重复执行标准 `function_call`。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
+- 当前过渡偏差由 OpenAPI `x-agentgov-known-deviations` 机器声明：即时非流式的 `trace_id` 可能与 retrieve 不一致；`response.completed.response.metadata` 当前不会回显请求 metadata；session 前源异常可能产生 `response.created.response.id=null` 后再失败。受管流在发送响应前完成 turn admission；若源在 identity 建立前失败，则不伪造 run/session headers，而在 HTTP `200` 后投影失败终态。客户端必须把没有声明终态的 EOF 当作失败，不能从 HTTP 状态本身推导运行成功。
+- 正常进入投影终态的流以 `response.completed`、`response.failed` 或 `response.incomplete` 恰好一次收口；在偏差修复前，不承诺流式完成对象、即时非流式响应与 retrieve 的所有字段完全同构。
+- 流式、非流式与 retrieve 的 `output[]` 都使用同一稳定顺序和 ID：存在 ThinkingBlock 时先是 `reasoning`（`rs_<run_id>`），随后是 assistant `message`（`msg_<run_id>`）。
 - 产品内置 Playground 是有意的例外：live turn 直接消费下节的 SDK-native 入口，不经 `/v1/responses` 或 `/api/chat/stream`；会话列表和历史恢复仍使用 `/v1/conversations*`。
 - 边界：工具权限、MCP、skills、subagents、hooks 和 sandbox 以业务 Agent workspace 的 Claude Code 项目配置为准；Runtime 只选择 project discovery，`can_use_tool` 只桥接原生 `ask`。旧 Chat 字段 `agent`、`skills`、`skills_mode`、`allowed_tools`、`disallowed_tools`、`permission_mode` 已删除，传入返回 `422`。续聊复用同一 `conversation_id`，或使用 `previous_response_id` 让底座解析其所属会话；两种方式都会校验所选业务 Agent 与既有会话 owner 一致，不允许把 Agent A 的 SDK transcript 交给 Agent B 续接。若 `previous_response_id` 对应 run 没有 `session_id`，或其 conversation mapping 已被删除，底座返回 `409`，不会把“续接”静默降级成新会话。
 
@@ -108,7 +109,8 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - Claude Code 可能因缓存或模型条件不生成建议，缺失不表示本轮失败。客户端收到后应只提供“填入输入框”动作，不自动发起下一轮请求。
 - Suggestion 是临时 UI 辅助，不属于 Prompt 治理资产，也不进入正式会话消息、SQLite run、response retrieve 或 SDK transcript；刷新后无需恢复。
 - Prompt Suggestion 在各接口终态前进行有界排空；超时或失败时跳过，不允许在
-  `agentgov.done`、`done`、`response.completed` 或 `response.failed` 后迟到。
+  `agentgov.done`、`done`、`response.completed`、`response.failed` 或
+  `response.incomplete` 后迟到。
 
 流式 Speech Summary 是另一项独立、显式 opt-in 的 TTS 文本辅助：
 
@@ -141,7 +143,26 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
   写入。完成后的 Trace 只有 `completeness=complete` 才替换 live evidence；不可用或请求失败时
   保留原生 live evidence。
 - 该接口跟随仓库锁定的 SDK 版本，不是 UI schema，也不是 CLI stdout byte stream。需要长期 OpenAI 兼容时，由独立适配服务消费该流并完成 Responses 转换；当前内置 `/v1/responses` 仅供过渡。
-- session turn admission 当前仍可能晚于 SSE headers。源在首个受管事件前失败时，HTTP 可能已是 `200` 且连接直接 EOF；只有收到 `agentgov.done` 才表示 managed turn 成功完成持久化和收尾。
+- session turn admission 与 backend-owned run/session 句柄在 SSE headers 发送前完成。源若在 identity 建立前失败，不会伪造句柄，而会在 HTTP `200` 后输出受管错误终态；只有收到 `agentgov.done` 才表示 managed turn 已完成持久化和收尾。
+
+#### 4.2.2.1 精确运行取消
+
+- `/api/agent-runtime/sdk-events`、`/api/chat/stream` 和流式 `/v1/responses` 在发送 body
+  前通过 `X-AgentGov-Run-Id`、`X-AgentGov-Session-Id` 返回 backend-owned 句柄。调用方不得
+  自造 run id，也不得只依赖首个 SSE frame 才建立停止控制面。
+- 主动停止调用 `POST /api/agent-runs/{run_id}/cancel`，请求无 body、使用统一 Bearer API
+  key。`200` 表示目标 run 已持久化为终态且不再持有该 session fence；重复调用返回同一终态。
+  `404` 表示 run 不存在，`409` 表示持久化运行仍未结束但当前单 API 进程找不到其 owner，
+  `504` 表示在服务端等待预算内未确认终态。后两者都不能被客户端解释为“已停止”。
+- 客户端点击停止后必须继续锁住同会话发送、会话/Agent 切换和 HITL 决策。若响应头尚未到达，
+  状态应为“等待运行句柄”；取消请求进行中为“停止中”；`409`、`504` 或网络结果不明时为
+  “状态待核对”，只允许对同一 run 重试取消。只有取消 API `200`，或流明确给出已持久化的
+  `agentgov.cancelled` + `agentgov.done`，才能解锁下一轮。
+- 取消保留已收到的部分文本和 Trace 证据，但不追加“运行失败”。Responses projector 以
+  `response.incomplete` 收口，不输出 `response.failed`。浏览器断开连接也会显式关闭嵌套
+  stream source 并取消 owner；非流式请求 owner 使用同一协调器。进程重启无法恢复旧
+  asyncio owner，新进程启动时会立即把上一进程遗留的 running intent 标为 `interrupted`
+  并释放 fence。
 
 #### 4.2.3 Runtime 原始事件调试 — OpenAPI tag `debug`
 
@@ -177,7 +198,7 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 最短集成流程：
 
 1. 过渡期调用 `POST /v1/responses`，传 `stream=true` 和 `agentgov.agent_id`，保持 SSE
-   连接直到 `response.completed` 或 `response.failed`；若 EOF 前未收到二者，按流失败处理。
+   连接直到 `response.completed`、`response.failed` 或 `response.incomplete`；若 EOF 前未收到任一标准终态，按流失败处理。
 2. 渲染标准 Responses 事件；control mode 同时处理 `agentgov.session`、`agentgov.tool_step`
    和可选的 `agentgov.prompt_suggestion`、`agentgov.speech_summary` 等事件。收到 SSE comment
    heartbeat 时只刷新连接存活时间。
@@ -284,10 +305,10 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 
 ## 5. 契约稳定性与版本
 
-- **受管运行事实源**：`POST /api/agent-runtime/sdk-events`；未来独立 OpenAI 适配服务从这里转换。客户端仍必须遵守“无 `agentgov.done` 的 EOF 即失败”的当前晚期错误边界。
+- **受管运行事实源**：`POST /api/agent-runtime/sdk-events`；未来独立 OpenAI 适配服务从这里转换。客户端仍必须遵守“无 `agentgov.done` 的 EOF 即失败”的终态边界。
 - **稳定资源路径**：`/v1/conversations*`、`GET /api/claude-user-input-requests`、`POST /v1/agentgov/confirmation-requests/{request_id}/decision`；反馈闭环、Agent 注册、版本治理等领域能力继续使用 OpenAPI 声明的 `/api/*` 资源接口。
 - **过渡契约**：`POST /v1/responses` 与 `GET /v1/responses/{response_id}`。消费者必须读取 OpenAPI 的 transitional 标记和已知偏差，不能据路径名推断完整 OpenAI 兼容。
-- **演进中**（接入需关注变更）：外置 OpenAI adapter、流式 admission 前置、Responses 三种投影一致性、业务 Agent 多租与隔离、审批外移细化。
+- **演进中**（接入需关注变更）：外置 OpenAI adapter、Responses 三种投影一致性、业务 Agent 多租与隔离、审批外移细化。
 - OpenAPI 与生成类型是契约边界；底座变更公开 API 时会同步 OpenAPI 与迁移说明。集成方应以 OpenAPI 版本为对接基线，并对 `4xx/5xx` 做稳健处理。
 - `POST /v1/responses` 是过渡单 endpoint 双响应媒体类型：`stream=false` 返回 `application/json`；`stream=true` 返回 `text/event-stream`。
 - 运维验收应同时检查运行容器 `/openapi.json` 的 `info.version` 与仓库 `VERSION` / 镜像 tag 一致；版本不一致优先按部署镜像或容器未 recreate 的漂移处理。仓库内的真实 Compose 验收只使用公开 Make 入口；入口基于当前工作树重建本地镜像、加载 `COMPOSE_ENV_FILE` 选择的完整配置、`--force-recreate` 服务并校验本轮 freshness 后才执行检查，不会自动拉取远端代码。纯宿主机测试不需要刷新容器。

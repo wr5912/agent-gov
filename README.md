@@ -198,6 +198,8 @@ http://localhost:55173
 
 每条 Claude Agent 回复的“回复细节”会保留 canonical SDK 事件，并汇总本次请求的 Skill / Tool 使用情况。流式请求默认通过 `INCLUDE_PARTIAL_MESSAGES=true` 接收 SDK `StreamEvent` 文本增量；这些增量只用于 SSE 传输，不写入会话消息、SQLite run 或 Langfuse SDK message 事实。最终 `AssistantMessage` 是权威快照：前后缀一致时只补发未到达的后缀，不一致时以 `STREAM_TEXT_DIVERGED` fail-closed，避免重复字或伪成功。前端按 animation frame/最长 32ms 合并增量并在 `response.completed` 用 canonical 文本校准 DOM。详情窗口支持关键字查找事件内容，底层 JSON 会完整展开显示。Claude Code 若在本轮末尾生成 Prompt Suggestion，Playground 会在输入框上方显示“下一步建议”；点击只把文本填入输入框，不会自动发送。
 
+Playground 的“停止”是后端运行取消动作，不等同于关闭浏览器 fetch。流式响应建立时会先在 `X-AgentGov-Run-Id` / `X-AgentGov-Session-Id` 响应头暴露后端句柄；前端用精确 `run_id` 调用 `POST /api/agent-runs/{run_id}/cancel`，并在接口确认持久化终态和 session fence 已释放前保持发送、切换会话和 HITL 动作锁定。取消后的部分文本保留并标记“已取消”，不会渲染成“运行失败”；取消超时或网络状态不明时进入“状态待核对”，只能重试停止，不能冒险开启同会话下一轮。
+
 ## 反馈优化闭环
 
 Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat`、`/api/chat/stream`、`/api/agent-runtime/sdk-events` 或 `/v1/responses` 受管运行都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；用户在“改进事项”中把反馈归并为事项后，按反馈整理、归因分析、优化执行、测试发布四个工作面板推进。治理 Agent 生成的归因、优化方案、执行记录和回归测试设计都写入事项级内容子资源，并保存 `generation_trace_id` / `generation_trace_url`。
@@ -435,10 +437,23 @@ session、HITL、result、error、done、Prompt Suggestion 与可选 Speech Summ
 `agentgov.*` 事件；
 heartbeat 是 SSE comment。SDK `ResultMessage` 只表示 SDK 终态，
 `agentgov.result` 只投影该进度事实；Runtime 随后仍会排空 SDK transcript mirror 和派生任务。
-只有收到 `agentgov.done` 才表示 managed turn 已完成持久化和收尾。当前 session turn
-admission 仍可能发生在 SSE headers 发送之后；若源在首个受管事件前失败，连接可能以 HTTP
-`200` 提前 EOF 而没有 `agentgov.error/done`。客户端必须把“未收到 `agentgov.done` 的 EOF”
-当作失败，不能把 HTTP 状态本身当作运行成功。
+`/api/agent-runtime/sdk-events`、`/api/chat/stream` 和流式 `/v1/responses` 都在 HTTP
+响应发送前完成 session turn admission，并通过响应头返回 `X-AgentGov-Run-Id`、
+`X-AgentGov-Session-Id`。若源在 session identity 建立前失败，则不会伪造句柄，而会在
+HTTP `200` 后以受管错误终态收口。客户端仍必须把“未收到声明终态的 EOF”当作失败，
+不能把 HTTP 状态本身当作运行成功。需要主动停止时调用：
+
+```bash
+curl -X POST "$API_BASE/api/agent-runs/<run_id>/cancel" \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+该接口无请求体且幂等；只有目标 run 已进入 `succeeded`、`failed`、`cancelled` 或
+`interrupted`，并且不再持有对应 session fence 后才返回 `200`。未知 run 返回 `404`；
+持久化 run 仍在运行但当前单 API 进程没有 owner 时返回 `409`；等待终态超时返回 `504`。
+服务关闭会取消当前进程的全部 owner；新进程启动时会立即把上一进程遗留的 running intent
+收口为 `interrupted`。部署仍要求单 API 进程。
+只有 `agentgov.done` 才表示 managed turn 已完成持久化和收尾。
 Speech Summary 的 `source_kind` 只会是顶层 `thinking` 或
 `assistant_response`；`ResultMessage` 不作为一次模型响应的摘要来源。正常进入 managed
 收口的流会在终态前有界排空派生事件，并以 `agentgov.done` 作为最后一个业务事件。
@@ -491,8 +506,9 @@ OpenAPI operation 以 `x-agentgov-contract-status: transitional` 标记，并在
   `trace_id` 可能缺失，流式 `response.completed.response.metadata` 当前为空对象。
 - session 事件之前的源异常可能先合成 `response.created`，其中 `response.id=null`，
   再输出 `response.failed`。该 nullable 形状只为如实描述现状，不是目标 OpenAI 语义。
-- 流式 headers 可能早于 session turn admission；任何未收到 `response.completed` 或
-  `response.failed` 的 EOF 都必须视为失败。
+- 受管流在 headers 前完成 session turn admission；session identity 建立前的源异常不会
+  伪造 run/session headers，而会在 HTTP `200` 后投影失败终态。任何未收到
+  `response.completed`、`response.failed` 或 `response.incomplete` 的 EOF 都必须视为失败。
 
 后续稳定 OpenAI 对接由独立适配服务消费 `/api/agent-runtime/sdk-events` 后转换；在上述偏差
 消除前，不应让生成客户端把内置 Responses 投影当作完整 OpenAI SDK drop-in replacement。
@@ -500,7 +516,7 @@ Speech Summary 只允许在 control mode、`stream=true` 时通过
 `agentgov.with_speech_summary=true` 开启；非流式开启返回 `422`，strict mode 不接受也不输出
 AgentGov Speech 事件。control 流可在标准终态前输出
 `event: agentgov.speech_summary`，随后完成其余 control 收口；正常进入 Responses
-投影终态的流以 `response.completed` 或 `response.failed` 结束。
+投影终态的流以 `response.completed`、`response.failed` 或 `response.incomplete` 结束。
 
 摘要边界由 `SPEECH_SUMMARY_BOUNDARIES` 控制，可选择顶层 ThinkingBlock 的原生
 `content_block_stop` 与完整顶层 AssistantMessage。默认超时/终态排空为 15/5 秒；只处理主

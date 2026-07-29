@@ -260,6 +260,10 @@ _RESULT = {
     },
 }
 _DONE = {"event": "done", "data": "[DONE]"}
+_CANCELLED = {
+    "event": "cancelled",
+    "data": {"run_id": "run-9", "session_id": "sess-9", "turn_status": "cancelled"},
+}
 
 
 # ---------------------------------------------------------------- 控制通道映射
@@ -286,6 +290,31 @@ def test_control_stream_maps_core_events() -> None:
     assert by["response.output_text.delta"]["delta"] == "日报正文"
     # completed 复用非流式投影：权威 output 在 output[]
     assert by["response.completed"]["response"]["output"][0]["content"][0]["text"] == "日报正文"
+
+
+def test_cancelled_stream_preserves_partial_output_and_emits_incomplete_terminal() -> None:
+    events = _parse(
+        _collect(
+            [_SESSION, _ASSISTANT, _CANCELLED, _DONE],
+            model="m",
+            effective_agent_id="soc-ops",
+            control=True,
+        )
+    )
+    names = [name for name, _ in events]
+
+    assert names == [
+        "response.created",
+        "agentgov.session",
+        "response.output_text.delta",
+        "agentgov.cancelled",
+        "agentgov.done",
+        "response.incomplete",
+    ]
+    incomplete = dict(events)["response.incomplete"]["response"]
+    assert incomplete["status"] == "incomplete"
+    assert incomplete["output"][0]["content"][0]["text"] == "日报正文"
+    assert "response.failed" not in names
 
 
 def test_strict_stream_emits_no_agentgov() -> None:
@@ -604,6 +633,8 @@ def test_endpoint_stream_control(monkeypatch, tmp_path: Path) -> None:
         resp = client.post("/v1/responses", json={"input": "hi", "stream": True, "agentgov": {"agent_id": "soc-ops"}})
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/event-stream")
+        assert resp.headers["x-agentgov-run-id"] == "run-9"
+        assert resp.headers["x-agentgov-session-id"] == "sess-9"
         names = [n for n, _ in _parse(resp.text)]
         assert "response.created" in names and "response.output_text.delta" in names and "agentgov.session" in names
 

@@ -169,6 +169,7 @@ class _ResponsesSseProjector:
     terminal_status: Optional[str] = None
     pending_completed_response: JsonObject | None = None
     pending_failure: JsonObject | None = None
+    pending_incomplete_response: JsonObject | None = None
     done_emitted: bool = False
     agentgov_error_emitted: bool = False
     trace_projector: AgentTraceProjector | None = None
@@ -234,6 +235,8 @@ class _ResponsesSseProjector:
             return self._project_result(event.data)
         if event.name == "error":
             return self._project_error(event.data)
+        if event.name == "cancelled":
+            return self._project_cancelled(event.data)
         if event.name == "claude_user_input_required" and self.control:
             return [
                 self._envelope(
@@ -645,6 +648,35 @@ class _ResponsesSseProjector:
             self.pending_failure = {"error": data}
         return self._project_agentgov_error(data)
 
+    def _project_cancelled(self, data: JsonObject) -> list[str]:
+        if self.done_emitted:
+            return []
+        self.pending_completed_response = None
+        self.pending_failure = None
+        response = _created_response(
+            self.run_id,
+            self.model,
+            self.session_id,
+            self.created_at or int(time.time()),
+        )
+        response.update(
+            {
+                "status": "incomplete",
+                "output": [
+                    item.model_dump(mode="json")
+                    for item in response_output_items(
+                        run_id=self.run_id or "",
+                        text=self.answer_text or None,
+                        reasoning=self.reasoning_text or None,
+                    )
+                ],
+            }
+        )
+        self.pending_incomplete_response = response
+        if not self.control:
+            return []
+        return [self._envelope("agentgov.cancelled", data)]
+
     def _project_agentgov_error(self, data: JsonObject) -> list[str]:
         if not self.control or self.agentgov_error_emitted:
             return []
@@ -656,7 +688,7 @@ class _ResponsesSseProjector:
             return []
         self.done_emitted = True
         chunks: list[str] = []
-        if self.pending_completed_response is None and self.pending_failure is None:
+        if self.pending_completed_response is None and self.pending_failure is None and self.pending_incomplete_response is None:
             detail = "Agent stream ended without a ResultMessage"
             error: JsonObject = {
                 "error_code": "STREAM_TERMINATED_WITHOUT_RESULT",
@@ -666,7 +698,15 @@ class _ResponsesSseProjector:
             chunks.extend(self._project_agentgov_error(error))
         if self.control:
             chunks.append(self._envelope("agentgov.done", {}))
-        if self.pending_failure is None and self.pending_completed_response is not None:
+        if self.pending_incomplete_response is not None:
+            self.terminal_status = "incomplete"
+            chunks.append(
+                self._std(
+                    "response.incomplete",
+                    {"response": self.pending_incomplete_response},
+                )
+            )
+        elif self.pending_failure is None and self.pending_completed_response is not None:
             self.terminal_status = "completed"
             chunks.append(
                 self._std(

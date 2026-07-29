@@ -5,12 +5,19 @@ import type { AgentPresentation, ChatMessage, ClaudeUserInputDecisionPayload, Cl
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageBubble } from "./MessageBubble";
 import { PromptSuggestion } from "./PromptSuggestion";
+import {
+  canStopPlaygroundRun,
+  canSubmitPlaygroundUserInput,
+  playgroundRunStatusText,
+  type PlaygroundRunState,
+} from "../playgroundRunState";
 
 // 四阶段改进治理 §3 Playground：主区只留对话 + 回复动作 + 输入；会话和运行设置使用独立抽屉，不接管 Claude Code 进程。
 interface ChatPanelProps {
   messages: ChatMessage[];
   input: string;
   streaming: boolean;
+  runState: PlaygroundRunState;
   streamingAssistantMessageId?: string;
   activeSessionId?: string;
   sessionSidebarOpen: boolean;
@@ -36,6 +43,7 @@ export function ChatPanel({
   messages,
   input,
   streaming,
+  runState,
   streamingAssistantMessageId,
   activeSessionId,
   sessionSidebarOpen,
@@ -56,6 +64,15 @@ export function ChatPanel({
   submittingUserInputRequests,
   onSubmitUserInput,
 }: ChatPanelProps) {
+  const runStatusText = playgroundRunStatusText(runState);
+  const stopDisabled = !canStopPlaygroundRun(runState);
+  const stopLabel = runState.phase === "reconciling"
+    ? "重试停止"
+    : runState.phase === "cancelling" || runState.phase === "cancelling_pending_handle"
+      ? "停止中…"
+      : "停止";
+  const showStreamIndicator = streaming && runState.phase !== "reconciling";
+  const userInputDisabled = !canSubmitPlaygroundUserInput(runState);
   const presentationMetadata = [
     agentPresentation?.version ? `v${agentPresentation.version}` : null,
     agentPresentation?.language,
@@ -93,7 +110,7 @@ export function ChatPanel({
           </div>
         </div>
         <div className="chat-header-actions">
-          {streaming ? <span className="run-status"><Loader2 size={14} className="spin" /> 运行中</span> : <span className="idle-status">Ready</span>}
+          {streaming ? <span className="run-status"><Loader2 size={14} className="spin" /> {runStatusText}</span> : <span className="idle-status">{runStatusText}</span>}
           <button className="ghost-button" type="button" data-testid="feedback-drawer-open" onClick={() => onOpenFeedback()}>
             <MessageSquarePlus size={15} /> 创建反馈
           </button>
@@ -147,7 +164,7 @@ export function ChatPanel({
               <MessageBubble
                 message={message}
                 key={message.id}
-                isActiveStreaming={streaming && message.id === streamingAssistantMessageId}
+                isActiveStreaming={showStreamIndicator && message.id === streamingAssistantMessageId}
                 onMessageElement={setMessageElement}
                 onOpenFeedback={onOpenFeedback}
                 onOpenTrace={onOpenTrace}
@@ -155,6 +172,7 @@ export function ChatPanel({
                 onRerun={onRerun}
                 userInputErrors={userInputErrors}
                 submittingUserInputRequests={submittingUserInputRequests}
+                userInputDisabled={userInputDisabled}
                 onSubmitUserInput={onSubmitUserInput}
               />
             ))
@@ -179,7 +197,7 @@ export function ChatPanel({
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
-                onSend();
+                if (!streaming) onSend();
               }
             }}
             placeholder={agentPresentation?.composer_placeholder || "输入任务或问题，Ctrl/⌘ + Enter 发送..."}
@@ -187,7 +205,7 @@ export function ChatPanel({
         </div>
         <div className="composer-actions">
           {streaming ? (
-            <button className="secondary-button" data-testid="chat-stop" onClick={onStop}><Square size={15} /> 停止</button>
+            <button className="secondary-button" data-testid="chat-stop" onClick={onStop} disabled={stopDisabled}><Square size={15} /> {stopLabel}</button>
           ) : (
             <button className="primary-button" data-testid="chat-send" onClick={onSend} disabled={!input.trim()}><Send size={15} /> 发送</button>
           )}

@@ -198,8 +198,8 @@ function mockPayload(urlOrPath) {
               agent_id: "security-operations-expert",
               updated_at: Date.parse("2026-06-18T00:00:30Z") / 1000,
               turns: 14,
-              active_run_id: "mock-active-run",
-              active_run_expires_at: "2099-01-01T00:00:00Z",
+              active_run_id: null,
+              active_run_expires_at: null,
             },
           }],
         }
@@ -580,9 +580,9 @@ async function main() {
         await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
         const sessionBox = await page.getByTestId("playground-session-sidebar").boundingBox();
         const sessionText = await page.getByTestId("playground-session-sidebar").innerText();
-        const activeSessionDeleteDisabled = REAL
+        const sessionDeleteMatchesRunState = REAL
           ? true
-          : await page.getByTestId("session-sidebar-delete").first().isDisabled();
+          : !(await page.getByTestId("session-sidebar-delete").first().isDisabled());
         await page.getByTestId("playground-session-trigger").click();
         await page.getByTestId("playground-session-sidebar").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
 
@@ -670,7 +670,7 @@ async function main() {
           currentTraceHref: historyTraceHref,
           restoredTraceHref,
           sessionNoRuntimeSettings: !sessionText.includes("Subagent") && !sessionText.includes("Skills Mode") && !sessionText.includes("Allowed Tools"),
-          activeSessionDeleteDisabled,
+          sessionDeleteMatchesRunState,
           settingsNoSessionHistory: !settingsText.includes("新会话") && !settingsText.includes("删除会话映射") && !settingsText.includes("Sessions"),
           debugClosed,
           markdownChecks,
@@ -707,7 +707,7 @@ async function main() {
           && settingsSize === "wide"
           && (settingsBox?.width || 0) >= 860
           && drawerChecks.sessionNoRuntimeSettings
-          && drawerChecks.activeSessionDeleteDisabled
+          && drawerChecks.sessionDeleteMatchesRunState
           && drawerChecks.settingsNoSessionHistory
           && debugClosed
           && !legacyModalVisible

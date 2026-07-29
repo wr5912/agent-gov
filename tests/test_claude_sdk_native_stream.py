@@ -79,6 +79,8 @@ def test_native_sdk_route_preserves_one_frame_per_sdk_yield(monkeypatch) -> None
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["x-agentgov-run-id"] == "run-native"
+    assert response.headers["x-agentgov-session-id"] == "session-native"
     event_names = [line.removeprefix("event: ") for line in response.text.splitlines() if line.startswith("event: ")]
     assert event_names == [
         "agentgov.session",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { deleteSession, defaultRuntimeConfig, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConversationItems, getCurrentAgentRef, getHealth, getSessions, isLegacyDockerApiBase, listBusinessAgents, submitClaudeUserInputDecision } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
@@ -19,6 +19,12 @@ import { usePlaygroundRun } from "./hooks/usePlaygroundRun";
 import { cancelWaitingUserInputRequests, patchUserInputRequest } from "./claudeUserInputState";
 import { messagesFromConversationItems } from "./playgroundHistory";
 import { usePromptSuggestion } from "./hooks/usePromptSuggestion";
+import {
+  canSubmitPlaygroundUserInput,
+  initialPlaygroundRunState,
+  isPlaygroundRunLocked,
+  playgroundRunReducer,
+} from "./playgroundRunState";
 import type { AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo } from "./types/runtime";
 import { getAgentRuns } from "./api/feedback";
 import { defaultLangfuseUrl, makeApiDocsUrl } from "./runtimeUrls";
@@ -51,7 +57,8 @@ export default function App() {
   const [caseId, setCaseId] = useState("");
   const [maxTurns, setMaxTurns] = useState(16);
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
+  const [runState, dispatchRun] = useReducer(playgroundRunReducer, initialPlaygroundRunState);
+  const streaming = isPlaygroundRunLocked(runState);
   const [streamingAssistantMessageId, setStreamingAssistantMessageId] = useState<string | undefined>();
   const [userInputErrors, setUserInputErrors] = useState<Record<string, string>>({});
   const [submittingUserInputRequests, setSubmittingUserInputRequests] = useState<Set<string>>(() => new Set());
@@ -118,10 +125,12 @@ export default function App() {
 
   const activeMessages = activeSessionId ? messagesBySession[activeSessionId] || [] : [];
   const activeMessageCount = activeMessages.length;
-  const activeBackendSessionTurns = useMemo(
-    () => sessions.find((session) => session.session_id === activeSessionId)?.turns ?? 0,
+  const activeBackendSession = useMemo(
+    () => sessions.find((session) => session.session_id === activeSessionId),
     [activeSessionId, sessions],
   );
+  const activeBackendSessionTurns = activeBackendSession?.turns ?? 0;
+  const activeBackendRunId = activeBackendSession?.active_run_id || undefined;
   const activeTraceMessage = useMemo(() => {
     if (activeTraceMessageId) {
       const selected = activeMessages.find((message) => message.id === activeTraceMessageId);
@@ -197,6 +206,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (
+      runState.phase !== "idle"
+      || !activeSessionId
+      || !activeBackendRunId
+      || runState.lastRunId === activeBackendRunId
+    ) {
+      return;
+    }
+    dispatchRun({
+      type: "observe_backend_run",
+      operationId: `detached:${activeSessionId}:${activeBackendRunId}`,
+      sessionId: activeSessionId,
+      runId: activeBackendRunId,
+    });
+  }, [activeBackendRunId, activeSessionId, runState.lastRunId, runState.phase]);
+
+  useEffect(() => {
     if (!activeSessionId || activeMessageCount > 0 || streaming || activeBackendSessionTurns <= 0) return;
 
     const controller = new AbortController();
@@ -265,7 +291,8 @@ export default function App() {
   const { sendMessage, stopStream } = usePlaygroundRun({
     clientConfig: effectiveClientConfig,
     input,
-    streaming,
+    runState,
+    dispatchRun,
     activeSessionId,
     selectedBusinessAgentId,
     alertId,
@@ -275,7 +302,6 @@ export default function App() {
     decisionTokensRef,
     promptSuggestion,
     setInput,
-    setStreaming,
     setStreamingAssistantMessageId,
     setLastError,
     setSessionSidebarOpen,
@@ -295,6 +321,7 @@ export default function App() {
     request: ClaudeUserInputRequest,
     input: Omit<ClaudeUserInputDecisionPayload, "decision_token">,
   ) {
+    if (!canSubmitPlaygroundUserInput(runState)) return;
     const token = decisionTokensRef.current[request.request_id];
     if (!token) {
       setUserInputErrors((prev) => ({ ...prev, [request.request_id]: "当前确认已失效，请重新运行本轮任务。" }));
@@ -431,6 +458,7 @@ export default function App() {
   }
 
   function rerunMessage(message: ChatMessage) {
+    if (streaming) return;
     const idx = activeMessages.findIndex((m) => m.id === message.id);
     for (let i = idx - 1; i >= 0; i -= 1) {
       if (activeMessages[i].role === "user") { promptSuggestion.handleInputChange(activeMessages[i].content); break; }
@@ -486,6 +514,7 @@ export default function App() {
             messages={activeMessages}
             input={input}
             streaming={streaming}
+            runState={runState}
             streamingAssistantMessageId={streamingAssistantMessageId}
             activeSessionId={activeSessionId}
             sessionSidebarOpen={sessionSidebarOpen}

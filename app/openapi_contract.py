@@ -5,6 +5,7 @@ from http import HTTPStatus
 
 from fastapi import FastAPI
 
+from app.runtime.prepared_managed_stream import MANAGED_RUN_RESPONSE_HEADER_DESCRIPTIONS
 from app.runtime.runtime_raw_events import RAW_EVENT_RESPONSE_HEADER_DESCRIPTIONS
 from app.runtime.speech_summary import AgentGovSpeechSummaryEnvelope
 from app.sse_contracts import (
@@ -85,6 +86,7 @@ _ERROR_DESCRIPTIONS = {
     501: "The host platform cannot provide byte-exact native Runtime capture.",
     502: "The selected Agent runtime failed to produce a compatible response.",
     503: "Configured runtime or model/agent target is temporarily unavailable.",
+    504: "The requested operation did not reach its durable terminal state before the timeout.",
 }
 
 _MUTATING_METHODS = frozenset({"post", "put", "patch", "delete"})
@@ -127,6 +129,7 @@ _EXPLICIT_ERROR_STATUSES: dict[tuple[str, str], frozenset[int]] = {
     (RAW_EVENTS_PATH, "post"): frozenset({400, 403, 404, 409, 413, 422, 501, 503}),
     (CHAT_COMPLETIONS_PATH, "post"): frozenset({400, 404, 422, 502, 503}),
     (RESPONSES_PATH, "post"): frozenset({400, 404, 409, 422, 503}),
+    ("/api/agent-runs/{run_id}/cancel", "post"): frozenset({404, 409, 504}),
     ("/v1/responses/{response_id}", "get"): frozenset({404}),
     ("/v1/conversations/{conversation_id}", "get"): frozenset({404}),
     ("/v1/conversations/{conversation_id}", "delete"): frozenset({409}),
@@ -284,6 +287,7 @@ def _fix_streaming_success_response(path: str, operation: OpenApiMutableMapping)
         success["description"] = "Server-sent event stream."
         description = "Claude Agent SDK-native SSE events" if path == CLAUDE_SDK_EVENTS_PATH else "Claude Agent Chat SSE events"
         success["content"] = {"text/event-stream": _sse_media_type(path, description)}
+        _document_managed_run_headers(success)
         return
     if path == RAW_EVENTS_PATH:
         success["description"] = "Byte-exact native Runtime stdout. stream=false buffers the body; stream=true flushes the same byte sequence incrementally."
@@ -308,6 +312,16 @@ def _fix_streaming_success_response(path: str, operation: OpenApiMutableMapping)
         success["description"] = "JSON response when stream=false; server-sent events when stream=true."
         content = _mapping(success.setdefault("content", {}))
         content.setdefault("text/event-stream", _sse_media_type(path, "Transitional OpenAI Responses-shaped SSE events"))
+        _document_managed_run_headers(success)
+
+
+def _document_managed_run_headers(success: OpenApiMutableMapping) -> None:
+    headers = _mapping(success.setdefault("headers", {}))
+    for name, description in MANAGED_RUN_RESPONSE_HEADER_DESCRIPTIONS.items():
+        headers[name] = {
+            "description": description,
+            "schema": {"type": "string"},
+        }
 
 
 def _add_error_response(path: str, operation: OpenApiMutableMapping, status_code: int) -> None:
@@ -369,7 +383,7 @@ def _document_sse_events(path: str, operation: OpenApiMutableMapping) -> None:
             "This in-process adapter is Responses-shaped, not full OpenAI Responses compatibility.",
             "stream, non-stream, and retrieve do not guarantee identical metadata or trace projection.",
             "A source failure before session identity may produce response.created with id=null.",
-            "Turn admission occurs during body iteration; some early stream failures are reported in-stream after HTTP 200.",
+            "Pre-session source failures are reported in-stream after HTTP 200 and cannot expose managed run headers.",
         ]
 
 

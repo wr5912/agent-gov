@@ -104,6 +104,14 @@ _RESULT_PAYLOAD = _object(
         "usage": {"type": ["object", "null"], "additionalProperties": True},
     },
 )
+_CANCELLED_PAYLOAD = _object(
+    required=("run_id", "session_id", "turn_status"),
+    properties={
+        "run_id": {"type": "string"},
+        "session_id": {"type": "string"},
+        "turn_status": {"const": "cancelled"},
+    },
+)
 _PROMPT_SUGGESTION_PAYLOAD = _object(
     required=("suggestion", "suggestions"),
     properties={
@@ -195,6 +203,7 @@ def _chat_specs() -> tuple[SseEventSpec, ...]:
         SseEventSpec("heartbeat", _object(required=("run_id", "timestamp")), "Data-frame keepalive for the legacy Chat surface.", "control"),
         SseEventSpec("result", _RESULT_PAYLOAD, "Runtime result metadata emitted before done.", "terminal"),
         SseEventSpec("error", _ERROR_PAYLOAD, "Runtime-managed in-stream error when available.", "terminal"),
+        SseEventSpec("cancelled", _CANCELLED_PAYLOAD, "Managed run cancellation.", "terminal"),
         SseEventSpec(
             "agentgov.speech_summary",
             {"$ref": "#/components/schemas/AgentGovSpeechSummaryEnvelope"},
@@ -228,6 +237,7 @@ def _sdk_specs() -> tuple[SseEventSpec, ...]:
         ),
         SseEventSpec("agentgov.result", _RESULT_PAYLOAD, "Runtime result metadata emitted before done.", "terminal"),
         SseEventSpec("agentgov.error", _ERROR_PAYLOAD, "Runtime-managed in-stream error when available.", "terminal"),
+        SseEventSpec("agentgov.cancelled", _CANCELLED_PAYLOAD, "Managed run cancellation.", "terminal"),
         SseEventSpec("agentgov.done", _object(additional_properties=False), "Managed stream terminator.", "terminal", terminal=True),
     )
 
@@ -500,6 +510,13 @@ def _responses_control_lifecycle_specs() -> tuple[SseEventSpec, ...]:
             condition="control mode and a managed error is available",
         ),
         SseEventSpec(
+            "agentgov.cancelled",
+            _agentgov_envelope("agentgov.cancelled", _CANCELLED_PAYLOAD),
+            "Control-mode managed run cancellation.",
+            "terminal",
+            condition="control mode and the target run is cancelled",
+        ),
+        SseEventSpec(
             "agentgov.done",
             _agentgov_envelope("agentgov.done", _object(additional_properties=False)),
             "Control-mode terminator emitted immediately before the standard terminal event.",
@@ -533,6 +550,17 @@ def _responses_terminal_specs() -> tuple[SseEventSpec, ...]:
                 },
             ),
             "Failed standard terminal event. Transitional source failures may omit response identity.",
+            "terminal",
+            terminal=True,
+        ),
+        SseEventSpec(
+            "response.incomplete",
+            _standard_event(
+                "response.incomplete",
+                required=("response",),
+                properties={"response": {"$ref": "#/components/schemas/ResponseObject"}},
+            ),
+            "Cancelled standard terminal event preserving any partial output.",
             "terminal",
             terminal=True,
         ),

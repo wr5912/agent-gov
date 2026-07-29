@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.runtime.state_machines import ImprovementStage
+
 
 class ImprovementCreateRequest(BaseModel):
     agent_id: str = Field(description="归属业务 Agent 的稳定 ID（治理归属主键）。")
@@ -35,7 +37,7 @@ class ImprovementLinkResponse(BaseModel):
 
 
 class ImprovementStageTransitionRequest(BaseModel):
-    stage: str = Field(
+    stage: ImprovementStage = Field(
         description="目标阶段：feedback_intake/triage/attribution/optimization/execution/regression/release；非法转移由后端状态机拒绝（409）。",
     )
 
@@ -56,7 +58,7 @@ class ImprovementItemResponse(BaseModel):
     title: str
     summary: str = ""
     source_feedback_refs: list[str] = Field(default_factory=list)
-    improvement_stage: str = Field(description="事项阶段（后端状态机管理）。")
+    improvement_stage: ImprovementStage = Field(description="事项阶段（后端状态机管理）。")
     improvement_status: str = Field(default="active", description="派生状态：active/done/archived。")
     artifact_presence: ImprovementArtifactPresence = Field(
         description="后端按持久化行实时投影的产物存在性；不得由阶段推导。",

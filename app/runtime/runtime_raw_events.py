@@ -25,18 +25,7 @@ RAW_EVENT_RESPONSE_HEADER_NAMES = tuple(RAW_EVENT_RESPONSE_HEADER_DESCRIPTIONS)
 
 
 class RuntimeRawEventsRequest(ChatRequest):
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "examples": [
-                {
-                    "message": "请输出本轮 Runtime 原生事件",
-                    "agent_id": "security-operations-expert",
-                    "stream": True,
-                }
-            ]
-        },
-    )
+    model_config = ConfigDict(extra="forbid")
 
     agent_id: str = Field(
         ...,

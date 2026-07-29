@@ -269,7 +269,7 @@ def create_responses_router(
     feedback_store: FeedbackStore,
     require_api_key: Callable,
 ) -> APIRouter:
-    """OpenAI Responses-first canonical 接口（薄路由，逻辑在 ``openai_responses_adapter`` 与本模块 impl）。"""
+    """过渡期 OpenAI Responses-shaped 投影（薄路由；SDK events 才是运行事实源）。"""
 
     router = APIRouter(prefix="/v1", tags=["openai-responses"], dependencies=[Depends(require_api_key)])
 
@@ -277,11 +277,13 @@ def create_responses_router(
         "/responses",
         response_model=ResponseObject,
         response_model_exclude_none=True,
-        summary="Run an AgentGov business agent (OpenAI Responses-compatible)",
+        summary="Run an AgentGov business agent through a transitional Responses-shaped projection",
         description=(
-            "Canonical run endpoint. No `agentgov` = strict (operator-configured agent, pure OpenAI shape). "
-            "`agentgov` present = control (requires `agentgov.agent_id`). `stream=true` returns Responses-style SSE "
-            "(`response.*`; plus `agentgov.*` control envelope, including optional `agentgov.prompt_suggestion`, in control mode)."
+            "Transitional projection over the SDK-native managed runtime; it is not full OpenAI Responses "
+            "compatibility and is not AgentGov's runtime source of truth. No `agentgov` = strict "
+            "(operator-configured agent, OpenAI-shaped response). `agentgov` present = control (requires "
+            "`agentgov.agent_id`). `stream=true` returns Responses-style SSE (`response.*`; plus `agentgov.*` "
+            "control events, including optional `agentgov.prompt_suggestion`, in control mode)."
         ),
     )
     async def create_response(

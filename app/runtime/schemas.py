@@ -5,6 +5,15 @@ from pydantic.types import JsonValue
 
 from app.runtime.json_types import JsonObject
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+from app.runtime.records.source_records import (
+    FeedbackConfidence,
+    FeedbackPriority,
+    FeedbackSignalSourceType,
+    FeedbackSourceAnnotationStatus,
+    FeedbackSourceKind,
+    SocEventType,
+)
+from app.runtime.state_machines import FeedbackCaseStatus, PendingCorrelationStatus
 
 NON_BLANK_TEXT_PATTERN = r"[\s\S]*\S[\s\S]*"
 
@@ -14,18 +23,7 @@ class ExtensibleResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "examples": [
-                {
-                    "message": "请说明当前 workspace 中有哪些 subagents 和 skills",
-                    "agent_id": "security-operations-expert",
-                    "max_turns": 8,
-                }
-            ]
-        },
-    )
+    model_config = ConfigDict(extra="forbid")
 
     message: str = Field(
         ...,
@@ -227,7 +225,7 @@ class FeedbackSignalCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     signal_id: Optional[str] = None
-    source_type: Literal["explicit_feedback", "implicit_feedback", "analyst_annotation"] = "explicit_feedback"
+    source_type: FeedbackSignalSourceType = "explicit_feedback"
     timestamp: Optional[str] = None
     run_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -235,7 +233,7 @@ class FeedbackSignalCreateRequest(BaseModel):
     case_id: Optional[str] = None
     labels: list[str] = Field(default_factory=list)
     comment: Optional[str] = None
-    confidence: Optional[Literal["low", "medium", "high"]] = None
+    confidence: Optional[FeedbackConfidence] = None
     auto_captured: bool = False
     requires_review: bool = False
     metadata: JsonObject = Field(default_factory=dict)
@@ -266,7 +264,7 @@ __all_agent_governance__ = [
 class FeedbackSignalResponse(BaseModel):
     signal_id: str
     created_at: str
-    source_type: str
+    source_type: FeedbackSignalSourceType
     agent_id: Optional[str] = None
     timestamp: Optional[str] = None
     run_id: Optional[str] = None
@@ -276,7 +274,7 @@ class FeedbackSignalResponse(BaseModel):
     case_id: Optional[str] = None
     labels: list[str] = Field(default_factory=list)
     comment: Optional[str] = None
-    confidence: Optional[str] = None
+    confidence: Optional[FeedbackConfidence] = None
     auto_captured: bool = False
     requires_review: bool = False
     metadata: JsonObject = Field(default_factory=dict)
@@ -287,15 +285,7 @@ class SocEventIngestRequest(BaseModel):
 
     event_id: str
     source_system: str
-    event_type: Literal[
-        "case.verdict_changed",
-        "case.severity_changed",
-        "recommendation.accepted",
-        "recommendation.rejected",
-        "recommendation.modified",
-        "evidence.added",
-        "tool.manual_query_after_agent",
-    ]
+    event_type: SocEventType
     timestamp: str
     run_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -306,7 +296,7 @@ class SocEventIngestRequest(BaseModel):
     after: Optional[JsonObject] = None
     entities: dict[str, list[str]] = Field(default_factory=dict)
     auto_captured: bool = True
-    confidence: Optional[Literal["low", "medium", "high"]] = "medium"
+    confidence: Optional[FeedbackConfidence] = "medium"
     requires_review: bool = True
     comment: Optional[str] = None
     metadata: JsonObject = Field(default_factory=dict)
@@ -315,7 +305,7 @@ class SocEventIngestRequest(BaseModel):
 class SocEventResponse(ExtensibleResponse):
     event_id: str
     source_system: str
-    event_type: str
+    event_type: SocEventType
     timestamp: str
     created_at: Optional[str] = None
     agent_id: Optional[str] = None
@@ -329,7 +319,7 @@ class SocEventResponse(ExtensibleResponse):
     after: Optional[JsonObject] = None
     entities: dict[str, list[str]] = Field(default_factory=dict)
     auto_captured: bool = True
-    confidence: Optional[str] = None
+    confidence: Optional[FeedbackConfidence] = None
     requires_review: bool = True
     comment: Optional[str] = None
     metadata: JsonObject = Field(default_factory=dict)
@@ -339,7 +329,7 @@ class PendingCorrelationResponse(ExtensibleResponse):
     pending_id: str
     created_at: str
     updated_at: Optional[str] = None
-    status: str
+    status: PendingCorrelationStatus
     reason: Optional[str] = None
     event_id: Optional[str] = None
     event_type: Optional[str] = None
@@ -369,22 +359,22 @@ class PendingCorrelationResolveRequest(BaseModel):
 class FeedbackSourceRef(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    source_kind: Literal["signal", "soc_event", "pending_correlation"]
+    source_kind: FeedbackSourceKind
     source_id: str = Field(min_length=1)
 
 
 class FeedbackSourceUpdateRequest(BaseModel):
     comment: Optional[str] = None
     labels: Optional[list[str]] = None
-    priority: Optional[Literal["high", "medium", "low"]] = None
-    status: Optional[Literal["new", "triaged", "in_batch", "resolved", "archived"]] = None
+    priority: Optional[FeedbackPriority] = None
+    status: Optional[FeedbackSourceAnnotationStatus] = None
     requires_review: Optional[bool] = None
     metadata: Optional[JsonObject] = None
 
 
 class FeedbackSourceResponse(ExtensibleResponse):
     schema_version: Optional[str] = None
-    source_kind: Literal["signal", "soc_event", "pending_correlation"]
+    source_kind: FeedbackSourceKind
     source_id: str
     id: Optional[str] = None
     created_at: Optional[str] = None
@@ -447,7 +437,7 @@ class FeedbackCaseResponse(BaseModel):
     agent_id: str = DEFAULT_BUSINESS_AGENT_ID
     created_at: str
     updated_at: str
-    status: str
+    status: FeedbackCaseStatus
     title: str
     priority: str
     source_ids: list[str] = Field(default_factory=list)

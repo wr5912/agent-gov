@@ -9,6 +9,7 @@ export type ImprovementItem = components["schemas"]["ImprovementItemResponse"];
 export type ImprovementArtifactPresence = components["schemas"]["ImprovementArtifactPresence"];
 export type ImprovementCreateRequest = components["schemas"]["ImprovementCreateRequest"];
 export type ImprovementStageTransitionRequest = components["schemas"]["ImprovementStageTransitionRequest"];
+export type ImprovementStage = ImprovementStageTransitionRequest["stage"];
 export type ImprovementSimilarItem = components["schemas"]["ImprovementSimilarItem"];
 export type ImprovementLink = components["schemas"]["ImprovementLinkResponse"];
 export type NormalizedFeedback = components["schemas"]["NormalizedFeedbackResponse"];
@@ -189,7 +190,7 @@ export function createImprovement(config: RuntimeClientConfig, payload: Improvem
   });
 }
 
-export function setImprovementStage(config: RuntimeClientConfig, improvementId: string, stage: string) {
+export function setImprovementStage(config: RuntimeClientConfig, improvementId: string, stage: ImprovementStage) {
   const payload: ImprovementStageTransitionRequest = { stage };
   return requestJson<ImprovementItem>(
     config,

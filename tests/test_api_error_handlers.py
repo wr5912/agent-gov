@@ -79,6 +79,46 @@ def test_feedback_workbench_preserves_domain_error_code(monkeypatch, tmp_path):
     }
 
 
+def test_public_finite_value_inputs_reject_unknown_values_at_validation_boundary(
+    monkeypatch,
+    tmp_path,
+):
+    module = _load_app(monkeypatch, tmp_path)
+
+    with TestClient(module.app) as client:
+        invalid_queries = (
+            ("/api/claude-user-input-requests", {"status": "unknown"}),
+            ("/api/agent-change-sets", {"status": "unknown"}),
+            ("/api/agent-releases", {"status": "unknown"}),
+            ("/api/agent-test-runs/history", {"status": "unknown"}),
+            ("/api/assets", {"asset_type": "unknown"}),
+            ("/api/agent-jobs", {"job_type": "unknown"}),
+            ("/api/agent-jobs", {"status": "unknown"}),
+            ("/api/feedback-cases", {"status": "unknown"}),
+            ("/api/feedback-signals", {"source_type": "unknown"}),
+            ("/api/soc-events", {"event_type": "unknown"}),
+            ("/api/pending-correlations", {"status": "unknown"}),
+        )
+        for path, params in invalid_queries:
+            response = client.get(path, params=params)
+            assert response.status_code == 422, (path, response.text)
+
+        invalid_bodies = (
+            ("/api/agent-registry/unknown/lifecycle", {"status": "unknown"}),
+            ("/api/improvements/unknown/lifecycle", {"stage": "unknown"}),
+            ("/api/assets", {"agent_id": "soc", "asset_type": "unknown", "title": "x"}),
+        )
+        for path, body in invalid_bodies:
+            response = client.post(path, json=body)
+            assert response.status_code == 422, (path, response.text)
+
+        for alias in ("feedback_signal", "event", "pending"):
+            get_response = client.get(f"/api/feedback-sources/{alias}/unknown")
+            patch_response = client.patch(f"/api/feedback-sources/{alias}/unknown", json={})
+            assert get_response.status_code == 422, (alias, get_response.text)
+            assert patch_response.status_code == 422, (alias, patch_response.text)
+
+
 def test_agent_change_set_route_not_found_returns_structured_error(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path)
 

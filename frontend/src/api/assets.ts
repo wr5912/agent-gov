@@ -5,10 +5,11 @@ import type { RuntimeClientConfig } from "../types/runtime";
 
 export type Asset = components["schemas"]["AssetResponse"];
 export type AssetCreateRequest = components["schemas"]["AssetCreateRequest"];
+export type AssetType = AssetCreateRequest["asset_type"];
 
 export function listAssets(
   config: RuntimeClientConfig,
-  opts: { agentId?: string; assetType?: string; sourceImprovementId?: string } = {},
+  opts: { agentId?: string; assetType?: AssetType; sourceImprovementId?: string } = {},
   readOptions?: RuntimeReadOptions,
 ) {
   const params = new URLSearchParams();

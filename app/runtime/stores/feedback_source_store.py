@@ -586,12 +586,6 @@ class FeedbackSourceStoreMixin:
 
     def _normalize_source_kind(self, source_kind: str) -> str:
         normalized = str(source_kind or "").strip()
-        aliases = {
-            "feedback_signal": "signal",
-            "event": "soc_event",
-            "pending": "pending_correlation",
-        }
-        normalized = aliases.get(normalized, normalized)
         if normalized not in {"signal", "soc_event", "pending_correlation"}:
             raise BusinessRuleViolation(f"Unsupported feedback source kind: {source_kind}")
         return normalized

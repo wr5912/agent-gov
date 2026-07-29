@@ -1,12 +1,23 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.runtime.json_types import JsonObject
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ExtensibleResponse
+from app.runtime.state_machines import AgentChangeSetStatus, AgentReleaseStatus
+
+AgentRepositoryHealthStatus: TypeAlias = Literal["active", "degraded"]
+AgentGitFileDiffStatus: TypeAlias = Literal[
+    "missing",
+    "added",
+    "deleted",
+    "unchanged",
+    "modified",
+    "binary_or_too_large",
+]
 
 
 class AgentRepositoryStatusResponse(ExtensibleResponse):
@@ -16,7 +27,7 @@ class AgentRepositoryStatusResponse(ExtensibleResponse):
     repository_dir: str
     worktrees_dir: str
     releases_dir: str
-    status: str
+    status: AgentRepositoryHealthStatus
     degraded_reason: Optional[str] = None
     service_url: Optional[str] = None
     service_public_url: Optional[str] = None
@@ -66,7 +77,7 @@ class AgentGitFileDiffResponse(ExtensibleResponse):
     to_version_id: str
     path: str
     archive_path: str
-    status: str
+    status: AgentGitFileDiffStatus
     before: Optional[AgentGitFileEntryResponse] = None
     after: Optional[AgentGitFileEntryResponse] = None
     unified_diff: str = ""
@@ -109,7 +120,7 @@ class AgentChangeSetResponse(ExtensibleResponse):
     agent_id: str = DEFAULT_BUSINESS_AGENT_ID
     created_at: str
     updated_at: str
-    status: str
+    status: AgentChangeSetStatus
     execution_job_id: Optional[str] = None
     base_commit_sha: str
     candidate_commit_sha: Optional[str] = None
@@ -146,7 +157,7 @@ class AgentReleaseResponse(ExtensibleResponse):
     agent_id: str = DEFAULT_BUSINESS_AGENT_ID
     created_at: str
     updated_at: str
-    status: str
+    status: AgentReleaseStatus
     tag_name: str
     commit_sha: str
     previous_commit_sha: Optional[str] = None

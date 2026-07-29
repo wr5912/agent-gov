@@ -14,7 +14,10 @@ export interface paths {
         /** 列出 Agent 待发布变更 */
         get: operations["list_agent_change_sets_api_agent_change_sets_get"];
         put?: never;
-        /** 创建 Agent 待发布变更的隔离 worktree */
+        /**
+         * 创建 Agent 待发布变更的隔离 worktree
+         * @description Create an isolated change-set worktree for the selected business Agent. Omit base_commit_sha to use the current published commit; a supplied SHA must come from the Agent repository API.
+         */
         post: operations["create_agent_change_set_api_agent_change_sets_post"];
         delete?: never;
         options?: never;
@@ -48,7 +51,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 放弃 Agent 待发布变更 */
+        /**
+         * 放弃 Agent 待发布变更
+         * @description Abandon an open change set that is no longer needed. The change_set_id must come from the change-set list and the operation records a terminal governance decision.
+         */
         post: operations["abandon_agent_change_set_api_agent_change_sets__change_set_id__abandon_post"];
         delete?: never;
         options?: never;
@@ -65,7 +71,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 批准 Agent 待发布变更进入发布 */
+        /**
+         * 批准 Agent 待发布变更进入发布
+         * @description Approve the identified change set after reviewing its diff and test evidence. Obtain change_set_id from GET /api/agent-change-sets; approval changes lifecycle state but does not publish.
+         */
         post: operations["approve_agent_change_set_api_agent_change_sets__change_set_id__approve_post"];
         delete?: never;
         options?: never;
@@ -133,7 +142,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 发布已批准的 Agent 待发布变更 */
+        /**
+         * 发布已批准的 Agent 待发布变更
+         * @description Publish an approved change set for its owning business Agent. Normal publication requires the current candidate test gate to pass; force is restricted to eligible manual change sets and requires a reason.
+         */
         post: operations["publish_agent_change_set_api_agent_change_sets__change_set_id__publish_post"];
         delete?: never;
         options?: never;
@@ -150,7 +162,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 拒绝 Agent 待发布变更 */
+        /**
+         * 拒绝 Agent 待发布变更
+         * @description Reject the identified change set and record the reason. Obtain change_set_id from the change-set list; the state transition is terminal for the rejected candidate.
+         */
         post: operations["reject_agent_change_set_api_agent_change_sets__change_set_id__reject_post"];
         delete?: never;
         options?: never;
@@ -184,7 +199,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 重试终态 Agent 待发布变更的持久化 worktree 清理 */
+        /**
+         * 重试终态 Agent 待发布变更的持久化 worktree 清理
+         * @description Retry persisted worktree cleanup for a terminal change set after inspecting its cleanup error. The operation does not change the published Agent version.
+         */
         post: operations["retry_agent_change_set_worktree_cleanup_api_agent_change_sets__change_set_id__worktree_cleanup_retry_post"];
         delete?: never;
         options?: never;
@@ -201,7 +219,10 @@ export interface paths {
         };
         /** Read an editable business-agent project config file */
         get: operations["read_agent_config_file_api_agent_config_file_get"];
-        /** Update an editable business-agent project config file */
+        /**
+         * Update an editable business-agent project config file
+         * @description Replace the selected editable UTF-8 config file. Read the file first and pass its sha256 as expected_sha256 to reject stale concurrent edits; content is the complete replacement, not a patch.
+         */
         put: operations["update_agent_config_file_api_agent_config_file_put"];
         post?: never;
         delete?: never;
@@ -287,7 +308,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Transition a business agent's lifecycle status (rejects illegal transitions) */
+        /**
+         * Transition a business agent's lifecycle status (rejects illegal transitions)
+         * @description Transition the registered business Agent to a valid target lifecycle state. The URL agent_id comes from GET /api/agent-registry; valid values can still be rejected when the current transition is illegal.
+         */
         post: operations["transition_agent_api_agent_registry__agent_id__lifecycle_post"];
         delete?: never;
         options?: never;
@@ -321,7 +345,10 @@ export interface paths {
         };
         /** Get Agent Test Schedule */
         get: operations["get_agent_test_schedule_api_agent_registry__agent_id__test_schedule_get"];
-        /** Update Agent Test Schedule */
+        /**
+         * Update Agent Test Schedule
+         * @description Create or replace the business Agent's test schedule. cron_expression is a five-field cron expression, timezone is an IANA timezone, and saving the schedule does not trigger an immediate run.
+         */
         put: operations["update_agent_test_schedule_api_agent_registry__agent_id__test_schedule_put"];
         post?: never;
         delete?: never;
@@ -407,7 +434,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create or overwrite a business Agent from an exact workspace package */
+        /**
+         * Create or overwrite a business Agent from an exact workspace package
+         * @description Upload one exact workspace.tar.gz package. A new Agent requires name; replacing an existing Agent requires expected_current_commit_sha from GET /api/agent-registry and is rejected while its workspace or governance state is busy.
+         */
         post: operations["import_workspace_api_agent_registry__agent_id__workspace_import_post"];
         delete?: never;
         options?: never;
@@ -424,7 +454,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Restore a historical workspace tree as a new Git commit */
+        /**
+         * Restore a historical workspace tree as a new Git commit
+         * @description Restore a historical workspace tree as a new commit without rewriting history. Both SHAs must come from the Agent's repository history; expected_current_commit_sha protects against concurrent changes.
+         */
         post: operations["restore_workspace_api_agent_registry__agent_id__workspace_restore_post"];
         delete?: never;
         options?: never;
@@ -475,7 +508,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Restore one business Agent Workspace to a release */
+        /**
+         * Restore one business Agent Workspace to a release
+         * @description Restore a historical release tree as a new auditable commit. Obtain release_id from the release list; the historical release record remains unchanged.
+         */
         post: operations["restore_agent_release_api_agent_releases__release_id__restore_post"];
         delete?: never;
         options?: never;
@@ -492,7 +528,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Rollback one business Agent Workspace to a release */
+        /**
+         * Rollback one business Agent Workspace to a release
+         * @description Roll the owning business Agent back to the selected published or archived release. Obtain release_id from GET /api/agent-releases and review current run impact before executing.
+         */
         post: operations["rollback_agent_release_api_agent_releases__release_id__rollback_post"];
         delete?: never;
         options?: never;
@@ -543,7 +582,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Discard confirmed uncommitted changes from the selected business Agent workspace */
+        /**
+         * Discard confirmed uncommitted changes from the selected business Agent workspace
+         * @description Discard only the listed dirty workspace paths for the selected business Agent. Read repository status first; an empty paths list is a no-op and the operation never means an implicit whole-workspace discard.
+         */
         post: operations["discard_agent_repository_changes_api_agent_repository_discard_changes_post"];
         delete?: never;
         options?: never;
@@ -560,7 +602,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Save the selected business Agent workspace as an Agent version */
+        /**
+         * Save the selected business Agent workspace as an Agent version
+         * @description Commit the selected business Agent's current dirty workspace as a version snapshot. The operation records operator and note for audit and has no effect when the workspace has no changes.
+         */
         post: operations["snapshot_agent_repository_api_agent_repository_snapshot_post"];
         delete?: never;
         options?: never;
@@ -669,7 +714,10 @@ export interface paths {
         /** List Agent Test Runs */
         get: operations["list_agent_test_runs_api_agent_test_runs_get"];
         put?: never;
-        /** Create Agent Test Run */
+        /**
+         * Create Agent Test Run
+         * @description Create a durable full-suite test run for one business Agent. Omit commit_sha to pin the current active commit at request time, or pass a commit returned by the Agent test/repository APIs.
+         */
         post: operations["create_agent_test_run_api_agent_test_runs_post"];
         delete?: never;
         options?: never;
@@ -737,7 +785,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Agent Test Session */
+        /**
+         * Create Agent Test Session
+         * @description Create a temporary interactive test session pinned to one Agent commit. Use change_set_id only when testing that Agent's candidate; IDs and SHAs must come from the corresponding governance APIs.
+         */
         post: operations["create_agent_test_session_api_agent_test_sessions_post"];
         delete?: never;
         options?: never;
@@ -771,7 +822,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Send Agent Test Message */
+        /**
+         * Send Agent Test Message
+         * @description Send one non-empty test message to the temporary session returned by POST /api/agent-test-sessions. Metadata is observability context and does not change Agent routing.
+         */
         post: operations["send_agent_test_message_api_agent_test_sessions__test_session_id__messages_post"];
         delete?: never;
         options?: never;
@@ -823,7 +877,10 @@ export interface paths {
         /** List governance assets, scoped by agent / type */
         get: operations["list_assets_api_assets_get"];
         put?: never;
-        /** Create a governance asset */
+        /**
+         * Create a governance asset
+         * @description Create a methodology, execution, or audit governance asset owned by a registered business Agent. Workspace tests are not generic assets and must remain in the Agent's Git-backed tests directory.
+         */
         post: operations["create_asset_api_assets_post"];
         delete?: never;
         options?: never;
@@ -857,7 +914,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Inherit (compound) an asset into another business agent */
+        /**
+         * Inherit (compound) an asset into another business agent
+         * @description Create a derived copy of the URL asset for another registered business Agent. Obtain asset_id from the asset list; tests and private workspace configuration are outside this inheritance contract.
+         */
         post: operations["inherit_asset_api_assets__asset_id__inherit_post"];
         delete?: never;
         options?: never;
@@ -1011,7 +1071,10 @@ export interface paths {
         /** List feedback disposition cases */
         get: operations["list_feedback_cases_api_feedback_cases_get"];
         put?: never;
-        /** Create one feedback disposition case from feedback signals */
+        /**
+         * Create one feedback disposition case from feedback signals
+         * @description Create one FeedbackCase from typed feedback sources owned by the same business Agent. Source IDs must come from feedback-signal, SOC-event, or resolved pending-correlation APIs; backend correlation fields are projected from those sources.
+         */
         post: operations["create_feedback_case_api_feedback_cases_post"];
         delete?: never;
         options?: never;
@@ -1063,7 +1126,10 @@ export interface paths {
         /** List collected feedback signals */
         get: operations["list_feedback_signals_api_feedback_signals_get"];
         put?: never;
-        /** Collect one feedback signal without attribution or proposal generation */
+        /**
+         * Collect one feedback signal without attribution or proposal generation
+         * @description Collect one feedback signal without running attribution or proposal generation. Omit signal_id and timestamp to let the backend assign them; provide only correlation IDs actually known by the caller.
+         */
         post: operations["create_feedback_signal_api_feedback_signals_post"];
         delete?: never;
         options?: never;
@@ -1097,7 +1163,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Reassign a feedback signal's owning agent (records an audit correction) */
+        /**
+         * Reassign a feedback signal's owning agent (records an audit correction)
+         * @description Correct the owning business Agent of one feedback signal and persist an audit record. Obtain signal_id from the feedback-signal list and agent_id from GET /api/agent-registry.
+         */
         post: operations["reassign_feedback_signal_agent_api_feedback_signals__signal_id__reassign_agent_post"];
         delete?: never;
         options?: never;
@@ -1136,7 +1205,10 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update developer annotations for one feedback source */
+        /**
+         * Update developer annotations for one feedback source
+         * @description Patch developer-owned annotations for one canonical feedback source. Omitted properties are unchanged; source_kind is signal, soc_event, or pending_correlation and source_id comes from the matching list API.
+         */
         patch: operations["update_feedback_source_api_feedback_sources__source_kind___source_id__patch"];
         trace?: never;
     };
@@ -1150,7 +1222,10 @@ export interface paths {
         /** List improvement items (governance work units), scoped by business agent */
         get: operations["list_improvements_api_improvements_get"];
         put?: never;
-        /** Create an improvement item under a business agent */
+        /**
+         * Create an improvement item under a business agent
+         * @description Create an ImprovementItem owned by a registered business Agent. source_feedback_refs must refer to existing feedback records; auto_merge may merge them into a similar open item instead of creating one.
+         */
         post: operations["create_improvement_api_improvements_post"];
         delete?: never;
         options?: never;
@@ -1202,7 +1277,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Attach an existing FeedbackCase to this improvement (prefilled + ref registered) */
+        /**
+         * Attach an existing FeedbackCase to this improvement (prefilled + ref registered)
+         * @description Attach one existing FeedbackCase to an ImprovementItem and register its feedback reference. Obtain feedback_case_id from GET /api/feedback-cases; ownership must be compatible with the target Agent.
+         */
         post: operations["attach_feedback_case_api_improvements__improvement_id__attach_feedback_case_post"];
         delete?: never;
         options?: never;
@@ -1236,7 +1314,10 @@ export interface paths {
         };
         /** Get attribution (404 if none) */
         get: operations["get_attr_api_improvements__improvement_id__attribution_get"];
-        /** Upsert attribution (text + responsibility boundary + evidence) */
+        /**
+         * Upsert attribution (text + responsibility boundary + evidence)
+         * @description Create or replace the attribution artifact for the ImprovementItem. The request owns business content only; backend lifecycle and provenance fields are injected by the service.
+         */
         put: operations["upsert_attr_api_improvements__improvement_id__attribution_put"];
         post?: never;
         delete?: never;
@@ -1357,7 +1438,10 @@ export interface paths {
         /** List source feedbacks of an improvement (404 if unknown) */
         get: operations["list_feedbacks_api_improvements__improvement_id__feedbacks_get"];
         put?: never;
-        /** Add a source feedback to an improvement (§8.4) */
+        /**
+         * Add a source feedback to an improvement (§8.4)
+         * @description Attach one generic feedback record while the ImprovementItem is in feedback_intake. FeedbackCase records use the dedicated attach-feedback-case endpoint instead.
+         */
         post: operations["add_feedback_api_improvements__improvement_id__feedbacks_post"];
         delete?: never;
         options?: never;
@@ -1374,7 +1458,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Move a feedback to another improvement (cross-item adjust) */
+        /**
+         * Move a feedback to another improvement (cross-item adjust)
+         * @description Move the identified feedback record to another ImprovementItem owned by the same Agent. The target ID comes from GET /api/improvements and both items must be in a state that permits feedback changes.
+         */
         post: operations["reassign_feedback_api_improvements__improvement_id__feedbacks__feedback_id__reassign_post"];
         delete?: never;
         options?: never;
@@ -1391,7 +1478,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Return an improvement item to an earlier refinement stage */
+        /**
+         * Return an improvement item to an earlier refinement stage
+         * @description Return an ImprovementItem to a valid earlier refinement stage. Obtain improvement_id from the improvement list; this endpoint cannot bypass artifacts to advance the workflow.
+         */
         post: operations["transition_improvement_api_improvements__improvement_id__lifecycle_post"];
         delete?: never;
         options?: never;
@@ -1425,7 +1515,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Merge a source improvement into this one (same agent; source becomes archived) */
+        /**
+         * Merge a source improvement into this one (same agent; source becomes archived)
+         * @description Merge another open ImprovementItem owned by the same Agent into the URL target. The source item is archived; obtain both IDs from GET /api/improvements and review their feedback references first.
+         */
         post: operations["merge_improvement_api_improvements__improvement_id__merge_post"];
         delete?: never;
         options?: never;
@@ -1442,7 +1535,10 @@ export interface paths {
         };
         /** Get system understanding (404 if none) */
         get: operations["get_nf_api_improvements__improvement_id__normalized_feedback_get"];
-        /** Upsert system understanding (NormalizedFeedback) */
+        /**
+         * Upsert system understanding (NormalizedFeedback)
+         * @description Create or replace the system-understanding artifact for the ImprovementItem. This writes content only; confirmation and lifecycle progression use their dedicated operations.
+         */
         put: operations["upsert_nf_api_improvements__improvement_id__normalized_feedback_put"];
         post?: never;
         delete?: never;
@@ -1494,7 +1590,10 @@ export interface paths {
         };
         /** Get optimization plan (404 if none) */
         get: operations["get_opt_api_improvements__improvement_id__optimization_plan_get"];
-        /** Upsert optimization plan (text + changes, §106) */
+        /**
+         * Upsert optimization plan (text + changes, §106)
+         * @description Create or replace the optimization-plan artifact. Each change names a governed target and a concrete business change; applying workspace changes remains a separate confirmed action.
+         */
         put: operations["upsert_opt_api_improvements__improvement_id__optimization_plan_put"];
         post?: never;
         delete?: never;
@@ -1614,7 +1713,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Split a source feedback ref out of this improvement into a new one */
+        /**
+         * Split a source feedback ref out of this improvement into a new one
+         * @description Move one source feedback reference out of the URL ImprovementItem into a new item. feedback_ref must already belong to the source item and is returned by the improvement detail API.
+         */
         post: operations["split_improvement_api_improvements__improvement_id__split_post"];
         delete?: never;
         options?: never;
@@ -1665,7 +1767,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Resolve one pending feedback correlation */
+        /**
+         * Resolve one pending feedback correlation
+         * @description Resolve one pending correlation by supplying only confirmed business identifiers. Obtain pending_id from the pending-correlation list; omitted fields remain unknown rather than receiving placeholder data.
+         */
         post: operations["resolve_pending_correlation_api_pending_correlations__pending_id__resolve_post"];
         delete?: never;
         options?: never;
@@ -1745,7 +1850,10 @@ export interface paths {
         };
         /** Get the /v1 出口业务 Agent (configured=False means use the default business Agent) */
         get: operations["get_openai_compat_agent_api_settings_openai_compat_agent_get"];
-        /** Set the /v1 出口业务 Agent (validated: unknown 404, non-business 400) */
+        /**
+         * Set the /v1 出口业务 Agent (validated: unknown 404, non-business 400)
+         * @description Select the registered business Agent used by strict /v1 Responses and the deprecated Chat Completions shim. Obtain agent_id from GET /api/agent-registry.
+         */
         put: operations["set_openai_compat_agent_api_settings_openai_compat_agent_put"];
         post?: never;
         /** Reset the /v1 出口业务 Agent to the default business Agent */
@@ -1782,7 +1890,10 @@ export interface paths {
         /** List collected SOC events */
         get: operations["list_soc_events_api_soc_events_get"];
         put?: never;
-        /** Collect one SOC event without attribution or proposal generation */
+        /**
+         * Collect one SOC event without attribution or proposal generation
+         * @description Collect one immutable SOC event and attempt deterministic correlation to an Agent run. event_id must be unique in the source system; before/after and entities should contain domain fields, not opaque dumps.
+         */
         post: operations["ingest_soc_event_api_soc_events_post"];
         delete?: never;
         options?: never;
@@ -1977,8 +2088,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run an AgentGov business agent (OpenAI Responses-compatible)
-         * @description Canonical run endpoint. No `agentgov` = strict (operator-configured agent, pure OpenAI shape). `agentgov` present = control (requires `agentgov.agent_id`). `stream=true` returns Responses-style SSE (`response.*`; plus `agentgov.*` control envelope, including optional `agentgov.prompt_suggestion`, in control mode).
+         * Run an AgentGov business agent through a transitional Responses-shaped projection
+         * @description Transitional projection over the SDK-native managed runtime; it is not full OpenAI Responses compatibility and is not AgentGov's runtime source of truth. No `agentgov` = strict (operator-configured agent, OpenAI-shaped response). `agentgov` present = control (requires `agentgov.agent_id`). `stream=true` returns Responses-style SSE (`response.*`; plus `agentgov.*` control events, including optional `agentgov.prompt_suggestion`, in control mode).
          */
         post: operations["create_response_v1_responses_post"];
         delete?: never;
@@ -2121,8 +2232,11 @@ export interface components {
             source_attribution_status?: string | null;
             /** Source Improvement Id */
             source_improvement_id?: string | null;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "execution_ready" | "candidate_committed" | "pending_approval" | "approved" | "rejected" | "publishing" | "published" | "abandoned" | "failed";
             /** Title */
             title?: string | null;
             /** Updated At */
@@ -2321,8 +2435,11 @@ export interface components {
             path: string;
             /** Reason */
             reason?: string | null;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "missing" | "added" | "deleted" | "unchanged" | "modified" | "binary_or_too_large";
             /** To Version Id */
             to_version_id: string;
             /**
@@ -2554,8 +2671,7 @@ export interface components {
             input_path: string;
             /** Job Id */
             job_id: string;
-            /** Job Type */
-            job_type: string;
+            job_type: components["schemas"]["AgentJobType"];
             /** Profile Name */
             profile_name: string;
             /** Profile Version */
@@ -2583,8 +2699,11 @@ export interface components {
             scope_kind?: string | null;
             /** Started At */
             started_at?: string | null;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "created" | "queued" | "running" | "schema_validating" | "evidence_packaging" | "completed" | "failed" | "needs_human_review" | "timeout";
             /**
              * Timeout Seconds
              * @default 300
@@ -2599,13 +2718,19 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * AgentJobType
+         * @enum {string}
+         */
+        AgentJobType: "attribution" | "optimization_plan" | "execution" | "regression_test_design" | "normalized_feedback";
         /** AgentLifecycleTransitionRequest */
         AgentLifecycleTransitionRequest: {
             /**
              * Status
              * @description 目标生命周期状态：active/evaluating/deprecated/archived（draft 仅创建态）。
+             * @enum {string}
              */
-            status: string;
+            status: "active" | "evaluating" | "deprecated" | "archived";
         };
         /**
          * AgentPresentationResponse
@@ -2719,8 +2844,11 @@ export interface components {
             schema_version: string;
             /** Source Improvement Id */
             source_improvement_id?: string | null;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "published" | "archived" | "rolled_back" | "rollback_failed";
             /** Tag Name */
             tag_name: string;
             /** Updated At */
@@ -2826,8 +2954,11 @@ export interface components {
             service_public_url?: string | null;
             /** Service Url */
             service_url?: string | null;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "degraded";
             /** Worktrees Dir */
             worktrees_dir: string;
         } & {
@@ -2999,19 +3130,15 @@ export interface components {
              * Status
              * @description 生命周期状态：draft/active/evaluating/deprecated/archived。
              * @default active
+             * @enum {string}
              */
-            status: string;
+            status: "draft" | "active" | "evaluating" | "deprecated" | "archived";
             /** Workspace Dir */
             workspace_dir: string;
         };
         /**
          * AgentTargetedChatRequest
          * @description Public native Chat request that always names the business Agent.
-         * @example {
-         *       "agent_id": "security-operations-expert",
-         *       "max_turns": 8,
-         *       "message": "请说明当前 workspace 中有哪些 subagents 和 skills"
-         *     }
          */
         AgentTargetedChatRequest: {
             /**
@@ -3440,8 +3567,9 @@ export interface components {
             /**
              * Asset Type
              * @description methodology / execution / audit。可执行测试只存在于业务 Agent Workspace tests/。
+             * @enum {string}
              */
-            asset_type: string;
+            asset_type: "methodology" | "execution" | "audit";
             /**
              * Body
              * @description 资产正文（方法论/执行脚本/审计说明）。
@@ -3509,8 +3637,11 @@ export interface components {
             agent_id: string;
             /** Asset Id */
             asset_id: string;
-            /** Asset Type */
-            asset_type: string;
+            /**
+             * Asset Type
+             * @enum {string}
+             */
+            asset_type: "methodology" | "execution" | "audit";
             /**
              * Body
              * @default
@@ -3696,11 +3827,6 @@ export interface components {
         /**
          * ChatStreamRequest
          * @description Legacy Chat SSE request with a stream-only derived-event opt-in.
-         * @example {
-         *       "agent_id": "security-operations-expert",
-         *       "max_turns": 8,
-         *       "message": "请说明当前 workspace 中有哪些 subagents 和 skills"
-         *     }
          */
         ChatStreamRequest: {
             /**
@@ -3757,11 +3883,6 @@ export interface components {
         /**
          * ClaudeSdkEventsRequest
          * @description SDK-native SSE request; kept separate from shared Chat/raw schemas.
-         * @example {
-         *       "agent_id": "security-operations-expert",
-         *       "max_turns": 8,
-         *       "message": "请说明当前 workspace 中有哪些 subagents 和 skills"
-         *     }
          */
         ClaudeSdkEventsRequest: {
             /**
@@ -4335,8 +4456,11 @@ export interface components {
             signal_ids?: string[];
             /** Source Ids */
             source_ids?: string[];
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending_evidence" | "pending_attribution" | "attribution_queued" | "pending_review" | "needs_human_review";
             /** Title */
             title: string;
             /** Updated At */
@@ -4432,7 +4556,7 @@ export interface components {
             /** Comment */
             comment?: string | null;
             /** Confidence */
-            confidence?: string | null;
+            confidence?: ("low" | "medium" | "high") | null;
             /** Created At */
             created_at: string;
             /** Labels */
@@ -4454,8 +4578,11 @@ export interface components {
             session_id?: string | null;
             /** Signal Id */
             signal_id: string;
-            /** Source Type */
-            source_type: string;
+            /**
+             * Source Type
+             * @enum {string}
+             */
+            source_type: "explicit_feedback" | "implicit_feedback" | "analyst_annotation";
             /** Timestamp */
             timestamp?: string | null;
         };
@@ -4774,8 +4901,9 @@ export interface components {
             /**
              * Improvement Stage
              * @description 事项阶段（后端状态机管理）。
+             * @enum {string}
              */
-            improvement_stage: string;
+            improvement_stage: "feedback_intake" | "triage" | "attribution" | "optimization" | "execution" | "regression" | "release";
             /**
              * Improvement Status
              * @description 派生状态：active/done/archived。
@@ -4837,8 +4965,9 @@ export interface components {
             /**
              * Stage
              * @description 目标阶段：feedback_intake/triage/attribution/optimization/execution/regression/release；非法转移由后端状态机拒绝（409）。
+             * @enum {string}
              */
-            stage: string;
+            stage: "feedback_intake" | "triage" | "attribution" | "optimization" | "execution" | "regression" | "release";
         };
         JsonValue: unknown;
         /** ModelProviderReadiness */
@@ -5198,8 +5327,11 @@ export interface components {
             session_id?: string | null;
             /** Source System */
             source_system?: string | null;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "resolved";
             /** Updated At */
             updated_at?: string | null;
         } & {
@@ -5569,14 +5701,7 @@ export interface components {
              */
             status: "ok";
         };
-        /**
-         * RuntimeRawEventsRequest
-         * @example {
-         *       "agent_id": "security-operations-expert",
-         *       "message": "请输出本轮 Runtime 原生事件",
-         *       "stream": true
-         *     }
-         */
+        /** RuntimeRawEventsRequest */
         RuntimeRawEventsRequest: {
             /**
              * Agent Id
@@ -5804,7 +5929,7 @@ export interface components {
             /** Comment */
             comment?: string | null;
             /** Confidence */
-            confidence?: string | null;
+            confidence?: ("low" | "medium" | "high") | null;
             /** Created At */
             created_at?: string | null;
             /** Entities */
@@ -5813,8 +5938,11 @@ export interface components {
             };
             /** Event Id */
             event_id: string;
-            /** Event Type */
-            event_type: string;
+            /**
+             * Event Type
+             * @enum {string}
+             */
+            event_type: "case.verdict_changed" | "case.severity_changed" | "recommendation.accepted" | "recommendation.rejected" | "recommendation.modified" | "evidence.added" | "tool.manual_query_after_agent";
             /** Matched Run Id */
             matched_run_id?: string | null;
             /** Metadata */
@@ -5957,7 +6085,7 @@ export interface operations {
     list_agent_change_sets_api_agent_change_sets_get: {
         parameters: {
             query?: {
-                status?: string | null;
+                status?: ("draft" | "execution_ready" | "candidate_committed" | "pending_approval" | "approved" | "rejected" | "publishing" | "published" | "abandoned" | "failed") | null;
                 limit?: number;
             };
             header?: never;
@@ -6876,10 +7004,10 @@ export interface operations {
     list_agent_jobs_api_agent_jobs_get: {
         parameters: {
             query?: {
-                job_type?: string | null;
+                job_type?: components["schemas"]["AgentJobType"] | null;
                 scope_kind?: string | null;
                 scope_id?: string | null;
-                status?: string | null;
+                status?: ("created" | "queued" | "running" | "schema_validating" | "evidence_packaging" | "completed" | "failed" | "needs_human_review" | "timeout") | null;
                 limit?: number;
             };
             header?: never;
@@ -7769,7 +7897,7 @@ export interface operations {
     list_agent_releases_api_agent_releases_get: {
         parameters: {
             query?: {
-                status?: string | null;
+                status?: ("published" | "archived" | "rolled_back" | "rollback_failed") | null;
                 limit?: number;
             };
             header?: never;
@@ -8604,7 +8732,7 @@ export interface operations {
         parameters: {
             query?: {
                 agent_id?: string | null;
-                status?: string | null;
+                status?: ("queued" | "running" | "passed" | "failed" | "error" | "cancelled" | "interrupted") | null;
                 source?: string | null;
                 commit_sha?: string | null;
                 cursor?: string | null;
@@ -9071,7 +9199,7 @@ export interface operations {
                 /** @description 按业务 Agent 过滤。 */
                 agent_id?: string | null;
                 /** @description 按资产类型过滤。 */
-                asset_type?: string | null;
+                asset_type?: ("methodology" | "execution" | "audit") | null;
                 /** @description 按沉淀来源改进事项过滤（§11.2 本事项沉淀资产）。 */
                 source_improvement_id?: string | null;
             };
@@ -9449,7 +9577,7 @@ export interface operations {
             query?: {
                 session_id?: string | null;
                 run_id?: string | null;
-                status?: string | null;
+                status?: ("waiting" | "resolved" | "cancelled") | null;
                 business_agent_id?: string | null;
                 limit?: number;
             };
@@ -9764,7 +9892,7 @@ export interface operations {
         parameters: {
             query?: {
                 agent_id?: string | null;
-                status?: string | null;
+                status?: ("pending_evidence" | "pending_attribution" | "attribution_queued" | "pending_review" | "needs_human_review") | null;
                 q?: string | null;
                 limit?: number;
             };
@@ -9995,7 +10123,7 @@ export interface operations {
                 session_id?: string | null;
                 alert_id?: string | null;
                 case_id?: string | null;
-                source_type?: string | null;
+                source_type?: ("explicit_feedback" | "implicit_feedback" | "analyst_annotation") | null;
                 agent_id?: string | null;
                 limit?: number;
             };
@@ -10259,7 +10387,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                source_kind: string;
+                source_kind: "signal" | "soc_event" | "pending_correlation";
                 source_id: string;
             };
             cookie?: never;
@@ -10309,7 +10437,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                source_kind: string;
+                source_kind: "signal" | "soc_event" | "pending_correlation";
                 source_id: string;
             };
             cookie?: never;
@@ -12557,7 +12685,7 @@ export interface operations {
     list_pending_correlations_api_pending_correlations_get: {
         parameters: {
             query?: {
-                status?: string | null;
+                status?: ("pending" | "resolved") | null;
                 limit?: number;
             };
             header?: never;
@@ -12980,7 +13108,7 @@ export interface operations {
                 session_id?: string | null;
                 alert_id?: string | null;
                 case_id?: string | null;
-                event_type?: string | null;
+                event_type?: ("case.verdict_changed" | "case.severity_changed" | "recommendation.accepted" | "recommendation.rejected" | "recommendation.modified" | "evidence.added" | "tool.manual_query_after_agent") | null;
                 limit?: number;
             };
             header?: never;

@@ -15,6 +15,7 @@ from app.runtime.protected_business_agents import (
     is_default_business_agent,
     is_protected_business_agent,
 )
+from app.runtime.state_machines import AgentLifecycleStatus, AgentLifecycleTargetStatus
 
 if TYPE_CHECKING:
     from app.runtime.stores.agent_registry_store import AgentRegistryRecord
@@ -26,7 +27,10 @@ class AgentSummaryResponse(BaseModel):
     category: str
     workspace_dir: str
     created_at: str
-    status: str = Field(default="active", description="生命周期状态：draft/active/evaluating/deprecated/archived。")
+    status: AgentLifecycleStatus = Field(
+        default="active",
+        description="生命周期状态：draft/active/evaluating/deprecated/archived。",
+    )
     builtin: bool = Field(default=False, description="是否由运行卷初始化源随产品提供。")
     default: bool = Field(default=False, description="是否为标准接口未显式配置时使用的默认业务 Agent。")
     protected: bool = Field(
@@ -84,7 +88,7 @@ class AssetProvenanceResponse(BaseModel):
 
 
 class AgentLifecycleTransitionRequest(BaseModel):
-    status: str = Field(description="目标生命周期状态：active/evaluating/deprecated/archived（draft 仅创建态）。")
+    status: AgentLifecycleTargetStatus = Field(description="目标生命周期状态：active/evaluating/deprecated/archived（draft 仅创建态）。")
 
 
 class FeedbackSignalReassignRequest(BaseModel):

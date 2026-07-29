@@ -1125,15 +1125,21 @@
       "scenarios": [
         {
           "id": "public_openapi_contract_and_hitl_surface",
-          "description": "公开 request required/非空白/conditional/const、逐 surface SSE 目录、状态码、description/deprecated、非 200 成功码和完整 live/local OpenAPI 语义由硬门约束；HITL 只保留唯一查询与 canonical decision，冗余 alias 返回 404。",
+          "description": "公开 request required/非空白/有限值/conditional/const、全部请求体的具名可执行示例、逐 surface SSE 目录、状态码、description/deprecated、非 200 成功码和完整 live/local OpenAPI 语义由硬门约束；Responses 明确是过渡投影；HITL 只保留唯一查询与 decision，冗余 alias 返回 404。",
           "pytest": [
+            "tests/test_openapi_export.py::test_every_request_body_has_named_runtime_valid_examples",
+            "tests/test_openapi_export.py::test_responses_named_examples_explain_strict_and_control_modes",
+            "tests/test_openapi_export.py::test_agent_governance_response_status_domains_are_not_cross_wired",
             "tests/test_openapi_export.py::test_openapi_public_request_models_express_runtime_validation",
             "tests/test_openapi_export.py::test_openapi_documents_complete_per_surface_sse_contracts",
             "tests/test_openapi_export.py::test_openapi_reviewed_operations_have_descriptions_deprecation_and_statuses",
             "tests/test_openapi_export.py::test_openapi_non_200_success_operations_do_not_gain_fake_200",
             "tests/test_openapi_export.py::test_openapi_audit_rejects_semantic_contract_mutations",
+            "tests/test_openapi_export.py::test_openapi_audit_rejects_placeholder_examples_and_open_finite_values",
+            "tests/test_openapi_export.py::test_openapi_audit_rejects_stale_example_registration",
             "tests/test_openapi_export.py::test_live_local_audit_deep_compares_components_and_operation_metadata",
             "tests/test_openapi_export.py::test_sse_registry_rejects_unregistered_events_and_accepts_sdk_family",
+            "tests/test_api_error_handlers.py::test_public_finite_value_inputs_reject_unknown_values_at_validation_boundary",
             "tests/test_claude_user_input.py::test_redundant_hitl_aliases_are_removed"
           ]
         },

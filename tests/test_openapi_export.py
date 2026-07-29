@@ -7,12 +7,14 @@ from pathlib import Path
 
 import pytest
 from app.openapi_contract import NON_200_SUCCESS_CODES, expected_error_statuses, operation_items
+from app.openapi_request_examples import REQUEST_EXAMPLE_CONTRACTS
 from app.sse_contracts import (
     CHAT_STREAM_PATH,
     CLAUDE_SDK_EVENTS_PATH,
     RESPONSES_PATH,
     require_registered_sse_event,
 )
+from fastapi.routing import APIRoute
 from scripts.audit_openapi_contract import audit_live_matches_local, audit_schema
 from scripts.export_openapi import (
     CONTAINER_RUNTIME_VOLUME_ROOT,
@@ -226,6 +228,81 @@ def test_openapi_contract_audit_passes_current_schema():
     expected_version = Path("VERSION").read_text(encoding="utf-8").strip()
 
     assert audit_schema(schema, expected_version=expected_version) == []
+
+
+def test_every_request_body_has_named_runtime_valid_examples() -> None:
+    schema = build_openapi_schema()
+    from app.main import app
+
+    body_operations = {(path, method) for path, method, operation in operation_items(schema) if "requestBody" in operation}
+    assert body_operations == set(REQUEST_EXAMPLE_CONTRACTS)
+
+    routes = {(route.path, method.lower()): route for route in app.routes if isinstance(route, APIRoute) for method in route.methods}
+    for key, contract in REQUEST_EXAMPLE_CONTRACTS.items():
+        operation = schema["paths"][key[0]][key[1]]
+        assert operation["description"].strip()
+        examples = operation["requestBody"]["content"][contract.media_type]["examples"]
+        assert examples == dict(contract.examples)
+        if contract.media_type != "application/json":
+            continue
+        route = routes[key]
+        assert route.body_field is not None
+        for example_name, example in examples.items():
+            _, errors = route.body_field.validate(example["value"], {}, loc=("body",))
+            assert errors is None, f"{key[1].upper()} {key[0]} example {example_name}: {errors}"
+
+
+def test_responses_named_examples_explain_strict_and_control_modes() -> None:
+    operation = build_openapi_schema()["paths"][RESPONSES_PATH]["post"]
+    examples = operation["requestBody"]["content"]["application/json"]["examples"]
+
+    assert set(examples) == {
+        "agentgov_control_stream",
+        "agentgov_control_structured",
+        "strict_openai",
+    }
+    assert examples["agentgov_control_stream"]["value"]["agentgov"]["agent_id"]
+    assert examples["agentgov_control_structured"]["value"]["instructions"]
+    assert "agentgov" not in examples["strict_openai"]["value"]
+    wording = f"{operation['summary']} {operation['description']}".lower()
+    assert "transitional" in wording
+    assert "source of truth" in wording
+    assert "canonical" not in wording
+
+
+def test_agent_governance_response_status_domains_are_not_cross_wired() -> None:
+    components = build_openapi_schema()["components"]["schemas"]
+
+    assert set(components["AgentRepositoryStatusResponse"]["properties"]["status"]["enum"]) == {
+        "active",
+        "degraded",
+    }
+    assert set(components["AgentGitFileDiffResponse"]["properties"]["status"]["enum"]) == {
+        "missing",
+        "added",
+        "deleted",
+        "unchanged",
+        "modified",
+        "binary_or_too_large",
+    }
+    assert set(components["AgentChangeSetResponse"]["properties"]["status"]["enum"]) == {
+        "draft",
+        "execution_ready",
+        "candidate_committed",
+        "pending_approval",
+        "approved",
+        "rejected",
+        "publishing",
+        "published",
+        "abandoned",
+        "failed",
+    }
+    assert set(components["AgentReleaseResponse"]["properties"]["status"]["enum"]) == {
+        "published",
+        "archived",
+        "rolled_back",
+        "rollback_failed",
+    }
 
 
 def test_openapi_requires_typed_improvement_artifact_presence() -> None:
@@ -484,6 +561,20 @@ def test_openapi_non_200_success_operations_do_not_gain_fake_200() -> None:
             lambda schema: schema["paths"][RESPONSES_PATH]["post"].pop("x-agentgov-sse-events"),
             "differs from the typed per-surface registry",
         ),
+        (
+            lambda schema: schema["paths"][RESPONSES_PATH]["post"].update(description="Canonical OpenAI Responses endpoint."),
+            "must not claim canonical",
+        ),
+        (
+            lambda schema: schema["paths"][RESPONSES_PATH]["post"]["requestBody"]["content"]["application/json"].pop("examples"),
+            "named request examples differ",
+        ),
+        (
+            lambda schema: schema["components"]["schemas"]["AgentRepositoryStatusResponse"]["properties"]["status"].update(
+                enum=["draft", "published"]
+            ),
+            "component AgentRepositoryStatusResponse.status enum",
+        ),
     ],
 )
 def test_openapi_audit_rejects_semantic_contract_mutations(mutation, expected_fragment) -> None:
@@ -491,6 +582,28 @@ def test_openapi_audit_rejects_semantic_contract_mutations(mutation, expected_fr
     mutation(schema)
 
     assert any(expected_fragment in issue for issue in audit_schema(schema))
+
+
+def test_openapi_audit_rejects_placeholder_examples_and_open_finite_values() -> None:
+    placeholder_schema = copy.deepcopy(build_openapi_schema())
+    placeholder_schema["paths"][RESPONSES_PATH]["post"]["requestBody"]["content"]["application/json"]["examples"]["strict_openai"]["value"]["input"] = "string"
+    placeholder_issues = audit_schema(placeholder_schema)
+    assert any("generic string placeholder" in issue for issue in placeholder_issues)
+
+    open_enum_schema = copy.deepcopy(build_openapi_schema())
+    status_parameter = next(
+        parameter for parameter in open_enum_schema["paths"]["/api/agent-change-sets"]["get"]["parameters"] if parameter["name"] == "status"
+    )
+    status_parameter["schema"] = {"anyOf": [{"type": "string"}, {"type": "null"}]}
+    enum_issues = audit_schema(open_enum_schema)
+    assert any("parameter status enum" in issue for issue in enum_issues)
+
+
+def test_openapi_audit_rejects_stale_example_registration() -> None:
+    schema = copy.deepcopy(build_openapi_schema())
+    schema["paths"]["/api/assets"]["post"].pop("requestBody")
+
+    assert any("stale request-example registration" in issue for issue in audit_schema(schema))
 
 
 def test_live_local_audit_deep_compares_components_and_operation_metadata() -> None:

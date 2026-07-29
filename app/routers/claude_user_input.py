@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -16,7 +17,10 @@ from app.runtime.claude_user_input_service import (
     ClaudeUserInputNotFound,
     ClaudeUserInputService,
 )
-from app.runtime.records.claude_user_input_records import ClaudeUserInputRequestRecord
+from app.runtime.records.claude_user_input_records import (
+    ClaudeUserInputRequestRecord,
+    ClaudeUserInputStatus,
+)
 
 
 def _response(
@@ -69,7 +73,7 @@ def create_claude_user_input_router(
     async def list_requests(
         session_id: str | None = Query(default=None),
         run_id: str | None = Query(default=None),
-        status: str | None = Query(default=None),
+        status: Annotated[ClaudeUserInputStatus | None, Query()] = None,
         business_agent_id: str | None = Query(default=None),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> ClaudeUserInputRequestListResponse:

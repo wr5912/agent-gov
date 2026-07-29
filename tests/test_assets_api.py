@@ -18,24 +18,24 @@ def test_asset_registry_and_inheritance(monkeypatch, tmp_path: Path) -> None:
         # 列表按 agent + type 过滤。
         assert asset_id in {a["asset_id"] for a in client.get("/api/assets", params={"agent_id": "soc-ops"}).json()}
         assert asset_id in {a["asset_id"] for a in client.get("/api/assets", params={"agent_id": "soc-ops", "asset_type": "methodology"}).json()}
-        assert client.get("/api/assets", params={"agent_id": "soc-ops", "asset_type": "regression"}).status_code == 400
+        assert client.get("/api/assets", params={"agent_id": "soc-ops", "asset_type": "regression"}).status_code == 422
         assert (
             client.post(
                 "/api/assets",
                 json={"agent_id": "soc-ops", "asset_type": "regression", "title": "旧独立回归资产"},
             ).status_code
-            == 400
+            == 422
         )
         dataset = client.post(
             "/api/assets",
             json={"agent_id": "soc-ops", "asset_type": "test_dataset", "title": "时间窗口测试数据集", "body": '{"test_dataset_id":"tds-1"}'},
         )
-        assert dataset.status_code == 400
-        assert client.get("/api/assets", params={"agent_id": "soc-ops", "asset_type": "test_dataset"}).status_code == 400
+        assert dataset.status_code == 422
+        assert client.get("/api/assets", params={"agent_id": "soc-ops", "asset_type": "test_dataset"}).status_code == 422
         # 详情 404。
         assert client.get("/api/assets/ast-nope").status_code == 404
-        # 非法类型 400。
-        assert client.post("/api/assets", json={"agent_id": "soc-ops", "asset_type": "bogus", "title": "x"}).status_code == 400
+        # 非法有限值在 HTTP/Pydantic 契约边界统一返回 422。
+        assert client.post("/api/assets", json={"agent_id": "soc-ops", "asset_type": "bogus", "title": "x"}).status_code == 422
         # 继承到另一个 Agent：复利。
         inherited = client.post(f"/api/assets/{asset_id}/inherit", json={"target_agent_id": "shop-bot"})
         assert inherited.status_code == 201

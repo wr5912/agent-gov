@@ -1,5 +1,6 @@
 // 四阶段改进治理工作台：后端仍可保留更细 improvement_stage，
 // 但用户主链路只展示四个阶段；主决策按钮由业务产物状态派生。
+import type { ImprovementStage } from "./api/improvements";
 
 export interface StageDef {
   key: string;
@@ -40,7 +41,7 @@ const VISIBLE_STAGE_BY_INTERNAL: Record<string, VisibleImprovementStageKey> = {
   release: "test_release",
 };
 
-const BACK_ACTION: Partial<Record<string, { stage: string; label: string }>> = {
+const BACK_ACTION: Partial<Record<string, { stage: ImprovementStage; label: string }>> = {
   attribution: { stage: "triage", label: "返回反馈整理" },
   optimization: { stage: "attribution", label: "返回归因分析" },
   regression: { stage: "execution", label: "返回优化执行" },
@@ -56,7 +57,7 @@ export interface ImprovementStageView {
   description: string;
   isTerminal: boolean;
   isCompleted: boolean;
-  backAction: { stage: string; label: string } | null;
+  backAction: { stage: ImprovementStage; label: string } | null;
 }
 
 export function stageLabel(stage: string): string {

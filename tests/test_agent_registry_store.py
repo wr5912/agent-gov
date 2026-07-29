@@ -327,6 +327,7 @@ def test_business_agent_lifecycle_transitions_and_archived_excluded_from_run(mon
         # 非法转移：archived 为终态，archived -> active 被拒绝并返回可理解的状态机错误（409）。
         rejected = client.post("/api/agent-registry/soc-ops/lifecycle", json={"status": "active"})
         assert rejected.status_code == 409
+        assert client.post("/api/agent-registry/soc-ops/lifecycle", json={"status": "unknown"}).status_code == 422
         assert "transition" in rejected.json()["detail"].lower()
         # archived Agent 仍可查询（审计）但不参与新运行（400）。
         assert any(a["agent_id"] == "soc-ops" for a in client.get("/api/agent-registry").json())

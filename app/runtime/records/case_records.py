@@ -1,23 +1,15 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import Field, field_validator, model_validator
 
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import FeedbackCaseModel
-from app.runtime.state_machines import CASE_STATES, validate_transition
+from app.runtime.state_machines import CASE_STATES, FeedbackCaseStatus, validate_transition
 
 from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
-
-FeedbackCaseStatus = Literal[
-    "pending_evidence",
-    "pending_attribution",
-    "attribution_queued",
-    "pending_review",
-    "needs_human_review",
-]
 
 
 class FeedbackCaseRecord(StrictRuntimeRecord):

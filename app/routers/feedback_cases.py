@@ -11,6 +11,7 @@ from app.runtime.schemas import (
     FeedbackCaseCreateRequest,
     FeedbackCaseResponse,
 )
+from app.runtime.state_machines import FeedbackCaseStatus
 from app.runtime.stores.feedback_store import FeedbackStore
 
 
@@ -34,7 +35,7 @@ def _register_case_routes(router: APIRouter, feedback_store: FeedbackStore) -> N
     )
     async def list_feedback_cases(
         agent_id: str | None = None,
-        status: str | None = None,
+        status: FeedbackCaseStatus | None = None,
         q: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[FeedbackCaseResponse]:

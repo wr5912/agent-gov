@@ -24,6 +24,7 @@ from app.runtime.response_schemas.agent_governance_response_schemas import (
     AgentRepositorySnapshotRequest,
     AgentRepositoryStatusResponse,
 )
+from app.runtime.state_machines import AgentChangeSetStatus, AgentReleaseStatus
 from app.services.agent_governance import AgentGovernanceService
 
 
@@ -85,7 +86,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
         summary="列出 Agent 待发布变更",
     )
     def list_agent_change_sets(
-        status: str | None = None,
+        status: AgentChangeSetStatus | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[AgentChangeSetResponse]:
         return agent_governance.list_change_sets(status=status, limit=limit)
@@ -206,7 +207,10 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
         response_model=list[AgentReleaseResponse],
         summary="List published Agent releases",
     )
-    def list_agent_releases(status: str | None = None, limit: int = Query(default=100, ge=1, le=500)) -> list[AgentReleaseResponse]:
+    def list_agent_releases(
+        status: AgentReleaseStatus | None = None,
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> list[AgentReleaseResponse]:
         return agent_governance.list_releases(status=status, limit=limit)
 
     @router.get(

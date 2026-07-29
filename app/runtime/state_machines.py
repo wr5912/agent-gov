@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Literal, TypeAlias, get_args
 
 from .errors import FeedbackStoreError
 
@@ -12,15 +13,14 @@ class StateTransitionError(FeedbackStoreError):
     error_code = "STATE_TRANSITION_ERROR"
 
 
-CASE_STATES = {
+FeedbackCaseStatus: TypeAlias = Literal[
     "pending_evidence",
     "pending_attribution",
     "attribution_queued",
     "pending_review",
     "needs_human_review",
-}
-
-AGENT_TEST_RUN_STATES = {
+]
+AgentTestRunStatus: TypeAlias = Literal[
     "queued",
     "running",
     "passed",
@@ -28,7 +28,52 @@ AGENT_TEST_RUN_STATES = {
     "error",
     "cancelled",
     "interrupted",
-}
+]
+PendingCorrelationStatus: TypeAlias = Literal["pending", "resolved"]
+AgentChangeSetStatus: TypeAlias = Literal[
+    "draft",
+    "execution_ready",
+    "candidate_committed",
+    "pending_approval",
+    "approved",
+    "rejected",
+    "publishing",
+    "published",
+    "abandoned",
+    "failed",
+]
+AgentReleaseStatus: TypeAlias = Literal[
+    "published",
+    "archived",
+    "rolled_back",
+    "rollback_failed",
+]
+AgentLifecycleStatus: TypeAlias = Literal[
+    "draft",
+    "active",
+    "evaluating",
+    "deprecated",
+    "archived",
+]
+AgentLifecycleTargetStatus: TypeAlias = Literal[
+    "active",
+    "evaluating",
+    "deprecated",
+    "archived",
+]
+ImprovementStage: TypeAlias = Literal[
+    "feedback_intake",
+    "triage",
+    "attribution",
+    "optimization",
+    "execution",
+    "regression",
+    "release",
+]
+
+CASE_STATES: set[str] = set(get_args(FeedbackCaseStatus))
+
+AGENT_TEST_RUN_STATES: set[str] = set(get_args(AgentTestRunStatus))
 
 AGENT_TEST_RUN_TRANSITIONS: Mapping[str, set[str]] = {
     "queued": {"running", "cancelled", "interrupted"},
@@ -56,30 +101,11 @@ AGENT_TEST_SCHEDULE_EVENT_TRANSITIONS: Mapping[str, set[str]] = {
     "failed": set(),
 }
 
-PENDING_CORRELATION_STATES = {
-    "pending",
-    "resolved",
-}
+PENDING_CORRELATION_STATES: set[str] = set(get_args(PendingCorrelationStatus))
 
-AGENT_CHANGE_SET_STATES = {
-    "draft",
-    "execution_ready",
-    "candidate_committed",
-    "pending_approval",
-    "approved",
-    "rejected",
-    "publishing",
-    "published",
-    "abandoned",
-    "failed",
-}
+AGENT_CHANGE_SET_STATES: set[str] = set(get_args(AgentChangeSetStatus))
 
-AGENT_RELEASE_STATES = {
-    "published",
-    "archived",
-    "rolled_back",
-    "rollback_failed",
-}
+AGENT_RELEASE_STATES: set[str] = set(get_args(AgentReleaseStatus))
 
 AGENT_RELEASE_OPERATION_STATES = {
     "reserved",
@@ -96,13 +122,7 @@ AGENT_RELEASE_OPERATION_TRANSITIONS: Mapping[str, set[str]] = {
 }
 
 # 业务 Agent 生命周期（AGV-020）。archived 为终态：仍可审计但不参与新运行、不可再转移。
-AGENT_LIFECYCLE_STATES = {
-    "draft",
-    "active",
-    "evaluating",
-    "deprecated",
-    "archived",
-}
+AGENT_LIFECYCLE_STATES: set[str] = set(get_args(AgentLifecycleStatus))
 
 AGENT_LIFECYCLE_TRANSITIONS: Mapping[str, set[str]] = {
     "draft": {"active", "archived"},
@@ -148,18 +168,10 @@ SESSION_TURN_INTENT_TRANSITIONS: Mapping[str, set[str]] = {
 # 改进事项阶段（四阶段改进治理 跨代重建：事项级单一领域实体 ImprovementItem 的生命周期单一来源）。
 # 七段对应中文 反馈收集/系统整理/归因分析/优化方案/执行优化/回归测试/发布；release 为终态。
 # 允许回退边（如 regression -> optimization）以支持返工，但不得跨段跳跃，由状态机统一判定。
-IMPROVEMENT_STAGES = {
-    "feedback_intake",
-    "triage",
-    "attribution",
-    "optimization",
-    "execution",
-    "regression",
-    "release",
-}
+IMPROVEMENT_STAGES: set[str] = set(get_args(ImprovementStage))
 
 # 改进事项阶段线性顺序（单一来源）：业务产物推进命令与前端 stepper 均以此为准。
-IMPROVEMENT_STAGE_ORDER: tuple[str, ...] = (
+IMPROVEMENT_STAGE_ORDER: tuple[ImprovementStage, ...] = (
     "feedback_intake",
     "triage",
     "attribution",

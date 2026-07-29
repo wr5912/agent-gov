@@ -25,6 +25,7 @@ import {
   setImprovementStage,
   splitImprovement,
   type ImprovementItem,
+  type ImprovementStage,
 } from "../api/improvements";
 import { ApiRequestError, requestJson } from "../api/request";
 import { IMPROVEMENT_STAGE_ORDER, describeImprovementStage, stageLabel, type VisibleImprovementStageKey } from "../improvementStage";
@@ -229,7 +230,7 @@ export function ImprovementWorkbench({
       .finally(() => setBusy(false));
   };
 
-  const handleAdvance = (item: ImprovementItem, targetStage: string) => {
+  const handleAdvance = (item: ImprovementItem, targetStage: ImprovementStage) => {
     void run(async () => {
       const updated = await setImprovementStage(clientConfig, item.improvement_id, targetStage);
       replaceItem(updated);

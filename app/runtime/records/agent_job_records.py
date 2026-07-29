@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
@@ -22,17 +22,7 @@ AgentJobStatus = Literal[
     "timeout",
 ]
 
-HISTORICAL_AGENT_JOB_STATES = {
-    "created",
-    "queued",
-    "running",
-    "schema_validating",
-    "evidence_packaging",
-    "completed",
-    "failed",
-    "needs_human_review",
-    "timeout",
-}
+HISTORICAL_AGENT_JOB_STATES: set[str] = set(get_args(AgentJobStatus))
 
 
 class AgentJobRecord(StrictRuntimeRecord):

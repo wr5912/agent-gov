@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
 from app.runtime.json_types import JsonObject
 
@@ -18,18 +18,9 @@ ClaudeUserInputDecision = Literal[
     "runtime_interrupted",
 ]
 
-REQUEST_TYPES: set[str] = {"tool_permission", "ask_user_question"}
-STATUSES: set[str] = {"waiting", "resolved", "cancelled"}
-DECISIONS: set[str] = {
-    "allow_once",
-    "allow_for_run",
-    "deny",
-    "answer_question",
-    "timeout_deny",
-    "client_cancelled",
-    "service_restarted",
-    "runtime_interrupted",
-}
+REQUEST_TYPES: set[str] = set(get_args(ClaudeUserInputRequestType))
+STATUSES: set[str] = set(get_args(ClaudeUserInputStatus))
+DECISIONS: set[str] = set(get_args(ClaudeUserInputDecision))
 
 TERMINAL_STATUS_BY_DECISION: dict[str, str] = {
     "allow_once": "resolved",

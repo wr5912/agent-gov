@@ -1,4 +1,8 @@
-import type { ImprovementFeedback, ImprovementItem } from "../api/improvements";
+import type {
+  ImprovementFeedback,
+  ImprovementItem,
+  ImprovementStage,
+} from "../api/improvements";
 import type { ImprovementPrimaryDecision } from "../improvementDecisionActions";
 import { operationStatusText, type ImprovementOperationError, type ImprovementPendingOperation } from "../improvementOperationState";
 import type { ImprovementStageView } from "../improvementStage";
@@ -13,7 +17,7 @@ interface ImprovementDecisionPanelProps {
   pendingOperation?: ImprovementPendingOperation | null;
   operationError?: ImprovementOperationError | null;
   onPrimaryAction: () => void;
-  onBackAction: (stage: string) => void;
+  onBackAction: (stage: ImprovementStage) => void;
   onManageSources: () => void;
   onRegenerateOptimizationPlan?: () => void;
 }

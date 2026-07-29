@@ -1,16 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createAsset, inheritAsset, listAssets, type Asset } from "../api/assets";
+import {
+  createAsset,
+  inheritAsset,
+  listAssets,
+  type Asset,
+  type AssetType,
+} from "../api/assets";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import { AgentTestAssets } from "./AgentTestAssets";
 import { DrawerShell } from "./DrawerShell";
 import "../improvement-workbench.css";
 
 // 治理资产 Registry 复利中心（四阶段改进治理 W3）：沉淀方法论/执行/审计资产，并跨业务 Agent 继承复用。
-const ASSET_TYPE_LABEL: Record<string, string> = {
+const ASSET_TYPE_LABEL: Record<AssetType, string> = {
   methodology: "方法论",
   execution: "执行",
   audit: "审计",
 };
+
+function isAssetType(value: string): value is AssetType {
+  return value === "methodology" || value === "execution" || value === "audit";
+}
 
 export function AssetRegistry({
   clientConfig,
@@ -27,11 +37,11 @@ export function AssetRegistry({
   const [assets, setAssets] = useState<Asset[]>([]);
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
-  const [newType, setNewType] = useState("methodology");
+  const [newType, setNewType] = useState<AssetType>("methodology");
   const [newTitle, setNewTitle] = useState("");
   const [newBody, setNewBody] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [typeFilter, setTypeFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState<AssetType | "all">("all");
   const [sourceFilter, setSourceFilter] = useState("");
   const [inheritTarget, setInheritTarget] = useState<Record<string, string>>({});
   const [assetScopeAgentId, setAssetScopeAgentId] = useState("");
@@ -143,7 +153,15 @@ export function AssetRegistry({
                   <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>
                 ))}
               </select>
-              <select className="iw-select select-inline" data-testid="asset-type-filter" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+              <select
+                className="iw-select select-inline"
+                data-testid="asset-type-filter"
+                value={typeFilter}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === "all" || isAssetType(value)) setTypeFilter(value);
+                }}
+              >
                 <option value="all">全部类型</option>
                 <option value="methodology">方法论</option>
                 <option value="execution">执行</option>
@@ -218,7 +236,15 @@ export function AssetRegistry({
               <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>
             ))}
           </select>
-          <select className="iw-select" data-testid="asset-create-type" value={newType} disabled={busy} onChange={(e) => setNewType(e.target.value)}>
+          <select
+            className="iw-select"
+            data-testid="asset-create-type"
+            value={newType}
+            disabled={busy}
+            onChange={(e) => {
+              if (isAssetType(e.target.value)) setNewType(e.target.value);
+            }}
+          >
             <option value="methodology">方法论</option>
             <option value="execution">执行</option>
             <option value="audit">审计</option>

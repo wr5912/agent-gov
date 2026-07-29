@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.runtime.json_types import JsonObject
 from app.runtime.schemas import ChatResponse
+from app.runtime.state_machines import AgentTestRunStatus
 
 
 class AgentTestDiagnostic(BaseModel):
@@ -61,7 +62,7 @@ class AgentTestRunResponse(BaseModel):
     schedule_id: str | None = None
     scheduled_for: str | None = None
     source: str
-    status: Literal["queued", "running", "passed", "failed", "error", "cancelled", "interrupted"]
+    status: AgentTestRunStatus
     cancel_requested: bool = False
     created_at: str
     started_at: str | None = None
@@ -89,7 +90,7 @@ class AgentTestRunSummaryResponse(BaseModel):
     schedule_id: str | None = None
     scheduled_for: str | None = None
     source: str
-    status: Literal["queued", "running", "passed", "failed", "error", "cancelled", "interrupted"]
+    status: AgentTestRunStatus
     created_at: str
     started_at: str | None = None
     completed_at: str | None = None

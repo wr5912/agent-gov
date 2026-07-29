@@ -8,6 +8,11 @@ from app.routers.error_helpers import ensure_found
 from app.runtime.agent_trace import AgentRunTraceResponse, project_agent_trace
 from app.runtime.json_types import JsonObject
 from app.runtime.message_utils import extract_answer_from_messages
+from app.runtime.records.source_records import (
+    FeedbackSignalSourceType,
+    FeedbackSourceKind,
+    SocEventType,
+)
 from app.runtime.schemas import (
     AgentRunResponse,
     AssetProvenanceImprovement,
@@ -23,6 +28,7 @@ from app.runtime.schemas import (
     SocEventIngestResponse,
     SocEventResponse,
 )
+from app.runtime.state_machines import PendingCorrelationStatus
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import ImprovementStore
 
@@ -149,7 +155,7 @@ def _register_feedback_signal_routes(
         session_id: str | None = None,
         alert_id: str | None = None,
         case_id: str | None = None,
-        source_type: str | None = None,
+        source_type: FeedbackSignalSourceType | None = None,
         agent_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[FeedbackSignalResponse]:
@@ -246,7 +252,7 @@ def _register_soc_event_routes(router: APIRouter, feedback_store: FeedbackStore)
         session_id: str | None = None,
         alert_id: str | None = None,
         case_id: str | None = None,
-        event_type: str | None = None,
+        event_type: SocEventType | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[SocEventResponse]:
         return feedback_store.list_events(
@@ -276,7 +282,7 @@ def _register_pending_correlation_routes(router: APIRouter, feedback_store: Feed
         summary="List pending feedback correlations",
     )
     async def list_pending_correlations(
-        status: str | None = None,
+        status: PendingCorrelationStatus | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[PendingCorrelationResponse]:
         return feedback_store.list_pending(status=status, limit=limit)
@@ -313,7 +319,7 @@ def _register_feedback_source_routes(router: APIRouter, feedback_store: Feedback
         response_model=FeedbackSourceResponse,
         summary="Get one unified feedback source",
     )
-    async def get_feedback_source(source_kind: str, source_id: str) -> FeedbackSourceResponse:
+    async def get_feedback_source(source_kind: FeedbackSourceKind, source_id: str) -> FeedbackSourceResponse:
         source = feedback_store.find_feedback_source(source_kind, source_id)
         return ensure_found(source, "Feedback source not found")
 
@@ -323,7 +329,7 @@ def _register_feedback_source_routes(router: APIRouter, feedback_store: Feedback
         summary="Update developer annotations for one feedback source",
     )
     async def update_feedback_source(
-        source_kind: str,
+        source_kind: FeedbackSourceKind,
         source_id: str,
         req: FeedbackSourceUpdateRequest,
     ) -> FeedbackSourceResponse:

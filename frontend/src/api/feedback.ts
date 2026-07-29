@@ -10,9 +10,11 @@ import type {
   FeedbackRunRecord,
   FeedbackSignalCreateRequest,
   FeedbackSignalRecord,
+  FeedbackSourceKind,
   FeedbackSourceRecord,
   FeedbackSourceUpdateRequest,
   FeedbackWorkbenchData,
+  JobType,
   PendingCorrelationRecord,
   PendingCorrelationResolveRequest,
   SocEventCreateRequest,
@@ -36,7 +38,7 @@ export function getAgentRuns(config: RuntimeClientConfig, filters?: FeedbackFilt
   return requestJson<FeedbackRunRecord[]>(config, `/api/agent-runs${feedbackQueryString(filters)}`);
 }
 
-export function getAgentJobs(config: RuntimeClientConfig, filters?: FeedbackFilters & { job_type?: string; scope_kind?: string; scope_id?: string }) {
+export function getAgentJobs(config: RuntimeClientConfig, filters?: FeedbackFilters & { job_type?: JobType; scope_kind?: string; scope_id?: string }) {
   return requestJson<AgentJobRecord[]>(config, `/api/agent-jobs${feedbackQueryString(filters)}`);
 }
 
@@ -95,7 +97,7 @@ export function getFeedbackSources(config: RuntimeClientConfig, filters?: Pick<F
   return requestJson<FeedbackSourceRecord[]>(config, `/api/feedback-sources${feedbackQueryString(filters)}`);
 }
 
-export function getFeedbackSource(config: RuntimeClientConfig, sourceKind: string, sourceId: string) {
+export function getFeedbackSource(config: RuntimeClientConfig, sourceKind: FeedbackSourceKind, sourceId: string) {
   return requestJson<FeedbackSourceRecord>(
     config,
     `/api/feedback-sources/${encodeURIComponent(sourceKind)}/${encodeURIComponent(sourceId)}`,
@@ -104,7 +106,7 @@ export function getFeedbackSource(config: RuntimeClientConfig, sourceKind: strin
 
 export function updateFeedbackSource(
   config: RuntimeClientConfig,
-  sourceKind: string,
+  sourceKind: FeedbackSourceKind,
   sourceId: string,
   payload: FeedbackSourceUpdateRequest,
 ) {

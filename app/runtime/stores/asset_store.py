@@ -6,10 +6,9 @@ from uuid import uuid4
 from sqlalchemy.orm import sessionmaker
 
 from ..asset_db import AssetModel
+from ..asset_schemas import ASSET_TYPES
 from ..errors import BusinessRuleViolation, NotFoundError
 from ..runtime_db import utc_now
-
-ASSET_TYPES = {"methodology", "execution", "audit"}
 
 
 @dataclass(frozen=True)

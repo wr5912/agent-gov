@@ -124,6 +124,7 @@ def test_create_rejects_empty_and_unknown_is_404(monkeypatch, tmp_path: Path) ->
         )
         assert client.get("/api/improvements/imp-unknown").status_code == 404
         assert client.post("/api/improvements/imp-unknown/lifecycle", json={"stage": "triage"}).status_code == 404
+        assert client.post("/api/improvements/imp-unknown/lifecycle", json={"stage": "unknown"}).status_code == 422
 
 
 def test_archive_is_terminal_status_and_blocks_lifecycle(monkeypatch, tmp_path: Path) -> None:

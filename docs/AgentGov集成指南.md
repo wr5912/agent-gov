@@ -59,13 +59,15 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - 过渡 OpenAI 风格投影：`POST /v1/responses`。同一个 endpoint 通过 `stream` 选择非流式 JSON 或流式 SSE，但 operation 已以 `x-agentgov-contract-status: transitional` 标记，不能宣称是完整 OpenAI Responses drop-in replacement：
   - **control mode（AgentGov 集成首选）**：请求包含 `agentgov`，且 `agentgov.agent_id` 必填；可同时传标准字段 `conversation`，以及 `agentgov.alert_id`、`agentgov.case_id`、`agentgov.max_turns` 等 OpenAPI 已声明扩展字段。
   - **strict mode（标准 OpenAI 客户端）**：请求不含 `agentgov`，运行运营者配置的 OpenAI-compatible 出口 Agent；不下发 `agentgov.*` 私有 SSE 事件。由于 AgentGov 的 `instructions` 是 append-only 而非 OpenAI replace/swap 语义，strict mode 传 `instructions` 返回 `422`。
+- Swagger UI 的请求体下拉框提供 `agentgov_control_stream`、`agentgov_control_structured` 和
+  `strict_openai` 三个具名示例；它们分别说明 control 流式、control 结构化输入和 strict
+  模式，不再显示 Pydantic 自动生成的 `null`、`string` 或随机字符串填充值。
 - 最小 control 请求以 OpenAPI 为准，典型形态如下：
 
 ```json
 {
   "input": "请核查当前告警并给出处置建议",
   "stream": true,
-  "conversation": "conv_sess_...",
   "agentgov": {
     "agent_id": "your-business-agent",
     "include_trace": true
@@ -73,6 +75,8 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 }
 ```
 
+- 新会话应省略 `conversation`；续聊时只填写由 `POST /v1/conversations`、会话列表或上一轮
+  响应实际返回的 `conversation_id`，不要复制文档中的伪造 ID。
 - `stream=false` 返回 Responses 对象；权威文本位于 `output[].content[].text`，运行关联位于 `agentgov.run_id`、`agentgov.conversation_id`、`agentgov.session_id`、`agentgov.trace_id` 等扩展字段。默认 `store=true` 时可通过 `GET /v1/responses/{response_id}` 取回已完成响应；`store=false` 只关闭公开取回，不关闭内部治理审计。
 - `stream=true` 返回 Responses-style SSE。完整事件名、payload schema、出现条件、phase 与 terminal 标记以该 operation 的 `x-agentgov-sse-events` 为准；其中取消会输出 `agentgov.cancelled`（control mode）并以 `response.incomplete` 保留部分 output。服务端工具事件只用于观察已经由 agent loop 执行的工具，绝不要求客户端重复执行标准 `function_call`。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
 - 当前过渡偏差由 OpenAPI `x-agentgov-known-deviations` 机器声明：即时非流式的 `trace_id` 可能与 retrieve 不一致；`response.completed.response.metadata` 当前不会回显请求 metadata；session 前源异常可能产生 `response.created.response.id=null` 后再失败。受管流在发送响应前完成 turn admission；若源在 identity 建立前失败，则不伪造 run/session headers，而在 HTTP `200` 后投影失败终态。客户端必须把没有声明终态的 EOF 当作失败，不能从 HTTP 状态本身推导运行成功。
@@ -220,12 +224,12 @@ decision 都要求 Bearer API key，`decision_token` 是 API key 之外的单请
   "decision_token": "<one-time-token>",
   "answer": {
     "response": "只处理当前告警资产"
-  },
-  "message": null
+  }
 }
 ```
 
-`answer` 是唯一回答对象：选项答案放在其 `answers` 键，自由文本放在其 `response` 键；二者都不是顶层字段。`message` 仅用于拒绝原因或补充说明。
+Swagger UI 同时提供 `deny`、`allow_once`、`allow_for_run`、`answer_question` 四个具名示例。
+`answer` 是唯一回答对象：选项答案放在其 `answers` 键，自由文本放在其 `response` 键；二者都不是顶层字段。`message` 仅用于拒绝原因或补充说明，不使用时应省略而不是发送 `null`。
 
 确认类型：
 
@@ -262,7 +266,7 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 
 ### 4.4 提交反馈并驱动闭环 — OpenAPI tag `feedback` / `improvements`
 - 目标：把用户/系统反馈喂回闭环，产出归因、优化、执行改动和回归测试设计。
-- 最短路径：先创建或识别已有的 `signal`、`soc_event` 或已解析的 `pending_correlation`，再调用 `POST /api/feedback-cases`。请求体必须包含至少一个 typed 引用，且所有来源必须归属同一业务 Agent，例如 `{"source_refs":[{"source_kind":"signal","source_id":"sig-..."}],"title":"...","priority":"medium"}`。`run_id`/`session_id`/`alert_id`/`case_id` 由底座从被引用来源投影，不是该请求的顶层字段；旧 `source_ids`、空 `source_refs` 和空白 `source_id` 均会被拒绝。随后通过 `POST /api/feedback-cases/{id}/evidence-packages` 补证据，创建或选择改进事项 `POST /api/improvements`，并把 `source_feedback_refs` 指向反馈记录。四阶段产物通过 `/api/improvements/{improvement_id}/attribution/generate`、`/optimization-plan/generate`、`/execution/apply`、`/regression-test-design/generate` 生成，集成方在对应确认门上决策。
+- 最短路径：先创建或识别已有的 `signal`、`soc_event` 或已解析的 `pending_correlation`，再调用 `POST /api/feedback-cases`。请求体必须包含至少一个 typed 引用，且所有来源必须归属同一业务 Agent，例如 `{"source_refs":[{"source_kind":"signal","source_id":"sig-..."}],"title":"...","priority":"medium"}`。统一反馈来源的 path 参数也只接受这三个规范值；历史内部别名 `feedback_signal`、`event`、`pending` 不再接受。`run_id`/`session_id`/`alert_id`/`case_id` 由底座从被引用来源投影，不是该请求的顶层字段；旧 `source_ids`、空 `source_refs` 和空白 `source_id` 均会被拒绝。随后通过 `POST /api/feedback-cases/{id}/evidence-packages` 补证据，创建或选择改进事项 `POST /api/improvements`，并把 `source_feedback_refs` 指向反馈记录。四阶段产物通过 `/api/improvements/{improvement_id}/attribution/generate`、`/optimization-plan/generate`、`/execution/apply`、`/regression-test-design/generate` 生成，集成方在对应确认门上决策。
 - Trace 集成：四阶段生成结果会返回 `generation_trace_id` / `generation_trace_url`；需要在上层系统展示详情时调用 `GET /api/langfuse/traces/{trace_id}`，不要让前端直接持有 Langfuse secret。
 - 边界：归因/优化/执行/回归生成的内部机制（governor、DSPy formatter、Langfuse enrich）是底座内部，集成方只**提交反馈 + 管理改进事项 + 在确认/门禁上决策**，不直接编排治理 Agent。业务产物成功持久化后由对应端点推进事项阶段；`/lifecycle` 仅用于合法返工，不能绕过产物直接前推。
 
@@ -280,7 +284,7 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 
 ### 4.7 资产沉淀与跨 Agent 复用 — OpenAPI tag `assets` / `agent-testing`
 - 目标：资产复利中心统一承载测试资产只读投影，以及方法论、执行和审计资产的继承复用；测试文件始终随对应业务 Agent Workspace Git 管理。
-- 最短路径：“测试资产”使用 §4.5 的 suite/file/history/schedule 接口，不调用通用资产创建或继承；“治理资产”使用 `GET/POST /api/assets`（通用类型仅 `methodology`、`execution`、`audit`，可按 `agent_id`/`asset_type` 过滤）和 `POST /api/assets/{asset_id}/inherit`。底座不复制测试正文，也不提供跨 Agent 自动继承测试代码。
+- 最短路径：“测试资产”使用 §4.5 的 suite/file/history/schedule 接口，不调用通用资产创建或继承；“治理资产”使用 `GET/POST /api/assets`（通用类型仅 `methodology`、`execution`、`audit`，可按 `agent_id`/`asset_type` 过滤）和 `POST /api/assets/{asset_id}/inherit`。未知 `asset_type` 在 API 契约边界返回 `422`。底座不复制测试正文，也不提供跨 Agent 自动继承测试代码。
 
 ### 4.8 定制业务 Agent 的行为（workspace / Claude Code 配置）
 - 目标：给某个业务 Agent 定制 prompt / 角色边界、skills、subagents、规则、MCP 工具与权限——即它的 Claude Code workspace 配置。

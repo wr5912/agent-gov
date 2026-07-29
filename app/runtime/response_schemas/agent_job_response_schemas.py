@@ -4,7 +4,9 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from app.runtime.agent_job_types import AgentJobType
 from app.runtime.json_types import JsonObject
+from app.runtime.records.agent_job_records import AgentJobStatus
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 
 
@@ -12,10 +14,10 @@ class AgentJobResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     job_id: str
-    job_type: str
+    job_type: AgentJobType
     scope_kind: Optional[str] = None
     scope_id: Optional[str] = None
-    status: str
+    status: AgentJobStatus
     profile_name: str
     created_at: str
     started_at: Optional[str] = None

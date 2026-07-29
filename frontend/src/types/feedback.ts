@@ -18,29 +18,23 @@ type OpenApiSocEventIngestResponse = components["schemas"]["SocEventIngestRespon
 type OpenApiSocEventResponse = components["schemas"]["SocEventResponse"];
 type OptionalClientDefaults<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
 
-export type FeedbackConfidence = "low" | "medium" | "high";
-export type FeedbackSourceType = "explicit_feedback" | "implicit_feedback" | "analyst_annotation";
-export type FeedbackSourceKind = "signal" | "soc_event" | "pending_correlation";
-export type JobType = "attribution" | "optimization_plan" | "execution" | "regression_test_design";
-export type JobStatus =
-  | "created"
-  | "evidence_packaging"
-  | "queued"
-  | "running"
-  | "schema_validating"
-  | "completed"
-  | "failed"
-  | "timeout"
-  | "needs_human_review";
+export type FeedbackConfidence = NonNullable<OpenApiFeedbackSignalResponse["confidence"]>;
+export type FeedbackSourceType = OpenApiFeedbackSignalResponse["source_type"];
+export type FeedbackSourceKind = OpenApiFeedbackSourceRef["source_kind"];
+export type FeedbackCaseStatus = OpenApiFeedbackCaseResponse["status"];
+export type SocEventType = OpenApiSocEventResponse["event_type"];
+export type PendingCorrelationStatus = OpenApiPendingCorrelationResponse["status"];
+export type JobType = OpenApiAgentJobResponse["job_type"];
+export type JobStatus = OpenApiAgentJobResponse["status"];
 
 export interface FeedbackFilters {
   run_id?: string;
   session_id?: string;
   alert_id?: string;
   case_id?: string;
-  status?: string;
-  source_type?: string;
-  event_type?: string;
+  status?: JobStatus | FeedbackCaseStatus | PendingCorrelationStatus;
+  source_type?: FeedbackSourceType;
+  event_type?: SocEventType;
   feedback_case_id?: string;
   include_messages?: boolean;
   limit?: number;
@@ -57,8 +51,8 @@ export type FeedbackRunRecord = OpenApiAgentRunResponse & {
 };
 
 export type AgentJobRecord = OpenApiAgentJobResponse & {
-  job_type: JobType | string;
-  status: JobStatus | string;
+  job_type: JobType;
+  status: JobStatus;
   feedback_case_id?: string;
   evidence_package_id?: string;
   attribution_job_id?: string;

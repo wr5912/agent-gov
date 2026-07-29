@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
+
+from app.runtime.state_machines import AgentTestRunStatus
 
 from .schedule import AgentTestScheduleService
 from .schemas import (
@@ -117,7 +120,7 @@ def _register_test_run_routes(router: APIRouter, service: AgentTestingService) -
     @router.get("/agent-test-runs/history", response_model=AgentTestRunHistoryResponse)
     def list_agent_test_run_history(
         agent_id: str | None = None,
-        run_status: str | None = Query(default=None, alias="status"),
+        run_status: Annotated[AgentTestRunStatus | None, Query(alias="status")] = None,
         source: str | None = None,
         commit_sha: str | None = None,
         cursor: str | None = None,

@@ -204,7 +204,7 @@ Playground 的“停止”是后端运行取消动作，不等同于关闭浏览
 
 Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat`、`/api/chat/stream`、`/api/agent-runtime/sdk-events` 或 `/v1/responses` 受管运行都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；用户在“改进事项”中把反馈归并为事项后，按反馈整理、归因分析、优化执行、测试发布四个工作面板推进。治理 Agent 生成的归因、优化方案、执行记录和回归测试设计都写入事项级内容子资源，并保存 `generation_trace_id` / `generation_trace_url`。
 
-完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 导出临时 OpenAPI JSON。OpenAPI 直接声明公共请求的 required/非空约束、条件分支、精确状态码、deprecated 标记以及各 SSE surface 的完整事件、payload schema、出现条件和终态；`scripts/audit_openapi_contract.py` 会深比较本地与运行态的完整 schema，而不只比较路径集合。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
+完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 导出临时 OpenAPI JSON。OpenAPI 直接声明公共请求的 required/非空约束、有限值、条件分支、精确状态码、deprecated 标记以及各 SSE surface 的完整事件、payload schema、出现条件和终态；每个请求体 operation 都提供集中维护的具名可执行示例，不使用 `null`、`string` 或 `additionalProp*` 自动填充值。`scripts/audit_openapi_contract.py` 会检查示例覆盖与有限值并深比较本地、运行态的完整 schema，而不只比较路径集合。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
 
 前端 OpenAPI 类型由运行时 schema 临时导出后生成，命令为：
 

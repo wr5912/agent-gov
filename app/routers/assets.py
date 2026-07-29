@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.runtime.asset_schemas import AssetCreateRequest, AssetInheritRequest, AssetResponse
+from app.runtime.asset_schemas import AssetCreateRequest, AssetInheritRequest, AssetResponse, AssetType
 from app.runtime.errors import NotFoundError
 from app.runtime.stores.asset_store import AssetRecord, AssetStore
 
@@ -35,7 +36,7 @@ def _register_generic_asset_routes(router: APIRouter, asset_store: AssetStore) -
     @router.get("/assets", response_model=list[AssetResponse], summary="List governance assets, scoped by agent / type")
     async def list_assets(
         agent_id: str | None = Query(default=None, description="按业务 Agent 过滤。"),
-        asset_type: str | None = Query(default=None, description="按资产类型过滤。"),
+        asset_type: Annotated[AssetType | None, Query(description="按资产类型过滤。")] = None,
         source_improvement_id: str | None = Query(default=None, description="按沉淀来源改进事项过滤（§11.2 本事项沉淀资产）。"),
     ) -> list[AssetResponse]:
         return [_response(record) for record in asset_store.list_assets(agent_id=agent_id, asset_type=asset_type, source_improvement_id=source_improvement_id)]

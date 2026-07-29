@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping
+from copy import deepcopy
 from http import HTTPStatus
 
 from fastapi import FastAPI
 
+from app.openapi_request_examples import REQUEST_EXAMPLE_CONTRACTS
 from app.runtime.prepared_managed_stream import MANAGED_RUN_RESPONSE_HEADER_DESCRIPTIONS
 from app.runtime.runtime_raw_events import RAW_EVENT_RESPONSE_HEADER_DESCRIPTIONS
 from app.runtime.speech_summary import AgentGovSpeechSummaryEnvelope
@@ -267,10 +269,23 @@ def operation_items(schema: OpenApiMapping) -> list[tuple[str, str, OpenApiMappi
 
 
 def _apply_operation_contract(path: str, method: str, operation: OpenApiMutableMapping) -> None:
+    _document_request_examples(path, method, operation)
     _fix_streaming_success_response(path, operation)
     _document_sse_events(path, operation)
     for status_code in sorted(expected_error_statuses(path, method, operation)):
         _add_error_response(path, operation, status_code)
+
+
+def _document_request_examples(path: str, method: str, operation: OpenApiMutableMapping) -> None:
+    contract = REQUEST_EXAMPLE_CONTRACTS.get((path, method))
+    if contract is None:
+        return
+    request_body = _mapping(operation.get("requestBody", {}))
+    content = _mapping(request_body.get("content", {}))
+    media = _mapping(content.get(contract.media_type, {}))
+    media["examples"] = deepcopy(dict(contract.examples))
+    if contract.operation_description and not operation.get("description"):
+        operation["description"] = contract.operation_description
 
 
 def _fix_streaming_success_response(path: str, operation: OpenApiMutableMapping) -> None:

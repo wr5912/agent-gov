@@ -359,7 +359,10 @@ app = FastAPI(
         {"name": "feedback", "description": "Feedback loop, attribution, and optimization proposal endpoints."},
         {"name": "sessions", "description": "List and delete API session mappings."},
         {"name": "openai-compatible", "description": "Minimal non-streaming OpenAI-compatible shim."},
-        {"name": "openai-responses", "description": "Canonical OpenAI Responses-first surface (POST /v1/responses, retrieve)."},
+        {
+            "name": "openai-responses",
+            "description": "Transitional OpenAI Responses-shaped projection (POST /v1/responses, retrieve).",
+        },
         {"name": "openai-conversations", "description": "OpenAI Conversations surface (create/list/get/delete + items, projected from SDK transcript)."},
     ],
     lifespan=lifespan,

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found
+from app.runtime.agent_job_types import AgentJobType
+from app.runtime.records.agent_job_records import AgentJobStatus
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 
@@ -22,10 +24,10 @@ def create_agent_jobs_router(
         summary="List async feedback-loop Agent jobs",
     )
     async def list_agent_jobs(
-        job_type: str | None = None,
+        job_type: AgentJobType | None = None,
         scope_kind: str | None = None,
         scope_id: str | None = None,
-        status: str | None = None,
+        status: AgentJobStatus | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[AgentJobResponse]:
         return feedback_store.list_agent_jobs(

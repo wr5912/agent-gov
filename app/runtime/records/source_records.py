@@ -12,12 +12,11 @@ from app.runtime.runtime_db import (
     PendingCorrelationModel,
     SocEventModel,
 )
-from app.runtime.state_machines import PENDING_CORRELATION_STATES, validate_transition
+from app.runtime.state_machines import PENDING_CORRELATION_STATES, PendingCorrelationStatus, validate_transition
 
 from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
 
-PendingCorrelationStatus = Literal["pending", "resolved"]
 FeedbackSourceKind = Literal["signal", "soc_event", "pending_correlation"]
 FeedbackSourceAnnotationStatus = Literal["new", "triaged", "in_batch", "resolved", "archived"]
 FeedbackPriority = Literal["high", "medium", "low"]

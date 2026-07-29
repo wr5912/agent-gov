@@ -30,18 +30,50 @@ class ChatRequest(BaseModel):
         min_length=1,
         pattern=NON_BLANK_TEXT_PATTERN,
         description="User message or task prompt. Must contain at least one non-whitespace character.",
+        examples=["请核查当前告警并给出处置建议"],
     )
-    session_id: Optional[str] = Field(default=None, description="Client-visible session id. If omitted, the API creates one.")
-    alert_id: Optional[str] = Field(default=None, description="Optional SOC alert id used by the feedback loop.")
-    case_id: Optional[str] = Field(default=None, description="Optional SOC case id used by the feedback loop.")
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Client-visible session id. If omitted, the API creates one.",
+        examples=["sess-20260729"],
+    )
+    alert_id: Optional[str] = Field(
+        default=None,
+        description="Optional SOC alert id used by the feedback loop.",
+        examples=["alert-20260729-001"],
+    )
+    case_id: Optional[str] = Field(
+        default=None,
+        description="Optional SOC case id used by the feedback loop.",
+        examples=["case-20260729-001"],
+    )
     agent_id: Optional[str] = Field(
         default=None,
         description="Registered business agent to run. Required by /api/chat and /api/chat/stream; requests without it are rejected with 422.",
+        examples=["security-operations-expert"],
     )
-    max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Per-request turn cap. Defaults to MAX_TURNS.")
-    model: Optional[str] = Field(default=None, description="Per-request model override. Defaults to AGENT_MODEL.")
-    system_append: Optional[str] = Field(default=None, description="Extra instruction appended to the Claude Code preset prompt.")
-    metadata: JsonObject = Field(default_factory=dict)
+    max_turns: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=50,
+        description="Per-request turn cap. Defaults to MAX_TURNS.",
+        examples=[8],
+    )
+    model: Optional[str] = Field(
+        default=None,
+        description="Per-request model override. Defaults to AGENT_MODEL.",
+        examples=["claude-sonnet-4-5"],
+    )
+    system_append: Optional[str] = Field(
+        default=None,
+        description="Extra instruction appended to the Claude Code preset prompt.",
+        examples=["输出结论时同时列出关键证据。"],
+    )
+    metadata: JsonObject = Field(
+        default_factory=dict,
+        description="Caller-provided JSON metadata retained with the managed run for observability.",
+        examples=[{"source": "soc-console", "tenant": "north-region"}],
+    )
 
     @field_validator("message")
     @classmethod
@@ -508,10 +540,20 @@ class EvidencePackageFileResponse(BaseModel):
 
 
 class OpenAIChatMessage(BaseModel):
+    """One text-only message accepted by the deprecated Chat Completions shim."""
+
     model_config = ConfigDict(extra="forbid")
 
-    role: Literal["developer", "system", "user", "assistant"]
-    content: str = Field(min_length=1, pattern=NON_BLANK_TEXT_PATTERN)
+    role: Literal["developer", "system", "user", "assistant"] = Field(
+        description="OpenAI-style role for this text message.",
+        examples=["user"],
+    )
+    content: str = Field(
+        min_length=1,
+        pattern=NON_BLANK_TEXT_PATTERN,
+        description="Non-blank text content for this message.",
+        examples=["请总结这起告警的关键风险"],
+    )
 
     @field_validator("content")
     @classmethod
@@ -522,16 +564,37 @@ class OpenAIChatMessage(BaseModel):
 
 
 class OpenAIChatCompletionRequest(BaseModel):
+    """Text-only, non-streaming request accepted by the deprecated compatibility shim."""
+
     model_config = ConfigDict(extra="forbid")
 
-    model: Optional[str] = Field(default=None, description="Model override. Defaults to AGENT_MODEL.")
-    messages: list[OpenAIChatMessage] = Field(min_length=1, description="OpenAI-compatible text chat messages.")
+    model: Optional[str] = Field(
+        default=None,
+        description="Model override. Defaults to AGENT_MODEL.",
+        examples=["claude-sonnet-4-5"],
+    )
+    messages: list[OpenAIChatMessage] = Field(
+        min_length=1,
+        description="OpenAI-compatible text chat messages. At least one non-empty user message is required.",
+        examples=[[{"role": "user", "content": "请总结这起告警的关键风险"}]],
+    )
     stream: Literal[False] = Field(
         default=False,
         description="This minimal compatibility endpoint is non-streaming; only false is accepted.",
+        examples=[False],
     )
-    max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Claude Agent turn cap for this request.")
-    metadata: JsonObject = Field(default_factory=dict)
+    max_turns: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=50,
+        description="Claude Agent turn cap for this request.",
+        examples=[8],
+    )
+    metadata: JsonObject = Field(
+        default_factory=dict,
+        description="Caller-provided JSON metadata retained with the managed run for observability.",
+        examples=[{"source": "openai-compat-client"}],
+    )
 
 
 class OpenAIChatCompletionChoice(BaseModel):

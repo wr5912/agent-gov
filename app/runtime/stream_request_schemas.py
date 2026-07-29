@@ -13,6 +13,7 @@ class AgentTargetedChatRequest(ChatRequest):
         min_length=1,
         pattern=NON_BLANK_TEXT_PATTERN,
         description="Registered business agent to run. Must contain at least one non-whitespace character.",
+        examples=["security-operations-expert"],
     )
 
 
@@ -21,7 +22,11 @@ class ChatStreamRequest(AgentTargetedChatRequest):
 
     with_speech_summary: bool = Field(
         default=False,
-        description="Emit best-effort agentgov.speech_summary events before the terminal done event.",
+        description=(
+            "Defaults to false. When true, eligible top-level thinking/assistant boundaries may emit best-effort "
+            "agentgov.speech_summary SSE events before done in either event_mode; generation failure is silent."
+        ),
+        examples=[True],
     )
 
 
@@ -30,5 +35,9 @@ class ClaudeSdkEventsRequest(AgentTargetedChatRequest):
 
     with_speech_summary: bool = Field(
         default=False,
-        description="Emit best-effort agentgov.speech_summary events alongside native SDK messages.",
+        description=(
+            "Defaults to false. When true, eligible top-level thinking/assistant boundaries may emit best-effort "
+            "agentgov.speech_summary SSE events alongside native SDK messages; generation failure is silent."
+        ),
+        examples=[True],
     )

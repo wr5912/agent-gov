@@ -6,6 +6,7 @@ from http import HTTPStatus
 
 from fastapi import FastAPI
 
+from app.openapi_input_documentation import apply_request_input_documentation
 from app.openapi_request_examples import REQUEST_EXAMPLE_CONTRACTS
 from app.runtime.prepared_managed_stream import MANAGED_RUN_RESPONSE_HEADER_DESCRIPTIONS
 from app.runtime.runtime_raw_events import RAW_EVENT_RESPONSE_HEADER_DESCRIPTIONS
@@ -188,6 +189,7 @@ def apply_openapi_contract(schema: OpenApiMutableMapping) -> None:
             if method not in HTTP_METHODS or not isinstance(operation, MutableMapping):
                 continue
             _apply_operation_contract(path, method, operation)
+    apply_request_input_documentation(schema)
 
 
 def expected_error_statuses(path: str, method: str, operation: OpenApiMapping) -> set[int]:
@@ -397,6 +399,10 @@ def _document_sse_events(path: str, operation: OpenApiMutableMapping) -> None:
         operation["x-agentgov-known-deviations"] = [
             "This in-process adapter is Responses-shaped, not full OpenAI Responses compatibility.",
             "stream, non-stream, and retrieve do not guarantee identical metadata or trace projection.",
+            (
+                "OpenAI disallows conversation and previous_response_id together; AgentGov currently accepts both "
+                "only when they resolve to the same conversation, otherwise it returns 409."
+            ),
             "A source failure before session identity may produce response.created with id=null.",
             "Pre-session source failures are reported in-stream after HTTP 200 and cannot expose managed run headers.",
         ]

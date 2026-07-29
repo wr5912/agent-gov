@@ -30,10 +30,12 @@ class RuntimeRawEventsRequest(ChatRequest):
     agent_id: str = Field(
         ...,
         description="Registered business agent to run. The Runtime implementation is selected by the server.",
+        examples=["security-operations-expert"],
     )
     stream: bool = Field(
         default=False,
         description="When true, flush raw Runtime stdout bytes as they arrive; otherwise buffer the same bytes into one response.",
+        examples=[True],
     )
 
     @field_validator("agent_id")

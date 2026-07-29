@@ -116,10 +116,18 @@
 | `agentgov.alert_id` / `case_id` | AgentGov 扩展 | 反馈闭环路由输入（backend-owned）；adapter 须回填 `agent_runs` index 列 |
 | `agentgov.max_turns` | AgentGov 扩展 | Claude Code turn cap，对应现有 `ChatRequest.max_turns`，不等同于 OpenAI output token limit |
 | `agentgov.include_trace` | AgentGov 扩展 | 默认 `false`；`true` 时在 control 流中输出完整 SDK 语义事件 |
-| `agentgov.with_speech_summary` | AgentGov 扩展 | 默认 `false`；仅 control mode + `stream=true` 有效，非流式开启返回 `422` |
-| `agentgov.debug` | AgentGov 扩展 | raw SDK envelope 等开发调试开关 |
+| `agentgov.with_speech_summary` | AgentGov 扩展 | 默认 `false`；仅 control mode + 顶层 `stream=true` 有效，非流式开启返回 `422`；符合边界时可能输出 best-effort `agentgov.speech_summary`，生成失败静默跳过，不保证事件存在 |
+| `agentgov.debug.sdk_raw` | AgentGov 扩展 | 默认 `false`；control streaming 调试开关，输出 AgentGov 包装的 SDK raw facts，不改变模型请求或标准 `response.*` 投影 |
 
 > `input` 为 items 数组时，服务端取其文本/内容映射为本轮 Claude Code prompt。`instructions` 使用 OpenAI 标准字段名，但 AgentGov 的 system 身份以 Claude Code preset + workspace `CLAUDE.md` 为治理态单一真相源；因此 `instructions` 在本项目中只作为 **append-only** 追加指令，不具备替换受治理 prompt 的能力，**语义区别于官方 replace/swap**（strict 模式处置见「模式口径」）。不再新增 `agentgov.system_append` 这类平行字段。
+
+Swagger UI 的 `Parameters → No parameters` 仅表示 `POST /v1/responses` 没有
+path/query/header/cookie 参数，JSON 输入在 `Request body`。当前 operation description 从同一
+OpenAPI schema 递归展开 22 个字段；请求体提供 control 全字段流式、control 两种结构化
+content、strict、按 `conversation` 续聊、按 `previous_response_id` 续聊五个可执行示例。
+官方 OpenAI 契约禁止同时使用 `conversation` 和 `previous_response_id`；AgentGov 当前只在两者
+解析到同一 conversation 时兼容接受，不一致返回 `409`。推荐调用始终二选一，该偏差通过
+`x-agentgov-known-deviations` 暴露。
 
 模式口径：
 
@@ -283,7 +291,7 @@ POST /v1/agentgov/confirmation-requests/{request_id}/decision
 
 `updated_input` / `allow_modified` 不进入最小契约。若未来支持“批准但修改工具参数”，必须作为单独安全子系统设计：按工具白名单限制可改字段、修改后重跑风险分类、强制一次性授权、记录原始/修改双写审计。
 
-## 落地状态（截至 2026-07-28）
+## 落地状态（截至 2026-07-29）
 
 1. **SDK-native 事实源已落地**：`POST /api/agent-runtime/sdk-events` 供 Playground 直接消费，
    并作为后续独立 OpenAI adapter 的输入；其完整事件 family、控制事件和 late-failure 边界已进入 OpenAPI。
@@ -302,8 +310,11 @@ POST /v1/agentgov/confirmation-requests/{request_id}/decision
    sunset。Chat Stream 的 Speech 与 semantic 观测都必须显式 opt-in，不把兼容面升级为主控制面。
 8. **旧 Sessions 进入退出路径**：`/api/sessions*` 已标记 deprecated；消费者迁移到
    `/v1/conversations*` 后，在下一次确认的破坏性版本删除。
-9. **OpenAPI 门禁已加深**：本地/运行态审计深比较完整 operation、components、required、
-   description、deprecated、响应和 SSE 扩展，不再只比路径与版本。
+9. **OpenAPI 输入文档已闭环**：45 个请求体、49 个递归可达请求组件、200 个请求字段和
+   166 个 path/query 参数都具备描述与具体示例；Responses 在 Swagger 展开 22 个嵌套字段和
+   5 个具名场景。无 baseline 审计递归覆盖 `$ref`、array、`anyOf`/`oneOf`/`allOf`、
+   inline multipart，并校验示例的类型、enum、范围、长度和 pattern；本地/运行态继续深比较
+   完整 operation、components、响应和 SSE 扩展。
 
 ## 持续验收
 

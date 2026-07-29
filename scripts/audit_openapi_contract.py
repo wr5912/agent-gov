@@ -46,6 +46,7 @@ from app.runtime.state_machines import (
 )
 from app.sse_contracts import sse_event_contract
 from scripts.export_openapi import build_openapi_schema
+from scripts.openapi_request_input_audit import audit_request_input_documentation
 
 OpenApiObject = dict[str, object]
 
@@ -87,6 +88,7 @@ def audit_schema(schema: OpenApiObject, *, expected_version: str | None = None) 
             issues.append(f"{method.upper()} {path} missing Bearer security declaration")
     issues.extend(_audit_streaming_media_types(schema))
     issues.extend(_audit_request_examples(schema))
+    issues.extend(audit_request_input_documentation(schema))
     issues.extend(_audit_closed_request_values(schema))
     issues.extend(_audit_request_components(schema))
     issues.extend(_audit_reviewed_operations(schema))

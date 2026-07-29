@@ -24,9 +24,18 @@ from app.runtime.schemas import NON_BLANK_TEXT_PATTERN
 
 
 class AgentGovDebug(BaseModel):
+    """Control-mode debug switches. These fields are never accepted in strict mode."""
+
     model_config = ConfigDict(extra="forbid")
 
-    sdk_raw: bool = False
+    sdk_raw: bool = Field(
+        default=False,
+        description=(
+            "Control streaming only. When true, emit AgentGov-wrapped SDK raw facts for debugging; "
+            "the value does not change the model request or the standard response.* projection."
+        ),
+        examples=[True],
+    )
 
 
 class AgentGovRequestExtension(BaseModel):
@@ -39,26 +48,62 @@ class AgentGovRequestExtension(BaseModel):
         min_length=1,
         pattern=NON_BLANK_TEXT_PATTERN,
         description="Business agent to run in control mode. Must contain at least one non-whitespace character.",
+        examples=["security-operations-expert"],
     )
-    alert_id: Optional[str] = Field(default=None, description="Feedback-loop routing input (backend-owned).")
-    case_id: Optional[str] = Field(default=None, description="Feedback-loop routing input (backend-owned).")
-    max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Claude Code turn cap.")
+    alert_id: Optional[str] = Field(
+        default=None,
+        description="Optional SOC alert id used as backend-owned feedback-loop routing input.",
+        examples=["alert-20260729-001"],
+    )
+    case_id: Optional[str] = Field(
+        default=None,
+        description="Optional SOC case id used as backend-owned feedback-loop routing input.",
+        examples=["case-20260729-001"],
+    )
+    max_turns: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=50,
+        description="Claude Code turn cap for this request; omit to use the operator-configured default.",
+        examples=[8],
+    )
     include_trace: bool = Field(
         default=False,
         description="Emit complete semantic SDK facts as agentgov.trace_event envelopes.",
+        examples=[True],
     )
     with_speech_summary: bool = Field(
         default=False,
-        description="Control streaming only: emit best-effort agentgov.speech_summary events.",
+        description=(
+            "Control streaming only; defaults to false. true requires the top-level stream=true or the API "
+            "returns 422. When enabled, eligible top-level thinking/assistant boundaries may emit best-effort "
+            "agentgov.speech_summary SSE events; generation failure is silent and no event is guaranteed."
+        ),
+        examples=[True],
     )
-    debug: Optional[AgentGovDebug] = None
+    debug: Optional[AgentGovDebug] = Field(
+        default=None,
+        description="Optional control-stream debugging switches; omit for normal business traffic.",
+        examples=[{"sdk_raw": True}],
+    )
 
 
 class ResponsesInputText(BaseModel):
+    """One typed text content block inside a Responses input message."""
+
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["input_text"] = "input_text"
-    text: str = Field(min_length=1, pattern=NON_BLANK_TEXT_PATTERN)
+    type: Literal["input_text"] = Field(
+        default="input_text",
+        description="Discriminator for a text input content block.",
+        examples=["input_text"],
+    )
+    text: str = Field(
+        min_length=1,
+        pattern=NON_BLANK_TEXT_PATTERN,
+        description="Non-blank text carried by this input content block.",
+        examples=["请复核该告警的处置结论"],
+    )
 
     @field_validator("text")
     @classmethod
@@ -69,11 +114,29 @@ class ResponsesInputText(BaseModel):
 
 
 class ResponsesInputMessage(BaseModel):
+    """Typed message item accepted by the transitional Responses input array."""
+
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["message"] = "message"
-    role: Literal["developer", "system", "user", "assistant"]
-    content: Annotated[str, Field(min_length=1, pattern=NON_BLANK_TEXT_PATTERN)] | Annotated[list[ResponsesInputText], Field(min_length=1)]
+    type: Literal["message"] = Field(
+        default="message",
+        description="Discriminator for an input message item.",
+        examples=["message"],
+    )
+    role: Literal["developer", "system", "user", "assistant"] = Field(
+        description=(
+            "Message role. At least one user message with non-blank text is required in the complete input array; "
+            "only user-message text is mapped to the current Agent prompt."
+        ),
+        examples=["user"],
+    )
+    content: Annotated[str, Field(min_length=1, pattern=NON_BLANK_TEXT_PATTERN)] | Annotated[list[ResponsesInputText], Field(min_length=1)] = Field(
+        description="Non-blank message text or a non-empty array of typed input_text blocks.",
+        examples=[
+            "请复核该告警的处置结论",
+            [{"type": "input_text", "text": "请复核该告警的处置结论"}],
+        ],
+    )
 
     @field_validator("content")
     @classmethod
@@ -131,10 +194,18 @@ class ResponsesRequest(BaseModel):
         },
     )
 
-    model: Optional[str] = Field(default=None, description="Per-request LLM override only; never an agent handle.")
+    model: Optional[str] = Field(
+        default=None,
+        description="Per-request LLM override only; never a business Agent handle. Omit to use the Agent profile.",
+        examples=["claude-sonnet-4-5"],
+    )
     input: Annotated[str, Field(min_length=1, pattern=NON_BLANK_TEXT_PATTERN)] | Annotated[list[ResponsesInputMessage], Field(min_length=1)] = Field(
         ...,
         description="Non-empty prompt string, or typed text message items containing a current user message.",
+        examples=[
+            "请核查当前告警并给出处置建议",
+            [{"type": "message", "role": "user", "content": "请核查当前告警并给出处置建议"}],
+        ],
     )
     instructions: Optional[str] = Field(
         default=None,
@@ -143,13 +214,40 @@ class ResponsesRequest(BaseModel):
             "Claude Code preset + workspace CLAUDE.md), which differs from OpenAI replace/swap semantics. "
             "Rejected (422) on the strict surface."
         ),
+        examples=["补充说明证据不足的判断，不替换业务 Agent 的受治理指令。"],
     )
-    stream: bool = False
-    store: bool = Field(default=True, description="Default true; false only closes public GET /v1/responses/{id}, internal audit stays.")
-    conversation: Optional[str] = Field(default=None, description="conv_<session_id>; maps to the server session.")
+    stream: bool = Field(
+        default=False,
+        description=(
+            "false returns one JSON ResponseObject; true returns Responses-style SSE. agentgov.with_speech_summary=true is valid only when this field is true."
+        ),
+        examples=[True],
+    )
+    store: bool = Field(
+        default=True,
+        description=(
+            "Whether the response remains retrievable through GET /v1/responses/{response_id}. "
+            "false disables public retrieval but does not remove internal audit evidence."
+        ),
+        examples=[False],
+    )
+    conversation: Optional[str] = Field(
+        default=None,
+        description=(
+            "AgentGov conversation projection (normally conv_<session_id>) used to continue that server session. "
+            "Prefer this or previous_response_id alone. If both are supplied, AgentGov currently accepts them only "
+            "when they resolve to the same conversation; this is a documented OpenAI compatibility deviation."
+        ),
+        examples=["conv_sess-20260729"],
+    )
     previous_response_id: Optional[str] = Field(
         default=None,
-        description="Derives owning conversation; 409 if inconsistent with an explicit conversation, 404 if not found.",
+        description=(
+            "Previous AgentGov response id (resp_<run_id>) whose owning conversation should be continued. "
+            "Returns 404 when the response is unknown and 409 when its conversation is unavailable or conflicts "
+            "with an explicit conversation. Prefer this or conversation alone."
+        ),
+        examples=["resp_run-20260729-001"],
     )
     metadata: JsonObject = Field(
         default_factory=dict,
@@ -157,8 +255,23 @@ class ResponsesRequest(BaseModel):
             "AgentGov transitional metadata object. Values may be nested JSON; backend-reserved keys are removed "
             "before public echo and the backend does not route on remaining entries."
         ),
+        examples=[{"source": "soc-console", "tenant": "north-region"}],
     )
-    agentgov: Optional[AgentGovRequestExtension] = Field(default=None, description="Presence selects control mode; carries the non-standard control plane.")
+    agentgov: Optional[AgentGovRequestExtension] = Field(
+        default=None,
+        description=(
+            "AgentGov control-plane extension. Omit it for strict mode; when present, agent_id is required and "
+            "control-only trace, debug, feedback routing, and speech-summary switches become available."
+        ),
+        examples=[
+            {
+                "agent_id": "security-operations-expert",
+                "include_trace": True,
+                "with_speech_summary": True,
+                "debug": {"sdk_raw": True},
+            }
+        ],
+    )
 
     @model_validator(mode="after")
     def _valid_input(self) -> ResponsesRequest:

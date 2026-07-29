@@ -259,11 +259,20 @@ def test_responses_named_examples_explain_strict_and_control_modes() -> None:
     assert set(examples) == {
         "agentgov_control_stream",
         "agentgov_control_structured",
+        "continue_with_conversation",
+        "continue_with_previous_response_id",
         "strict_openai",
     }
     assert examples["agentgov_control_stream"]["value"]["agentgov"]["agent_id"]
+    assert examples["agentgov_control_stream"]["value"]["agentgov"]["with_speech_summary"] is True
+    assert examples["agentgov_control_stream"]["value"]["stream"] is True
     assert examples["agentgov_control_structured"]["value"]["instructions"]
+    assert {
+        type(message["content"]).__name__ for message in examples["agentgov_control_structured"]["value"]["input"]
+    } == {"str", "list"}
     assert "agentgov" not in examples["strict_openai"]["value"]
+    assert "previous_response_id" not in examples["continue_with_conversation"]["value"]
+    assert "conversation" not in examples["continue_with_previous_response_id"]["value"]
     wording = f"{operation['summary']} {operation['description']}".lower()
     assert "transitional" in wording
     assert "source of truth" in wording

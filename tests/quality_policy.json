@@ -491,7 +491,7 @@
       {
         "id": "openai-contract",
         "changed_paths": [
-          "app/openapi_contract.py",
+          "app/openapi_*.py",
           "app/sse_contracts.py",
           "app/runtime/openai_*.py",
           "app/runtime/schemas.py",
@@ -504,7 +504,7 @@
           "app/routers/responses.py",
           "app/routers/runtime_raw_events.py",
           "app/routers/sessions.py",
-          "scripts/audit_openapi_contract.py",
+          "scripts/*openapi*.py",
           "README.md",
           "docs/README.md",
           "docs/AgentGov集成指南.md",
@@ -1125,10 +1125,14 @@
       "scenarios": [
         {
           "id": "public_openapi_contract_and_hitl_surface",
-          "description": "公开 request required/非空白/有限值/conditional/const、全部请求体的具名可执行示例、逐 surface SSE 目录、状态码、description/deprecated、非 200 成功码和完整 live/local OpenAPI 语义由硬门约束；Responses 明确是过渡投影；HITL 只保留唯一查询与 decision，冗余 alias 返回 404。",
+          "description": "公开 request required/非空白/有限值/conditional/const、全部 request body/component/property/path/query 的描述与具体示例、全部请求体的具名可执行示例、逐 surface SSE 目录、状态码、description/deprecated、非 200 成功码和完整 live/local OpenAPI 语义由无 baseline 硬门约束；Responses 在 Swagger 展开 22 个嵌套字段并解释 No parameters，明确是过渡投影；HITL 只保留唯一查询与 decision，冗余 alias 返回 404。",
           "pytest": [
             "tests/test_openapi_export.py::test_every_request_body_has_named_runtime_valid_examples",
             "tests/test_openapi_export.py::test_responses_named_examples_explain_strict_and_control_modes",
+            "tests/test_openapi_request_documentation.py::test_all_live_request_inputs_have_descriptions_and_examples",
+            "tests/test_openapi_request_documentation.py::test_responses_swagger_guide_covers_every_nested_request_field",
+            "tests/test_openapi_request_documentation.py::test_request_documentation_audit_reaches_arrays_unions_refs_and_multipart",
+            "tests/test_openapi_request_documentation.py::test_request_documentation_audit_rejects_regressions",
             "tests/test_openapi_export.py::test_agent_governance_response_status_domains_are_not_cross_wired",
             "tests/test_openapi_export.py::test_openapi_public_request_models_express_runtime_validation",
             "tests/test_openapi_export.py::test_openapi_documents_complete_per_surface_sse_contracts",

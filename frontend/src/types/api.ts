@@ -2090,6 +2090,35 @@ export interface paths {
         /**
          * Run an AgentGov business agent through a transitional Responses-shaped projection
          * @description Transitional projection over the SDK-native managed runtime; it is not full OpenAI Responses compatibility and is not AgentGov's runtime source of truth. No `agentgov` = strict (operator-configured agent, OpenAI-shaped response). `agentgov` present = control (requires `agentgov.agent_id`). `stream=true` returns Responses-style SSE (`response.*`; plus `agentgov.*` control events, including optional `agentgov.prompt_suggestion`, in control mode).
+         *
+         *     ### Request-body field guide
+         *
+         *     Swagger UI's **Parameters → No parameters** means this operation has no path, query, header, or cookie parameters. The JSON inputs below are under **Request body**. Supply the Bearer API key through **Authorize**.
+         *
+         *     | JSON path | Required | Type | Default | Example | Description |
+         *     | --- | --- | --- | --- | --- | --- |
+         *     | `model` | no | string \| null | — | "claude-sonnet-4-5" | Per-request LLM override only; never a business Agent handle. Omit to use the Agent profile. |
+         *     | `input` | yes | string \| array | — | "请核查当前告警并给出处置建议" | Non-empty prompt string, or typed text message items containing a current user message. |
+         *     | `input[].type` | no | literal message | "message" | "message" | Discriminator for an input message item. |
+         *     | `input[].role` | yes | enum | — | "user" | Message role. At least one user message with non-blank text is required in the complete input array; only user-message text is mapped to the current Agent prompt. |
+         *     | `input[].content` | yes | string \| array | — | "请复核该告警的处置结论" | Non-blank message text or a non-empty array of typed input_text blocks. |
+         *     | `input[].content[].type` | no | literal input_text | "input_text" | "input_text" | Discriminator for a text input content block. |
+         *     | `input[].content[].text` | yes | string | — | "请复核该告警的处置结论" | Non-blank text carried by this input content block. |
+         *     | `instructions` | no | string \| null | — | "补充说明证据不足的判断，不替换业务 Agent 的受治理指令。" | OpenAI standard field NAME. In AgentGov this is APPEND-ONLY (mapped to system_append, appended to the Claude Code preset + workspace CLAUDE.md), which differs from OpenAI replace/swap semantics. Rejected (422) on the strict surface. |
+         *     | `stream` | no | boolean | false | true | false returns one JSON ResponseObject; true returns Responses-style SSE. agentgov.with_speech_summary=true is valid only when this field is true. |
+         *     | `store` | no | boolean | true | false | Whether the response remains retrievable through GET /v1/responses/{response_id}. false disables public retrieval but does not remove internal audit evidence. |
+         *     | `conversation` | no | string \| null | — | "conv_sess-20260729" | AgentGov conversation projection (normally conv_<session_id>) used to continue that server session. Prefer this or previous_response_id alone. If both are supplied, AgentGov currently accepts them only when they resolve to the same conversation; this is a documented OpenAI compatibility deviation. |
+         *     | `previous_response_id` | no | string \| null | — | "resp_run-20260729-001" | Previous AgentGov response id (resp_<run_id>) whose owning conversation should be continued. Returns 404 when the response is unknown and 409 when its conversation is unavailable or conflicts with an explicit conversation. Prefer this or conversation alone. |
+         *     | `metadata` | no | object | — | {"source":"soc-console","tenant":"north-region"} | AgentGov transitional metadata object. Values may be nested JSON; backend-reserved keys are removed before public echo and the backend does not route on remaining entries. |
+         *     | `agentgov` | no | AgentGovRequestExtension \| null | — | {"agent_id":"security-operations-expert","debug":{"sdk_raw":true},"include_trace":true,"with_speech_summary":true} | AgentGov control-plane extension. Omit it for strict mode; when present, agent_id is required and control-only trace, debug, feedback routing, and speech-summary switches become available. |
+         *     | `agentgov.agent_id` | yes | string | — | "security-operations-expert" | Business agent to run in control mode. Must contain at least one non-whitespace character. |
+         *     | `agentgov.alert_id` | no | string \| null | — | "alert-20260729-001" | Optional SOC alert id used as backend-owned feedback-loop routing input. |
+         *     | `agentgov.case_id` | no | string \| null | — | "case-20260729-001" | Optional SOC case id used as backend-owned feedback-loop routing input. |
+         *     | `agentgov.max_turns` | no | integer \| null | — | 8 | Claude Code turn cap for this request; omit to use the operator-configured default. |
+         *     | `agentgov.include_trace` | no | boolean | false | true | Emit complete semantic SDK facts as agentgov.trace_event envelopes. |
+         *     | `agentgov.with_speech_summary` | no | boolean | false | true | Control streaming only; defaults to false. true requires the top-level stream=true or the API returns 422. When enabled, eligible top-level thinking/assistant boundaries may emit best-effort agentgov.speech_summary SSE events; generation failure is silent and no event is guaranteed. |
+         *     | `agentgov.debug` | no | AgentGovDebug \| null | — | {"sdk_raw":true} | Optional control-stream debugging switches; omit for normal business traffic. |
+         *     | `agentgov.debug.sdk_raw` | no | boolean | false | true | Control streaming only. When true, emit AgentGov-wrapped SDK raw facts for debugging; the value does not change the model request or the standard response.* projection. |
          */
         post: operations["create_response_v1_responses_post"];
         delete?: never;
@@ -2122,23 +2151,47 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AgentChangeSetActionRequest */
+        /**
+         * AgentChangeSetActionRequest
+         * @description Operator decision recorded against one Agent change set.
+         */
         AgentChangeSetActionRequest: {
-            /** Note */
+            /**
+             * Note
+             * @description Optional operator note written to the governance audit trail.
+             * @example 已核对候选差异与测试证据。
+             */
             note?: string | null;
             /**
              * Operator
+             * @description Operator identity recorded in the governance audit trail.
              * @default runtime
+             * @example platform-operator
              */
             operator: string;
         };
-        /** AgentChangeSetCreateRequest */
+        /**
+         * AgentChangeSetCreateRequest
+         * @description Create a Git-backed candidate change set from the current Agent repository state.
+         */
         AgentChangeSetCreateRequest: {
-            /** Base Commit Sha */
+            /**
+             * Base Commit Sha
+             * @description Expected Git commit from which the candidate change set starts.
+             * @example a1b2c3d4e5f6
+             */
             base_commit_sha?: string | null;
-            /** Note */
+            /**
+             * Note
+             * @description Optional operator note written to the governance audit trail.
+             * @example 已核对候选差异与测试证据。
+             */
             note?: string | null;
-            /** Title */
+            /**
+             * Title
+             * @description Human-readable title for this governed object.
+             * @example 修复停止后再次发送的会话冲突
+             */
             title?: string | null;
         };
         /** AgentChangeSetEventResponse */
@@ -2164,23 +2217,42 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** AgentChangeSetPublishRequest */
+        /**
+         * AgentChangeSetPublishRequest
+         * @description Publish an approved Agent change set, with an explicit forced-publication escape hatch.
+         */
         AgentChangeSetPublishRequest: {
             /**
              * Force
+             * @description Whether to use the audited forced-publication path.
              * @default false
+             * @example false
              */
             force: boolean;
-            /** Force Reason */
+            /**
+             * Force Reason
+             * @description Required audit reason when force is true.
+             * @example 紧急修复已由值班负责人复核。
+             */
             force_reason?: string | null;
-            /** Note */
+            /**
+             * Note
+             * @description Optional operator note written to the governance audit trail.
+             * @example 已核对候选差异与测试证据。
+             */
             note?: string | null;
             /**
              * Operator
+             * @description Operator identity recorded in the governance audit trail.
              * @default runtime
+             * @example platform-operator
              */
             operator: string;
-            /** Tag Name */
+            /**
+             * Tag Name
+             * @description Optional release tag; omit to use the server's release naming policy.
+             * @example agent-release-20260729
+             */
             tag_name?: string | null;
         };
         /** AgentChangeSetResponse */
@@ -2283,21 +2355,29 @@ export interface components {
              */
             size_bytes: number;
         };
-        /** AgentConfigFileUpdateRequest */
+        /**
+         * AgentConfigFileUpdateRequest
+         * @description Complete replacement of one editable Agent configuration file with optimistic concurrency.
+         */
         AgentConfigFileUpdateRequest: {
             /**
              * Content
              * @description New UTF-8 file content.
+             * @example {
+             *       "mcpServers": {}
+             *     }
              */
             content: string;
             /**
              * Expected Sha256
              * @description Current file sha256 returned by GET; rejects stale edits when mismatched.
+             * @example 7f83b1657ff1fc53b92dc18148a1d65dfa13514e
              */
             expected_sha256?: string | null;
             /**
              * Session Id
              * @description Optional API session to detach from its Claude SDK resume id after applying this config.
+             * @example sess-20260729
              */
             session_id?: string | null;
         };
@@ -2523,11 +2603,16 @@ export interface components {
             /** Sdk Session Id */
             sdk_session_id?: string | null;
         };
-        /** AgentGovDebug */
+        /**
+         * AgentGovDebug
+         * @description Control-mode debug switches. These fields are never accepted in strict mode.
+         */
         AgentGovDebug: {
             /**
              * Sdk Raw
+             * @description Control streaming only. When true, emit AgentGov-wrapped SDK raw facts for debugging; the value does not change the model request or the standard response.* projection.
              * @default false
+             * @example true
              */
             sdk_raw: boolean;
         };
@@ -2539,34 +2624,46 @@ export interface components {
             /**
              * Agent Id
              * @description Business agent to run in control mode. Must contain at least one non-whitespace character.
+             * @example security-operations-expert
              */
             agent_id: string;
             /**
              * Alert Id
-             * @description Feedback-loop routing input (backend-owned).
+             * @description Optional SOC alert id used as backend-owned feedback-loop routing input.
+             * @example alert-20260729-001
              */
             alert_id?: string | null;
             /**
              * Case Id
-             * @description Feedback-loop routing input (backend-owned).
+             * @description Optional SOC case id used as backend-owned feedback-loop routing input.
+             * @example case-20260729-001
              */
             case_id?: string | null;
+            /**
+             * @description Optional control-stream debugging switches; omit for normal business traffic.
+             * @example {
+             *       "sdk_raw": true
+             *     }
+             */
             debug?: components["schemas"]["AgentGovDebug"] | null;
             /**
              * Include Trace
              * @description Emit complete semantic SDK facts as agentgov.trace_event envelopes.
              * @default false
+             * @example true
              */
             include_trace: boolean;
             /**
              * Max Turns
-             * @description Claude Code turn cap.
+             * @description Claude Code turn cap for this request; omit to use the operator-configured default.
+             * @example 8
              */
             max_turns?: number | null;
             /**
              * With Speech Summary
-             * @description Control streaming only: emit best-effort agentgov.speech_summary events.
+             * @description Control streaming only; defaults to false. true requires the top-level stream=true or the API returns 422. When enabled, eligible top-level thinking/assistant boundaries may emit best-effort agentgov.speech_summary SSE events; generation failure is silent and no event is guaranteed.
              * @default false
+             * @example true
              */
             with_speech_summary: boolean;
         };
@@ -2723,11 +2820,15 @@ export interface components {
          * @enum {string}
          */
         AgentJobType: "attribution" | "optimization_plan" | "execution" | "regression_test_design" | "normalized_feedback";
-        /** AgentLifecycleTransitionRequest */
+        /**
+         * AgentLifecycleTransitionRequest
+         * @description Requested lifecycle transition for one registered business Agent.
+         */
         AgentLifecycleTransitionRequest: {
             /**
              * Status
              * @description 目标生命周期状态：active/evaluating/deprecated/archived（draft 仅创建态）。
+             * @example evaluating
              * @enum {string}
              */
             status: "active" | "evaluating" | "deprecated" | "archived";
@@ -2856,13 +2957,22 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** AgentReleaseRestoreRequest */
+        /**
+         * AgentReleaseRestoreRequest
+         * @description Restore a published Agent release into a new candidate workspace state.
+         */
         AgentReleaseRestoreRequest: {
-            /** Note */
+            /**
+             * Note
+             * @description Optional operator note written to the governance audit trail.
+             * @example 已核对候选差异与测试证据。
+             */
             note?: string | null;
             /**
              * Operator
+             * @description Operator identity recorded in the governance audit trail.
              * @default runtime
+             * @example platform-operator
              */
             operator: string;
         };
@@ -2881,28 +2991,55 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** AgentReleaseRollbackRequest */
+        /**
+         * AgentReleaseRollbackRequest
+         * @description Rollback the active Agent release to the selected release.
+         */
         AgentReleaseRollbackRequest: {
-            /** Note */
+            /**
+             * Note
+             * @description Optional operator note written to the governance audit trail.
+             * @example 已核对候选差异与测试证据。
+             */
             note?: string | null;
             /**
              * Operator
+             * @description Operator identity recorded in the governance audit trail.
              * @default runtime
+             * @example platform-operator
              */
             operator: string;
         };
-        /** AgentRepositoryDiscardChangesRequest */
+        /**
+         * AgentRepositoryDiscardChangesRequest
+         * @description Discard selected uncommitted paths in the business Agent repository.
+         */
         AgentRepositoryDiscardChangesRequest: {
-            /** Paths */
+            /**
+             * Paths
+             * @description Repository-relative paths whose uncommitted changes should be discarded.
+             * @example [
+             *       ".mcp.json"
+             *     ]
+             */
             paths?: string[];
         };
-        /** AgentRepositorySnapshotRequest */
+        /**
+         * AgentRepositorySnapshotRequest
+         * @description Create a Git snapshot of the current business Agent repository state.
+         */
         AgentRepositorySnapshotRequest: {
-            /** Note */
+            /**
+             * Note
+             * @description Optional operator note written to the governance audit trail.
+             * @example 已核对候选差异与测试证据。
+             */
             note?: string | null;
             /**
              * Operator
+             * @description Operator identity recorded in the governance audit trail.
              * @default runtime
+             * @example platform-operator
              */
             operator: string;
         };
@@ -3144,45 +3281,60 @@ export interface components {
             /**
              * Agent Id
              * @description Registered business agent to run. Must contain at least one non-whitespace character.
+             * @example security-operations-expert
              */
             agent_id: string;
             /**
              * Alert Id
              * @description Optional SOC alert id used by the feedback loop.
+             * @example alert-20260729-001
              */
             alert_id?: string | null;
             /**
              * Case Id
              * @description Optional SOC case id used by the feedback loop.
+             * @example case-20260729-001
              */
             case_id?: string | null;
             /**
              * Max Turns
              * @description Per-request turn cap. Defaults to MAX_TURNS.
+             * @example 8
              */
             max_turns?: number | null;
             /**
              * Message
              * @description User message or task prompt. Must contain at least one non-whitespace character.
+             * @example 请核查当前告警并给出处置建议
              */
             message: string;
-            /** Metadata */
+            /**
+             * Metadata
+             * @description Caller-provided JSON metadata retained with the managed run for observability.
+             * @example {
+             *       "source": "soc-console",
+             *       "tenant": "north-region"
+             *     }
+             */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Model
              * @description Per-request model override. Defaults to AGENT_MODEL.
+             * @example claude-sonnet-4-5
              */
             model?: string | null;
             /**
              * Session Id
              * @description Client-visible session id. If omitted, the API creates one.
+             * @example sess-20260729
              */
             session_id?: string | null;
             /**
              * System Append
              * @description Extra instruction appended to the Claude Code preset prompt.
+             * @example 输出结论时同时列出关键证据。
              */
             system_append?: string | null;
         };
@@ -3226,11 +3378,24 @@ export interface components {
             /** Qualified Name */
             qualified_name: string;
         };
-        /** AgentTestMessageRequest */
+        /**
+         * AgentTestMessageRequest
+         * @description Send one message through an isolated Agent test session.
+         */
         AgentTestMessageRequest: {
-            /** Message */
+            /**
+             * Message
+             * @description Non-blank user message or operator note for this action.
+             * @example 请核查当前告警并给出处置建议
+             */
             message: string;
-            /** Metadata */
+            /**
+             * Metadata
+             * @description Test-only message metadata retained inside the isolated test session.
+             * @example {
+             *       "case": "stop-and-resend"
+             *     }
+             */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
@@ -3273,13 +3438,21 @@ export interface components {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
         };
-        /** AgentTestRunCreateRequest */
+        /**
+         * AgentTestRunCreateRequest
+         * @description Start a platform-owned Agent regression test run.
+         */
         AgentTestRunCreateRequest: {
-            /** Agent Id */
+            /**
+             * Agent Id
+             * @description Registered business Agent identifier.
+             * @example security-operations-expert
+             */
             agent_id: string;
             /**
              * Commit Sha
              * @description Omit to pin the current active commit when this request is created.
+             * @example a1b2c3d4e5f6
              */
             commit_sha?: string | null;
         };
@@ -3453,24 +3626,51 @@ export interface components {
             /** Updated At */
             updated_at?: string | null;
         };
-        /** AgentTestScheduleUpdateRequest */
+        /**
+         * AgentTestScheduleUpdateRequest
+         * @description Replace the scheduled regression-test policy for one business Agent.
+         */
         AgentTestScheduleUpdateRequest: {
-            /** Cron Expression */
+            /**
+             * Cron Expression
+             * @description Five-field cron expression interpreted in the supplied timezone.
+             * @example 0 2 * * *
+             */
             cron_expression: string;
-            /** Enabled */
+            /**
+             * Enabled
+             * @description Whether scheduled Agent regression testing is enabled.
+             * @example true
+             */
             enabled: boolean;
-            /** Timezone */
+            /**
+             * Timezone
+             * @description IANA timezone used to interpret the cron expression.
+             * @example Asia/Shanghai
+             */
             timezone: string;
         };
-        /** AgentTestSessionCreateRequest */
+        /**
+         * AgentTestSessionCreateRequest
+         * @description Create an isolated interactive test session for one Agent revision.
+         */
         AgentTestSessionCreateRequest: {
-            /** Agent Id */
+            /**
+             * Agent Id
+             * @description Registered business Agent identifier.
+             * @example security-operations-expert
+             */
             agent_id: string;
-            /** Change Set Id */
+            /**
+             * Change Set Id
+             * @description Agent change set associated with this test session.
+             * @example chg-20260729-001
+             */
             change_set_id?: string | null;
             /**
              * Commit Sha
              * @description Omit to pin the current active commit once when the session is created.
+             * @example a1b2c3d4e5f6
              */
             commit_sha?: string | null;
         };
@@ -3557,16 +3757,21 @@ export interface components {
             /** Subagent Id */
             subagent_id?: string | null;
         };
-        /** AssetCreateRequest */
+        /**
+         * AssetCreateRequest
+         * @description Create one governed reusable asset owned by a business Agent.
+         */
         AssetCreateRequest: {
             /**
              * Agent Id
              * @description 归属业务 Agent。
+             * @example security-operations-expert
              */
             agent_id: string;
             /**
              * Asset Type
              * @description methodology / execution / audit。可执行测试只存在于业务 Agent Workspace tests/。
+             * @example methodology
              * @enum {string}
              */
             asset_type: "methodology" | "execution" | "audit";
@@ -3574,25 +3779,32 @@ export interface components {
              * Body
              * @description 资产正文（方法论/执行脚本/审计说明）。
              * @default
+             * @example 所有高危处置必须同时记录证据来源。
              */
             body: string;
             /**
              * Source Improvement Id
              * @description 沉淀来源改进事项 ID（可空）。
              * @default
+             * @example imp-20260729-001
              */
             source_improvement_id: string;
             /**
              * Title
              * @description 资产标题。
+             * @example 修复停止后再次发送的会话冲突
              */
             title: string;
         };
-        /** AssetInheritRequest */
+        /**
+         * AssetInheritRequest
+         * @description Copy one governed asset into another business Agent's ownership.
+         */
         AssetInheritRequest: {
             /**
              * Target Agent Id
              * @description 把资产继承复用到的目标业务 Agent。
+             * @example soc-analyst
              */
             target_agent_id: string;
         };
@@ -3687,11 +3899,15 @@ export interface components {
             /** Text */
             text: string;
         };
-        /** AttachFeedbackCaseRequest */
+        /**
+         * AttachFeedbackCaseRequest
+         * @description Attach an existing first-class feedback case to the current improvement.
+         */
         AttachFeedbackCaseRequest: {
             /**
              * Feedback Case Id
              * @description 要归入当前事项的已有反馈 Case（fbc-…）。
+             * @example fbc-20260729-001
              */
             feedback_case_id: string;
         };
@@ -3768,21 +3984,31 @@ export interface components {
              */
             verification_suggestions?: string[];
         };
-        /** AttributionUpsertRequest */
+        /**
+         * AttributionUpsertRequest
+         * @description Replace the editable attribution content for one improvement.
+         */
         AttributionUpsertRequest: {
             /**
              * Evidence
              * @description 证据要点。
+             * @example [
+             *       "停止后同一 session 的 active turn 已释放。"
+             *     ]
              */
             evidence?: string[];
             /**
              * Responsibility Boundary
              * @description 责任边界 bullets。
+             * @example [
+             *       "Runtime owns session fencing."
+             *     ]
              */
             responsibility_boundary?: string[];
             /**
              * Summary
              * @description 归因正文。
+             * @example 停止后续聊需要统一释放 session fence。
              */
             summary: string;
         };
@@ -3832,51 +4058,67 @@ export interface components {
             /**
              * Agent Id
              * @description Registered business agent to run. Must contain at least one non-whitespace character.
+             * @example security-operations-expert
              */
             agent_id: string;
             /**
              * Alert Id
              * @description Optional SOC alert id used by the feedback loop.
+             * @example alert-20260729-001
              */
             alert_id?: string | null;
             /**
              * Case Id
              * @description Optional SOC case id used by the feedback loop.
+             * @example case-20260729-001
              */
             case_id?: string | null;
             /**
              * Max Turns
              * @description Per-request turn cap. Defaults to MAX_TURNS.
+             * @example 8
              */
             max_turns?: number | null;
             /**
              * Message
              * @description User message or task prompt. Must contain at least one non-whitespace character.
+             * @example 请核查当前告警并给出处置建议
              */
             message: string;
-            /** Metadata */
+            /**
+             * Metadata
+             * @description Caller-provided JSON metadata retained with the managed run for observability.
+             * @example {
+             *       "source": "soc-console",
+             *       "tenant": "north-region"
+             *     }
+             */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Model
              * @description Per-request model override. Defaults to AGENT_MODEL.
+             * @example claude-sonnet-4-5
              */
             model?: string | null;
             /**
              * Session Id
              * @description Client-visible session id. If omitted, the API creates one.
+             * @example sess-20260729
              */
             session_id?: string | null;
             /**
              * System Append
              * @description Extra instruction appended to the Claude Code preset prompt.
+             * @example 输出结论时同时列出关键证据。
              */
             system_append?: string | null;
             /**
              * With Speech Summary
-             * @description Emit best-effort agentgov.speech_summary events before the terminal done event.
+             * @description Defaults to false. When true, eligible top-level thinking/assistant boundaries may emit best-effort agentgov.speech_summary SSE events before done in either event_mode; generation failure is silent.
              * @default false
+             * @example true
              */
             with_speech_summary: boolean;
         };
@@ -3888,51 +4130,67 @@ export interface components {
             /**
              * Agent Id
              * @description Registered business agent to run. Must contain at least one non-whitespace character.
+             * @example security-operations-expert
              */
             agent_id: string;
             /**
              * Alert Id
              * @description Optional SOC alert id used by the feedback loop.
+             * @example alert-20260729-001
              */
             alert_id?: string | null;
             /**
              * Case Id
              * @description Optional SOC case id used by the feedback loop.
+             * @example case-20260729-001
              */
             case_id?: string | null;
             /**
              * Max Turns
              * @description Per-request turn cap. Defaults to MAX_TURNS.
+             * @example 8
              */
             max_turns?: number | null;
             /**
              * Message
              * @description User message or task prompt. Must contain at least one non-whitespace character.
+             * @example 请核查当前告警并给出处置建议
              */
             message: string;
-            /** Metadata */
+            /**
+             * Metadata
+             * @description Caller-provided JSON metadata retained with the managed run for observability.
+             * @example {
+             *       "source": "soc-console",
+             *       "tenant": "north-region"
+             *     }
+             */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Model
              * @description Per-request model override. Defaults to AGENT_MODEL.
+             * @example claude-sonnet-4-5
              */
             model?: string | null;
             /**
              * Session Id
              * @description Client-visible session id. If omitted, the API creates one.
+             * @example sess-20260729
              */
             session_id?: string | null;
             /**
              * System Append
              * @description Extra instruction appended to the Claude Code preset prompt.
+             * @example 输出结论时同时列出关键证据。
              */
             system_append?: string | null;
             /**
              * With Speech Summary
-             * @description Emit best-effort agentgov.speech_summary events alongside native SDK messages.
+             * @description Defaults to false. When true, eligible top-level thinking/assistant boundaries may emit best-effort agentgov.speech_summary SSE events alongside native SDK messages; generation failure is silent.
              * @default false
+             * @example true
              */
             with_speech_summary: boolean;
         };
@@ -3949,16 +4207,32 @@ export interface components {
         ClaudeUserInputDecisionRequest: {
             /**
              * Action
+             * @description Decision action allowed for the exact waiting request.
+             * @example deny
              * @enum {string}
              */
             action: "allow_once" | "allow_for_run" | "deny" | "answer_question";
-            /** Answer */
+            /**
+             * Answer
+             * @description Structured answers for an AskUserQuestion decision.
+             * @example {
+             *       "response": "只处理当前告警资产"
+             *     }
+             */
             answer?: {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
-            /** Decision Token */
+            /**
+             * Decision Token
+             * @description One-time token returned for this exact authenticated waiting request.
+             * @example token-from-exact-waiting-request
+             */
             decision_token: string;
-            /** Message */
+            /**
+             * Message
+             * @description Non-blank user message or operator note for this action.
+             * @example 请核查当前告警并给出处置建议
+             */
             message?: string | null;
         };
         /** ClaudeUserInputDecisionResponse */
@@ -4120,11 +4394,17 @@ export interface components {
             /** Title */
             title?: string | null;
         };
-        /** ConversationCreateRequest */
+        /**
+         * ConversationCreateRequest
+         * @description Create an empty AgentGov conversation projection with optional client metadata.
+         */
         ConversationCreateRequest: {
             /**
              * Metadata
              * @description Observability metadata; backend-reserved keys are removed and the backend does not route on remaining entries.
+             * @example {
+             *       "source": "soc-console"
+             *     }
              */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -4407,20 +4687,35 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
-        /** FeedbackCaseCreateRequest */
+        /**
+         * FeedbackCaseCreateRequest
+         * @description Create one feedback case from typed sources owned by the same business Agent.
+         */
         FeedbackCaseCreateRequest: {
             /**
              * Priority
+             * @description Analyst-assigned triage priority.
              * @default medium
+             * @example high
              * @enum {string}
              */
             priority: "high" | "medium" | "low";
             /**
              * Source Refs
              * @description One or more typed feedback sources owned by the same business Agent.
+             * @example [
+             *       {
+             *         "source_id": "signal-20260729-001",
+             *         "source_kind": "signal"
+             *       }
+             *     ]
              */
             source_refs: components["schemas"]["FeedbackSourceRef"][];
-            /** Title */
+            /**
+             * Title
+             * @description Human-readable title for this governed object.
+             * @example 修复停止后再次发送的会话冲突
+             */
             title?: string | null;
         };
         /** FeedbackCaseResponse */
@@ -4481,62 +4776,122 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** FeedbackSignalCreateRequest */
+        /**
+         * FeedbackSignalCreateRequest
+         * @description Ingest one explicit, implicit, or analyst-authored feedback signal.
+         */
         FeedbackSignalCreateRequest: {
-            /** Alert Id */
+            /**
+             * Alert Id
+             * @description SOC alert identifier used for correlation or feedback routing.
+             * @example alert-20260729-001
+             */
             alert_id?: string | null;
             /**
              * Auto Captured
+             * @description Whether the source was captured automatically rather than entered by an analyst.
              * @default false
+             * @example true
              */
             auto_captured: boolean;
-            /** Case Id */
+            /**
+             * Case Id
+             * @description SOC business-case identifier used for correlation or feedback routing.
+             * @example case-20260729-001
+             */
             case_id?: string | null;
-            /** Comment */
+            /**
+             * Comment
+             * @description Optional analyst or operator comment.
+             * @example 已复核原始运行证据。
+             */
             comment?: string | null;
-            /** Confidence */
+            /**
+             * Confidence
+             * @description Confidence assigned to the feedback or SOC event.
+             * @example high
+             */
             confidence?: ("low" | "medium" | "high") | null;
-            /** Labels */
+            /**
+             * Labels
+             * @description Analyst-defined labels used for filtering and triage.
+             * @example [
+             *       "session",
+             *       "concurrency"
+             *     ]
+             */
             labels?: string[];
-            /** Metadata */
+            /**
+             * Metadata
+             * @description Caller-provided JSON metadata retained for correlation or observability.
+             * @example {
+             *       "source": "soc-console"
+             *     }
+             */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Requires Review
+             * @description Whether the source must remain in the human-review queue.
              * @default false
+             * @example true
              */
             requires_review: boolean;
-            /** Run Id */
+            /**
+             * Run Id
+             * @description Managed Agent run identifier used for correlation.
+             * @example run-20260729-001
+             */
             run_id?: string | null;
-            /** Session Id */
+            /**
+             * Session Id
+             * @description AgentGov session identifier used for continuation or correlation.
+             * @example sess-20260729
+             */
             session_id?: string | null;
-            /** Signal Id */
+            /**
+             * Signal Id
+             * @description Optional caller-stable feedback signal identifier.
+             * @example signal-20260729-001
+             */
             signal_id?: string | null;
             /**
              * Source Type
+             * @description Feedback signal source category.
              * @default explicit_feedback
+             * @example explicit_feedback
              * @enum {string}
              */
             source_type: "explicit_feedback" | "implicit_feedback" | "analyst_annotation";
-            /** Timestamp */
+            /**
+             * Timestamp
+             * @description RFC 3339 timestamp supplied by the source system.
+             * @example 2026-07-29T12:00:00Z
+             */
             timestamp?: string | null;
         };
-        /** FeedbackSignalReassignRequest */
+        /**
+         * FeedbackSignalReassignRequest
+         * @description Correct the business-Agent ownership of one feedback signal with audit attribution.
+         */
         FeedbackSignalReassignRequest: {
             /**
              * Agent Id
              * @description 修正后的归属业务 Agent。
+             * @example security-operations-expert
              */
             agent_id: string;
             /**
              * Operator
              * @description 执行修正的操作人，用于审计。
+             * @example platform-operator
              */
             operator: string;
             /**
              * Reason
              * @description 修正原因（可选），写入审计记录。
+             * @example 恢复到已验证的 workspace 版本。
              */
             reason?: string | null;
         };
@@ -4586,12 +4941,21 @@ export interface components {
             /** Timestamp */
             timestamp?: string | null;
         };
-        /** FeedbackSourceRef */
+        /**
+         * FeedbackSourceRef
+         * @description Typed reference to one existing feedback source.
+         */
         FeedbackSourceRef: {
-            /** Source Id */
+            /**
+             * Source Id
+             * @description Identifier within the selected feedback-source kind.
+             * @example signal-20260729-001
+             */
             source_id: string;
             /**
              * Source Kind
+             * @description Typed feedback-source discriminator.
+             * @example signal
              * @enum {string}
              */
             source_kind: "signal" | "soc_event" | "pending_correlation";
@@ -4653,21 +5017,53 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** FeedbackSourceUpdateRequest */
+        /**
+         * FeedbackSourceUpdateRequest
+         * @description Patch the analyst-owned annotation fields of one feedback source.
+         */
         FeedbackSourceUpdateRequest: {
-            /** Comment */
+            /**
+             * Comment
+             * @description Optional analyst or operator comment.
+             * @example 已复核原始运行证据。
+             */
             comment?: string | null;
-            /** Labels */
+            /**
+             * Labels
+             * @description Analyst-defined labels used for filtering and triage.
+             * @example [
+             *       "session",
+             *       "concurrency"
+             *     ]
+             */
             labels?: string[] | null;
-            /** Metadata */
+            /**
+             * Metadata
+             * @description Replacement annotation metadata; omit the field to leave metadata unchanged.
+             * @example {
+             *       "reviewed_by": "analyst-17"
+             *     }
+             */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
-            /** Priority */
+            /**
+             * Priority
+             * @description Analyst-assigned triage priority.
+             * @example high
+             */
             priority?: ("low" | "medium" | "high") | null;
-            /** Requires Review */
+            /**
+             * Requires Review
+             * @description Whether the source must remain in the human-review queue.
+             * @example true
+             */
             requires_review?: boolean | null;
-            /** Status */
+            /**
+             * Status
+             * @description Annotation workflow status: new, triaged, in_batch, resolved, or archived.
+             * @example triaged
+             */
             status?: ("new" | "triaged" | "in_batch" | "resolved" | "archived") | null;
         };
         /** FeedbackValidationErrorResponse */
@@ -4738,33 +5134,43 @@ export interface components {
              */
             regression_test_design: boolean;
         };
-        /** ImprovementCreateRequest */
+        /**
+         * ImprovementCreateRequest
+         * @description Create one governed improvement item from feedback references.
+         */
         ImprovementCreateRequest: {
             /**
              * Agent Id
              * @description 归属业务 Agent 的稳定 ID（治理归属主键）。
+             * @example security-operations-expert
              */
             agent_id: string;
             /**
              * Auto Merge
              * @description 为真时：若同 Agent 存在相似开放改进事项，则把来源反馈并入该事项而非新建。
              * @default false
+             * @example false
              */
             auto_merge: boolean;
             /**
              * Source Feedback Refs
              * @description 来源反馈 ID 列表（轻引用）。
+             * @example [
+             *       "signal-20260729-001"
+             *     ]
              */
             source_feedback_refs?: string[];
             /**
              * Summary
              * @description 改进事项摘要/系统理解，可空。
              * @default
+             * @example 停止后续聊需要统一释放 session fence。
              */
             summary: string;
             /**
              * Title
              * @description 改进事项标题。
+             * @example 修复停止后再次发送的会话冲突
              */
             title: string;
         };
@@ -4785,73 +5191,90 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** ImprovementFeedbackCreateRequest */
+        /**
+         * ImprovementFeedbackCreateRequest
+         * @description Attach one general feedback record to an improvement.
+         */
         ImprovementFeedbackCreateRequest: {
             /**
              * Agent Version Id
              * @description 反馈归属的 Agent 版本。
              * @default
+             * @example agent-ver-20260729
              */
             agent_version_id: string;
             /**
              * Alert Id
              * @description 反馈归属的告警 ID。
              * @default
+             * @example alert-20260729-001
              */
             alert_id: string;
             /**
              * Case Id
              * @description 反馈归属的业务 Case ID，不接受 FeedbackCase ID。
              * @default
+             * @example case-20260729-001
              */
             case_id: string;
             /**
              * Raw Text
              * @description 反馈原文。
              * @default
+             * @example 停止后再次发送消息时报 SESSION_CONFLICT。
              */
             raw_text: string;
             /**
              * Run Id
              * @description 关联 Run。
              * @default
+             * @example run-20260729-001
              */
             run_id: string;
             /**
              * Scenario
              * @description 反馈归属的业务场景。
              * @default
+             * @example playground-stop-and-resend
              */
             scenario: string;
             /**
              * Session Id
              * @description 关联 Session。
              * @default
+             * @example sess-20260729
              */
             session_id: string;
             /**
              * Source
              * @description 通用反馈来源，例如 playground_run/trace；FeedbackCase 必须走专用挂接接口。
              * @default playground_run
+             * @example playground_run
              */
             source: string;
             /**
              * Summary
              * @description 反馈摘要。
+             * @example 停止后续聊需要统一释放 session fence。
              */
             summary: string;
             /**
              * Task Id
              * @description 反馈归属的任务 ID。
              * @default
+             * @example task-20260729-001
              */
             task_id: string;
         };
-        /** ImprovementFeedbackReassignRequest */
+        /**
+         * ImprovementFeedbackReassignRequest
+         * @description Move one improvement feedback record to another improvement.
+         */
         ImprovementFeedbackReassignRequest: {
             /**
              * Target Improvement Id
              * @description 把该反馈移动到的目标改进事项 ID（跨事项调整）。
+             * @example imp-20260729-002
              */
             target_improvement_id: string;
         };
@@ -4935,11 +5358,15 @@ export interface components {
             /** Ref Id */
             ref_id: string;
         };
-        /** ImprovementMergeRequest */
+        /**
+         * ImprovementMergeRequest
+         * @description Merge another improvement item into the current target improvement.
+         */
         ImprovementMergeRequest: {
             /**
              * Source Improvement Id
              * @description 被归并进当前事项的源改进事项 ID（同 Agent）。
+             * @example imp-20260729-001
              */
             source_improvement_id: string;
         };
@@ -4952,23 +5379,32 @@ export interface components {
              */
             score: number;
         };
-        /** ImprovementSplitRequest */
+        /**
+         * ImprovementSplitRequest
+         * @description Split one feedback reference into a new improvement item.
+         */
         ImprovementSplitRequest: {
             /**
              * Feedback Ref
              * @description 要从当前事项拆出为新事项的来源反馈 ID。
+             * @example feedback-20260729-001
              */
             feedback_ref: string;
         };
-        /** ImprovementStageTransitionRequest */
+        /**
+         * ImprovementStageTransitionRequest
+         * @description Move one improvement item through its governed lifecycle.
+         */
         ImprovementStageTransitionRequest: {
             /**
              * Stage
              * @description 目标阶段：feedback_intake/triage/attribution/optimization/execution/regression/release；非法转移由后端状态机拒绝（409）。
+             * @example attribution
              * @enum {string}
              */
             stage: "feedback_intake" | "triage" | "attribution" | "optimization" | "execution" | "regression" | "release";
         };
+        /** @description Recursive JSON value accepted inside caller-provided metadata objects. */
         JsonValue: unknown;
         /** ModelProviderReadiness */
         ModelProviderReadiness: {
@@ -5083,41 +5519,50 @@ export interface components {
             /** User Quote */
             user_quote: string;
         };
-        /** NormalizedFeedbackUpsertRequest */
+        /**
+         * NormalizedFeedbackUpsertRequest
+         * @description Replace the editable normalized-feedback artifact for one improvement.
+         */
         NormalizedFeedbackUpsertRequest: {
             /**
              * Impact
              * @description 影响（高/中/低或描述）。
              * @default
+             * @example 高：停止后的下一轮无法继续会话。
              */
             impact: string;
             /**
              * Possible Object
              * @description 可能对象。
              * @default
+             * @example session turn admission
              */
             possible_object: string;
             /**
              * Possible Reason
              * @description 可能原因。
              * @default
+             * @example 停止路径未等待 session fence 释放。
              */
             possible_reason: string;
             /**
              * Problem
              * @description 问题（一句话）。
+             * @example 停止流式输出后再次发送消息发生会话冲突。
              */
             problem: string;
             /**
              * Suggestion
              * @description 建议方向。
              * @default
+             * @example 停止接口等待 run 终态与 fence 释放。
              */
             suggestion: string;
             /**
              * User Quote
              * @description 用户原话。
              * @default
+             * @example 停止后再发消息就报会话冲突。
              */
             user_quote: string;
         };
@@ -5135,31 +5580,49 @@ export interface components {
             index: number;
             message: components["schemas"]["OpenAIChatMessage"];
         };
-        /** OpenAIChatCompletionRequest */
+        /**
+         * OpenAIChatCompletionRequest
+         * @description Text-only, non-streaming request accepted by the deprecated compatibility shim.
+         */
         OpenAIChatCompletionRequest: {
             /**
              * Max Turns
              * @description Claude Agent turn cap for this request.
+             * @example 8
              */
             max_turns?: number | null;
             /**
              * Messages
-             * @description OpenAI-compatible text chat messages.
+             * @description OpenAI-compatible text chat messages. At least one non-empty user message is required.
+             * @example [
+             *       {
+             *         "content": "请总结这起告警的关键风险",
+             *         "role": "user"
+             *       }
+             *     ]
              */
             messages: components["schemas"]["OpenAIChatMessage"][];
-            /** Metadata */
+            /**
+             * Metadata
+             * @description Caller-provided JSON metadata retained with the managed run for observability.
+             * @example {
+             *       "source": "openai-compat-client"
+             *     }
+             */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Model
              * @description Model override. Defaults to AGENT_MODEL.
+             * @example claude-sonnet-4-5
              */
             model?: string | null;
             /**
              * Stream
              * @description This minimal compatibility endpoint is non-streaming; only false is accepted.
              * @default false
+             * @example false
              * @constant
              */
             stream: false;
@@ -5182,12 +5645,21 @@ export interface components {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
         };
-        /** OpenAIChatMessage */
+        /**
+         * OpenAIChatMessage
+         * @description One text-only message accepted by the deprecated Chat Completions shim.
+         */
         OpenAIChatMessage: {
-            /** Content */
+            /**
+             * Content
+             * @description Non-blank text content for this message.
+             * @example 请总结这起告警的关键风险
+             */
             content: string;
             /**
              * Role
+             * @description OpenAI-style role for this text message.
+             * @example user
              * @enum {string}
              */
             role: "developer" | "system" | "user" | "assistant";
@@ -5213,9 +5685,16 @@ export interface components {
              */
             effective_agent_id: string;
         };
-        /** OpenAICompatAgentUpdate */
+        /**
+         * OpenAICompatAgentUpdate
+         * @description Select the registered business Agent used by strict OpenAI-compatible surfaces.
+         */
         OpenAICompatAgentUpdate: {
-            /** Agent Id */
+            /**
+             * Agent Id
+             * @description Registered business Agent identifier.
+             * @example security-operations-expert
+             */
             agent_id: string;
         };
         /** OpenAIErrorResponse */
@@ -5226,16 +5705,21 @@ export interface components {
                 type: string;
             };
         };
-        /** OptimizationChange */
+        /**
+         * OptimizationChange
+         * @description One concrete target and change pair in an optimization plan.
+         */
         OptimizationChange: {
             /**
              * Change
              * @description 变更描述。
+             * @example 补充停止后续聊的并发回归测试。
              */
             change: string;
             /**
              * Target
              * @description 变更对象（prompt/skill/profile/config 等）。
+             * @example tests/runtime
              */
             target: string;
         };
@@ -5277,30 +5761,63 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
-        /** OptimizationPlanUpsertRequest */
+        /**
+         * OptimizationPlanUpsertRequest
+         * @description Replace the editable optimization-plan artifact for one improvement.
+         */
         OptimizationPlanUpsertRequest: {
             /**
              * Changes
              * @description 变更项列表。
+             * @example [
+             *       {
+             *         "change": "补充停止后续聊的并发回归测试。",
+             *         "target": "tests/runtime"
+             *       }
+             *     ]
              */
             changes: components["schemas"]["OptimizationChange"][];
             /**
              * Summary
              * @description 方案正文。
+             * @example 停止后续聊需要统一释放 session fence。
              */
             summary: string;
         };
-        /** PendingCorrelationResolveRequest */
+        /**
+         * PendingCorrelationResolveRequest
+         * @description Supply identifiers that resolve one pending SOC event correlation.
+         */
         PendingCorrelationResolveRequest: {
-            /** Alert Id */
+            /**
+             * Alert Id
+             * @description SOC alert identifier used for correlation or feedback routing.
+             * @example alert-20260729-001
+             */
             alert_id?: string | null;
-            /** Case Id */
+            /**
+             * Case Id
+             * @description SOC business-case identifier used for correlation or feedback routing.
+             * @example case-20260729-001
+             */
             case_id?: string | null;
-            /** Comment */
+            /**
+             * Comment
+             * @description Optional analyst or operator comment.
+             * @example 已复核原始运行证据。
+             */
             comment?: string | null;
-            /** Run Id */
+            /**
+             * Run Id
+             * @description Managed Agent run identifier used for correlation.
+             * @example run-20260729-001
+             */
             run_id?: string | null;
-            /** Session Id */
+            /**
+             * Session Id
+             * @description AgentGov session identifier used for continuation or correlation.
+             * @example sess-20260729
+             */
             session_id?: string | null;
         };
         /** PendingCorrelationResponse */
@@ -5512,29 +6029,55 @@ export interface components {
              */
             type: "reasoning_text";
         };
-        /** ResponsesInputMessage */
+        /**
+         * ResponsesInputMessage
+         * @description Typed message item accepted by the transitional Responses input array.
+         */
         ResponsesInputMessage: {
-            /** Content */
+            /**
+             * Content
+             * @description Non-blank message text or a non-empty array of typed input_text blocks.
+             * @example 请复核该告警的处置结论
+             * @example [
+             *       {
+             *         "text": "请复核该告警的处置结论",
+             *         "type": "input_text"
+             *       }
+             *     ]
+             */
             content: string | components["schemas"]["ResponsesInputText"][];
             /**
              * Role
+             * @description Message role. At least one user message with non-blank text is required in the complete input array; only user-message text is mapped to the current Agent prompt.
+             * @example user
              * @enum {string}
              */
             role: "developer" | "system" | "user" | "assistant";
             /**
              * Type
+             * @description Discriminator for an input message item.
              * @default message
+             * @example message
              * @constant
              */
             type: "message";
         };
-        /** ResponsesInputText */
+        /**
+         * ResponsesInputText
+         * @description One typed text content block inside a Responses input message.
+         */
         ResponsesInputText: {
-            /** Text */
+            /**
+             * Text
+             * @description Non-blank text carried by this input content block.
+             * @example 请复核该告警的处置结论
+             */
             text: string;
             /**
              * Type
+             * @description Discriminator for a text input content block.
              * @default input_text
+             * @example input_text
              * @constant
              */
             type: "input_text";
@@ -5544,49 +6087,78 @@ export interface components {
          * @description ``POST /v1/responses`` 请求。无 ``agentgov`` = strict 模式；有 = control 模式。
          */
         ResponsesRequest: ({
-            /** @description Presence selects control mode; carries the non-standard control plane. */
+            /**
+             * @description AgentGov control-plane extension. Omit it for strict mode; when present, agent_id is required and control-only trace, debug, feedback routing, and speech-summary switches become available.
+             * @example {
+             *       "agent_id": "security-operations-expert",
+             *       "debug": {
+             *         "sdk_raw": true
+             *       },
+             *       "include_trace": true,
+             *       "with_speech_summary": true
+             *     }
+             */
             agentgov?: components["schemas"]["AgentGovRequestExtension"] | null;
             /**
              * Conversation
-             * @description conv_<session_id>; maps to the server session.
+             * @description AgentGov conversation projection (normally conv_<session_id>) used to continue that server session. Prefer this or previous_response_id alone. If both are supplied, AgentGov currently accepts them only when they resolve to the same conversation; this is a documented OpenAI compatibility deviation.
+             * @example conv_sess-20260729
              */
             conversation?: string | null;
             /**
              * Input
              * @description Non-empty prompt string, or typed text message items containing a current user message.
+             * @example 请核查当前告警并给出处置建议
+             * @example [
+             *       {
+             *         "content": "请核查当前告警并给出处置建议",
+             *         "role": "user",
+             *         "type": "message"
+             *       }
+             *     ]
              */
             input: string | components["schemas"]["ResponsesInputMessage"][];
             /**
              * Instructions
              * @description OpenAI standard field NAME. In AgentGov this is APPEND-ONLY (mapped to system_append, appended to the Claude Code preset + workspace CLAUDE.md), which differs from OpenAI replace/swap semantics. Rejected (422) on the strict surface.
+             * @example 补充说明证据不足的判断，不替换业务 Agent 的受治理指令。
              */
             instructions?: string | null;
             /**
              * Metadata
              * @description AgentGov transitional metadata object. Values may be nested JSON; backend-reserved keys are removed before public echo and the backend does not route on remaining entries.
+             * @example {
+             *       "source": "soc-console",
+             *       "tenant": "north-region"
+             *     }
              */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Model
-             * @description Per-request LLM override only; never an agent handle.
+             * @description Per-request LLM override only; never a business Agent handle. Omit to use the Agent profile.
+             * @example claude-sonnet-4-5
              */
             model?: string | null;
             /**
              * Previous Response Id
-             * @description Derives owning conversation; 409 if inconsistent with an explicit conversation, 404 if not found.
+             * @description Previous AgentGov response id (resp_<run_id>) whose owning conversation should be continued. Returns 404 when the response is unknown and 409 when its conversation is unavailable or conflicts with an explicit conversation. Prefer this or conversation alone.
+             * @example resp_run-20260729-001
              */
             previous_response_id?: string | null;
             /**
              * Store
-             * @description Default true; false only closes public GET /v1/responses/{id}, internal audit stays.
+             * @description Whether the response remains retrievable through GET /v1/responses/{response_id}. false disables public retrieval but does not remove internal audit evidence.
              * @default true
+             * @example false
              */
             store: boolean;
             /**
              * Stream
+             * @description false returns one JSON ResponseObject; true returns Responses-style SSE. agentgov.with_speech_summary=true is valid only when this field is true.
              * @default false
+             * @example true
              */
             stream: boolean;
         } & unknown) & ({
@@ -5701,56 +6273,75 @@ export interface components {
              */
             status: "ok";
         };
-        /** RuntimeRawEventsRequest */
+        /**
+         * RuntimeRawEventsRequest
+         * @description Managed Agent turn whose response boundary exposes byte-exact Runtime stdout.
+         */
         RuntimeRawEventsRequest: {
             /**
              * Agent Id
              * @description Registered business agent to run. The Runtime implementation is selected by the server.
+             * @example security-operations-expert
              */
             agent_id: string;
             /**
              * Alert Id
              * @description Optional SOC alert id used by the feedback loop.
+             * @example alert-20260729-001
              */
             alert_id?: string | null;
             /**
              * Case Id
              * @description Optional SOC case id used by the feedback loop.
+             * @example case-20260729-001
              */
             case_id?: string | null;
             /**
              * Max Turns
              * @description Per-request turn cap. Defaults to MAX_TURNS.
+             * @example 8
              */
             max_turns?: number | null;
             /**
              * Message
              * @description User message or task prompt. Must contain at least one non-whitespace character.
+             * @example 请核查当前告警并给出处置建议
              */
             message: string;
-            /** Metadata */
+            /**
+             * Metadata
+             * @description Caller-provided JSON metadata retained with the managed run for observability.
+             * @example {
+             *       "source": "soc-console",
+             *       "tenant": "north-region"
+             *     }
+             */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Model
              * @description Per-request model override. Defaults to AGENT_MODEL.
+             * @example claude-sonnet-4-5
              */
             model?: string | null;
             /**
              * Session Id
              * @description Client-visible session id. If omitted, the API creates one.
+             * @example sess-20260729
              */
             session_id?: string | null;
             /**
              * Stream
              * @description When true, flush raw Runtime stdout bytes as they arrive; otherwise buffer the same bytes into one response.
              * @default false
+             * @example true
              */
             stream: boolean;
             /**
              * System Append
              * @description Extra instruction appended to the Claude Code preset prompt.
+             * @example 输出结论时同时列出关键证据。
              */
             system_append?: string | null;
         };
@@ -5834,61 +6425,137 @@ export interface components {
             /** Path */
             path: string;
         };
-        /** SocEventIngestRequest */
+        /**
+         * SocEventIngestRequest
+         * @description Ingest one typed SOC event and attempt deterministic run correlation.
+         */
         SocEventIngestRequest: {
-            /** Actor Id */
+            /**
+             * Actor Id
+             * @description Identifier of the human or system actor that caused the SOC event.
+             * @example analyst-17
+             */
             actor_id?: string | null;
-            /** After */
+            /**
+             * After
+             * @description Structured value after the observed SOC change.
+             * @example {
+             *       "verdict": "malicious"
+             *     }
+             */
             after?: {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
-            /** Alert Id */
+            /**
+             * Alert Id
+             * @description SOC alert identifier used for correlation or feedback routing.
+             * @example alert-20260729-001
+             */
             alert_id?: string | null;
             /**
              * Auto Captured
+             * @description Whether the source was captured automatically rather than entered by an analyst.
              * @default true
+             * @example true
              */
             auto_captured: boolean;
-            /** Before */
+            /**
+             * Before
+             * @description Structured value before the observed SOC change.
+             * @example {
+             *       "verdict": "unknown"
+             *     }
+             */
             before?: {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
-            /** Case Id */
+            /**
+             * Case Id
+             * @description SOC business-case identifier used for correlation or feedback routing.
+             * @example case-20260729-001
+             */
             case_id?: string | null;
-            /** Comment */
+            /**
+             * Comment
+             * @description Optional analyst or operator comment.
+             * @example 已复核原始运行证据。
+             */
             comment?: string | null;
             /**
              * Confidence
+             * @description Confidence assigned to the feedback or SOC event.
              * @default medium
+             * @example high
              */
             confidence: ("low" | "medium" | "high") | null;
-            /** Entities */
+            /**
+             * Entities
+             * @description Entity identifiers grouped by entity kind.
+             * @example {
+             *       "host": [
+             *         "host-17"
+             *       ],
+             *       "user": [
+             *         "alice"
+             *       ]
+             *     }
+             */
             entities?: {
                 [key: string]: string[];
             };
-            /** Event Id */
+            /**
+             * Event Id
+             * @description Caller-stable SOC event identifier used for idempotent ingestion.
+             * @example soc-event-20260729-001
+             */
             event_id: string;
             /**
              * Event Type
+             * @description Closed SOC event type that describes the observed change.
+             * @example case.verdict_changed
              * @enum {string}
              */
             event_type: "case.verdict_changed" | "case.severity_changed" | "recommendation.accepted" | "recommendation.rejected" | "recommendation.modified" | "evidence.added" | "tool.manual_query_after_agent";
-            /** Metadata */
+            /**
+             * Metadata
+             * @description Caller-provided JSON metadata retained for correlation or observability.
+             * @example {
+             *       "source": "soc-console"
+             *     }
+             */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Requires Review
+             * @description Whether the source must remain in the human-review queue.
              * @default true
+             * @example true
              */
             requires_review: boolean;
-            /** Run Id */
+            /**
+             * Run Id
+             * @description Managed Agent run identifier used for correlation.
+             * @example run-20260729-001
+             */
             run_id?: string | null;
-            /** Session Id */
+            /**
+             * Session Id
+             * @description AgentGov session identifier used for continuation or correlation.
+             * @example sess-20260729
+             */
             session_id?: string | null;
-            /** Source System */
+            /**
+             * Source System
+             * @description System that produced the SOC event.
+             * @example soc-console
+             */
             source_system: string;
-            /** Timestamp */
+            /**
+             * Timestamp
+             * @description RFC 3339 timestamp supplied by the source system.
+             * @example 2026-07-29T12:00:00Z
+             */
             timestamp: string;
         };
         /** SocEventIngestResponse */
@@ -6034,18 +6701,27 @@ export interface components {
             /** Tree Sha256 */
             tree_sha256: string;
         };
-        /** WorkspaceRestoreRequest */
+        /**
+         * WorkspaceRestoreRequest
+         * @description Restore a historical Agent workspace tree as a new commit.
+         */
         WorkspaceRestoreRequest: {
             /**
              * Expected Current Commit Sha
              * @description Current workspace HEAD used as an optimistic concurrency guard.
+             * @example a1b2c3d4e5f6
              */
             expected_current_commit_sha: string;
-            /** Reason */
+            /**
+             * Reason
+             * @description Optional audited reason for the requested operation.
+             * @example 恢复到已验证的 workspace 版本。
+             */
             reason?: string | null;
             /**
              * Target Commit Sha
              * @description Historical workspace commit whose tree will be restored.
+             * @example 9f8e7d6c5b4a
              */
             target_commit_sha: string;
         };
@@ -6085,7 +6761,15 @@ export interface operations {
     list_agent_change_sets_api_agent_change_sets_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Filter Agent change sets by their governed change-set lifecycle state.
+                 * @example draft
+                 */
                 status?: ("draft" | "execution_ready" | "candidate_committed" | "pending_approval" | "approved" | "rejected" | "publishing" | "published" | "abandoned" | "failed") | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
             };
             header?: never;
@@ -6130,6 +6814,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description 创建 Agent 待发布变更的隔离 worktree payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentChangeSetCreateRequest"];
@@ -6188,6 +6873,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
                 change_set_id: string;
             };
             cookie?: never;
@@ -6237,10 +6926,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
                 change_set_id: string;
             };
             cookie?: never;
         };
+        /** @description 放弃 Agent 待发布变更 payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentChangeSetActionRequest"];
@@ -6308,10 +7002,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
                 change_set_id: string;
             };
             cookie?: never;
         };
+        /** @description 批准 Agent 待发布变更进入发布 payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentChangeSetActionRequest"];
@@ -6379,6 +7078,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
                 change_set_id: string;
             };
             cookie?: never;
@@ -6428,6 +7131,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
                 change_set_id: string;
             };
             cookie?: never;
@@ -6475,10 +7182,18 @@ export interface operations {
     diff_agent_change_set_file_api_agent_change_sets__change_set_id__file_diff_get: {
         parameters: {
             query: {
+                /**
+                 * @description Repository-relative changed file whose unified diff should be returned.
+                 * @example .mcp.json
+                 */
                 path: string;
             };
             header?: never;
             path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
                 change_set_id: string;
             };
             cookie?: never;
@@ -6528,10 +7243,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
                 change_set_id: string;
             };
             cookie?: never;
         };
+        /** @description 发布已批准的 Agent 待发布变更 payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentChangeSetPublishRequest"];
@@ -6608,10 +7328,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
                 change_set_id: string;
             };
             cookie?: never;
         };
+        /** @description 拒绝 Agent 待发布变更 payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentChangeSetActionRequest"];
@@ -6679,6 +7404,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
                 change_set_id: string;
             };
             cookie?: never;
@@ -6755,10 +7484,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
                 change_set_id: string;
             };
             cookie?: never;
         };
+        /** @description 重试终态 Agent 待发布变更的持久化 worktree 清理 payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentChangeSetActionRequest"];
@@ -6824,9 +7558,15 @@ export interface operations {
     read_agent_config_file_api_agent_config_file_get: {
         parameters: {
             query: {
-                /** @description Business agent id from /api/agent-registry. */
+                /**
+                 * @description Business agent id from /api/agent-registry.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string;
-                /** @description Editable project config path. Currently only .mcp.json is supported. */
+                /**
+                 * @description Editable project config path. Currently only .mcp.json is supported.
+                 * @example .mcp.json
+                 */
                 path: string;
             };
             header?: never;
@@ -6912,15 +7652,22 @@ export interface operations {
     update_agent_config_file_api_agent_config_file_put: {
         parameters: {
             query: {
-                /** @description Business agent id from /api/agent-registry. */
+                /**
+                 * @description Business agent id from /api/agent-registry.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string;
-                /** @description Editable project config path. Currently only .mcp.json is supported. */
+                /**
+                 * @description Editable project config path. Currently only .mcp.json is supported.
+                 * @example .mcp.json
+                 */
                 path: string;
             };
             header?: never;
             path?: never;
             cookie?: never;
         };
+        /** @description Update an editable business-agent project config file payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentConfigFileUpdateRequest"];
@@ -7004,10 +7751,30 @@ export interface operations {
     list_agent_jobs_api_agent_jobs_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Filter historical Agent jobs by their registered governance job type.
+                 * @example attribution
+                 */
                 job_type?: components["schemas"]["AgentJobType"] | null;
+                /**
+                 * @description Filter historical jobs by backend-owned scope category.
+                 * @example feedback_case
+                 */
                 scope_kind?: string | null;
+                /**
+                 * @description Filter historical jobs by backend-owned scope identifier.
+                 * @example fbc-20260729-001
+                 */
                 scope_id?: string | null;
+                /**
+                 * @description Filter records by the closed status enum documented for this operation.
+                 * @example running
+                 */
                 status?: ("created" | "queued" | "running" | "schema_validating" | "evidence_packaging" | "completed" | "failed" | "needs_human_review" | "timeout") | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
             };
             header?: never;
@@ -7050,6 +7817,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Historical Agent job identifier addressed by this read-only operation.
+                 * @example job-20260729-001
+                 */
                 job_id: string;
             };
             cookie?: never;
@@ -7128,6 +7899,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
@@ -7195,10 +7970,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
         };
+        /** @description Transition a business agent's lifecycle status (rejects illegal transitions) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentLifecycleTransitionRequest"];
@@ -7266,6 +8046,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
@@ -7315,6 +8099,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
@@ -7364,10 +8152,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
         };
+        /** @description Update Agent Test Schedule payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentTestScheduleUpdateRequest"];
@@ -7433,10 +8226,18 @@ export interface operations {
     list_agent_test_schedule_events_api_agent_registry__agent_id__test_schedule_events_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
             };
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
@@ -7484,10 +8285,18 @@ export interface operations {
     inspect_agent_test_suite_api_agent_registry__agent_id__test_suite_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Read or filter against this exact Agent repository commit.
+                 * @example a1b2c3d4e5f6
+                 */
                 commit_sha?: string | null;
             };
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
@@ -7535,11 +8344,23 @@ export interface operations {
     get_agent_test_suite_file_api_agent_registry__agent_id__test_suite_file_get: {
         parameters: {
             query: {
+                /**
+                 * @description Non-empty workspace-relative pytest file path from the Agent test suite.
+                 * @example tests/test_runtime.py
+                 */
                 path: string;
+                /**
+                 * @description Read or filter against this exact Agent repository commit.
+                 * @example a1b2c3d4e5f6
+                 */
                 commit_sha?: string | null;
             };
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
@@ -7607,6 +8428,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
@@ -7691,23 +8516,38 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
         };
+        /** @description Create or overwrite a business Agent from an exact workspace package payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "multipart/form-data": {
-                    /** @description Required when overwriting an existing Agent. */
+                    /**
+                     * @description Required when overwriting an existing Agent.
+                     * @example a1b2c3d4e5f6
+                     */
                     expected_current_commit_sha?: string;
-                    /** @description Required only for a new Agent. */
+                    /**
+                     * @description Required only for a new Agent.
+                     * @example SOC Analyst
+                     */
                     name?: string;
                     /**
                      * Format: binary
                      * @description A .tar.gz archive with exactly one workspace/ root. workspace/agent.yaml must declare an agent.id that exactly matches the URL agent_id.
+                     * @example business-agent-workspace.tar.gz
                      */
                     package: string;
-                    /** @description Optional overwrite commit message. */
+                    /**
+                     * @description Optional overwrite commit message.
+                     * @example 导入已离线验收的 workspace 包。
+                     */
                     reason?: string;
                 };
             };
@@ -7810,10 +8650,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id: string;
             };
             cookie?: never;
         };
+        /** @description Restore a historical workspace tree as a new Git commit payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["WorkspaceRestoreRequest"];
@@ -7897,7 +8742,15 @@ export interface operations {
     list_agent_releases_api_agent_releases_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Filter Agent releases by published, archived, rolled-back, or rollback-failed state.
+                 * @example published
+                 */
                 status?: ("published" | "archived" | "rolled_back" | "rollback_failed") | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
             };
             header?: never;
@@ -7940,6 +8793,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent release identifier addressed by this operation.
+                 * @example rel-20260729-001
+                 */
                 release_id: string;
             };
             cookie?: never;
@@ -7989,10 +8846,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent release identifier addressed by this operation.
+                 * @example rel-20260729-001
+                 */
                 release_id: string;
             };
             cookie?: never;
         };
+        /** @description Restore one business Agent Workspace to a release payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentReleaseRestoreRequest"];
@@ -8069,10 +8931,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Agent release identifier addressed by this operation.
+                 * @example rel-20260729-001
+                 */
                 release_id: string;
             };
             cookie?: never;
         };
+        /** @description Rollback one business Agent Workspace to a release payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentReleaseRollbackRequest"];
@@ -8147,7 +9014,10 @@ export interface operations {
     get_agent_repository_status_api_agent_repository_get: {
         parameters: {
             query?: {
-                /** @description Defaults to security-operations-expert. */
+                /**
+                 * @description Defaults to security-operations-expert.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
             };
             header?: never;
@@ -8188,6 +9058,10 @@ export interface operations {
     get_current_agent_ref_api_agent_repository_current_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
             };
             header?: never;
@@ -8228,12 +9102,17 @@ export interface operations {
     discard_agent_repository_changes_api_agent_repository_discard_changes_post: {
         parameters: {
             query?: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
             };
             header?: never;
             path?: never;
             cookie?: never;
         };
+        /** @description Discard confirmed uncommitted changes from the selected business Agent workspace payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentRepositoryDiscardChangesRequest"];
@@ -8290,12 +9169,17 @@ export interface operations {
     snapshot_agent_repository_api_agent_repository_snapshot_post: {
         parameters: {
             query?: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
             };
             header?: never;
             path?: never;
             cookie?: never;
         };
+        /** @description Save the selected business Agent workspace as an Agent version payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentRepositorySnapshotRequest"];
@@ -8352,13 +9236,40 @@ export interface operations {
     list_agent_runs_api_agent_runs_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Filter records by managed Agent run identifier.
+                 * @example run-20260729-001
+                 */
                 run_id?: string | null;
+                /**
+                 * @description Filter records by AgentGov session identifier.
+                 * @example sess-20260729
+                 */
                 session_id?: string | null;
+                /**
+                 * @description Filter records correlated with this SOC alert.
+                 * @example alert-20260729-001
+                 */
                 alert_id?: string | null;
+                /**
+                 * @description Filter records correlated with this SOC business case.
+                 * @example case-20260729-001
+                 */
                 case_id?: string | null;
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
-                /** @description Include full SDK messages and reconstructed answer for explicit debug or audit inspection. */
+                /**
+                 * @description Include full SDK messages and reconstructed answer for explicit debug or audit inspection.
+                 * @example true
+                 */
                 include_messages?: boolean;
             };
             header?: never;
@@ -8401,6 +9312,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Managed Agent run identifier addressed by this operation.
+                 * @example run-20260729-001
+                 */
                 run_id: string;
             };
             cookie?: never;
@@ -8462,6 +9377,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Managed Agent run identifier addressed by this operation.
+                 * @example run-20260729-001
+                 */
                 run_id: string;
             };
             cookie?: never;
@@ -8513,6 +9432,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Run a managed Claude Agent SDK turn and stream native SDK messages payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ClaudeSdkEventsRequest"];
@@ -8620,8 +9540,20 @@ export interface operations {
     list_agent_test_runs_api_agent_test_runs_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
+                /**
+                 * @description Filter test runs by Agent change set.
+                 * @example chg-20260729-001
+                 */
                 change_set_id?: string | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
             };
             header?: never;
@@ -8666,6 +9598,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Create Agent Test Run payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentTestRunCreateRequest"];
@@ -8731,11 +9664,35 @@ export interface operations {
     list_agent_test_run_history_api_agent_test_runs_history_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
+                /**
+                 * @description Filter records by the closed status enum documented for this operation.
+                 * @example running
+                 */
                 status?: ("queued" | "running" | "passed" | "failed" | "error" | "cancelled" | "interrupted") | null;
+                /**
+                 * @description Filter test-run history by trigger source.
+                 * @example manual
+                 */
                 source?: string | null;
+                /**
+                 * @description Read or filter against this exact Agent repository commit.
+                 * @example a1b2c3d4e5f6
+                 */
                 commit_sha?: string | null;
+                /**
+                 * @description Opaque pagination cursor returned by the preceding history page.
+                 * @example cursor-20260729-001
+                 */
                 cursor?: string | null;
+                /**
+                 * @description Maximum number of historical test runs to return (1–200).
+                 * @example 50
+                 */
                 limit?: number;
             };
             header?: never;
@@ -8787,6 +9744,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Platform Agent test-run identifier.
+                 * @example test-run-20260729-001
+                 */
                 test_run_id: string;
             };
             cookie?: never;
@@ -8836,6 +9797,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Platform Agent test-run identifier.
+                 * @example test-run-20260729-001
+                 */
                 test_run_id: string;
             };
             cookie?: never;
@@ -8905,6 +9870,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Create Agent Test Session payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentTestSessionCreateRequest"];
@@ -8963,6 +9929,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Isolated Agent test-session identifier.
+                 * @example test-session-20260729-001
+                 */
                 test_session_id: string;
             };
             cookie?: never;
@@ -9028,10 +9998,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Isolated Agent test-session identifier.
+                 * @example test-session-20260729-001
+                 */
                 test_session_id: string;
             };
             cookie?: never;
         };
+        /** @description Send Agent Test Message payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentTestMessageRequest"];
@@ -9097,7 +10072,10 @@ export interface operations {
     list_agents_api_agents_get: {
         parameters: {
             query?: {
-                /** @description Business agent id from /api/agent-registry. */
+                /**
+                 * @description Business agent id from /api/agent-registry.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string;
             };
             header?: never;
@@ -9149,6 +10127,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description First-class feedback case identifier addressed by this operation.
+                 * @example fbc-20260729-001
+                 */
                 feedback_case_id: string;
             };
             cookie?: never;
@@ -9196,11 +10178,20 @@ export interface operations {
     list_assets_api_assets_get: {
         parameters: {
             query?: {
-                /** @description 按业务 Agent 过滤。 */
+                /**
+                 * @description 按业务 Agent 过滤。
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
-                /** @description 按资产类型过滤。 */
+                /**
+                 * @description 按资产类型过滤。
+                 * @example methodology
+                 */
                 asset_type?: ("methodology" | "execution" | "audit") | null;
-                /** @description 按沉淀来源改进事项过滤（§11.2 本事项沉淀资产）。 */
+                /**
+                 * @description 按沉淀来源改进事项过滤（§11.2 本事项沉淀资产）。
+                 * @example imp-20260729-001
+                 */
                 source_improvement_id?: string | null;
             };
             header?: never;
@@ -9245,6 +10236,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Create a governance asset payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AssetCreateRequest"];
@@ -9303,6 +10295,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Governed asset identifier addressed by this operation.
+                 * @example asset-20260729-001
+                 */
                 asset_id: string;
             };
             cookie?: never;
@@ -9352,10 +10348,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Governed asset identifier addressed by this operation.
+                 * @example asset-20260729-001
+                 */
                 asset_id: string;
             };
             cookie?: never;
         };
+        /** @description Inherit (compound) an asset into another business agent payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AssetInheritRequest"];
@@ -9425,6 +10426,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Run a Claude Agent task and return the full result payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentTargetedChatRequest"];
@@ -9499,13 +10501,17 @@ export interface operations {
     chat_stream_api_chat_stream_post: {
         parameters: {
             query?: {
-                /** @description raw preserves the legacy AgentGov SSE projection of parsed SDK messages; it is not byte-exact Runtime stdout. semantic adds complete trace_event facts and suppresses transport noise. */
+                /**
+                 * @description raw preserves the legacy AgentGov SSE projection of parsed SDK messages; it is not byte-exact Runtime stdout. semantic adds complete trace_event facts and suppresses transport noise.
+                 * @example semantic
+                 */
                 event_mode?: "raw" | "semantic";
             };
             header?: never;
             path?: never;
             cookie?: never;
         };
+        /** @description Run a Claude Agent task as server-sent events payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ChatStreamRequest"];
@@ -9575,10 +10581,30 @@ export interface operations {
     list_requests_api_claude_user_input_requests_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Filter records by AgentGov session identifier.
+                 * @example sess-20260729
+                 */
                 session_id?: string | null;
+                /**
+                 * @description Filter records by managed Agent run identifier.
+                 * @example run-20260729-001
+                 */
                 run_id?: string | null;
+                /**
+                 * @description Filter Claude user-input requests by waiting, resolved, or cancelled state.
+                 * @example waiting
+                 */
                 status?: ("waiting" | "resolved" | "cancelled") | null;
+                /**
+                 * @description Filter waiting input requests by registered business Agent.
+                 * @example security-operations-expert
+                 */
                 business_agent_id?: string | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
             };
             header?: never;
@@ -9619,9 +10645,15 @@ export interface operations {
     config_mapping_api_config_get: {
         parameters: {
             query?: {
-                /** @description Business agent id from /api/agent-registry. */
+                /**
+                 * @description Business agent id from /api/agent-registry.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string;
-                /** @description Include host mount paths for operator diagnostics. */
+                /**
+                 * @description Include host mount paths for operator diagnostics.
+                 * @example false
+                 */
                 include_host_mounts?: boolean;
             };
             header?: never;
@@ -9675,6 +10707,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Run a managed Agent and return byte-exact native Runtime events payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["RuntimeRawEventsRequest"];
@@ -9794,6 +10827,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Evidence package identifier addressed by this operation.
+                 * @example evp-20260729-001
+                 */
                 evidence_package_id: string;
             };
             cookie?: never;
@@ -9843,7 +10880,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Evidence package identifier addressed by this operation.
+                 * @example evp-20260729-001
+                 */
                 evidence_package_id: string;
+                /**
+                 * @description Included evidence-package file name.
+                 * @example manifest.json
+                 */
                 file_name: string;
             };
             cookie?: never;
@@ -9891,9 +10936,25 @@ export interface operations {
     list_feedback_cases_api_feedback_cases_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
+                /**
+                 * @description Filter feedback cases by their governed evidence/attribution/review state.
+                 * @example pending_evidence
+                 */
                 status?: ("pending_evidence" | "pending_attribution" | "attribution_queued" | "pending_review" | "needs_human_review") | null;
+                /**
+                 * @description Case-insensitive free-text search over the feedback-case title and source identifiers.
+                 * @example 会话冲突
+                 */
                 q?: string | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
             };
             header?: never;
@@ -9938,6 +10999,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Create one feedback disposition case from feedback signals payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["FeedbackCaseCreateRequest"];
@@ -10005,6 +11067,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description First-class feedback case identifier addressed by this operation.
+                 * @example fbc-20260729-001
+                 */
                 feedback_case_id: string;
             };
             cookie?: never;
@@ -10054,6 +11120,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description First-class feedback case identifier addressed by this operation.
+                 * @example fbc-20260729-001
+                 */
                 feedback_case_id: string;
             };
             cookie?: never;
@@ -10119,12 +11189,40 @@ export interface operations {
     list_feedback_signals_api_feedback_signals_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Filter records by managed Agent run identifier.
+                 * @example run-20260729-001
+                 */
                 run_id?: string | null;
+                /**
+                 * @description Filter records by AgentGov session identifier.
+                 * @example sess-20260729
+                 */
                 session_id?: string | null;
+                /**
+                 * @description Filter records correlated with this SOC alert.
+                 * @example alert-20260729-001
+                 */
                 alert_id?: string | null;
+                /**
+                 * @description Filter records correlated with this SOC business case.
+                 * @example case-20260729-001
+                 */
                 case_id?: string | null;
+                /**
+                 * @description Filter feedback signals by the documented source-type enum.
+                 * @example explicit_feedback
+                 */
                 source_type?: ("explicit_feedback" | "implicit_feedback" | "analyst_annotation") | null;
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
             };
             header?: never;
@@ -10169,6 +11267,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Collect one feedback signal without attribution or proposal generation payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["FeedbackSignalCreateRequest"];
@@ -10227,6 +11326,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Feedback signal identifier addressed by this operation.
+                 * @example signal-20260729-001
+                 */
                 signal_id: string;
             };
             cookie?: never;
@@ -10276,10 +11379,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Feedback signal identifier addressed by this operation.
+                 * @example signal-20260729-001
+                 */
                 signal_id: string;
             };
             cookie?: never;
         };
+        /** @description Reassign a feedback signal's owning agent (records an audit correction) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["FeedbackSignalReassignRequest"];
@@ -10345,6 +11453,10 @@ export interface operations {
     list_feedback_sources_api_feedback_sources_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Maximum number of unified feedback sources to return (1–1000).
+                 * @example 500
+                 */
                 limit?: number;
             };
             header?: never;
@@ -10387,7 +11499,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Feedback source namespace: signal, soc_event, or pending_correlation.
+                 * @example signal
+                 */
                 source_kind: "signal" | "soc_event" | "pending_correlation";
+                /**
+                 * @description Identifier within the source_kind namespace.
+                 * @example signal-20260729-001
+                 */
                 source_id: string;
             };
             cookie?: never;
@@ -10437,11 +11557,20 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Feedback source namespace: signal, soc_event, or pending_correlation.
+                 * @example signal
+                 */
                 source_kind: "signal" | "soc_event" | "pending_correlation";
+                /**
+                 * @description Identifier within the source_kind namespace.
+                 * @example signal-20260729-001
+                 */
                 source_id: string;
             };
             cookie?: never;
         };
+        /** @description Update developer annotations for one feedback source payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["FeedbackSourceUpdateRequest"];
@@ -10507,7 +11636,10 @@ export interface operations {
     list_improvements_api_improvements_get: {
         parameters: {
             query?: {
-                /** @description 按业务 Agent 归属过滤；省略则返回全部 Agent。 */
+                /**
+                 * @description 按业务 Agent 归属过滤；省略则返回全部 Agent。
+                 * @example security-operations-expert
+                 */
                 agent_id?: string | null;
             };
             header?: never;
@@ -10552,6 +11684,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Create an improvement item under a business agent payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ImprovementCreateRequest"];
@@ -10610,6 +11743,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -10659,6 +11796,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -10724,6 +11865,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -10791,10 +11936,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
         };
+        /** @description Attach an existing FeedbackCase to this improvement (prefilled + ref registered) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AttachFeedbackCaseRequest"];
@@ -10862,6 +12012,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -10911,6 +12065,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -10960,10 +12118,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
         };
+        /** @description Upsert attribution (text + responsibility boundary + evidence) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AttributionUpsertRequest"];
@@ -11031,6 +12194,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -11098,6 +12265,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -11174,6 +12345,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -11223,6 +12398,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -11272,6 +12451,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -11348,6 +12531,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -11415,6 +12602,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -11464,10 +12655,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
         };
+        /** @description Add a source feedback to an improvement (§8.4) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ImprovementFeedbackCreateRequest"];
@@ -11535,11 +12731,20 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
+                /**
+                 * @description Improvement feedback identifier addressed by this operation.
+                 * @example feedback-20260729-001
+                 */
                 feedback_id: string;
             };
             cookie?: never;
         };
+        /** @description Move a feedback to another improvement (cross-item adjust) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ImprovementFeedbackReassignRequest"];
@@ -11607,10 +12812,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
         };
+        /** @description Return an improvement item to an earlier refinement stage payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ImprovementStageTransitionRequest"];
@@ -11678,6 +12888,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -11727,10 +12941,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
         };
+        /** @description Merge a source improvement into this one (same agent; source becomes archived) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ImprovementMergeRequest"];
@@ -11798,6 +13017,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -11847,10 +13070,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
         };
+        /** @description Upsert system understanding (NormalizedFeedback) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["NormalizedFeedbackUpsertRequest"];
@@ -11918,6 +13146,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -11985,6 +13217,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -12061,6 +13297,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -12110,10 +13350,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
         };
+        /** @description Upsert optimization plan (text + changes, §106) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["OptimizationPlanUpsertRequest"];
@@ -12181,6 +13426,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -12248,6 +13497,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -12324,6 +13577,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -12373,6 +13630,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -12440,6 +13701,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -12516,6 +13781,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
@@ -12565,10 +13834,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Improvement item identifier addressed by this operation.
+                 * @example imp-20260729-001
+                 */
                 improvement_id: string;
             };
             cookie?: never;
         };
+        /** @description Split a source feedback ref out of this improvement into a new one payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ImprovementSplitRequest"];
@@ -12636,6 +13910,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Langfuse trace identifier addressed by this debug operation.
+                 * @example trace-20260729-001
+                 */
                 trace_id: string;
             };
             cookie?: never;
@@ -12685,7 +13963,15 @@ export interface operations {
     list_pending_correlations_api_pending_correlations_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Filter pending correlations by pending or resolved state.
+                 * @example pending
+                 */
                 status?: ("pending" | "resolved") | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
             };
             header?: never;
@@ -12728,10 +14014,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Pending-correlation identifier addressed by this operation.
+                 * @example pending-20260729-001
+                 */
                 pending_id: string;
             };
             cookie?: never;
         };
+        /** @description Resolve one pending feedback correlation payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PendingCorrelationResolveRequest"];
@@ -12828,6 +14119,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description AgentGov session identifier addressed by this deprecated native route.
+                 * @example sess-20260729
+                 */
                 session_id: string;
             };
             cookie?: never;
@@ -12875,11 +14170,23 @@ export interface operations {
     get_session_messages_api_sessions__session_id__messages_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number | null;
+                /**
+                 * @description Zero-based message offset used by the deprecated session route.
+                 * @example 0
+                 */
                 offset?: number;
             };
             header?: never;
             path: {
+                /**
+                 * @description AgentGov session identifier addressed by this deprecated native route.
+                 * @example sess-20260729
+                 */
                 session_id: string;
             };
             cookie?: never;
@@ -12969,6 +14276,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Set the /v1 出口业务 Agent (validated: unknown 404, non-business 400) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["OpenAICompatAgentUpdate"];
@@ -13054,7 +14362,10 @@ export interface operations {
     list_skills_api_skills_get: {
         parameters: {
             query?: {
-                /** @description Business agent id from /api/agent-registry. */
+                /**
+                 * @description Business agent id from /api/agent-registry.
+                 * @example security-operations-expert
+                 */
                 agent_id?: string;
             };
             header?: never;
@@ -13104,11 +14415,35 @@ export interface operations {
     list_soc_events_api_soc_events_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Filter records by managed Agent run identifier.
+                 * @example run-20260729-001
+                 */
                 run_id?: string | null;
+                /**
+                 * @description Filter records by AgentGov session identifier.
+                 * @example sess-20260729
+                 */
                 session_id?: string | null;
+                /**
+                 * @description Filter records correlated with this SOC alert.
+                 * @example alert-20260729-001
+                 */
                 alert_id?: string | null;
+                /**
+                 * @description Filter records correlated with this SOC business case.
+                 * @example case-20260729-001
+                 */
                 case_id?: string | null;
+                /**
+                 * @description Filter SOC events by the documented closed event-type enum.
+                 * @example case.verdict_changed
+                 */
                 event_type?: ("case.verdict_changed" | "case.severity_changed" | "recommendation.accepted" | "recommendation.rejected" | "recommendation.modified" | "evidence.added" | "tool.manual_query_after_agent") | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
                 limit?: number;
             };
             header?: never;
@@ -13153,6 +14488,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Collect one SOC event without attribution or proposal generation payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SocEventIngestRequest"];
@@ -13211,6 +14547,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description SOC event identifier addressed by this operation.
+                 * @example soc-event-20260729-001
+                 */
                 event_id: string;
             };
             cookie?: never;
@@ -13329,10 +14669,15 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description Exact waiting Claude user-input request identifier.
+                 * @example uir-20260729-001
+                 */
                 request_id: string;
             };
             cookie?: never;
         };
+        /** @description Resolve one active HITL confirmation payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ClaudeUserInputDecisionRequest"];
@@ -13393,6 +14738,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Run the deprecated minimal text-only chat-completion shim payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["OpenAIChatCompletionRequest"];
@@ -13500,6 +14846,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Create a conversation payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody?: {
             content: {
                 "application/json": components["schemas"]["ConversationCreateRequest"] | null;
@@ -13540,6 +14887,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description AgentGov conversation projection identifier (conv_<session_id>).
+                 * @example conv_sess-20260729
+                 */
                 conversation_id: string;
             };
             cookie?: never;
@@ -13589,6 +14940,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description AgentGov conversation projection identifier (conv_<session_id>).
+                 * @example conv_sess-20260729
+                 */
                 conversation_id: string;
             };
             cookie?: never;
@@ -13636,15 +14991,33 @@ export interface operations {
     list_conversation_items_v1_conversations__conversation_id__items_get: {
         parameters: {
             query?: {
+                /**
+                 * @description Return conversation items after this msg_<index> cursor.
+                 * @example msg_0
+                 */
                 after?: string | null;
+                /**
+                 * @description Maximum number of chronological conversation items to return (1–100).
+                 * @example 20
+                 */
                 limit?: number;
-                /** @description Chronological order. */
+                /**
+                 * @description Chronological order.
+                 * @example asc
+                 */
                 order?: "asc";
-                /** @description OpenAI-shape passthrough; currently a no-op. */
+                /**
+                 * @description OpenAI-shape passthrough; currently a no-op.
+                 * @example items
+                 */
                 include?: string | null;
             };
             header?: never;
             path: {
+                /**
+                 * @description AgentGov conversation projection identifier (conv_<session_id>).
+                 * @example conv_sess-20260729
+                 */
                 conversation_id: string;
             };
             cookie?: never;
@@ -13705,6 +15078,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
+        /** @description Run an AgentGov business agent through a transitional Responses-shaped projection payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ResponsesRequest"];
@@ -13786,6 +15160,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /**
+                 * @description AgentGov response projection identifier (resp_<run_id>).
+                 * @example resp_run-20260729-001
+                 */
                 response_id: string;
             };
             cookie?: never;

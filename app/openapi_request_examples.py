@@ -1,89 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import NotRequired, TypedDict
 
-OperationKey = tuple[str, str]
-
-
-class OpenApiExample(TypedDict):
-    summary: str
-    value: object
-    description: NotRequired[str]
-
-
-@dataclass(frozen=True)
-class RequestExampleContract:
-    media_type: str
-    examples: Mapping[str, OpenApiExample]
-    operation_description: str | None = None
-
-
-def _example(summary: str, value: object, *, description: str | None = None) -> OpenApiExample:
-    item: OpenApiExample = {"summary": summary, "value": value}
-    if description:
-        item["description"] = description
-    return item
-
+from app.openapi_example_contracts import OperationKey, RequestExampleContract
+from app.openapi_example_contracts import example as _example
+from app.openapi_runtime_request_examples import RUNTIME_REQUEST_EXAMPLE_CONTRACTS
 
 _AGENT_ID = "security-operations-expert"
 _OPERATOR = "platform-operator"
 
 
-REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract] = {
-    ("/api/chat", "post"): RequestExampleContract(
-        media_type="application/json",
-        examples={
-            "default": _example(
-                "Run the deprecated native chat projection",
-                {
-                    "message": "请说明当前 workspace 中有哪些 subagents 和 skills",
-                    "agent_id": _AGENT_ID,
-                    "max_turns": 8,
-                },
-            )
-        },
-    ),
-    ("/api/chat/stream", "post"): RequestExampleContract(
-        media_type="application/json",
-        examples={
-            "default": _example(
-                "Stream the deprecated native chat projection",
-                {
-                    "message": "请分析当前告警并持续输出调查过程",
-                    "agent_id": _AGENT_ID,
-                    "max_turns": 8,
-                },
-            )
-        },
-    ),
-    ("/api/agent-runtime/sdk-events", "post"): RequestExampleContract(
-        media_type="application/json",
-        examples={
-            "managed_turn": _example(
-                "Run the managed-turn source-of-truth stream",
-                {
-                    "message": "请核查当前告警并给出处置建议",
-                    "agent_id": _AGENT_ID,
-                    "metadata": {"source": "soc-console"},
-                },
-            )
-        },
-    ),
-    ("/api/debug/agent-runtime/raw-events", "post"): RequestExampleContract(
-        media_type="application/json",
-        examples={
-            "stream_raw_bytes": _example(
-                "Stream byte-exact Runtime output",
-                {
-                    "message": "请输出本轮 Runtime 原生事件",
-                    "agent_id": _AGENT_ID,
-                    "stream": True,
-                },
-            )
-        },
-    ),
+_DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract] = {
     (
         "/v1/agentgov/confirmation-requests/{request_id}/decision",
         "post",
@@ -135,88 +62,6 @@ REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract] = {
                     "content": '{\n  "mcpServers": {}\n}\n',
                     "expected_sha256": "sha256-from-get-agent-config-file",
                 },
-            )
-        },
-    ),
-    ("/v1/chat/completions", "post"): RequestExampleContract(
-        media_type="application/json",
-        examples={
-            "minimal_text_only": _example(
-                "Run the deprecated non-streaming text shim",
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": "请总结这起告警的关键风险",
-                        }
-                    ],
-                    "stream": False,
-                },
-            )
-        },
-    ),
-    ("/v1/responses", "post"): RequestExampleContract(
-        media_type="application/json",
-        examples={
-            "agentgov_control_stream": _example(
-                "AgentGov control mode with Responses-style SSE",
-                {
-                    "input": "请核查当前告警并给出处置建议",
-                    "stream": True,
-                    "agentgov": {
-                        "agent_id": _AGENT_ID,
-                        "include_trace": True,
-                    },
-                },
-            ),
-            "agentgov_control_structured": _example(
-                "AgentGov control mode with structured input",
-                {
-                    "input": [
-                        {
-                            "type": "message",
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_text",
-                                    "text": "请复核该告警的处置结论",
-                                }
-                            ],
-                        }
-                    ],
-                    "instructions": "补充说明证据不足的判断，不替换业务 Agent 的受治理指令。",
-                    "agentgov": {"agent_id": _AGENT_ID},
-                },
-            ),
-            "strict_openai": _example(
-                "Strict OpenAI-shaped transitional request",
-                {
-                    "input": "请概括当前任务的处理结果",
-                    "stream": False,
-                },
-            ),
-        },
-    ),
-    ("/v1/conversations", "post"): RequestExampleContract(
-        media_type="application/json",
-        examples={
-            "empty_conversation": _example(
-                "Create a conversation without client metadata",
-                {},
-            ),
-            "with_metadata": _example(
-                "Create a conversation with observability metadata",
-                {"metadata": {"source": "soc-console", "tenant": "north-region"}},
-            ),
-        },
-    ),
-    ("/api/settings/openai-compat-agent", "put"): RequestExampleContract(
-        media_type="application/json",
-        operation_description="Select the registered business Agent used by strict /v1 Responses and the deprecated Chat Completions shim. Obtain agent_id from GET /api/agent-registry.",
-        examples={
-            "select_registered_agent": _example(
-                "Select the built-in business Agent",
-                {"agent_id": _AGENT_ID},
             )
         },
     ),
@@ -790,3 +635,22 @@ REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract] = {
         },
     ),
 }
+
+
+def _merge_contracts(
+    *registries: Mapping[OperationKey, RequestExampleContract],
+) -> Mapping[OperationKey, RequestExampleContract]:
+    merged: dict[OperationKey, RequestExampleContract] = {}
+    for registry in registries:
+        duplicates = set(merged) & set(registry)
+        if duplicates:
+            rendered = ", ".join(f"{method.upper()} {path}" for path, method in sorted(duplicates))
+            raise ValueError(f"duplicate OpenAPI request-example contracts: {rendered}")
+        merged.update(registry)
+    return merged
+
+
+REQUEST_EXAMPLE_CONTRACTS = _merge_contracts(
+    RUNTIME_REQUEST_EXAMPLE_CONTRACTS,
+    _DOMAIN_REQUEST_EXAMPLE_CONTRACTS,
+)

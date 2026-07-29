@@ -11,6 +11,10 @@ COMPOSE ?= docker compose --env-file $(COMPOSE_ENV_FILE) -f docker/docker-compos
 export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)
 PYTHON_TYPECHECK_TARGETS := \
 	app/openapi_contract.py \
+	app/openapi_example_contracts.py \
+	app/openapi_input_documentation.py \
+	app/openapi_request_examples.py \
+	app/openapi_runtime_request_examples.py \
 	app/routers/agent_workspace_packages.py \
 	app/agent_testing \
 	app/routers/claude_user_input.py \
@@ -62,6 +66,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/check_orphan_tests.py \
 	scripts/check_stage_language.py \
 	scripts/audit_openapi_contract.py \
+	scripts/openapi_request_input_audit.py \
 	scripts/codex_governance_typed_output.py \
 	scripts/check_test_quality_policy.py \
 	scripts/run_test_lane.py \
@@ -93,7 +98,7 @@ GOVERNANCE_BASE_REF_ARG := $(if $(strip $(GOVERNANCE_BASE_REF)),--base-ref $(GOV
 CONTAINER_ACCEPTANCE := $(PYTHON_RUN) scripts/run_container_acceptance.py --env-file "$(COMPOSE_ENV_FILE)"
 REQUIRE_CONTAINER_ACCEPTANCE = [ "$$AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE" = "1" ] && [ -n "$$AGENT_GOV_ACCEPTANCE_RUN_ID" ] || { echo "Use the public container acceptance Make target." >&2; exit 1; }
 
-.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check container-core-smoke container-openapi-check container-live-test container-speech-summary-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke ui-openai-responses-smoke ui-playground-cancel-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts _container-core-smoke _container-openapi-check _container-live-test _container-speech-summary-test _container-health-e2e _smoke _ui-smoke _ui-feedback-smoke _ui-openai-responses-smoke _ui-playground-cancel-smoke _langfuse-smoke
+.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check openapi-type-drift-check container-core-smoke container-openapi-check container-live-test container-speech-summary-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke ui-openai-responses-smoke ui-playground-cancel-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts _container-core-smoke _container-openapi-check _container-live-test _container-speech-summary-test _container-health-e2e _smoke _ui-smoke _ui-feedback-smoke _ui-openai-responses-smoke _ui-playground-cancel-smoke _langfuse-smoke
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -285,11 +290,15 @@ codex-guard:
 	$(PYTHON_RUN) scripts/check_stage_language.py
 	$(PYTHON_RUN) scripts/check_version_consistency.py
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
+	AGENTGOV_PYTHON="$(abspath $(PYTHON))" bash scripts/check_openapi_type_drift.sh
 	$(PYTHON_RUN) scripts/check_docs_governance.py
 	$(PYTHON_RUN) scripts/check_test_quality_policy.py --manifest-only --policy $(QUALITY_POLICY)
 
 openapi-contract-check:
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
+
+openapi-type-drift-check:
+	AGENTGOV_PYTHON="$(abspath $(PYTHON))" bash scripts/check_openapi_type_drift.sh
 
 container-openapi-check:
 	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _container-openapi-check
@@ -299,7 +308,8 @@ _container-openapi-check:
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
 	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' "$(COMPOSE_ENV_FILE)" 2>/dev/null)}; \
 	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
-	$(PYTHON_RUN) scripts/audit_openapi_contract.py --base-url "$$api_base" --compare-local --fail
+	$(PYTHON_RUN) scripts/audit_openapi_contract.py --base-url "$$api_base" --compare-local --fail && \
+	RUNTIME_API_BASE="$$api_base" pnpm --dir frontend run verify:openapi-docs
 
 container-health-e2e:
 	$(CONTAINER_ACCEPTANCE) --profile isolated-health -- $(MAKE) --no-print-directory _container-health-e2e

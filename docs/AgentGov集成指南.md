@@ -59,9 +59,13 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 - 过渡 OpenAI 风格投影：`POST /v1/responses`。同一个 endpoint 通过 `stream` 选择非流式 JSON 或流式 SSE，但 operation 已以 `x-agentgov-contract-status: transitional` 标记，不能宣称是完整 OpenAI Responses drop-in replacement：
   - **control mode（AgentGov 集成首选）**：请求包含 `agentgov`，且 `agentgov.agent_id` 必填；可同时传标准字段 `conversation`，以及 `agentgov.alert_id`、`agentgov.case_id`、`agentgov.max_turns` 等 OpenAPI 已声明扩展字段。
   - **strict mode（标准 OpenAI 客户端）**：请求不含 `agentgov`，运行运营者配置的 OpenAI-compatible 出口 Agent；不下发 `agentgov.*` 私有 SSE 事件。由于 AgentGov 的 `instructions` 是 append-only 而非 OpenAI replace/swap 语义，strict mode 传 `instructions` 返回 `422`。
-- Swagger UI 的请求体下拉框提供 `agentgov_control_stream`、`agentgov_control_structured` 和
-  `strict_openai` 三个具名示例；它们分别说明 control 流式、control 结构化输入和 strict
-  模式，不再显示 Pydantic 自动生成的 `null`、`string` 或随机字符串填充值。
+- Swagger UI 的 operation 顶部若显示 `Parameters → No parameters`，只表示该接口没有
+  path/query/header/cookie 参数；JSON 字段仍完整位于 `Request body`。Responses 的 operation
+  description 会扁平展开 22 个递归字段，请求体下拉框提供
+  `agentgov_control_stream`、`agentgov_control_structured`、`strict_openai`、
+  `continue_with_conversation`、`continue_with_previous_response_id` 五个具名示例，分别覆盖
+  全 control 开关（含 `with_speech_summary`/debug）、两种结构化 content、strict 和两种推荐续聊形式。
+  字段/参数示例不再使用 Pydantic 自动生成的 `null`、`string`、随机串或 `additionalProp*`。
 - 最小 control 请求以 OpenAPI 为准，典型形态如下：
 
 ```json
@@ -76,7 +80,9 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 ```
 
 - 新会话应省略 `conversation`；续聊时只填写由 `POST /v1/conversations`、会话列表或上一轮
-  响应实际返回的 `conversation_id`，不要复制文档中的伪造 ID。
+  响应实际返回的 `conversation_id`，或只传上一轮实际返回的 `previous_response_id`，不要复制
+  文档中的示例 ID。官方 OpenAI 契约不允许同时传两者；当前 AgentGov 仅在二者解析到同一会话时
+  暂时接受，否则返回 `409`，该行为已列入 `x-agentgov-known-deviations`，新集成不要依赖此偏差。
 - `stream=false` 返回 Responses 对象；权威文本位于 `output[].content[].text`，运行关联位于 `agentgov.run_id`、`agentgov.conversation_id`、`agentgov.session_id`、`agentgov.trace_id` 等扩展字段。默认 `store=true` 时可通过 `GET /v1/responses/{response_id}` 取回已完成响应；`store=false` 只关闭公开取回，不关闭内部治理审计。
 - `stream=true` 返回 Responses-style SSE。完整事件名、payload schema、出现条件、phase 与 terminal 标记以该 operation 的 `x-agentgov-sse-events` 为准；其中取消会输出 `agentgov.cancelled`（control mode）并以 `response.incomplete` 保留部分 output。服务端工具事件只用于观察已经由 agent loop 执行的工具，绝不要求客户端重复执行标准 `function_call`。heartbeat 使用 SSE comment 保活，不应写入业务时间线。
 - 当前过渡偏差由 OpenAPI `x-agentgov-known-deviations` 机器声明：即时非流式的 `trace_id` 可能与 retrieve 不一致；`response.completed.response.metadata` 当前不会回显请求 metadata；session 前源异常可能产生 `response.created.response.id=null` 后再失败。受管流在发送响应前完成 turn admission；若源在 identity 建立前失败，则不伪造 run/session headers，而在 HTTP `200` 后投影失败终态。客户端必须把没有声明终态的 EOF 当作失败，不能从 HTTP 状态本身推导运行成功。

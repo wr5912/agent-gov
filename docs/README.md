@@ -43,6 +43,35 @@
   `docs/engineering/多Runtime适配与外部CLI旁路及Multica协作边界方案.md`，定义当前 Claude 原生受管实现、
   未来多 Runtime 小端口适配、外部 CLI 只读观测、配置改进闭环以及 Multica 上层协作边界
 
+## 下一阶段实施方案
+
+这些文档是 2026-07-30 基于当前实现证据形成的工程评审稿，按“P0 准入收口 → P1 业务证据
+主线 → P2A/P2B 受限并行 → P3 独立扩展准入”组织。它们定义当前建议的实施顺序、契约边界和
+退出门，不表示目标能力已经实现；当前运行态仍以“当前实现基线”为准。
+
+- [AgentGov 下一阶段实施方案索引](./AgentGov下一阶段实施方案索引.md)：
+  `docs/AgentGov下一阶段实施方案索引.md`，统一说明阶段结论、权威关系、准入证据、治理对象、
+  依赖顺序、全局裁决和评审清单
+- [P0 准入收口实施方案](./engineering/AgentGov下一阶段P0准入收口实施方案.md)：
+  `docs/engineering/AgentGov下一阶段P0准入收口实施方案.md`，先分别收口内置安全 Agent
+  29/29 静态绿测、模拟 MCP 平台回执、测试质量策略可见性和 Runtime 生命周期裁决
+- [P0 模拟 MCP 平台验收实施方案](./engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md)：
+  `docs/engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md`，固定原始
+  `openapi-mcp-server` 与 `mock_service` 提交，以隔离、只读、合成夹具验证 AgentGov 的真实
+  MCP 工具闭环；不作为生产 MCP、认证或业务 Agent 能力证据
+- [P1 网络安全测评纵向闭环实施方案](./engineering/AgentGov下一阶段P1网络安全测评纵向闭环实施方案.md)：
+  `docs/engineering/AgentGov下一阶段P1网络安全测评纵向闭环实施方案.md`，以 8 个静态 L2 案例
+  建立 typed 评分、安全否决、改进事项和精确发布闭环；案例固定无工具，不继承 P0-MCP 成绩
+- [P2A Runtime 中立核心与 Claude Adapter 实施方案](./engineering/AgentGov下一阶段P2ARuntime中立核心与ClaudeAdapter实施方案.md)：
+  `docs/engineering/AgentGov下一阶段P2ARuntime中立核心与ClaudeAdapter实施方案.md`，只做
+  Claude-only 小端口、registry、gateway 和委托 adapter，不迁移公开会话字段
+- [P2B Governor 受控学习基础实施方案](./engineering/AgentGov下一阶段P2BGovernor受控学习基础实施方案.md)：
+  `docs/engineering/AgentGov下一阶段P2BGovernor受控学习基础实施方案.md`，建立不可变证据、
+  能力版本、方法候选和隔离评估，候选保持 shadow
+- [P3 扩展准入实施方案](./engineering/AgentGov下一阶段P3扩展准入实施方案.md)：
+  `docs/engineering/AgentGov下一阶段P3扩展准入实施方案.md`，分别约束安全完整 MVP、Runtime
+  公共迁移、Governor 人工启用、外部 CLI、第二 Runtime 和 Multica 的启动门
+
 ## 当前实现基线
 
 这些文档解释当前代码、API、数据库、测试和用户可见运行态。当前反馈闭环主对象是 `ImprovementItem`；文档中若出现 `优化批次`、`proposal` 等历史术语，只能作为迁移来源或归档证据阅读，不作为当前 API 或 UI 主流程依据。四阶段改进治理用户主流程术语以 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md) 为准；与旧设计冲突时，以 [AgentGov 四阶段改进治理工作台 UI 整改方案](./AgentGov_四阶段改进治理工作台UI整改方案.md) 和四张效果图为准。

@@ -74,17 +74,17 @@ Docker 构建阶段已在 Dockerfile 中固定使用国内镜像源：Debian apt
 
 `MODEL_PROVIDER_API_KEY` 只用于 sidecar 访问上游模型服务；LiteLLM 的 `LITELLM_MASTER_KEY` 则是 Proxy Admin / Virtual Key 管理面的根凭据，二者不是同一个信任边界，也不得复用。AgentGov 的 sidecar 不发布宿主机端口，只在 Compose 内网承担推理协议转换，并关闭 Admin UI、Swagger 与 Redoc，因此用户无需配置 `LITELLM_MASTER_KEY`。若未来把它改造成可被外部客户端访问的共享模型网关，必须另行设计独立的代理管理员密钥、应用 Virtual Key、网络暴露和轮换方案，不能沿用当前内部 sidecar 边界。参考 LiteLLM 官方的 [Virtual Keys](https://docs.litellm.ai/docs/proxy/virtual_keys)、[Admin UI](https://docs.litellm.ai/docs/proxy/ui) 与 [Production Best Practices](https://docs.litellm.ai/docs/proxy/prod)。
 
-为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，启动时会对 `${HOME}/volume-agent-gov/data/`、governor Workspace 和 `${HOME}/volume-agent-gov/claude-roots/*` 对应的容器挂载目录执行 `chmod -R a+rwX`，方便直接写入。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
+为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，启动时会对 `${HOME}/volume-agent-gov/data/`、governor Workspace 和 `${HOME}/volume-agent-gov/claude-roots/*` 对应的容器挂载目录执行 `chmod -R a+rwX`，方便直接写入。Langfuse 的 Postgres、ClickHouse、Redis 和 MinIO 数据目录由 `make langfuse-prepare` 通过一次性 root 容器执行同样的递归权限准备；`make langfuse-up`、`make all-up` 和 `make langfuse-smoke` 都将它作为失败即停止的前置步骤。生产环境如果需要收紧权限，可以再切换到固定非 root 用户并配套处理宿主机目录 owner/ACL。
 
 启动：
 
 ```bash
 make build
-make up
+make all-up
 make logs
 ```
 
-`make up` 会启动 API、前端和配置所需的 LiteLLM sidecar，不再启动独立 Agent job worker。改进事项闭环中需要模型执行的归因、方案、执行计划和回归用例生成由 API 进程调用 governor，结果写入 `/api/improvements/{improvement_id}/...` 对应内容子资源，并保留 Langfuse Trace 引用供前端查看。
+`make up` 只启动 API、前端和配置所需的 LiteLLM sidecar；`make langfuse-up` 只启动 Langfuse 的 6 个服务；`make all-up` 一次启动两组共 9 个长期运行服务。三个入口均不再启动独立 Agent job worker。改进事项闭环中需要模型执行的归因、方案、执行计划和回归用例生成由 API 进程调用 governor，结果写入 `/api/improvements/{improvement_id}/...` 对应内容子资源，并保留 Langfuse Trace 引用供前端查看。
 
 只修改 `docker/runtime-bootstrap/` 下的初始化内容时，在已使用当前 Compose 配置 recreate 过容器后不需要重建镜像；执行 `make up` 即可让 API 启动协调器处理整体缺失的 Workspace、Git 版本源初始化和运行 receipt。初始化源不会覆盖已存在的运行态 Workspace；升级现有 Agent 必须走 Workspace 包导入或直接治理其 live Workspace。修改 Dockerfile、Python 代码、初始化逻辑或依赖时仍需 `make build` 并 recreate。
 
@@ -277,6 +277,8 @@ make langfuse-up
 make langfuse-smoke
 ```
 
+需要单独修复当前 Compose 配置所选 Langfuse 数据目录的权限时运行 `make langfuse-prepare`。该命令使用一次性容器挂载五个权威数据目录并递归补齐可写权限，成功后自动删除容器；它不删除、复制或迁移已有数据。需要同时启动核心服务和 Langfuse 时直接运行 `make all-up`。
+
 默认访问地址：
 
 - Langfuse UI: `http://localhost:53000`
@@ -339,7 +341,7 @@ OTEL_LOG_RAW_API_BODIES=1
 
 - 后端 `app/version.py` 读取 `VERSION` → OpenAPI `info.version` 与 `/health` runtime_version。
 - 前端 `frontend/package.json` 的 `version` 同步自 `VERSION`（`make sync-version`）。
-- docker 镜像 tag 由 `make build` / `make up` 从 `VERSION` 注入 `${APP_VERSION}` 派生，不在 compose 硬编码。
+- docker 镜像 tag 由 `make build` / `make up` / `make all-up` 从 `VERSION` 注入 `${APP_VERSION}` 派生，不在 compose 硬编码。
 - git release tag 为 `v` + `VERSION`。
 
 发布流程：① 改 `VERSION` → ② `make sync-version` → ③ 使用该版本镜像完成 `make test` 与真实容器验收 → ④ commit 并推送目标分支 → ⑤ `make tag`。`make tag` 只创建并推送 `v<VERSION>` 这一枚 annotated tag；禁止使用 `git push --tags` 批量推送本地 tag。

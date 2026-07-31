@@ -80,10 +80,14 @@ def test_deploy_script_uses_loaded_images_for_full_compose_stack() -> None:
     assert "git archive origin/master" in text
     assert "working tree must be clean" not in text
     assert "--profile langfuse down --remove-orphans" in text
-    assert "--profile langfuse up -d --no-build --pull never" in text
+    assert "COMPOSE_ENV_FILE=docker/.env" in text
+    assert 'COMPOSE_UP_FLAGS="--no-build --pull never"' in text
+    assert "make --no-print-directory all-up" in text
     assert 'docker ps -aq --filter "name=agent-gov"' in text
-    assert "runtime_root=$(expand_remote_value" in text
-    assert "rm -rf '${HOME}'" in text
+    assert "--profile langfuse up -d --no-build --pull never" not in text
+    assert "runtime_root=$(expand_remote_value" not in text
+    assert "chmod a+rwx" not in text
+    assert "rm -rf '${HOME}'" not in text
 
 
 def test_deploy_script_uses_python_health_checks_without_remote_curl_dependency() -> None:

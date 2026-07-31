@@ -287,11 +287,12 @@ def test_make_container_helpers_use_the_selected_compose_env_file() -> None:
             "make",
             "-n",
             "ui-smoke",
-            "langfuse-dirs",
+            "langfuse-prepare",
             "langfuse-smoke",
             "chat",
             "container-openapi-check",
             "up",
+            "all-up",
             "smoke",
             "runtime-clean",
             f"COMPOSE_ENV_FILE={selected}",
@@ -625,12 +626,22 @@ def test_frontend_pnpm_registry_uses_npm_compatible_environment_key() -> None:
 
 def test_make_up_waits_removes_orphans_and_prints_sanitized_diagnostics() -> None:
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-    up_target = makefile.split("\nup:", 1)[1].split("\n\ndown:", 1)[0]
+    up_target = makefile.split("\nup:", 1)[1].split("\n\nall-up:", 1)[0]
+    all_up_target = makefile.split("\nall-up:", 1)[1].split("\n\n_runtime-health-diagnose:", 1)[0]
+    runtime_diagnose_target = makefile.split("\n_runtime-health-diagnose:", 1)[1].split("\n\ndown:", 1)[0]
     diagnose_script = (REPO_ROOT / "scripts/compose_diagnose.sh").read_text(encoding="utf-8")
 
     assert "up -d --wait --remove-orphans" in up_target
+    assert "$(COMPOSE_UP_FLAGS)" in up_target
     assert "compose-diagnose" in up_target
-    assert "diagnose_runtime_health.py" in up_target
+    assert "_runtime-health-diagnose" in up_target
+    assert "--profile langfuse up -d --wait --remove-orphans" in all_up_target
+    assert "$(COMPOSE_UP_FLAGS)" in all_up_target
+    assert "compose-diagnose" in all_up_target
+    assert "_runtime-health-diagnose" in all_up_target
+    assert 'python_bin="$(PYTHON)"' in runtime_diagnose_target
+    assert "command -v python3" in runtime_diagnose_target
+    assert "diagnose_runtime_health.py" in runtime_diagnose_target
     assert "compose config" not in diagnose_script
     assert "os.path.abspath(sys.argv[1])" in diagnose_script
     assert 'export COMPOSE_ENV_FILE="$compose_env_file"' in diagnose_script
@@ -638,6 +649,38 @@ def test_make_up_waits_removes_orphans_and_prints_sanitized_diagnostics() -> Non
     assert '--env-file "$compose_env_file"' in diagnose_script
     assert "docker inspect" in diagnose_script
     assert "logs --no-color --tail=80" in diagnose_script
+
+
+def test_langfuse_permission_init_reuses_all_stateful_mount_sources() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    init_service = services["langfuse-volume-init"]
+
+    def volume_map(service_name: str) -> dict[str, str]:
+        return {
+            target: source
+            for source, target in (
+                volume.rsplit(":", 1) for volume in services[service_name]["volumes"]
+            )
+        }
+
+    expected_sources = {
+        "/langfuse/postgres": volume_map("langfuse-postgres")["/var/lib/postgresql/data"],
+        "/langfuse/clickhouse-data": volume_map("langfuse-clickhouse")["/var/lib/clickhouse"],
+        "/langfuse/clickhouse-logs": volume_map("langfuse-clickhouse")["/var/log/clickhouse-server"],
+        "/langfuse/redis": volume_map("langfuse-redis")["/data"],
+        "/langfuse/minio": volume_map("langfuse-minio")["/data"],
+    }
+
+    assert init_service["profiles"] == ["langfuse-maintenance"]
+    assert init_service["image"] == "${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17}"
+    assert init_service["user"] == "0:0"
+    assert init_service["network_mode"] == "none"
+    assert init_service["entrypoint"] == ["/bin/sh", "-ec"]
+    assert volume_map("langfuse-volume-init") == expected_sources
+    assert "chmod -R a+rwX" in "\n".join(init_service["command"])
+    assert "container_name" not in init_service
+    assert "restart" not in init_service
 
 
 def test_compose_uses_api_coordinator_without_runtime_init_container() -> None:

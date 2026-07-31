@@ -7,6 +7,7 @@ COMPOSE_ENV_FILE ?= docker/.env
 export COMPOSE_ENV_FILE
 export AGENT_GOV_COMPOSE_ENV_FILE := $(abspath $(COMPOSE_ENV_FILE))
 COMPOSE ?= docker compose --env-file $(COMPOSE_ENV_FILE) -f docker/docker-compose.yml
+COMPOSE_UP_FLAGS ?=
 # 版本唯一真相源：根 VERSION 文件。导出给 compose，让镜像 tag ${APP_VERSION} 派生（build/up 自动生效）。
 export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)
 PYTHON_TYPECHECK_TARGETS := \
@@ -98,24 +99,39 @@ GOVERNANCE_BASE_REF_ARG := $(if $(strip $(GOVERNANCE_BASE_REF)),--base-ref $(GOV
 CONTAINER_ACCEPTANCE := $(PYTHON_RUN) scripts/run_container_acceptance.py --env-file "$(COMPOSE_ENV_FILE)"
 REQUIRE_CONTAINER_ACCEPTANCE = [ "$$AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE" = "1" ] && [ -n "$$AGENT_GOV_ACCEPTANCE_RUN_ID" ] || { echo "Use the public container acceptance Make target." >&2; exit 1; }
 
-.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check openapi-type-drift-check container-core-smoke container-openapi-check container-live-test container-speech-summary-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke ui-openai-responses-smoke ui-playground-cancel-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts _container-core-smoke _container-openapi-check _container-live-test _container-speech-summary-test _container-health-e2e _smoke _ui-smoke _ui-feedback-smoke _ui-openai-responses-smoke _ui-playground-cancel-smoke _langfuse-smoke
+.PHONY: setup build up all-up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test openapi-contract-check openapi-type-drift-check container-core-smoke container-openapi-check container-live-test container-speech-summary-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke ui-openai-responses-smoke ui-playground-cancel-smoke langfuse-prepare langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean runtime-migrate-workspace-tests runtime-migrate-workspace-tests-scan local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-bootstrap-scan runtime-bootstrap-clean clean-runtime-artifacts _runtime-health-diagnose _container-core-smoke _container-openapi-check _container-live-test _container-speech-summary-test _container-health-e2e _smoke _ui-smoke _ui-feedback-smoke _ui-openai-responses-smoke _ui-playground-cancel-smoke _langfuse-smoke
 
 setup:
 	cp -n docker/.env.example docker/.env || true
 	@if ! command -v $(UV) >/dev/null 2>&1; then echo "uv is required. Install uv before running make setup." >&2; exit 1; fi
 	$(UV) venv $(VENV) --python 3.11
 	$(UV) pip install --python $(PYTHON) -r requirements.txt -e packages/agentgov-testkit
-	$(MAKE) langfuse-dirs
 
 build:
 	$(COMPOSE) build
 
 up:
-	@if ! $(COMPOSE) up -d --wait --remove-orphans; then \
+	@if ! $(COMPOSE) up -d --wait --remove-orphans $(COMPOSE_UP_FLAGS); then \
 		$(MAKE) --no-print-directory compose-diagnose; \
 		exit 1; \
 	fi
-	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py --env-file "$(COMPOSE_ENV_FILE)" || true
+	@$(MAKE) --no-print-directory _runtime-health-diagnose
+
+all-up: langfuse-prepare
+	@if ! $(COMPOSE) --profile langfuse up -d --wait --remove-orphans $(COMPOSE_UP_FLAGS); then \
+		$(MAKE) --no-print-directory compose-diagnose; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory _runtime-health-diagnose
+
+_runtime-health-diagnose:
+	@python_bin="$(PYTHON)"; \
+	if [ ! -x "$$python_bin" ]; then python_bin=$$(command -v python3 2>/dev/null || true); fi; \
+	if [ -z "$$python_bin" ]; then \
+		echo "Runtime health diagnosis skipped: neither $(PYTHON) nor python3 is available."; \
+	else \
+		"$$python_bin" scripts/diagnose_runtime_health.py --env-file "$(COMPOSE_ENV_FILE)" || true; \
+	fi
 
 down:
 	$(COMPOSE) down
@@ -200,13 +216,11 @@ _ui-openai-responses-smoke:
 	VERIFY_SCREENSHOT_DIR="$${VERIFY_SCREENSHOT_DIR:-/tmp/agentgov-openai-responses-smoke}" \
 	pnpm --dir frontend run verify:openai-responses-container:impl
 
-langfuse-dirs:
-	@runtime_root=$$($(PYTHON_RUN) -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from bootstrap_runtime_volume import resolve_runtime_root; print(resolve_runtime_root(None, Path(sys.argv[1])).as_posix())' "$(COMPOSE_ENV_FILE)"); \
-	mkdir -p "$$runtime_root/langfuse/postgres" "$$runtime_root/langfuse/clickhouse/data" "$$runtime_root/langfuse/clickhouse/logs" "$$runtime_root/langfuse/redis" "$$runtime_root/langfuse/minio"; \
-	chmod a+rwx "$$runtime_root/langfuse" "$$runtime_root/langfuse/postgres" "$$runtime_root/langfuse/clickhouse" "$$runtime_root/langfuse/clickhouse/data" "$$runtime_root/langfuse/clickhouse/logs" "$$runtime_root/langfuse/redis" "$$runtime_root/langfuse/minio" 2>/dev/null || true
+langfuse-prepare:
+	$(COMPOSE) --profile langfuse-maintenance run --rm --no-deps -T --pull missing langfuse-volume-init
 
-langfuse-up: langfuse-dirs
-	$(COMPOSE) --profile langfuse up -d langfuse-postgres langfuse-clickhouse langfuse-redis langfuse-minio langfuse-web langfuse-worker
+langfuse-up: langfuse-prepare
+	$(COMPOSE) --profile langfuse up -d --wait --remove-orphans $(COMPOSE_UP_FLAGS) langfuse-postgres langfuse-clickhouse langfuse-redis langfuse-minio langfuse-web langfuse-worker
 
 langfuse-stop:
 	$(COMPOSE) --profile langfuse stop langfuse-worker langfuse-web langfuse-minio langfuse-redis langfuse-clickhouse langfuse-postgres
@@ -214,7 +228,7 @@ langfuse-stop:
 langfuse-logs:
 	$(COMPOSE) --profile langfuse logs -f langfuse-web langfuse-worker
 
-langfuse-smoke: langfuse-dirs
+langfuse-smoke: langfuse-prepare
 	$(CONTAINER_ACCEPTANCE) --profile langfuse -- $(MAKE) --no-print-directory _langfuse-smoke
 
 _langfuse-smoke:

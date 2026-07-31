@@ -333,7 +333,13 @@ def test_make_routes_real_acceptance_through_refresh_and_keeps_main_full_serial(
     ):
         body = makefile.split(f"{target}:", 1)[1].split("\n\n", 1)[0]
         assert f"$(CONTAINER_ACCEPTANCE) --profile {profile}" in body
-    assert "langfuse-smoke: langfuse-dirs" in makefile
+    assert "langfuse-smoke: langfuse-prepare" in makefile
+    prepare_body = makefile.split("langfuse-prepare:", 1)[1].split("\n\n", 1)[0]
+    assert "--profile langfuse-maintenance" in prepare_body
+    assert "run --rm --no-deps -T --pull missing langfuse-volume-init" in prepare_body
+    all_up_body = makefile.split("all-up:", 1)[1].split("\n\n", 1)[0]
+    assert "all-up: langfuse-prepare" in makefile
+    assert "--profile langfuse up -d --wait --remove-orphans" in all_up_body
     assert "--keep-going --jobs=3 _smoke _ui-smoke _container-openapi-check" in makefile
     live_body = makefile.split("_container-live-test:", 1)[1].split("\n\n", 1)[0]
     assert "-e AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE" in live_body

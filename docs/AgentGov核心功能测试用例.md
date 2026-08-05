@@ -45,6 +45,9 @@
 | 典型落地场景 | 安全运营只是典型场景之一，平台不绑定单一行业 | AGV-046 |
 | 产品边界 | AgentGov 负责治理能力，外部系统负责业务界面、权限、生产系统和高风险动作责任；当前不建设通用协作模型 | AGV-047, AGV-048, AGV-049 |
 | OpenAI 兼容主路径 | Responses-first 接口可承载 Playground 主运行、会话恢复、外部 API 集成，并保留原生 Chat 兼容面 | AGV-050 |
+| 平台发布评测与 EvalOps | 业务 Agent、evaluator-owned 评测基准和平台发布裁决职责分离 | AGV-051 |
+| 平台控制面与数据治理 | 单组织先行仍保留 backend-owned 身份、resource scope 和数据全生命周期边界 | AGV-052, AGV-053 |
+| 扩展集成与可运营性 | 外部集成遵循通用可靠性契约，规模化扩展具有 SLO、容量和经济性证据 | AGV-054, AGV-055 |
 
 ## 核心功能测试套件
 
@@ -611,7 +614,9 @@
 
 证据要求：资产治理事件和引用关系。
 
-当前 Registry 已把通用方法论/执行/审计资产与 Workspace pytest 真相分开，避免复制测试正文，但尚未提供跨资产重复检测、合并/废弃治理事件和引用重定向契约，因此本项保持 `gap`。
+当前 Registry 已把通用方法论、执行资产及审计记录投影与 Workspace pytest 真相分开，避免复制
+测试正文；其中审计是横切治理维度，不是可继承的第四类一级资产。当前尚未提供跨资产重复检测、
+合并/废弃治理事件和引用重定向契约，因此本项保持 `gap`。
 ### AGV-024 反馈可归属到 Agent、version、run 和场景
 
 状态：`gap`
@@ -671,21 +676,21 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 目标来源：能力域与场景包。
 
-前置条件：平台支持能力域或场景包。
+前置条件：存在可独立版本化的方法论和执行资产。
 
 测试步骤：
 
-1. 创建一个场景包，例如“告警研判”或“客服投诉处理”。
-2. 关联 Agent 定义、prompt、skill、SOP、Workspace pytest 测试和发布准入规则。
-3. 查询场景包详情。
+1. 创建一个能力/场景包修订，例如“告警研判”或“客服投诉处理”。
+2. 以精确修订引用 Agent 行为配置、prompt、skill、SOP、eval 协议和发布策略，不复制它们的正文。
+3. 查询场景包详情、适用范围、风险、provenance 和关联资产修订。
 
 成功标准：
 
-- 场景包表达业务目标、适用范围和风险等级。
-- 场景包中的资产可迁移、可复制、可审计。
-- Agent 可按场景包装配能力。
+- 能力/场景包表达业务目标、适用范围、风险等级和版本策略。
+- 资产正文仍由各自真源拥有；能力包只保存不可变引用和关系，可迁移、可审计。
+- Agent 可从能力包生成待审查的待发布版本，不直接改写 active Workspace。
 
-证据要求：场景包定义和资产关联。
+证据要求：能力/场景包修订、资产引用、待发布变更和关系查询。
 
 当前缺口：旧场景包表、store 和公开 API 已迁移归档；Workspace 包可以复用完整 Agent 配置，
 但尚无一等的能力域/场景资产聚合契约，不能以导出包替代本项验收。
@@ -700,17 +705,19 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 测试步骤：
 
-1. 将一个场景包应用到 Agent A。
-2. 基于同一场景包创建或配置 Agent B。
-3. 比较两个 Agent 的评估结果和差异配置。
+1. 将同一个精确能力/场景包修订分别应用到 Agent A 和 Agent B。
+2. 确认两次应用均只生成各自 Agent 的待发布变更和待发布版本，不共享 active pointer。
+3. 在各自 Runtime binding、作用域和评测协议下独立评测，比较结果与差异配置。
+4. 回退 Agent B 的应用，确认 Agent A 的版本和审计不受影响。
 
 成功标准：
 
 - 场景包可复用但不强制完全相同。
 - 每个 Agent 保留自己的版本和审计边界。
-- 复用后仍需评估通过才能进入 active。
+- 来源 Agent 的通过结果不能被目标 Agent 继承，每个 Agent 复用后仍需独立评测和发布裁决。
+- 一个 Agent 的失败或回退不改写能力包修订或其他 Agent 的历史。
 
-证据要求：场景包应用记录和两个 Agent 的评估结果。
+证据要求：能力包修订、两条应用 provenance、各自待发布变更、独立评测与回退记录。
 
 当前证据：多业务 Agent 的版本库、Workspace pytest 与 `AgentTestRun` 已按 Agent 隔离；当前没有跨 Agent
 场景资产复用记录，且 Agent active 门禁不能由已删除旧场景包链证明，因此本项保持 `gap`。
@@ -917,6 +924,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 - 运行 item、stdout、stderr 和结构化 error 能解释失败。
 - 取消、中断、错误和旧提交通过均不能冒充当前提交通过。
 - 反馈闭环待发布版本不能强制绕过测试；已有失败和新增失败都必须修复，provenance 不完整也不可绕过。
+- 该 `current` 门只证明精确 Workspace commit 的已知单元/回归测试通过；不得将它单独表述为独立评测基准、能力提升证明或线上业务效果。
 
 证据要求：Workspace suite、`AgentTestRun`、发布阻塞原因和 release 审计。
 
@@ -1154,20 +1162,22 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 测试步骤：
 
-1. 建立一个跨 Agent 可复用的方法论资产。
-2. 绑定到一个有适用范围和风险说明的能力包。
-3. 在多个 Agent 中复用并评估。
+1. 建立一个可独立版本化的跨 Agent 方法论资产。
+2. 将其绑定到具有精确资产引用、适用范围、风险、eval 和发布策略的能力包修订。
+3. 将同一修订应用到至少两个业务 Agent，分别生成待发布变更和待发布版本。
+4. 在每个 Agent 的独立作用域和评测协议下评测、发布或回退。
 
 成功标准：
 
 - 方法论资产不是单 Agent 私有经验。
-- 能力包能组织 prompt、skill、SOP、eval 和版本策略。
-- 跨 Agent 复用后仍保留独立审计和评估结果。
+- 能力包以引用关系组织 prompt、skill、SOP、eval 和版本策略，不复制各资产正文。
+- 跨 Agent 复用后仍保留独立待发布版本、Runtime binding、审计、评测和回退结果。
+- P2B 的 Governor method candidate/capability build 属于治理 Agent 自身方法演进，不得替代业务 Agent 能力包或本用例的跨 Agent 应用证据。
 
-证据要求：能力包、方法论资产和跨 Agent 评估报告。
+证据要求：能力包修订、方法论资产、两条应用 provenance、各自待发布变更和跨 Agent 独立评测/回退报告。
 
-当前缺口：治理方法已有集中 typed formatter/prompt registry，多业务 Agent 也已有独立版本与评估边界；
-仍缺跨 Agent 能力包及其复用 provenance、风险和逐 Agent 验证报告。旧场景包实现已迁移归档。
+当前缺口：治理方法已有集中 typed formatter/prompt registry，多业务 Agent 也已有独立版本与测试边界；
+仍缺跨 Agent 能力包、应用 provenance、风险、逐 Agent 发布评测与回退报告。P2B 即使完成 Governor shadow candidate 和评估，也只是方法治理的局部基础，不能将本项升级为 `current`。旧场景包实现已迁移归档。
 
 ### AGV-046 安全运营作为示例场景可被替换
 
@@ -1310,6 +1320,139 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 证据要求：OpenAPI/pytest 契约、前端网络请求、真实容器 Playwright 截图、API 响应、容器健康状态。
 
 自动验收：核心 API 契约已绑定到 `tests/quality_policy.json` 的 `openai_responses_first_surface`、`responses_streaming_sse` 与 `playground_native_sdk_stream` 场景，覆盖 `tests/test_openapi_request_documentation.py`、`tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_sdk_projector.py`、`tests/test_responses_retrieve.py`、`tests/test_claude_sdk_native_stream.py`、`tests/test_runtime_run_cancellation.py`、`tests/test_conversations_api.py`、`tests/test_trace_projection.py`、`tests/test_trace_stream_contract.py` 和 `tests/test_agent_runs_api.py`；旧 Chat raw/semantic 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收使用 `make container-openapi-check`、`make ui-openai-responses-smoke` 与 `make ui-playground-cancel-smoke`：公开入口先基于当前工作树重建镜像、recreate Compose UI/API，再只读验证 Swagger 输入文档、运行 Responses API、消息动作和“发送→停止→同会话立即再发送”浏览器验收，验证 UI live turn 只请求 SDK-native endpoint、取消命中精确 run、会话走 `/v1/conversations`、Trace 刷新重放、Responses retrieve 可用，并执行 hostile / boundary 请求。
+
+### AGV-051 评测基准独立治理并驱动平台发布评测
+
+状态：`gap`
+
+目标来源：核心目标 5、反馈到资产闭环、P3 EvalOps 准入维度。
+
+前置条件：存在一个精确 baseline BusinessAgentVersion、candidate BusinessAgentVersion 和经批准的评测基准修订。
+
+测试步骤：
+
+1. 建立 evaluator-owned 稳定 `EvaluationBenchmark`，冻结其 `EvaluationProtocolRevision`，记录能力维度、样本范围、Ground Truth/评分规程、安全否决、采样规则和环境约束。
+2. 确认 Workspace 可见单元/回归测试与平台 holdout 物理分离，candidate 开发侧不能读取或改写 holdout、评分器和发布阈值。
+3. 在同协议修订、同 Runtime/模型/工具环境下对 baseline 和 candidate 执行规定次数，生成稳定性、能力维度、safety gate 和差异证据。
+4. 对争议或高风险结果执行人工复核，形成关联精确 assessment/comparison 的独立 `EvaluationReviewDecision`，且不回写评分或可比性事实。
+5. 由后端组合当前 Workspace 回归、assessment、comparison、安全门、所需人工决定和外部审批引用，形成独立 `ReleaseGateDecision`；发布、驳回或回退仍是后续业务动作。
+6. 分别从“业务 Agent 详情 → 测评”、“独立测评中心”和“资产复利 → 测试资产”进入，验证单 Agent 版本治理、全局 campaign 和测试源码/执行证据的分工。
+7. 发布后查看线上业务指标、安全信号、延迟/成本和回退条件，不以离线分数单独宣称能力提升。
+
+成功标准：
+
+- 业务 Agent 是被测对象，`EvaluationBenchmark` 是稳定治理容器，其 `EvaluationProtocolRevision` 是独立测量合同；平台发布评测是调用该合同形成裁决的治理流程，三者不混为同一资产。
+- `AgentTestRun` 可作为 Workspace pytest sample adapter，但不是 `EvaluationExecution`、动态评测、隐藏集、人工裁决和跨 Agent campaign 的唯一领域对象。
+- 任何分数均展示 protocol revision、样本/采样范围和环境指纹；不可比的结果不强行排名。
+- `Assessment`、comparison、`EvaluationReviewDecision`、`ReleaseGateDecision`、Release 和 OnlineOutcome 分层记录，且可从 release 反查。
+
+证据要求：`benchmark_id`、评测协议修订/digest、baseline/candidate `EvaluationExecution/Assessment`、环境指纹、comparison、人工决定、发布门裁决/Release、三类 UI 入口和 OnlineOutcome 观察记录。
+
+当前缺口：当前 `current` 能力是业务 Agent Workspace pytest、精确 commit 的 `AgentTestRun` 和发布回归门；尚无 evaluator-owned 基准权威、隐藏集、baseline/candidate 比较、独立测评中心和发布后结果闭环，因此保持 `gap`。
+
+### AGV-052 单组织控制面保持身份与资源作用域隔离
+
+状态：`gap`
+
+目标来源：治理边界与审批、平台扩展准入。
+
+前置条件：平台仍以单组织部署为当前边界，但存在多个 project/resource scope 与至少两类治理职责。
+
+测试步骤：
+
+1. 由服务端认证与映射 `AuthenticatedPrincipal`，向请求体注入伪造 operator、owner、role 和 scope。
+2. 分别读写 Agent、protocol/holdout、capability package、Governor build/activation 和审计记录，尝试跨 project/resource scope 访问。
+3. 尝试让候选生成者同时成为唯一 evaluator/reviewer/activator。
+4. 验证外部业务用户、生产审批和执行责任仍由外部系统拥有，AgentGov 只授权自身治理资源。
+
+成功标准：
+
+- 请求体自报身份与 scope 被忽略或覆盖，后端映射是唯一权威来源。
+- 不同 scope 的资源不可越权读写或通过 ID 猜测访问，拒绝有结构化错误与审计记录。
+- 候选生成、基准管理、独立评测、人工复核和启用职责可分离。
+- 单组织先行不被虚称为多租户已完成，但日后增加组织边界时无需重写所有资源归属契约。
+
+证据要求：principal 投影、role/scope 策略、越权负向测试、职责分离记录和外部责任边界说明。
+
+当前缺口：当前 API key 与若干 Agent 归属检查只提供局部边界，尚无贯穿 EvalOps、能力包和 Governor 激活面的 backend-owned principal、resource scope 和职责分离验收。
+
+### AGV-053 运行与评测数据具有全生命周期治理
+
+状态：`gap`
+
+目标来源：数据资产、权限与敏感信息边界、P3 数据治理准入维度。
+
+前置条件：存在 run/trace、feedback、evaluation/holdout、人工评审和 release 证据。
+
+测试步骤：
+
+1. 为每类数据检查来源授权、敏感分类、owner、保留期、删除/销毁和导出策略。
+2. 让被测 Agent、普通开发者和越权 scope 尝试读取 holdout 正文、Ground Truth 或评分细则。
+3. 执行脱敏导出、保留到期销毁、授权删除和 legal hold，并注入 DB/文件部分失败。
+4. 检查 Registry、公开 API、日志和对外评测摘要是否只包含必要引用与脱敏证据。
+
+成功标准：
+
+- 数据资产不是无期限日志，其来源、用途、保留和删除责任可追溯。
+- holdout 与被测 Workspace 物理隔离，未授权主体无法通过 API、Registry、错误详情或导出包获得正文。
+- 导出、删除、销毁、保留与 legal hold 都有 backend-owned principal、scope、时间和结果审计。
+- 部分失败不被记录为全部完成，可幂等重试或安全停止。
+
+证据要求：数据分类/保留策略、授权记录、脱敏导出、销毁/legal hold 事件、无泄露扫描与部分失败对账。
+
+当前缺口：仓库秘密扫描、live Workspace 敏感资产边界和若干只读投影已有局部证据；仍缺跨 run/trace/evaluation/holdout/release 的统一保留、导出、删除、销毁和部分失败闭环。
+
+### AGV-054 外部集成使用通用可靠性契约而非产品专用主流程
+
+状态：`gap`
+
+目标来源：外部 API 集成、产品边界、P3 通用集成准入维度。
+
+前置条件：存在一个真实外部 API、webhook、CLI observer 或上层调度平台集成需求。
+
+测试步骤：
+
+1. 通过通用 integration contract 绑定外部身份、稳定对象引用、resource scope 和幂等键。
+2. 分别注入重复、乱序、超时、断网、重启、撤销授权和 DB/外部系统部分失败。
+3. 若使用 observer，尝试通过 observer 写配置、批准工具、取消、恢复或控制外部进程。
+4. 在不配置特定外部产品时运行 AgentGov 核心闭环，检查是否存在产品专用平行状态源、Compose 强依赖或认证系统。
+
+成功标准：
+
+- 重试不产生重复业务副作用，乱序/断网/重启后可对账，部分失败有可操作的错误与恢复路径。
+- observer 严格只读，受管动作仍通过 Runtime adapter 或外部审批边界执行。
+- AgentGov 不复制外部 workspace、issue、member、queue 或任务状态，未配置候选集成时核心能力仍完整。
+- Multica 等产品只有在至少两个独立真实场景且通用 API/webhook/observer 不足时才作为候选，不预先锁定。
+
+证据要求：通用 integration contract、幂等/对账记录、断网与部分失败结果、observer 只读证据和未配置负向断言。
+
+当前缺口：Responses/Chat 公开 API 和当前边界文档已有部分证据；尚无覆盖 webhook/observer/上层调度的通用幂等、sequence/ack、撤销授权和部分失败验收。
+
+### AGV-055 规模化扩展具有 SLO、容量与单位经济性证据
+
+状态：`future`
+
+目标来源：优化闭环治理基础设施愿景、P3 可运营性准入维度。
+
+前置条件：某条扩展线准备声称支持规模化生产使用。
+
+测试步骤：
+
+1. 按真实用户任务声明可用性、端到端延迟、队列等待、吞吐、证据完整性和数据新鲜度目标。
+2. 在声明的观察窗和最小样本下，记录请求/评测量、模型与工具调用、重试、存储增长、人工工时和单次成功任务成本。
+3. 注入队列压力、依赖变慢、模型/工具预算超限和存储容量不足，验证限流、排队、停止、降级和恢复。
+4. 检查降级是否丢失安全否决、评测证据或审计完整性。
+
+成功标准：
+
+- SLO 直接对应用户任务和治理证据，不只是进程存活或平均数。
+- 限流、排队、停止与降级可解释、可恢复，不静默丢失证据或绕过安全门。
+- 单次成功任务成本可分解为 Runtime、模型/工具、评测、存储和人工复核成本，可与业务价值和预算比较。
+- 样本不足或未达观察窗时明确标记证据不足，不虚称已满足生产 SLO 或经济性。
+
+证据要求：SLO/预算定义、容量测试、观察窗报告、单位成本分解、限流/降级/恢复记录和证据完整性断言。
+
+当前缺口：当前健康检查、Runtime 耗时/usage 与部分质量门是局部可观测证据，不等于规模化生产 SLO、容量和单位经济性已经建立。
 
 ## 开发推进规则
 

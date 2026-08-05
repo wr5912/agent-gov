@@ -289,8 +289,8 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 - 边界：版本治理按 `agent_id` 落到各业务 Agent 自己的 per-Agent 版本库。发布必须存在同一业务 Agent、当前待发布 `commit_sha` 上完整测试集通过的平台运行；旧提交通过不能放行新提交，已有失败和新增失败都必须修复。反馈闭环待发布版本不能强制绕过测试条件，Playground 的反馈发布工作台不提供强制发布入口；未关联反馈、由版本治理 API 手工创建的待发布版本仍可通过受保护 API 强制发布，但必须填写非空原因并持久化原阻塞项和警告。provenance 不完整始终不可绕过。审批/发布的业务决策在上层；底座负责执行、记录、审计与原子性。
 
 ### 4.7 资产沉淀与跨 Agent 复用 — OpenAPI tag `assets` / `agent-testing`
-- 目标：资产复利中心统一承载测试资产只读投影，以及方法论、执行和审计资产的继承复用；测试文件始终随对应业务 Agent Workspace Git 管理。
-- 最短路径：“测试资产”使用 §4.5 的 suite/file/history/schedule 接口，不调用通用资产创建或继承；“治理资产”使用 `GET/POST /api/assets`（通用类型仅 `methodology`、`execution`、`audit`，可按 `agent_id`/`asset_type` 过滤）和 `POST /api/assets/{asset_id}/inherit`。未知 `asset_type` 在 API 契约边界返回 `422`。底座不复制测试正文，也不提供跨 Agent 自动继承测试代码。
+- 目标：资产复利中心统一承载测试资产只读投影，以及方法论、执行资产的复用和审计记录投影；审计记录只可追溯，不可继承。测试文件始终随对应业务 Agent Workspace Git 管理。长期一级分类是数据/证据、方法论和执行资产，version/provenance/audit/scope/lifecycle 是横切治理维度。
+- 最短路径：“测试资产”使用 §4.5 的 suite/file/history/schedule 接口，不调用通用资产创建或继承；“治理资产”使用 `GET/POST /api/assets`（当前实现过滤值仍为 `methodology`、`execution`、`audit`，其中 `audit` 是审计记录投影，不提升为长期一级资产）和 `POST /api/assets/{asset_id}/inherit`。未知 `asset_type` 在 API 契约边界返回 `422`。底座不复制测试正文，也不提供跨 Agent 自动继承测试代码。
 
 ### 4.8 定制业务 Agent 的行为（workspace / Claude Code 配置）
 - 目标：给某个业务 Agent 定制 prompt / 角色边界、skills、subagents、规则、MCP 工具与权限——即它的 Claude Code workspace 配置。

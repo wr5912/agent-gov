@@ -49,8 +49,9 @@
 | 中文展示名 | 英文领域名 | 代码 / API 词根 | 统一 ID | 说明 |
 | --- | --- | --- | --- | --- |
 | 业务 Agent | `BusinessAgent` | `agent` | `agent_id` | 被治理对象；所有注册业务 Agent（含 `main-agent`）遵循同一运行与治理机制。 |
-| 业务 Agent Workspace | `BusinessAgentWorkspace` | `workspace` | 由 `agent_id` 归属 | Claude Code 原生项目目录，承载 `CLAUDE.md`、`.mcp.json`、`.claude/` 等行为配置。 |
-| 运行态 Workspace | `LiveWorkspace` | `workspace_dir` | 由 `agent_id` 归属 | `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/` 中当前实际运行和版本化的 Workspace。 |
+| 业务 Agent 版本 | `BusinessAgentVersion` | 当前由 Workspace commit、待发布变更和 release 表达 | `agent_id + commit_sha` | 测试、测评、发布和回滚的精确被治理对象；长期可绑定 Runtime，但客户端不能逐请求改写。 |
+| 业务 Agent Workspace | `BusinessAgentWorkspace` | `workspace` | 由 `agent_id` 归属 | Runtime 原生项目目录；当前 `claude-code` 实现承载 `CLAUDE.md`、`.mcp.json`、`.claude/` 等配置，其他 Runtime 使用各自原生包，不做自动翻译。 |
+| 运行态 Workspace | `LiveWorkspace` | `workspace_dir` | 由 `agent_id` 归属 | `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/` 中当前实际运行和版本化的 Runtime 原生 Workspace。 |
 | 业务 Agent Workspace 包 | `BusinessAgentWorkspacePackage` | `workspace/import`、`workspace/export` | 目标 `agent_id` | 完整 `.tar.gz` 交换包；普通新 Agent 的唯一创建输入，也是跨环境迁移和覆盖载体。 |
 | 内置业务 Agent | `BuiltinBusinessAgent` | `builtin` | `agent_id` | 随当前代码版本提供出生 Workspace 的业务 Agent；当前唯一值为 `security-operations-expert`。 |
 | 默认业务 Agent | `DefaultBusinessAgent` | `default` | `agent_id` | 未显式指定兼容入口 Agent 时使用的产品默认；当前为 `security-operations-expert`，不等同于内置或受保护属性。 |
@@ -67,11 +68,23 @@
 | 回归测试设计 | `RegressionTestDesign` | `regression_test_design` | `regression_test_design_id` | 治理 Agent 生成并由用户确认的测试语义候选，不是可执行测试资产。 |
 | Workspace 测试文件 | `WorkspaceTestFile` | `tests/test_*.py` | Git 路径 + `commit_sha` | 业务 Agent 可执行测试资产的唯一真相源，随 Workspace Git 版本化。 |
 | 平台测试运行 | `AgentTestRun` | `agent_test_run` | `test_run_id` | 平台使用固定 pytest 命令在精确业务 Agent 提交上产生的持久化执行证据。 |
+| 评测基准 | `EvaluationBenchmark` | 目标逻辑契约 | `benchmark_id` | 稳定命名的能力测量与治理容器，定义目的、能力维度、owner 和修订链；不是一次运行、具体试卷或脱离协议的总分。 |
+| 评测协议修订 | `EvaluationProtocolRevision` | P1 先以受控评测包引用表达 | `protocol_id + revision/digest`，并归属 `benchmark_id` | 评测基准下不可变的测量合同，冻结 case/corpus、Ground Truth、scorer、安全门、采样和环境约束；正式发布修订不得由同一候选 Agent 变更，隐藏内容不得进入候选 Workspace。 |
+| 评测执行 | `EvaluationExecution` | P1 目标为最小协议中立聚合，样本运行由 `AgentTestRun` 适配 | `evaluation_execution_id` | 把一个精确 Agent 版本、协议修订、purpose、Runtime/模型/工具/环境与 1..N 个独立 sample run 绑定；不复制运行事实，也不是旧 `EvalRun` 的兼容恢复。 |
+| 评测结论 | `Assessment` | P1 目标 typed immutable record | `assessment_id`，归属 `evaluation_execution_id` | 对一次完成执行的 Scorecard、Violation、安全门和稳定性结论；不包含 baseline/candidate 可比性、人工决定或发布动作，被测 Agent 无权声明通过。 |
+| 版本比较组 | `EvaluationComparisonGroup` | P1 目标 typed immutable record | `comparison_group_id` | 在兼容协议和环境下关联修复前与待发布版本的 execution/assessment，单独表达可比性和差异。 |
+| 评测人工决定 | `EvaluationReviewDecision` | 目标 control-plane record | `review_decision_id` | 授权人员针对精确 assessment/comparison 作出的批准、拒绝或补证决定；不得回写机器评测事实。 |
+| 发布门裁决 | `ReleaseGateDecision` | 目标 backend-owned record | `release_gate_decision_id` | 后端组合当前 Workspace 回归、assessment、comparison、安全门和所需人工决定形成的准入裁决；不等于 `Release` 本身。 |
+| 线上效果 | `OnlineOutcome` | 外部事实引用 + AgentGov 受控投影 | 来源 ID + observation window | 发布后的业务效果、复发、成本、漂移和回滚信号；不能由离线分数替代。 |
 | 修复前版本 | `BaseCommit` | `base_commit_sha` | `commit_sha` | 当前改进开始前的 Git 提交；用于 UI 对比。 |
 | 待发布变更 | `AgentChangeSet` | `change_set` | `change_set_id` | 围绕一个业务 Agent 隔离、审查并准备发布的一组改动。 |
 | 待发布版本 | `PendingReleaseCommit` | `candidate_commit_sha` | `commit_sha` | 当前待发布变更准备发布的精确 Git 提交；代码字段保留 `candidate_commit_sha`。 |
 | 发布 | `Release` | `release` | `release_id` | 已满足发布条件并固化到业务 Agent 版本链的结果。 |
-| 资产 Registry | `AssetRegistry` | `asset` | `asset_id` | 数据资产、方法论资产、执行资产和审计资产的关联视图。 |
+| 资产 Registry | `AssetRegistry` | `asset` | `asset_id` | 数据/证据、方法论和执行三类资产的关联视图；版本、provenance、审计、scope 和生命周期作为横切维度，不复制原生正文。 |
+| Runtime 绑定 | `RuntimeBinding` | 近期由部署配置和 Agent 原生包共同约束 | backend-owned binding ID/digest | 业务 Agent 版本可使用的 Runtime 选择；一次 run 只绑定一个 Runtime，客户端请求不得覆盖。 |
+| 治理身份 | `GovernancePrincipal` | 目标 control-plane contract；当前 API auth 尚不足以证明可信身份 | `principal_id` | AgentGov 自身治理操作的身份，不等同于外部业务系统的组织成员或业务角色。 |
+| 资源范围 | `ResourceScope` | 目标 typed contract | scope ID/tuple | 约束 Agent、Workspace、评测包、trace、release 和 Governor 能力的可见与可操作范围；单组织部署也必须保留。 |
+| Governor 能力版本 | `GovernorCapabilityVersion` | 目标 learning domain | capability key + version/build digest | 可执行 prompt、skill、job spec、typed contract 和方法 revision 的不可变组合；评测、激活和回退必须指向同一 build。 |
 | Trace 摘要 | `TraceSummary` | `trace_summary` | `trace_summary_id` | 面向用户和治理流程的运行证据摘要，不暴露完整底层日志为主体验。 |
 | 上下文包 | `ContextPackage` | `context_package` | `context_package_id` | 用于 AI 协作、Playwright 复现、问题转交和完整 JSON 导出的上下文。 |
 
@@ -91,26 +104,76 @@
 | `proposal` / `optimization proposal` | 当前方案生成 job 的输出命名 | `OptimizationPlan` | 当前代码/API 名可保留；用户主流程改为“优化方案”。 |
 | `RegressionAssessment` / `regression-assessment` | 已删除的四阶段测试候选名称 | `RegressionTestDesign` / `regression-test-design` | 只允许出现在历史迁移、归档材料和旧入口不存在的负向断言中。 |
 | `TestDataset` / `test_dataset` / 测试数据集 | 已删除的数据库测试内容副本和生命周期 | Workspace `tests/test_*.py` | 不作为当前资产、API、状态机或 UI 对象；历史 migration 可保留原名。 |
-| `EvalRun` / `eval_run` / 评估运行 | 已删除的数据库数据集评估链 | `AgentTestRun` / 平台测试运行 | 不作为当前运行、发布条件或人工复核对象；历史 migration 可保留原名。 |
-| 基线版本 / 候选版本 / 基线与候选 | 含义不清的用户展示词 | 修复前版本 / 待发布版本 | 代码字段 `base_commit_sha`、`candidate_commit_sha` 保留；UI 和活跃产品文档使用明确中文。 |
+| `EvalRun` / `eval_run` / 评估运行 | 已删除的数据库数据集评估链 | 当前执行证据使用 `AgentTestRun`；长期中立概念使用 `EvaluationExecution` | 不恢复旧表、旧 API、数据集正文副本或逐 case review 链；新逻辑对象只能按新的协议权威和升级条件建立。 |
+| 基线版本 / 候选版本 / 基线与候选 | 单独出现时含义不清的用户展示词 | 修复前版本 / 待发布版本；评测技术上下文可使用 baseline/candidate role | 代码字段 `base_commit_sha`、`candidate_commit_sha` 保留；UI 必须同时显示实际版本与协议，不用角色名替代版本身份。 |
 | `反馈信息 / 优化批次 / 回归资产 / 版本管理` | 当前旧反馈工作台四菜单 | 四阶段改进治理工作台中的来源、方案、测试资产和发布条件能力 | 不作为改进治理工作台主导航或验收结构。 |
 | 发布顶级入口 / `ReleaseWorkbench` | 当前或历史独立发布入口 | 测试发布阶段的发布条件预览与发布准备能力 | 不作为改进治理工作台外的默认主动作。 |
 | `SDK 事件` | Playground 调试视图中的底层事件 | Trace / Trace 摘要 / Developer Debug | 用户主流程不以 SDK 事件为核心操作。 |
 | `Run Summary` | 运行摘要 | `TraceSummary` 或运行证据摘要 | 需按用途区分面向用户的摘要与底层调试信息。 |
 | 反馈优化 workspace | 当前旧反馈闭环工作台 | 四阶段改进治理改进事项闭环的能力来源 | 功能等价迁移前不能直接下线；迁移后再退役旧入口。 |
 
-## 6. 写作规则
+## 6. 资产分类、评测关系与产品入口
+
+### 6.1 三类一级资产
+
+| 一级资产 | 典型内容 | 不属于该分类的并列项 |
+| --- | --- | --- |
+| 数据/证据资产 | run、trace、feedback、evaluation result、release/rollback event、online outcome | version 和 audit 是治理维度，不另复制正文 |
+| 方法论资产 | 归因方法、优化 SOP、评测规程、发布策略、回滚策略 | 方法修订号属于 version 维度 |
+| 执行资产 | Agent 行为包、prompt、skill、profile、playbook、Workspace 测试、独立评测包、治理规则 | 执行记录属于数据/证据资产 |
+
+所有一级资产统一携带 version/revision、digest、provenance、owner、applicability scope、审计、访问
+边界、保留/删除状态和生命周期。`AssetRegistry` 只投影稳定引用和关系，不成为 Workspace、评测包、
+Runtime 原生事实或外部业务数据的第二真相源。
+
+### 6.2 测试、基准与发布评测
+
+- 业务 Agent Workspace 测试属于 Agent 自有的可见工程契约和已知问题回归集；
+- `EvaluationBenchmark` 是稳定治理容器，其 `EvaluationProtocolRevision` 是独立版本化、不可变的
+  能力测量合同，可包含可见开发集和候选不可读取的 holdout；
+- 平台发布评测使用指定基准、精确 Agent 版本和受控环境形成 `Assessment` 与版本比较证据；
+- 线上效果记录发布后的真实业务结果、漂移、复发、成本和回滚条件。
+
+领域关系固定为：`EvaluationExecution` 聚合 1..N 个 sample run，完成后产生独立
+`Assessment`；`EvaluationComparisonGroup` 关联 baseline/candidate 的 execution/assessment；
+`EvaluationReviewDecision` 和 `ReleaseGateDecision` 在其后形成，不回写前述事实。
+
+“业务 Agent 测评”是上述基准、执行、结论和效果的产品能力总称；“平台发布评测”只是其中
+`release_baseline/release_candidate` purpose 的受控用法，不等于所有开发诊断或周期评测。
+
+测试通过、离线得分、发布成功和线上能力提升是四种不同结论，文档、API 和 UI 不得互相替代。
+
+### 6.3 UI 入口归属
+
+- “业务 Agent 详情 → 测评”是单 Agent 测评主入口；
+- “独立测评中心”管理跨 Agent/协议 campaign、隐藏集、批次执行和人工评审；
+- “资产复利 → 测试资产”管理测试源码、suite 和执行证据；
+- “资产复利 → 治理资产”展示方法论与执行资产及其审计关系，不把审计重新定义为一级资产；
+- 改进治理工作台只承接失败证据进入 `ImprovementItem` 后的四阶段闭环，不承担测评运营或
+  Governor 元治理。
+
+“测试资产”和“治理资产”是按用户任务组织的产品视图，不是两套新的一级资产分类。前者关联
+Workspace 测试执行资产与对应运行证据，后者组织可复用的方法论/执行资产并展示 provenance 和
+审计关系；审计记录只可追溯，不随资产继承。
+
+P1 即建立“业务 Agent 详情 → 测评”主入口，现有测试运行详情只作为 sample/run 证据深链。出现
+第二个 benchmark/protocol、跨 Agent campaign、持续隐藏集运营或专家评审队列任一条件时，必须
+启用独立测评中心；单个受控 holdout 本身不要求预建全局运营菜单。
+
+## 7. 写作规则
 
 1. 写长期产品、目标愿景、四阶段改进治理方案、用户主流程时，优先使用第 4 节统一术语。
 2. 写当前实现事实、API、数据库、pytest、OpenAPI、文件路径、环境变量时，保留真实标识符，不做表面改名。
 3. 引用旧方案时，应说明它属于当前实现基线、历史评审或迁移前设计，不把旧词提升为未来产品术语。
 4. 讨论多 Agent 时，必须区分业务 Agent、Subagent 和治理 Agent；所有注册业务 Agent（含 `main-agent`）遵循同一机制。
-5. 讨论资产沉淀时，必须同时考虑数据资产、方法论资产、执行资产和审计资产，不把 AgentGov 收窄成数据记录系统。
+5. 讨论资产沉淀时，一级分类只使用数据/证据、方法论和执行资产；版本、provenance、审计、scope 和生命周期按横切治理维度表达。
 6. 四阶段改进治理 UI、API、DTO、事件、ContextPackage 和 Playwright 选择器应同名同义；新增旧名别名必须有明确迁移理由。
 7. 后续代码整改计划默认以四阶段方案为准；重构收益更大时，不为旧设计增加兼容层，除非用户明确批准。
 8. 讨论业务 Agent 创建、迁移和出生配置时，只使用“业务 Agent Workspace 包”“运行态 Workspace”“内置业务 Agent”和“运行卷初始化源”；“模板”不用于指代导出的 `security-operations-expert` Workspace 包。
+9. 讨论评测时，必须明确被测 Agent 版本、评测协议 revision、评测方、Runtime/模型/工具/环境和结果用途；不把 Workspace pytest、能力基准、发布裁决或线上效果混成一个“测评得分”。
+10. 讨论平台身份时，必须区分 AgentGov 治理操作的 `GovernancePrincipal/ResourceScope` 与外部业务系统的组织、业务权限和生产审批。
 
-## 7. 归档规则
+## 8. 归档规则
 
 四阶段改进治理方案出现后，旧文档不自动归档。当前实现基线文档仍承担三类价值：
 

@@ -19,7 +19,11 @@ AgentGov 长期应形成一个治理内核、两种运行入口、多个原生 R
 1. **治理内核只有一套**：统一接收运行事实，形成反馈、评测、改进建议、测试资产和版本决策。
 2. **运行入口有两种**：AgentGov 发起并控制的受管执行，以及外部 CLI 自主运行、AgentGov 只读观测的旁路模式。
 3. **Runtime 保持原生**：Claude Code、Qwen Code、Codex、Kimi、CodeWhale 分别使用自己的会话、权限、hooks、配置和工具语义，不做相互转换。
-4. **一个部署只绑定一个 Runtime**：所有注册业务 Agent（含 main-agent）和治理 Agent 使用该部署选定的同一种 Runtime；请求或单个 Agent 不得临时切换 Runtime。
+4. **Runtime 由后端绑定，单次运行不混跑**：长期由后端将精确 BusinessAgentVersion 或
+   GovernorCapabilityVersion 绑定到一个 Runtime，同一部署可治理不同 Runtime
+   的版本；每次 run 只能使用一个后端绑定，API 请求、客户端和原生包都不得
+   临时选择或覆盖 Runtime。“单部署只启用一个 Runtime”只是过渡期安全门，不是
+   2 至 3 年产品不变量。
 5. **Multica 是可选的上层协作系统**：它负责任务、成员、队列和多 Agent 协作；AgentGov 负责运行证据、质量评测和持续改进。二者不复制领域对象，也不共同控制同一次执行。
 6. **模型网关不是 Agent Runtime**：LiteLLM/vLLM Sidecar 只处理模型协议与路由，不能承担 CLI 会话、工具、权限或协作职责。
 
@@ -71,8 +75,8 @@ AgentGov 的核心问题不是“替用户再造一个通用 Agent CLI”，也�
 
 | 对象 | 当前归属 | 未来归属 | 不应承担的职责 |
 | --- | --- | --- | --- |
-| 所有注册业务 Agent（含 main-agent） | Claude 原生 Workspace 与 AgentGov 业务资产 | 部署所选 Runtime 的原生业务 Agent 包 | 不决定跨 Agent 任务编排 |
-| 治理 Agent | Claude 原生 Workspace | 与业务 Agent 相同 Runtime 的独立原生包 | 不伪装成业务 Agent，不接管外部 CLI |
+| 所有注册业务 Agent（含 main-agent） | Claude 原生 Workspace 与 AgentGov 业务资产 | 每个精确 BusinessAgentVersion 绑定的 Runtime 原生包 | 不自报或覆盖 Runtime，不决定跨 Agent 任务编排 |
+| 治理 Agent | Claude 原生 Workspace | 每个 GovernorCapabilityVersion 绑定的独立 Runtime 原生包 | 不伪装成业务 Agent，不接管外部 CLI |
 | AgentGov 治理内核 | API、运行投影、反馈闭环、评测与版本 | Runtime 中立的治理事实与业务流程 | 不重写原生 agent loop |
 | 系统内 CLI | Claude Agent SDK 启动的 Claude Code | 所选 Runtime 的受管执行端 | 不与 Multica 争夺任务所有权 |
 | 外部 CLI | 当前不受支持 | 用户或第三方自行启动，AgentGov 只读观测 | AgentGov 不代写其配置、不控制进程 |
@@ -176,8 +180,11 @@ claude-agent-sdk + 捆绑的 Claude Code agent
 目标完成时应满足：
 
 1. Claude Code、Qwen Code、Codex、Kimi、CodeWhale 可按明确优先级接入；每个 Runtime 有版本化能力清单和真实验收结果。
-2. 一个 AgentGov 部署通过 `AGENT_RUNTIME_KIND` 绑定一个 Runtime，启动时完成版本与能力探测；不接受请求级 Runtime 覆盖。
-3. 所有注册业务 Agent（含 main-agent）和治理 Agent 均使用该 Runtime 的原生包，不做 Claude 配置到其他 Runtime 的自动翻译。
+2. 后端 Runtime binding 将精确 BusinessAgentVersion 或 GovernorCapabilityVersion 绑定到
+   Runtime，启动时完成已注册 adapter 的版本与能力探测；不接受请求级
+   Runtime 覆盖。
+3. 每个受管版本使用其绑定 Runtime 的原生包，不做 Claude 配置到其他 Runtime
+   的自动翻译；每次 run 固化 binding 快照和 provenance，运行中不切换 Runtime。
 4. 受管执行和外部 CLI 旁路共享治理内核，但分别保留自己的事实源、可靠性边界和权限模型。
 5. 外部 CLI 即使断网或 AgentGov 重启，也能通过本地 durable spool 和幂等回放补齐已采集事件。
 6. UI、API、数据库和 Langfuse 可以明确回答：这是哪个 Runtime、哪种执行来源、哪个原生会话、哪份配置、观测是否完整。
@@ -223,7 +230,7 @@ claude-agent-sdk + 捆绑的 Claude Code agent
 +-----------------------------------------------------------------------+
          |                                           ^
          v                                           |
-  部署选定的系统内 Runtime CLI             agentgov-observer（只读）
+  后端绑定的系统内 Runtime CLI             agentgov-observer（只读）
   Claude/Qwen/Codex/Kimi/CodeWhale         + Runtime 原生 hooks/OTel/API
 ```
 
@@ -292,7 +299,8 @@ Multica task -> AgentGov 公开 API -> 系统内 CLI
 受管执行继续承担当前核心产品能力：
 
 - AgentGov 选择已注册业务 Agent；
-- `RuntimeGateway` 通过当前部署的 `RuntimeAdapterBundle` 发起运行；
+- `RuntimeGateway` 根据 backend-owned BusinessAgentVersion/GovernorCapabilityVersion binding
+  解析唯一 `RuntimeAdapterBundle` 发起运行；
 - Runtime 原生驱动决定 options、权限、hooks、会话恢复、工具和流式协议；
 - AgentGov 只保存 API 所需映射、治理投影和审计字段；
 - 原生 Runtime 仍是消息、会话、工具调用和子 Agent 行为的事实源；
@@ -336,7 +344,7 @@ external_cli: observer raw events  -> normalizer -> canonical facts
 
 | 端口 | 职责 | 典型能力 |
 | --- | --- | --- |
-| `RuntimeDescriptor` | 身份、版本、能力探测 | runtime kind、版本范围、能力位 |
+| `RuntimeDescriptor` | 身份、版本、能力探测 | runtime kind、版本范围、typed capability support |
 | `ManagedExecutionDriver` | 发起和控制受管运行 | run、stream、cancel、resume |
 | `NativeSessionDriver` | 读取原生会话事实 | messages、session info、subagents |
 | `NativePackageDriver` | 校验和发现原生 Agent 包 | manifest、配置文件、测试入口 |
@@ -360,25 +368,57 @@ class RuntimeAdapterBundle:
 
 首期采用仓库内的一方注册表，不提前设计第三方插件 SDK。只有两个以上外部团队需要独立发布适配器时，才评审插件发现、签名和兼容协议。
 
-### 7.2 部署级选择
+### 7.2 后端绑定与阶段性部署默认
 
-目标配置增加：
+过渡期配置增加：
 
 ```text
 AGENT_RUNTIME_KIND=claude-code
 ```
 
+该值是当前实例启用的 Runtime 默认，不是长期 Agent 身份模型。目标解析契约为：
+
+```text
+RuntimeBinding:
+  binding_id
+  subject_type             # business_agent_version | governor_capability_version
+  subject_id
+  runtime_kind
+  native_package_ref
+  native_package_digest
+
+resolve(subject, run_context) -> exactly one immutable binding snapshot
+```
+
+`subject_id`、binding 和 run 归属均由后端提供。Agent manifest 的 `runtime` 是原生包类型声明，
+只能与已授权 binding 做一致性校验，不能创建或覆盖 binding。
+
 约束如下：
 
 - 允许值由内置 registry 提供；
 - 应用启动时完成 Runtime 版本和能力探测，失败即输出结构化诊断并 fail fast；
-- API 请求、Agent manifest 和 observer 配对不得覆盖部署 Runtime；
-- 所有注册业务 Agent（含 main-agent）和治理 Agent 必须与部署 Runtime 一致；
-- 若需要同时运行 Claude Code 和 Codex，部署两个独立 AgentGov 实例，后续再评审跨实例聚合，而不是在一次请求中混跑。
+- API 请求、Agent manifest、observer 配对和前端 env 不得创建或覆盖 binding；
+- 每次 run 开始时固化一个 binding 快照，直到不可变终态都不允许切换；
+- 初期实现可由 `DeploymentDefaultRuntimeBindingResolver` 将全部准入版本解析到
+  `AGENT_RUNTIME_KIND`，并且一个部署只启用一个 adapter；
+- 完成第二个生产 adapter、每 BusinessAgentVersion 原生包准入和隔离验收后，同一部署可
+  加载多个 adapter 并按 binding 解析，不需要更改公开请求契约；
+- 任何阶段都禁止在一次请求或 run 中混跑，也禁止为了多 Runtime 开放客户端
+  `runtime_kind` selector。
 
 ### 7.3 能力协商
 
-每个 Runtime 适配器必须声明并实测：
+每个 Runtime 适配器必须为每个能力键声明 typed `CapabilitySupport`：
+
+```text
+CapabilitySupport:
+  support_level            # supported | partial | unsupported
+  constraints              # 版本、模式、权限、恢复或并发条件
+  observation_coverage     # full | partial | summary_only | unknown
+  evidence_ref             # 真实版本实测回执
+```
+
+首批能力键包括：
 
 ```text
 managed_run
@@ -393,7 +433,7 @@ structured_observation
 native_package_validation
 ```
 
-缺少能力时必须显式降级或拒绝：例如没有可靠会话恢复，就禁用“继续会话”；没有人工输入回调，就不能显示可操作审批；只有 OTel 汇总数据时，外部运行的 coverage 不能标记为完整。禁止用同名空字段掩盖能力缺失。
+缺少能力时必须显式降级或拒绝：例如没有可靠会话恢复，就禁用“继续会话”；没有人工输入回调，就不能显示可操作审批；只有 OTel 汇总数据时，外部运行的 coverage 不能标记为完整。禁止用同名空字段、单一布尔位或无真实回执的自报掩盖能力缺失。
 
 ### 7.4 Runtime 与模型提供方彻底分离
 
@@ -418,18 +458,30 @@ ExecutionOrigin = managed | external_cli
 RuntimeSessionRef:
   runtime_kind
   native_session_id
-  native_project_key?
+  native_project_scope?
+  native_version
 
-RuntimeRunRecord:
+RuntimeProvenance:
+  runtime_kind
+  adapter_version
+  native_version
+  binding_id / binding_source
+  native_package_digest?
+  model_provider_ref?
+  capability_report_digest
+
+RuntimeRun:
   run_id
   agent_id
+  business_agent_version_id?  # 仅受管运行
+  runtime_binding_id?
   runtime_kind
   execution_origin
   runtime_session_ref?
-  agent_version_id?       # 仅受管运行
   config_snapshot_id?     # 外部运行优先使用
   status
   observation_coverage
+  provenance
   started_at / finished_at
 
 RuntimeEvent:
@@ -438,7 +490,7 @@ RuntimeEvent:
   event_kind
   occurred_at
   normalized_payload
-  raw_native_payload
+  raw_native_payload      # 只在 DB/HTTP/日志等 boundary 序列化
 ```
 
 首批稳定事件只包含治理真正需要的交集：
@@ -468,7 +520,10 @@ run.failed
 | Agent 输出 | 回复内容、分析、建议和业务结构化结果 |
 | 边界层 | DB、HTTP、SSE、Langfuse、observer batch 的序列化形式 |
 
-公共契约最终使用 `runtime_session_id` 或结构化 `RuntimeSessionRef` 取代 `sdk_session_id`。现有 Claude 值可通过一次性数据库迁移保留为 `native_session_id`；不保留长期双写、长期 alias 或两套 OpenAPI 字段。
+公共契约最终使用 backend-owned opaque `platform_session_id`。结构化
+`RuntimeSessionRef` 只是平台内部 provenance，不对外暴露 native session 主键细节。现有
+Claude `sdk_session_id` 值通过一次性数据库迁移保留为内部 `native_session_id`；
+不保留长期双写、长期 alias 或两套 OpenAPI 字段。
 
 ### 8.3 运行状态与观测完整性分离
 
@@ -476,12 +531,13 @@ run.failed
 
 ```text
 running -> completed | failed | cancelled | interrupted
-interrupted -> running | completed | failed | cancelled
 ```
 
-- `completed`、`failed`、`cancelled` 是不可变终态；
+- `completed`、`failed`、`cancelled`、`interrupted` 都是不可变终态；
 - 服务或 observer 中断时，未确认终态的运行进入 `interrupted`；
-- Runtime 支持恢复时可回到 `running`，只支持事件回放时根据原生终态收敛；
+- Runtime 支持会话恢复时，创建新 `run_id` 并可继续引用同一内部
+  `RuntimeSessionRef`；不重开旧 run；
+- 只支持事件回放时，回放补全原 run 的证据/coverage，不改写已确定的不可变终态；
 - `ObservationCoverage` 单独表达 `full`、`partial`、`summary_only` 或 `unknown`；
 - `completed + partial` 是合法组合，不能因任务完成就宣称证据完整。
 
@@ -511,13 +567,16 @@ runtime: claude-code
 ```
 
 `workspace/` 内容由对应 Runtime 原生约定决定。Claude 包可以包含 `CLAUDE.md`、`.claude/`、`.mcp.json`；其他 Runtime 使用各自官方配置。平台只校验 manifest 与适配器定义的原生结构，不自动把一个 Runtime 的 prompt、hook、permission 或 skill 翻译到另一个 Runtime。
+该 `runtime` 只是包类型声明；导入和发布时必须与 backend-owned BusinessAgentVersion binding
+一致，不能通过修改 manifest 自行切换 Runtime。
 
 同一业务语义若需支持多个 Runtime，应由开发者维护多个原生包并分别测试。它们可以共享外部业务资料，但不能假定配置文件逐项等价。
 
 ### 9.2 治理 Agent
 
 - 治理 Agent 不是业务 Agent，不出现在 Playground 业务 Agent 选择语义中；
-- 它与所有注册业务 Agent（含 main-agent）使用相同的部署 Runtime；
+- 其精确 GovernorCapabilityVersion 有独立 backend-owned Runtime binding；过渡期
+  resolver 可将它与业务 Agent 一同解析到部署默认，但这不是长期必须相同的产品约束；
 - 通用治理 prompt、Pydantic 输出和确定性投影保留在治理内核；
 - Runtime 特有的 options、permissions、hooks 和 workspace 由对应原生治理 Agent 包承担；
 - 治理任务通过同一个 `ManagedExecutionDriver`，删除 Claude 专用 `AgentJobRunner` 旁路。
@@ -526,7 +585,7 @@ runtime: claude-code
 
 ### 9.3 受管版本与外部快照不得混淆
 
-- 受管运行绑定 `agent_version_id`；
+- 受管运行绑定 `business_agent_version_id`；
 - 外部运行绑定 `config_snapshot_id`；
 - 只有内容 digest 可确定性证明完全相同时，才可额外记录与受管版本的匹配关系；
 - 不能因为 `agent_id` 相同，就把外部运行标记为当前受管版本；
@@ -538,10 +597,12 @@ runtime: claude-code
 ### 10.1 受管 API
 
 - 保留 `/v1/responses` 与 `/v1/conversations` 的产品语义；
-- 运行详情增加 `runtime_kind`、`execution_origin`、`runtime_session_ref` 和 `observation_coverage`；
+- 运行详情增加 `runtime_kind`、`execution_origin`、opaque `platform_session_id` 和
+  `observation_coverage`；原生 `RuntimeSessionRef` 只在受权内部证据面使用；
 - 不增加请求级 `runtime_kind`；
 - 原生人工确认统一投影为 UI 可消费的 envelope，但 allow/deny/modify/defer 等合法动作以当前 Runtime 能力为准；
-- OpenAPI 和前端生成类型同步删除公开 `sdk_session_id`，不建立永久兼容字段。
+- OpenAPI 和前端生成类型同步将公开 `sdk_session_id` 迁移为
+  `platform_session_id`，不建立永久兼容字段。
 
 ### 10.2 observer API
 
@@ -570,7 +631,7 @@ DELETE /v1/observer/pairings/{pairing_id}
 
 | 页面 | 目标变化 |
 | --- | --- |
-| Playground | 显示当前部署 Runtime；只列出与该 Runtime 匹配的注册业务 Agent |
+| Playground | 过渡期显示部署默认 Runtime；多 adapter 阶段在 BusinessAgentVersion 上显示后端绑定 Runtime，用户选 Agent 而不选 Runtime |
 | 会话与运行详情 | 显示“受管运行/外部 CLI”、原生会话引用、Runtime 版本和观测完整性 |
 | Agent 设置 | 管理原生包；外部 CLI 使用独立“配对与观测”入口 |
 | 反馈工作台 | 可筛选 Runtime 和执行来源；同一反馈模型处理两种证据 |
@@ -609,10 +670,10 @@ DELETE /v1/observer/pairings/{pairing_id}
 | --- | --- |
 | 保留 | Responses-first API 语义、Claude 原生能力、业务 Agent 包、治理 Agent、反馈/评测/版本闭环、Langfuse |
 | 抽取 | `ClaudeRuntime` 中的执行、会话、人工输入、事件、provider 和 telemetry 职责 |
-| 迁移 | `sdk_session_id` 到 Runtime 中立会话引用；Claude 旧值一次性迁移为 `native_session_id` |
+| 迁移 | 公开 `sdk_session_id` 到 opaque `platform_session_id`；Claude 旧值一次性迁移为内部 `RuntimeSessionRef.native_session_id` |
 | 替换 | router 对 `ClaudeRuntime` 的直接依赖，改为 `RuntimeGateway` |
 | 收口 | `AgentJobRunner` 与业务聊天共用当前 Runtime 的 `ManagedExecutionDriver` |
-| 新增 | Runtime registry、capability manifest、canonical events、observer ingress、pairing、spool、snapshot |
+| 新增 | backend-owned Runtime binding、registry、typed capability support、run/session/event provenance、observer ingress、pairing、spool、snapshot |
 | 删除 | 路由中的 Runtime 分支、公共 Claude 专属字段、长期 alias/双写、跨 Runtime 配置转换、observer 写回能力 |
 | 不改职责 | LiteLLM/vLLM Sidecar 继续只处理模型协议与路由 |
 
@@ -647,74 +708,68 @@ agentgov-observer/
 └── spool/
 ```
 
-### 12.3 分阶段实施与硬门
+### 12.3 Runtime 演进地平线与硬门
 
-#### P0：契约冻结与能力实测
+本节使用 `Runtime-H*` 标识 Runtime 专项地平线，不与 AgentGov 下一阶段
+P0/P1/P2A/P2B/P3 重名。
 
-- 建立 ADR：单部署单 Runtime、双入口、Multica 边界、字段所有权；
+#### Runtime-H0：契约候选与真实协议证伪
+
 - 记录当前 Claude 受管主流程的 golden behavior；
-- 对候选 CLI 做真实版本 spike，不先写生产适配器；
-- 固定 canonical event 最小集合和 capability manifest。
+- 冻结内部 `RuntimeSessionRef` / `RuntimeRun` / `RuntimeEvent` / provenance 候选语义；
+- 将能力自报改为 support level、constraints、coverage 和实测 evidence；
+- 用真实 Codex app server `thread/turn` 协议做 spike，不写第二个生产 adapter。
 
-**硬门**：当前 Claude 功能清单、数据库迁移影响、公开 API breaking change 和回滚点全部可审查。
+**硬门**：输出可复用边界、Claude-shaped 假设、Runtime 特有扩展和不支持能力矩阵；
+fake 不能代替真实回执。
 
-#### P1：中立核心与一次性数据迁移
+#### Runtime-H1：Claude 边界提取与等价验收
 
-- 新增 Runtime 中立类型、状态转移表和 registry；
-- 将 `sdk_session_id` 一次性迁移为 Runtime 会话引用；
+- 将现有 Claude 逻辑按小端口收口到 `claude_code` adapter；
+- router 只依赖 `RuntimeGateway`，初期 resolver 将全部受管版本绑定到部署默认；
+- 治理 Agent 和业务 Agent 共用受管执行端口；
+- 保持当前 DB/OpenAPI/SSE 不变，core 不出现 `sdk_session_id`。
+
+**硬门**：Claude 会话恢复、流式、工具、人工输入、subagents、Langfuse、反馈主流程和
+真实容器 E2E 与迁移前等价，且第二协议发现的 Claude-shaped 假设已隔离。
+
+#### Runtime-H2：公开会话身份与绑定基础
+
+- 将公开 `sdk_session_id` 一次性迁移为 opaque `platform_session_id`；
+- 建立 backend-owned Runtime binding 与 run binding snapshot，初期数据仍全部指向 Claude；
 - 更新 OpenAPI、前端生成类型、DB、Langfuse 属性和术语文档；
-- 不增加第二 Runtime。
+- 不保留长期双写或 native session 公开主键。
 
 **硬门**：旧 Claude 历史仍可读取；无长期双写；非法状态转移、重复迁移和回滚路径有测试。
 
-#### P2：Claude adapter 抽取与等价验收
+#### Runtime-H3：首个非 Claude 生产 adapter 与同部署多绑定
 
-- 将现有 Claude 逻辑按小端口迁入 `claude_code` adapter；
-- router 只依赖 `RuntimeGateway`；
-- 治理 Agent 和业务 Agent 共用受管执行端口；
-- 删除生产路径对 `ClaudeRuntime` 的直接构造。
+- 候选 Runtime 由真实业务需求、H0 spike 结果和官方结构化协议稳定性共同决定；
+- 先完成真实能力报告，再实现 Runtime 原生包、adapter 和治理 Agent 包；
+- 同一部署加载 Claude 与首个非 Claude adapter，按 BusinessAgentVersion/GovernorCapabilityVersion
+  binding 解析；
+- 隔离验证 Workspace、session、权限、资源限额、并发和 telemetry，单次 run 不混跑。
 
-**硬门**：Claude 会话恢复、流式、工具、人工输入、subagents、prompt suggestions、Langfuse、反馈主流程和真实容器 E2E 与迁移前等价。
+**硬门**：两个 Runtime 在同一实例中按后端绑定分别完成真实受管运行；客户端无 selector；
+错误绑定、能力缺失和跨 Runtime session 污染均 fail closed。
 
-#### P3：Claude 外部 CLI observer
+#### Runtime-H4：外部 CLI observer
 
 - 实现配对、spool、batch、幂等、coverage 和配置快照；
-- 只使用 Claude 官方 hooks/OTel/结构化能力；
+- 每个 Runtime 只使用官方 hooks/OTel/结构化能力，按能力分级开放；
 - UI 区分 managed 与 external CLI；
 - 形成“建议 -> 用户手工应用 -> 新快照匹配”的只读闭环。
 
 **硬门**：断网、observer 重启、AgentGov 重启、重复 batch、事件缺口、撤销配对和敏感文件排除全部通过。
 
-#### P4：Qwen Code
+#### Runtime-H5：其余 Runtime 与生态收口
 
-- 先完成真实能力报告，再实现原生包和 adapter；
-- 受管执行通过后，再开放旁路观测；
-- 不复用 Claude 配置映射。
-
-**硬门**：与 Claude 共用同一 contract test suite；不支持能力均有明确诊断和 UI 降级。
-
-#### P5：Codex
-
-- 基于 app server/thread/turn 和官方 hooks/OTel 建立 adapter；
-- 单独验证审批、恢复、工具事件与流式；
-- 完成 Runtime 原生治理 Agent 包。
-
-**硬门**：真实 Codex CLI 版本矩阵和容器/宿主机边界通过，不靠模拟协议宣称可用。
-
-#### P6：Kimi
-
-- 基于 Wire Mode、hooks 和 sessions 完成能力 spike；
-- 先解决原生会话与事件身份，再接治理闭环。
-
-**硬门**：长会话、异常中断和权限语义可追溯；能力缺口不被中立 schema 掩盖。
-
-#### P7：CodeWhale 与生态收口
-
-- 以届时公开、稳定且可测试的结构化接口为准；
+- Qwen Code、Codex、Kimi 和 CodeWhale 依次按业务需求与实测证据接入，不自动翻译配置；
 - 若只具备有限观测能力，只发布 observer partial support；
-- 总结两个以上非 Claude adapter 的重复点，再决定是否开放插件 SDK。
+- 总结两个以上非 Claude 生产 adapter 的重复点，再决定是否开放插件 SDK。
 
-**硬门**：没有结构化事实来源时不得通过终端文本解析伪装完整接入。
+**硬门**：没有结构化事实来源时不得通过终端文本解析伪装完整接入；每个 adapter 都有固定版本区间、
+typed capability support 和真实验收回执。
 
 Multica 不作为以上阶段的前置依赖。只有 AgentGov 多 Runtime 核心稳定、出现真实协作需求且通用 API/旁路模式无法满足时，才单独进入需求评审。
 
@@ -735,7 +790,7 @@ Multica 不作为以上阶段的前置依赖。只有 AgentGov 多 Runtime 核�
 ### 13.2 受管真实验收
 
 - 所有注册业务 Agent（含 main-agent）均可选择和运行；
-- 治理 Agent 使用同一 Runtime 且不出现在业务选择列表；
+- 治理 Agent 按其 GovernorCapabilityVersion binding 运行，且不出现在业务选择列表；
 - 非流式、流式、会话恢复、人工确认、服务重启和失败诊断完整；
 - 反馈 -> 归因 -> 优化 -> 自测/平台评测 -> 发布主流程可完成；
 - UI 空态、成功态、失败详情和 Runtime 降级态有截图或浏览器场景证据；
@@ -766,6 +821,8 @@ Multica 不作为以上阶段的前置依赖。只有 AgentGov 多 Runtime 核�
 | --- | --- | --- |
 | 过度归一化 | 丢失原生权限、工具和会话语义 | 最小事件交集 + `raw_native_payload` + coverage |
 | 巨型 adapter | 新增 Runtime 后修改所有实现 | 小端口 + bundle + contract tests |
+| 客户端或 manifest 覆盖绑定 | 越权使用 Runtime、原生包与会话事实污染 | backend-owned version binding、run 快照、单 run 唯一解析 |
+| 同部署多 adapter 资源串扰 | 会话、Workspace、凭据、限额或 telemetry 跨 Runtime 泄漏 | 原生包、进程/权限、会话命名空间和观测隔离验收 |
 | 双重控制 | AgentGov 与 Multica/用户竞争取消、恢复、审批 | `execution_origin` 唯一；外部模式严格只读 |
 | 外部 CLI 版本漂移 | hooks 或事件结构失效 | 版本探测、支持矩阵、fail closed、真实验收 |
 | 配置泄密 | observer 上传凭据 | adapter allowlist，默认拒绝未知文件，快照前扫描 |
@@ -792,18 +849,25 @@ Multica 不作为以上阶段的前置依赖。只有 AgentGov 多 Runtime 核�
 
 本方案提交审批时，应一次性确认以下架构决策：
 
-1. 接受“一个部署一个 Runtime”，拒绝请求级混跑；
+1. 接受“当前单 active Runtime 是过渡期门禁”，长期由 backend-owned
+   BusinessAgentVersion/GovernorCapabilityVersion binding 支持同部署多 Runtime；无论何时都拒绝
+   客户端 selector 和单 run 混跑；
 2. 接受“受管执行 + 外部 CLI 只读旁路”共享治理内核；
 3. 接受 Runtime 原生包并存，拒绝跨 Runtime 配置转换；
-4. 接受 `sdk_session_id` 一次性迁移和公共契约清理，不保留永久兼容层；
+4. 接受 `sdk_session_id` 一次性迁移为 opaque `platform_session_id`，内部
+   `RuntimeSessionRef` 保留 native provenance，不保留永久兼容层；
 5. 接受 observer 严格只读，外部自动应用必须通过显式导入转为受管模式；
 6. 接受 Multica 仅为可选上层协作系统，不进入当前 AgentGov 领域模型和 Compose；
-7. 接受先完成 Claude adapter 等价抽取，再接 Qwen Code、Codex、Kimi、CodeWhale；
+7. 接受先用真实第二协议证伪边界、完成 Claude adapter 等价抽取，再按真实
+   需求接入第二个生产 Runtime；
 8. 接受能力分级和 fail closed，不以“能启动 CLI”替代完整验收。
 
 ## 17. 最终目标判断
 
 当前“在 Claude Agent SDK 上包一层”的实现不是应被丢弃的临时方案，而是未来 `claude-code` adapter 的真实、成熟起点。需要替换的是它对路由、公共 schema、治理任务和模型绑定的直接渗透，不是 Claude 原生能力本身。
+候选 core 边界也不能因 Claude 委托和 fake contract tests 通过就被宣称为 Runtime 中立；
+真实第二协议的反证、两个生产 adapter 的等价/差异证据和同部署隔离验收，分别决定
+边界能否冻结、第二 Runtime 能否上线以及多 Runtime 能否同部署运行。
 
 未来外部 CLI 旁路也不是另一套 AgentGov。它只增加一种证据入口：原生 CLI 保持自主，observer 可靠采集，治理内核继续完成反馈、评测和配置改进。受管模式与旁路模式在事实归一化之后汇合，在此之前各自尊重原生生命周期和真相源。
 

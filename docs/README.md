@@ -24,7 +24,8 @@
 
 ## 权威入口
 
-- [项目目标愿景使命](./项目目标愿景使命.md)：`docs/项目目标愿景使命.md`
+- [项目目标愿景使命](./项目目标愿景使命.md)：`docs/项目目标愿景使命.md`，定义长期定位、七个平台面、
+  三类一级资产、评测关系、控制面边界与平台成功度量
 - [AgentGov核心功能测试用例](./AgentGov核心功能测试用例.md)：`docs/AgentGov核心功能测试用例.md`
 - [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)：`docs/AgentGov术语与版本边界.md`
 - [文档治理与归档策略](./文档治理与归档策略.md)：`docs/文档治理与归档策略.md`，文档治理入口和权威地图
@@ -45,32 +46,38 @@
 
 ## 下一阶段实施方案
 
-这些文档是 2026-07-30 基于当前实现证据形成的工程评审稿，按“P0 准入收口 → P1 业务证据
-主线 → P2A/P2B 受限并行 → P3 独立扩展准入”组织。它们定义当前建议的实施顺序、契约边界和
-退出门，不表示目标能力已经实现；当前运行态仍以“当前实现基线”为准。
+这些文档是 2026-07-30 基于当前实现证据形成、并于 2026-08-05 完成长远平台边界复核的工程
+评审稿，按“P0 准入收口 → P1/P2A 受限并行 → P2B shadow → P3 平台基础与独立扩展准入”
+组织。它们定义当前建议的实施顺序、长期 seam、契约边界和退出门，不表示目标能力已经实现；
+当前运行态仍以“当前实现基线”为准。
 
 - [AgentGov 下一阶段实施方案索引](./AgentGov下一阶段实施方案索引.md)：
   `docs/AgentGov下一阶段实施方案索引.md`，统一说明阶段结论、权威关系、准入证据、治理对象、
   依赖顺序、全局裁决和评审清单
 - [P0 准入收口实施方案](./engineering/AgentGov下一阶段P0准入收口实施方案.md)：
   `docs/engineering/AgentGov下一阶段P0准入收口实施方案.md`，先分别收口内置安全 Agent
-  29/29 静态绿测、模拟 MCP 平台回执、测试质量策略可见性和 Runtime 生命周期裁决
+  精确 commit 全量测试、模拟 MCP capability slice 回执、per-Agent 质量策略 lane 和 Runtime
+  生命周期裁决；当前 29 个 leaf 只是基线快照，不进入平台长期契约
 - [P0 模拟 MCP 平台验收实施方案](./engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md)：
   `docs/engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md`，固定原始
   `openapi-mcp-server` 与 `mock_service` 提交，以隔离、只读、合成夹具验证 AgentGov 的真实
-  MCP 工具闭环；不作为生产 MCP、认证或业务 Agent 能力证据
+  `Claude / Streamable HTTP / tools / read-only / no-auth` capability slice；不作为其他 transport、
+  生产 MCP、认证或业务 Agent 能力证据
 - [P1 网络安全测评纵向闭环实施方案](./engineering/AgentGov下一阶段P1网络安全测评纵向闭环实施方案.md)：
   `docs/engineering/AgentGov下一阶段P1网络安全测评纵向闭环实施方案.md`，以 8 个静态 L2 案例
-  建立 typed 评分、安全否决、改进事项和精确发布闭环；案例固定无工具，不继承 P0-MCP 成绩
-- [P2A Runtime 中立核心与 Claude Adapter 实施方案](./engineering/AgentGov下一阶段P2ARuntime中立核心与ClaudeAdapter实施方案.md)：
-  `docs/engineering/AgentGov下一阶段P2ARuntime中立核心与ClaudeAdapter实施方案.md`，只做
-  Claude-only 小端口、registry、gateway 和委托 adapter，不迁移公开会话字段
+  建立 Agent 自有可见回归包与 evaluator-owned 发布基准分权、typed 评分、安全否决、版本比较和
+  精确发布闭环；本阶段只称协议化回归/发布准入，不以通过结果宣称整体能力提升
+- [P2A Runtime 边界提取与 Claude Adapter 实施方案](./engineering/AgentGov下一阶段P2ARuntime边界提取与ClaudeAdapter实施方案.md)：
+  `docs/engineering/AgentGov下一阶段P2ARuntime边界提取与ClaudeAdapter实施方案.md`，提取
+  中立内部事实、小端口、registry/gateway 和 Claude 委托 adapter，并用第二类真实协议 spike
+  证伪 Claude-shaped abstraction；本阶段不迁移公开会话字段或接第二生产 Runtime
 - [P2B Governor 受控学习基础实施方案](./engineering/AgentGov下一阶段P2BGovernor受控学习基础实施方案.md)：
   `docs/engineering/AgentGov下一阶段P2BGovernor受控学习基础实施方案.md`，建立不可变证据、
-  能力版本、方法候选和隔离评估，候选保持 shadow
-- [P3 扩展准入实施方案](./engineering/AgentGov下一阶段P3扩展准入实施方案.md)：
-  `docs/engineering/AgentGov下一阶段P3扩展准入实施方案.md`，分别约束安全完整 MVP、Runtime
-  公共迁移、Governor 人工启用、外部 CLI、第二 Runtime 和 Multica 的启动门
+  方法候选、不可变 capability build、ApplicabilityScope 和盲化隔离评估，候选保持 shadow
+- [P3 扩展组合准入框架](./engineering/AgentGov下一阶段P3扩展准入实施方案.md)：
+  `docs/engineering/AgentGov下一阶段P3扩展准入实施方案.md`，分别约束统一 EvalOps、资产关系与
+  能力包、单组织控制面、数据治理、SLO/成本，以及安全完整 MVP、Runtime 公共迁移、Governor
+  受控激活和通用外部 adapter 的启动门
 
 ## 当前实现基线
 
@@ -102,7 +109,9 @@
 
 ## 工程治理
 
-- [测试资产组合治理](./engineering/测试资产组合治理.md)：`docs/engineering/测试资产组合治理.md`，测试分类、生命周期、执行通道、可信证据、TIA/xdist 晋级和 mutation 的权威工程契约
+- [测试资产组合治理](./engineering/测试资产组合治理.md)：`docs/engineering/测试资产组合治理.md`，
+  测试分类、业务 Agent 自有回归与独立发布评测包分权、生命周期、执行通道、可信证据、TIA/xdist
+  晋级和 mutation 的权威工程契约
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`
 - [GSD长程重构阶段清单](./engineering/GSD长程重构阶段清单.md)：`docs/engineering/GSD长程重构阶段清单.md`
 - [Agent 运行时语义事件与 Speech Summary 整改方案](./engineering/Agent运行时语义事件与SpeechSummary整改方案.md)：

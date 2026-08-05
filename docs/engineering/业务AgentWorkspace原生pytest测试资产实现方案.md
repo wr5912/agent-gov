@@ -143,8 +143,9 @@ API 的 `manual` / `release_check`，以及用户预先保存并启用的每 Age
 
 ### 5.1 资产复利中心投影
 
-“资产复利中心”默认展示“测试资产”，并保留“治理资产”页签中的方法论、执行和审计资产。测试页按业务
-Agent 展示当前有效 commit 的 suite、文件数、诊断、最近运行和定时状态；详情分为“测试文件”“运行历史”
+“资产复利中心”默认展示“测试资产”，并保留“治理资产”页签中的方法论、执行资产和审计记录投影；
+当前 `audit` 过滤值属于横切审计维度，不定义长期第四类资产。测试页按业务 Agent 展示当前有效
+commit 的 suite、文件数、诊断、最近运行和定时状态；详情分为“测试文件”“运行历史”
 和“定时策略”。源码查看满足以下约束：
 
 - 只接受当前 suite 已声明的 `tests/test_*.py` 路径，拒绝绝对路径和目录穿越；
@@ -267,6 +268,12 @@ python -m pytest -q -p agentgov_testkit.pytest_plugin tests
 ## 10. 迁移与删除
 
 该设计直接替换数据库 `TestDataset`、`EvalRun`、逐 case review API 和通用资产中的测试类型：
+
+这里删除的是以数据库测试正文副本为权威的旧链路，不禁止后续建立协议中立的
+`EvaluationExecution/Assessment` 领域对象。当前 `AgentTestRun` 只是 Workspace pytest 的执行证据；
+P1 计划将其作为 `EvaluationExecution` 中独立 sample 的首个 adapter，并由最小协议中立聚合引用，
+而不是把全部评测语义塞回 `report_json`。正式评测包正文继续由独立版本化资产持有，不能借新名称
+恢复旧双轨。
 
 - 迁移 `0048` 归档旧行后删除旧表和待发布变更上的历史评测字段，并建立平台测试运行表；
 - 迁移 `0049` 把四阶段产物统一为 `RegressionTestDesign` 命名；

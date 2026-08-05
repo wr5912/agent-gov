@@ -30,6 +30,29 @@
 和
 [MCP Resource 范围说明](https://github.com/wr5912/openapi-mcp-server/blob/fb3d79c05cfaf70067a170af42a04503c619b688/docs/openapi-mcp-resource-sketch.md)。
 
+### 1.1 本回执的精确 capability tuple
+
+P0-MCP 只对以下精确组合作出肯定结论：
+
+| 维度 | 本次覆盖值 |
+| --- | --- |
+| Runtime | `claude-code` 受管 Runtime |
+| MCP transport | Streamable HTTP |
+| MCP surface | `tools/list` + `tools/call` |
+| Operation | 过滤 spec 中的两个 GET-only/read-only tool |
+| Authentication | `not-tested` / no-auth 合成夹具 |
+| Data/network | 合成数据 + 隔离 fixture network |
+| Evidence | SDK/Agent 原生 tool facts 与 AgentGov canonical 投影 |
+
+因此回执中的能力标识必须等价表达为
+`claude-code / streamable-http / tools / GET-read-only / no-auth-fixture`，不得缩写为
+“MCP 已验证”或“生产工具能力已就绪”。
+
+以下能力在 P0-MCP 退出后仍保持 `GAP`：认证与授权、凭据/header 传递、多组织隔离、
+写操作与人工审批、resources/templates 消费、生产 endpoint/allowlist、第二 Runtime、
+动态安全场景和真实业务质量。空 resources/templates 只是本次工具面收缩断言，不是对该
+能力的支持证据。
+
 ## 2. 实际问题、替代方案与退出条件
 
 ### 2.1 实际问题
@@ -37,8 +60,8 @@
 P0 当前有两类互不替代的 GAP：
 
 1. Workspace 29 个静态测试中 14 个失败，需要按安全缺陷、环境缺陷和陈测分别收口；
-2. 即使静态测试全绿，仍缺一条“真实 Runtime 加载 MCP → Agent 调用 → AgentGov 采集原生证据”
-   的平台验收。
+2. 即使静态测试全绿，仍缺一条对第 1.1 节 capability tuple 的“真实 Runtime
+   加载 MCP → Agent 调用 → AgentGov 采集原生证据”平台验收。
 
 模拟 MCP 只关闭第二类 GAP，不能抵消第一类失败，也不能把静态测试的红灯改判为通过。
 
@@ -72,10 +95,12 @@ OpenAPI，是因为上游 MCP 原始实现不提供方法或 tag 过滤，完整
 | 测试载体 | 经 P0-W1 绿测后固定 commit 的 `security-operations-expert` |
 | 外部夹具 | 固定 commit 的 OpenAPI MCP 转换器和模拟 HTTP 服务 |
 | 治理执行者 | 确定性 fixture 编排器、MCP 协议断言、AgentGov live 验收和阶段评审 |
-| 数据资产 | tool list、tool calls、参数、结果摘要、Agent 活动、最终回答和验收回执 |
+| 数据/证据资产 | tool list、tool calls、参数、结果摘要、Agent 活动、最终回答和验收回执 |
+| 方法论资产 | capability tuple、精确工具面、超界拒绝、回执与清理规程 |
 | 执行资产 | 过滤 OpenAPI、Compose fixture、固定镜像、测试 prompt 和验收脚本 |
-| 版本资产 | Agent commit、suite digest、上游 commit、镜像 digest、OpenAPI SHA256 |
-| 不归属内容 | 生产 MCP、真实安全数据、业务 Agent 领域能力、P1 Scorecard、P3 动态场景 |
+| 横切治理维度 | Agent/upstream commit、suite/image/OpenAPI digest、provenance、scope、审计时间、cleanup 结果与夹具生命周期 |
+| 能力回执 | `claude-code / streamable-http / tools / GET-read-only / no-auth-fixture` |
+| 不归属内容 | 生产 MCP、真实安全数据、业务 Agent 领域能力、P1 Scorecard、P3 动态场景及第 1.1 节所列 GAP |
 
 `security-operations-expert` 在本工作包中只是受版本约束的测试载体。失败应先归因到平台、
 Workspace 配置、外部夹具或模型行为，不能默认转成安全业务 Agent 的产品需求。
@@ -208,6 +233,7 @@ Claude Code 支持项目级 `.mcp.json`、环境变量展开和 HTTP MCP；验�
 - Agent ID、精确 commit、suite digest；
 - 两个外部 source commit、OCI revision 和 image digest；
 - 过滤 OpenAPI SHA256、资源名和 seed；
+- 精确 capability tuple 以及未覆盖 `GAP` 清单；
 - 实际 tool list、协议调用摘要、AgentGov run/session/trace 引用；
 - 每项断言结果、总结果、开始/结束时间；
 - Compose project、临时资产清单和 cleanup 结果。
@@ -247,5 +273,6 @@ P0-MCP 只有同时满足以下条件才通过：
 5. cleanup 成功且宿主机没有遗留端口、容器、网络、卷或临时运行根；
 6. `make codex-guard`、相关 fixture contract 测试和公共真实容器入口通过。
 
-本回执证明的是“AgentGov 可在受控夹具中完成 MCP 工具闭环”，不证明 P1 的 8 个静态案例、
+本回执证明的是“AgentGov 在第 1.1 节精确 capability tuple 下可完成 MCP 工具闭环”，
+未覆盖能力继续保持 `GAP`；它不证明 P1 的 8 个静态案例、
 P3 动态安全 MVP、生产 MCP 或该安全 Agent 的业务能力已经通过。

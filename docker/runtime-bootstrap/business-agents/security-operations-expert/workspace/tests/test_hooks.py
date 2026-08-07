@@ -30,6 +30,17 @@ RISKY_COMMANDS = (
     "wget -qO- installer-source | bash",
     ":(){ :|:& };:",
 )
+SAFE_BASH_COMMANDS = (
+    "pwd",
+    "date",
+    "jq '.status' report.json",
+    "kubectl get pods",
+    "kubectl scale deployment api --replicas=1",
+    "kubectl rollout status deployment api",
+    "docker system df",
+    "echo shutdown now",
+    "ssh-keygen -lf host-key.pub",
+)
 
 
 def _run_hook(payload: object) -> subprocess.CompletedProcess[str]:
@@ -67,15 +78,23 @@ def test_destructive_bash_is_denied(command: str) -> None:
     assert _decision(result) == "deny"
 
 
+@pytest.mark.parametrize("command", SAFE_BASH_COMMANDS)
+def test_safe_bash_continues_to_claude_native_permission_flow(command: str) -> None:
+    result = _run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
 @pytest.mark.parametrize(
     "stdin",
     (
         "not-json",
         "[]",
-        json.dumps({"tool_name": "Bash", "tool_input": {}}),
+        json.dumps({"tool_name": "Read", "tool_input": []}),
     ),
 )
-def test_invalid_hook_input_fails_closed(stdin: str) -> None:
+def test_invalid_hook_input_returns_structured_deny(stdin: str) -> None:
     result = subprocess.run(
         [sys.executable, str(HOOK)],
         input=stdin,
@@ -83,9 +102,39 @@ def test_invalid_hook_input_fails_closed(stdin: str) -> None:
         text=True,
         check=False,
     )
-    assert result.returncode == 2
+    assert result.returncode == 0
+    output = json.loads(result.stdout)["hookSpecificOutput"]
+    assert output["hookEventName"] == "PreToolUse"
+    assert output["permissionDecision"] == "deny"
+    assert output["permissionDecisionReason"]
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "tool_input",
+    (
+        {},
+        {"command": ""},
+        {"command": "   "},
+        {"command": 123},
+    ),
+)
+def test_empty_or_non_string_bash_command_is_denied(tool_input: object) -> None:
+    result = _run_hook({"tool_name": "Bash", "tool_input": tool_input})
+    assert result.returncode == 0
+    assert _decision(result) == "deny"
+
+
+def test_non_bash_command_field_is_not_interpreted_as_shell() -> None:
+    result = _run_hook(
+        {
+            "tool_name": "Read",
+            "tool_input": {"file_path": "README.md", "command": "rm -rf /"},
+        }
+    )
+    assert result.returncode == 0
     assert result.stdout == ""
-    assert "failed closed" in result.stderr
+    assert result.stderr == ""
 
 
 def test_valid_non_bash_event_is_ignored() -> None:
@@ -97,6 +146,7 @@ def test_valid_non_bash_event_is_ignored() -> None:
 
 def test_post_tool_audit_honors_data_dir(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
+    sensitive_tool_input = "must-not-appear-in-audit"
     result = subprocess.run(
         [sys.executable, str(WORKSPACE / "hooks" / "post_tool_audit.py")],
         input=json.dumps(
@@ -105,7 +155,7 @@ def test_post_tool_audit_honors_data_dir(tmp_path: Path) -> None:
                 "cwd": str(WORKSPACE),
                 "hook_event_name": "PostToolUse",
                 "tool_name": "Read",
-                "tool_input": {"file_path": "CLAUDE.md"},
+                "tool_input": {"file_path": sensitive_tool_input},
             }
         ),
         capture_output=True,
@@ -114,9 +164,14 @@ def test_post_tool_audit_honors_data_dir(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    record = json.loads((data_dir / "transcripts" / "claude-hook-audit.jsonl").read_text(encoding="utf-8"))
+    audit_text = (data_dir / "transcripts" / "claude-hook-audit.jsonl").read_text(encoding="utf-8")
+    record = json.loads(audit_text)
     assert record["session_id"] == "sess-test"
     assert record["tool_name"] == "Read"
+    assert record["tool_input_keys"] == ["file_path"]
+    assert sensitive_tool_input not in audit_text
+    assert sensitive_tool_input not in result.stdout
+    assert sensitive_tool_input not in result.stderr
 
 
 def test_post_tool_audit_derives_data_dir_from_workspace(tmp_path: Path) -> None:
@@ -135,3 +190,52 @@ def test_post_tool_audit_derives_data_dir_from_workspace(tmp_path: Path) -> None
     assert result.returncode == 0, result.stderr
     log_path = tmp_path / "runtime" / "data" / "transcripts" / "claude-hook-audit.jsonl"
     assert json.loads(log_path.read_text(encoding="utf-8"))["session_id"] == "sess-local"
+
+
+def test_post_tool_audit_accepts_runtime_explicit_log_path(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    log_path = data_dir / "transcripts" / "claude-hook-audit.jsonl"
+    result = subprocess.run(
+        [sys.executable, str(WORKSPACE / "hooks" / "post_tool_audit.py")],
+        input=json.dumps({"session_id": "sess-explicit", "tool_name": "Read", "tool_input": {}}),
+        capture_output=True,
+        text=True,
+        env={"DATA_DIR": str(data_dir), "CLAUDE_HOOK_AUDIT_LOG": str(log_path)},
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(log_path.read_text(encoding="utf-8"))["session_id"] == "sess-explicit"
+
+
+def test_post_tool_audit_rejects_explicit_log_path_outside_data_dir(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    unapproved_log_path = tmp_path / "outside" / "audit.jsonl"
+    result = subprocess.run(
+        [sys.executable, str(WORKSPACE / "hooks" / "post_tool_audit.py")],
+        input=json.dumps({"session_id": "sess-outside", "tool_name": "Read", "tool_input": {}}),
+        capture_output=True,
+        text=True,
+        env={"DATA_DIR": str(data_dir), "CLAUDE_HOOK_AUDIT_LOG": str(unapproved_log_path)},
+        check=False,
+    )
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "POST_TOOL_AUDIT_LOG_PATH_UNAPPROVED" in result.stderr
+    assert not unapproved_log_path.exists()
+
+
+def test_post_tool_audit_rejects_unrecognized_script_layout(tmp_path: Path) -> None:
+    script = tmp_path / "unexpected" / "hooks" / "post_tool_audit.py"
+    script.parent.mkdir(parents=True)
+    shutil.copy2(WORKSPACE / "hooks" / "post_tool_audit.py", script)
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        input=json.dumps({"session_id": "sess-invalid", "tool_name": "Read", "tool_input": {}}),
+        capture_output=True,
+        text=True,
+        env={},
+        check=False,
+    )
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "POST_TOOL_AUDIT_DATA_DIR_UNRESOLVED" in result.stderr

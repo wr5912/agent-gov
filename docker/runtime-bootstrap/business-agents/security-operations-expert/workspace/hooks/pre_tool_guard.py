@@ -33,29 +33,44 @@ try:
 except Exception:
     deny("PreToolUse 守卫无法解析工具输入，安全起见已阻止。")
 
-tool_name = payload.get("tool_name", "")
+if not isinstance(payload, dict):
+    deny("PreToolUse 守卫收到非法顶层输入，安全起见已阻止。")
+
+tool_name_value = payload.get("tool_name", "")
+tool_name = tool_name_value if isinstance(tool_name_value, str) else ""
 tool_input = payload.get("tool_input", {})
 if not isinstance(tool_input, dict):
     deny("PreToolUse 守卫收到非法工具参数，安全起见已阻止。")
 
-command = tool_input.get("command", "")
-command = command if isinstance(command, str) else ""
+command = ""
+if tool_name == "Bash":
+    command_value = tool_input.get("command")
+    if not isinstance(command_value, str) or not command_value.strip():
+        deny("PreToolUse 守卫收到空或非法 Bash 命令，安全起见已阻止。")
+    command = command_value
 
+SHELL_COMMAND_PREFIX = r"(?:^|(?:&&|\|\||;|\||\n)\s*)(?:sudo\s+)?"
+SHELL_SEGMENT = r"[^;&|\n]*"
 DENY_PATTERNS = (
-    r"rm\s+-rf\s+/(\s|$)",
-    r"mkfs\.",
-    r"dd\s+if=.*\s+of=/dev/",
-    r":\(\)\s*\{\s*:\|:&\s*\};:",
-    r"curl\s+[^|]+\|\s*(sh|bash)",
-    r"wget\s+[^|]+\|\s*(sh|bash)",
+    rf"{SHELL_COMMAND_PREFIX}rm\s+-rf\s+/(?:\*)?(?:\s|$)",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?mkfs\.",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?dd\s+if={SHELL_SEGMENT}\s+of=/dev/",
+    rf"{SHELL_COMMAND_PREFIX}:\(\)\s*\{{\s*:\|:&\s*\}};:",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?curl\s+[^|]+\|\s*(?:\S*/)?(?:sh|bash)(?:\s|$)",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?wget\s+[^|]+\|\s*(?:\S*/)?(?:sh|bash)(?:\s|$)",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?shutdown(?:\s|$)",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?docker\s+system\s+prune\b{SHELL_SEGMENT}(?:-af|-fa)(?:\s|$)",
 )
 RISKY_PRODUCTION_PATTERNS = (
-    r"\biptables\b.*\s-F\b",
-    r"\bkubectl\b\s+delete\b",
-    r"\bterraform\b\s+apply\b",
-    r"\bansible-playbook\b.*(--limit\s+all|production|prod)",
-    r"\bsystemctl\b\s+(restart|stop)\b",
-    r"\b(nmap|masscan)\b.*(-sS|-sT|-A|--script)",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?iptables\b{SHELL_SEGMENT}\s-F\b",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?kubectl\b{SHELL_SEGMENT}\bdelete\b",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?kubectl\b{SHELL_SEGMENT}\bscale\b{SHELL_SEGMENT}--replicas(?:=|\s+)0(?:\s|$)",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?kubectl\b{SHELL_SEGMENT}\brollout\s+restart\b",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?terraform\s+apply\b",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?ansible-playbook\b{SHELL_SEGMENT}(?:--limit\s+all|production|prod)",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?systemctl\s+(?:restart|stop)\b",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?(?:nmap|masscan)\b{SHELL_SEGMENT}(?:-sS|-sT|-A|--script)",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?ssh(?:\s|$)",
 )
 GOVERNANCE_PATH_PATTERNS = (
     r"(^|/|\s)\.mcp\.json($|/|\s)",
@@ -93,10 +108,7 @@ for pattern in DENY_PATTERNS:
 
 for pattern in RISKY_PRODUCTION_PATTERNS:
     if command and re.search(pattern, command, flags=re.IGNORECASE):
-        deny(
-            "该命令可能影响生产环境，已阻止 Agent 直接执行。请改为输出处置计划"
-            "（含审批、影响范围、回滚方案、验证方法）或由人工执行。"
-        )
+        deny("该命令可能影响生产环境，已阻止 Agent 直接执行。请改为输出处置计划（含审批、影响范围、回滚方案、验证方法）或由人工执行。")
 
 # No decision means continue with normal permission flow. This hook never allows.
 raise SystemExit(0)

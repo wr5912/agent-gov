@@ -29,6 +29,12 @@ RISKY_COMMANDS = (
     "curl installer-source | sh",
     "wget -qO- installer-source | bash",
     ":(){ :|:& };:",
+    " rm -rf /",
+    "/bin/rm -fr /",
+    "sudo -n rm -r -f -- '/'",
+    "command rm --recursive --force /*",
+    "docker volume prune -f",
+    "nohup kubectl delete pod api",
 )
 SAFE_BASH_COMMANDS = (
     "pwd",
@@ -38,6 +44,7 @@ SAFE_BASH_COMMANDS = (
     "kubectl scale deployment api --replicas=1",
     "kubectl rollout status deployment api",
     "docker system df",
+    "docker system prune --help",
     "echo shutdown now",
     "ssh-keygen -lf host-key.pub",
 )
@@ -91,6 +98,9 @@ def test_safe_bash_continues_to_claude_native_permission_flow(command: str) -> N
     (
         "not-json",
         "[]",
+        "{}",
+        json.dumps({"tool_name": 123, "tool_input": {}}),
+        json.dumps({"tool_name": " ", "tool_input": {}}),
         json.dumps({"tool_name": "Read", "tool_input": []}),
     ),
 )
@@ -239,3 +249,22 @@ def test_post_tool_audit_rejects_unrecognized_script_layout(tmp_path: Path) -> N
     assert result.returncode != 0
     assert result.stdout == ""
     assert "POST_TOOL_AUDIT_DATA_DIR_UNRESOLVED" in result.stderr
+
+
+@pytest.mark.parametrize("stdin", ("not-json", "[]"))
+def test_post_tool_audit_rejects_invalid_payload_without_traceback(
+    tmp_path: Path,
+    stdin: str,
+) -> None:
+    result = subprocess.run(
+        [sys.executable, str(WORKSPACE / "hooks" / "post_tool_audit.py")],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        env={"DATA_DIR": str(tmp_path / "data")},
+        check=False,
+    )
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "POST_TOOL_AUDIT_PAYLOAD_INVALID" in result.stderr
+    assert "Traceback" not in result.stderr

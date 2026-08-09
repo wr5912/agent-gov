@@ -24,6 +24,14 @@ def fail_log_path_resolution() -> None:
     raise SystemExit(2)
 
 
+def fail_payload_resolution() -> None:
+    print(
+        "POST_TOOL_AUDIT_PAYLOAD_INVALID: PostToolUse 审计输入必须是 JSON object。",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
 def derive_data_dir(script_path: Path) -> Path:
     hooks_dir = script_path.resolve().parent
     workspace_dir = hooks_dir.parent
@@ -51,7 +59,12 @@ def resolve_log_path() -> Path:
     return approved_log_path
 
 
-payload = json.load(sys.stdin)
+try:
+    payload = json.load(sys.stdin)
+except (json.JSONDecodeError, UnicodeDecodeError):
+    fail_payload_resolution()
+if not isinstance(payload, dict):
+    fail_payload_resolution()
 log_path = resolve_log_path()
 log_path.parent.mkdir(parents=True, exist_ok=True)
 

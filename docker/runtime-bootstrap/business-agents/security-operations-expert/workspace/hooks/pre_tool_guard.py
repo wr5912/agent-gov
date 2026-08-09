@@ -36,8 +36,10 @@ except Exception:
 if not isinstance(payload, dict):
     deny("PreToolUse 守卫收到非法顶层输入，安全起见已阻止。")
 
-tool_name_value = payload.get("tool_name", "")
-tool_name = tool_name_value if isinstance(tool_name_value, str) else ""
+tool_name_value = payload.get("tool_name")
+if not isinstance(tool_name_value, str) or not tool_name_value.strip():
+    deny("PreToolUse 守卫收到非法工具名称，安全起见已阻止。")
+tool_name = tool_name_value
 tool_input = payload.get("tool_input", {})
 if not isinstance(tool_input, dict):
     deny("PreToolUse 守卫收到非法工具参数，安全起见已阻止。")
@@ -49,17 +51,30 @@ if tool_name == "Bash":
         deny("PreToolUse 守卫收到空或非法 Bash 命令，安全起见已阻止。")
     command = command_value
 
-SHELL_COMMAND_PREFIX = r"(?:^|(?:&&|\|\||;|\||\n)\s*)(?:sudo\s+)?"
+SHELL_COMMAND_PREFIX = (
+    r"(?:^|(?:&&|\|\||;|\||\n))\s*"
+    r"(?:(?:command|exec|nohup)\s+)*"
+    r"(?:sudo(?:\s+(?:-n|-E|-H|-S|--non-interactive|(?:-u|--user)\s+\S+|--user=\S+))*\s+)?"
+    r"(?:(?:command|exec|nohup)\s+)*"
+)
 SHELL_SEGMENT = r"[^;&|\n]*"
+RM_RECURSIVE_OPTION = r"(?:-(?!-)[A-Za-z]*r[A-Za-z]*|--recursive)"
+RM_FORCE_OPTION = r"(?:-(?!-)[A-Za-z]*f[A-Za-z]*|--force)"
+ROOT_DELETE_TARGET = r"(?:/\*|/|[\"']/\*[\"']|[\"']/[\"'])(?:\s|$)"
 DENY_PATTERNS = (
-    rf"{SHELL_COMMAND_PREFIX}rm\s+-rf\s+/(?:\*)?(?:\s|$)",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?rm\b"
+    rf"(?={SHELL_SEGMENT}\s{RM_RECURSIVE_OPTION}(?:\s|$))"
+    rf"(?={SHELL_SEGMENT}\s{RM_FORCE_OPTION}(?:\s|$))"
+    rf"{SHELL_SEGMENT}\s(?:--\s+)?{ROOT_DELETE_TARGET}",
     rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?mkfs\.",
     rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?dd\s+if={SHELL_SEGMENT}\s+of=/dev/",
     rf"{SHELL_COMMAND_PREFIX}:\(\)\s*\{{\s*:\|:&\s*\}};:",
     rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?curl\s+[^|]+\|\s*(?:\S*/)?(?:sh|bash)(?:\s|$)",
     rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?wget\s+[^|]+\|\s*(?:\S*/)?(?:sh|bash)(?:\s|$)",
     rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?shutdown(?:\s|$)",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?docker\s+system\s+prune\b{SHELL_SEGMENT}(?:-af|-fa)(?:\s|$)",
+    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?docker\s+"
+    rf"(?:system|container|image|network|volume|builder)\s+prune\b"
+    rf"(?!{SHELL_SEGMENT}(?:--help|-h)(?:\s|$))",
 )
 RISKY_PRODUCTION_PATTERNS = (
     rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?iptables\b{SHELL_SEGMENT}\s-F\b",

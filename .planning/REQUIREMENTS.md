@@ -7,14 +7,14 @@
 
 ### P0-W1：安全 Workspace 基线
 
-- [ ] **P0W-01**: 平台可在 P0 锁定的 `security-operations-expert` 精确 commit 上执行完整 Workspace suite，并得到零未分类失败；当前 29 个 leaf 只记录在该回执中，不成为永久数量契约。
-- [ ] **P0W-02**: 所有已分类危险 Bash（破坏性删除、关机、Kubernetes 扩缩/重启、Docker 清理、远程 SSH）都返回 Claude hook 可识别的结构化 deny。
-- [ ] **P0W-03**: 非 JSON hook 输入返回结构化 deny，测试不再把历史进程退出码作为唯一安全契约。
-- [ ] **P0W-04**: JSON 顶层不是 object 时返回结构化 deny，且不抛未处理异常。
-- [ ] **P0W-05**: Bash tool input 缺少必填 `command` 时返回结构化 deny。
-- [ ] **P0W-06**: 审计输出优先使用显式批准的数据目录，否则只派生到批准的 runtime data 路径，不回退到不可写 `/data/transcripts`。
-- [ ] **P0W-07**: Workspace 测试只断言当前权威的只读 ask、绝对 runtime 输出路径、Claude 原生规则与 `agent.yaml.agent.id`，不继续维护已退出的身份/配置陈测。
-- [ ] **P0W-08**: 本阶段只修改并扫描仓库运行卷初始化源中的单个内置 Workspace；live Workspace、`version/`、`.env*` 和 runtime SQLite 保持未修改。
+- [x] **P0W-01**: 平台可在 P0 锁定的 `security-operations-expert` 精确 commit 上执行完整 Workspace suite，并得到零未分类失败；每次实际收集的 leaf 数量只记录在对应回执中，不成为永久数量契约。
+- [x] **P0W-02**: 所有已分类危险 Bash（破坏性删除、关机、Kubernetes 扩缩/重启、Docker 清理、远程 SSH）都返回 Claude hook 可识别的结构化 deny。
+- [x] **P0W-03**: 非 JSON hook 输入返回结构化 deny，测试不再把历史进程退出码作为唯一安全契约。
+- [x] **P0W-04**: JSON 顶层不是 object 时返回结构化 deny，且不抛未处理异常。
+- [x] **P0W-05**: Bash tool input 缺少必填 `command` 时返回结构化 deny。
+- [x] **P0W-06**: 审计输出优先使用显式批准的数据目录，否则只派生到批准的 runtime data 路径，不回退到不可写 `/data/transcripts`。
+- [x] **P0W-07**: Workspace 测试只断言当前权威的只读 ask、绝对 runtime 输出路径、Claude 原生规则与 `agent.yaml.agent.id`，不继续维护已退出的身份/配置陈测。
+- [x] **P0W-08**: 本阶段只修改并扫描仓库运行卷初始化源中的单个内置 Workspace；live Workspace、`version/`、`.env*` 和 runtime SQLite 保持未修改。
 
 ### P0：per-Agent 隔离测试 lane
 
@@ -153,14 +153,14 @@
 
 | Requirement | Phase | Status |
 | --- | ---: | --- |
-| P0W-01 | Phase 6 | Pending |
-| P0W-02 | Phase 6 | Pending |
-| P0W-03 | Phase 6 | Pending |
-| P0W-04 | Phase 6 | Pending |
-| P0W-05 | Phase 6 | Pending |
-| P0W-06 | Phase 6 | Pending |
-| P0W-07 | Phase 6 | Pending |
-| P0W-08 | Phase 6 | Pending |
+| P0W-01 | Phase 6 | Complete |
+| P0W-02 | Phase 6 | Complete |
+| P0W-03 | Phase 6 | Complete |
+| P0W-04 | Phase 6 | Complete |
+| P0W-05 | Phase 6 | Complete |
+| P0W-06 | Phase 6 | Complete |
+| P0W-07 | Phase 6 | Complete |
+| P0W-08 | Phase 6 | Complete |
 | LANE-01 | Phase 7 | Pending |
 | LANE-02 | Phase 7 | Pending |
 | LANE-03 | Phase 7 | Pending |

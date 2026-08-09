@@ -31,10 +31,10 @@ AgentGov 是面向通用智能体应用的优化闭环治理平台，以 Agent R
 - ✓ Claude SDK/Agent 仍是会话、消息、工具、HITL、subagent 与 Trace 的运行事实源；后端承担 API、证据投影和治理编排 — 当前运行基线。
 - ✓ 四阶段改进治理保持“反馈整理 → 归因分析 → 优化执行 → 测试发布”，状态推进只作为真实业务动作副作用 — 当前产品契约。
 - ✓ Workspace Git、精确 commit、suite digest 和发布门已有基础骨架 — 当前实现；隔离、安全与独立发布测评仍属于 v3.1 active scope。
+- ✓ `security-operations-expert` 初始化源的完整 Workspace suite 在当前精确候选上 `58 passed`；危险/畸形 hook 输入结构化 fail-closed、审计路径受批准 data 根约束，且 bootstrap 扫描通过 — Phase 6。
 
 ### Active
 
-- [ ] P0-W1 修复安全 Workspace 的 14 个分类失败，并保持全部测试归属在对应业务 Agent Workspace Git。
 - [ ] 把 exact-commit runner 从 API 容器 root、继承 env、可写 `/data` 的现状迁入最小权限隔离 lane。
 - [ ] 完成 P0-MCP 精确 capability tuple 的直接协议、真实 AgentGov live 与 cleanup 回执。
 - [ ] 冻结一次 run 不重开、同 session 新 run 恢复、原生事实/canonical 投影/边界展示三层语义，并关闭 P0 双门。
@@ -60,7 +60,7 @@ AgentGov 是面向通用智能体应用的优化闭环治理平台，以 Agent R
 ## Context
 
 - 前序“Agent 版本治理与 Diff 对比重构”里程碑已完成，历史 Phase 0-5 摘要在 `.planning/MILESTONES.md`，原 `.planning/phases/agent-version-governance-diff-refactor/` 按原路径保留。
-- 2026-08-05 P0 基线：`security-operations-expert` 完整 Workspace suite 为 15 pass / 14 fail；失败分为 6 个危险 Bash、3 个畸形输入、1 个审计 fallback 路径和 4 个原生配置/身份陈测。
+- 2026-08-05 P0 初始基线：`security-operations-expert` 完整 Workspace suite 为 15 pass / 14 fail；失败分为 6 个危险 Bash、3 个畸形输入、1 个审计 fallback 路径和 4 个原生配置/身份陈测。Phase 6 在 2026-08-09 以两轮修正收口为当前 `58 passed`，实际 leaf 数量只进入阶段回执。
 - exact commit、suite digest 与 publish gate 骨架已经存在，但当前执行仍位于 API 容器 root、继承运行 env、可写 `/data`，不能作为安全隔离证据。
 - P0-MCP 的 fixture、过滤 spec、runner 和 receipt 尚未实现。已锁定的 `openapi-mcp-server` 与 `mock_service` 服务可用，但共享实例暴露 10 tools、1 resource、1 template，不能替代精确两工具验收。
 - P1 的 `EvaluationBenchmark`、`EvaluationProtocolRevision`、`EvaluationExecution`、`Assessment` 等领域/API/UI 基本未实现。
@@ -84,9 +84,11 @@ AgentGov 是面向通用智能体应用的优化闭环治理平台，以 Agent R
 
 | Decision | Rationale | Outcome |
 | --- | --- | --- |
-| v3.1 Phase 从 6 延续到 15 | 保留前序 Phase 0-5 历史与可追溯性 | — Pending |
+| v3.1 Phase 从 6 延续到 15 | 保留前序 Phase 0-5 历史与可追溯性 | ✓ Phase 6 已按连续编号完成，历史目录保持原位 |
 | P0 Workspace 与 P0-MCP 是独立阻断门 | 静态 Agent 契约与 Runtime/MCP 平台回执互不替代 | — Pending |
-| 业务 Agent 测试不进入根静态 collection | 测试正文归属 Workspace Git，平台只治理 runner、隔离、lane 和 receipt | — Pending |
+| 业务 Agent 测试不进入根静态 collection | 测试正文归属 Workspace Git，平台只治理 runner、隔离、lane 和 receipt | ✓ Phase 6 的 58 leaf 仍只归属该 Workspace；Phase 7 实现通用 lane |
+| 保留并收紧 `CLAUDE_HOOK_AUDIT_LOG` | Runtime 仍主动注入该变量，直接移除会破坏活跃契约；任意路径又不能成为旁路 | ✓ 仅接受批准 `DATA_DIR` 下固定审计文件，其他路径 fail-closed |
+| Workspace hook 只返回 hard-deny | 未分类输入必须继续由 Claude 原生权限、deny 与 HITL 裁决，hook 不接管 allow 所有权 | ✓ Phase 6 对危险/畸形输入拒绝，安全 Bash、非 Bash 与 MCP 无显式 allow |
 | P1 先做 8-case、无工具、静态 L2 | 先证明独立发布测评闭环，不把首切片冒充完整 MVP | — Pending |
 | `AgentTestRun` 只作首个 sample adapter | 保持 `EvaluationExecution/Assessment/ComparisonGroup` 协议中立，不恢复旧 `TestDataset/EvalRun` | — Pending |
 | P2A 生产仅注册 `claude-code` | 先以委托 adapter 保持等价，再由真实第二协议识别抽象偏差 | — Pending |
@@ -114,4 +116,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context, metrics and verified AGV evidence.
 
 ---
-*Last updated: 2026-08-05 after starting milestone v3.1 planning*
+*Last updated: 2026-08-09 after Phase 6*

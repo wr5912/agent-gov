@@ -9,9 +9,9 @@ v3.1“业务智能体测评与平台治理演进”从前序 Phase 5 之后继�
 ## Milestones
 
 - ✅ **v3.0.3 Agent 版本治理与 Diff 对比重构** — Phases 0-5；摘要见 `.planning/MILESTONES.md`。
-- 📋 **v3.1 业务智能体测评与平台治理演进** — Phases 6-15；planned。
+- 🚧 **v3.1 业务智能体测评与平台治理演进** — Phases 6-15；in progress（Phase 6 complete）。
 
-## v3.1 业务智能体测评与平台治理演进（Planned）
+## v3.1 业务智能体测评与平台治理演进（In Progress）
 
 **Milestone Goal:** 以独立、隔离、可回滚的真实证据串联业务 Agent 测试、发布测评、Runtime 边界、Governor shadow 学习与平台扩展准入。
 
@@ -19,7 +19,7 @@ v3.1“业务智能体测评与平台治理演进”从前序 Phase 5 之后继�
 
 **Phase numbering:** 前序 Phase 0-5 已完成并移入里程碑摘要；本里程碑从 6 连续编号，不重置。
 
-- [ ] **Phase 6: P0-W1 安全 Workspace 基线修复** - 让精确 commit 的完整安全 Workspace suite 在当前权威配置下零未分类失败。
+- [x] **Phase 6: P0-W1 安全 Workspace 基线修复** - 让精确 commit 的完整安全 Workspace suite 在当前权威配置下零未分类失败。 (completed 2026-08-09)
 - [ ] **Phase 7: per-Agent 最小权限隔离测试 lane** - 让平台在无 root、无继承 secret、无可写 live data 的环境中执行 exact-commit suite 并形成发布门回执。
 - [ ] **Phase 8: P0-MCP 精确两工具回执** - 以固定上游、过滤 OpenAPI、真实 Claude Runtime 和强制清理证明窄 capability tuple。
 - [ ] **Phase 9: P0 状态语义与双门准入收口** - 冻结 run/session/facts 语义并以 Workspace 与 MCP 两个独立门关闭 P0。
@@ -52,7 +52,7 @@ Phase 10-11（P1）与 Phase 12（P2A）在 Phase 9 退出后具备并行前置�
   2. 危险 Bash、非 JSON、错误顶层类型和缺少 command 的输入全部结构化 deny，任何输入都不产生未处理异常或静默放行。
   3. 审计输出只落到批准的 runtime data 路径，原生配置/身份测试与当前 Workspace 权威一致。
   4. `runtime-bootstrap-scan` 证明初始化源安全，live Workspace、版本目录、私有 env 和 runtime DB 没有被修改。
-**Plans**: TBD
+**Plans**: 1/1 plans complete
 
 ### Phase 7: per-Agent 最小权限隔离测试 lane
 
@@ -177,7 +177,7 @@ Phase 10-11（P1）与 Phase 12（P2A）在 Phase 9 退出后具备并行前置�
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 | --- | --- | --- | --- | --- |
-| 6. P0-W1 安全 Workspace 基线修复 | v3.1 | 0/TBD | Not started | - |
+| 6. P0-W1 安全 Workspace 基线修复 | v3.1 | 1/1 | Complete | 2026-08-09 |
 | 7. per-Agent 最小权限隔离测试 lane | v3.1 | 0/TBD | Not started | - |
 | 8. P0-MCP 精确两工具回执 | v3.1 | 0/TBD | Not started | - |
 | 9. P0 状态语义与双门准入收口 | v3.1 | 0/TBD | Not started | - |

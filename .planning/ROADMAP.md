@@ -64,7 +64,7 @@ Phase 10-11（P1）与 Phase 12（P2A）在 Phase 9 退出后具备并行前置�
   2. 回执证明执行进程非 root、无继承 secret、无可写 live `/data`/runtime root、无宿主机控制能力，并且 hostile 测试无法越出 Workspace。
   3. 每次运行都有可复现的 commit/suite/image/invocation/isolation/cleanup 摘要，敏感值不进入回执。
   4. 发布门拒绝历史或 digest 错配的通过记录；缺失 Docker/镜像/隔离前置时严格失败且不遗留临时资产。
-**Plans**: TBD
+**Plans**: 0/3 plans complete
 
 ### Phase 8: P0-MCP 精确两工具回执
 
@@ -178,7 +178,7 @@ Phase 10-11（P1）与 Phase 12（P2A）在 Phase 9 退出后具备并行前置�
 | Phase | Milestone | Plans Complete | Status | Completed |
 | --- | --- | --- | --- | --- |
 | 6. P0-W1 安全 Workspace 基线修复 | v3.1 | 1/1 | Complete | 2026-08-09 |
-| 7. per-Agent 最小权限隔离测试 lane | v3.1 | 0/TBD | Not started | - |
+| 7. per-Agent 最小权限隔离测试 lane | v3.1 | 0/3 | Planned | - |
 | 8. P0-MCP 精确两工具回执 | v3.1 | 0/TBD | Not started | - |
 | 9. P0 状态语义与双门准入收口 | v3.1 | 0/TBD | Not started | - |
 | 10. P1 独立测评领域与 API | v3.1 | 0/TBD | Not started | - |

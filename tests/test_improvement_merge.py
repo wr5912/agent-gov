@@ -88,7 +88,7 @@ def test_similarity_finds_chinese_semantic_case_without_shared_refs(tmp_path: Pa
     results = find_similar_improvements(
         store,
         agent_id="soc-ops",
-        text="sec-ops-data 返回事件时间窗口不一致，导致横向移动告警被误判为真实攻击",
+        text="sec-ops-data 返回事件时间窗口不一致，导致横向移动告警被误判为真实风险事件",
         refs=[],
         exclude_id="imp-none",
     )

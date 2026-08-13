@@ -8,8 +8,8 @@ v3.1“业务智能体测评与平台治理演进”从前序 Phase 5 之后继�
 
 ## Milestones
 
-- ✅ **v3.0.3 Agent 版本治理与 Diff 对比重构** — Phases 0-5；摘要见 `.planning/MILESTONES.md`。
-- 🚧 **v3.1 业务智能体测评与平台治理演进** — Phases 6-15；in progress（Phase 6 complete）。
+- ✅ **v3.0.3 Agent 版本治理与 Diff 对比重构** — Phases 0-5；当前发布版为 3.0.3，摘要见 `.planning/MILESTONES.md`。
+- 🚧 **v3.1 业务智能体测评与平台治理演进** — Phases 6-15；executing（Phases 6-7 complete；Phase 8 ready/planned）。
 
 ## v3.1 业务智能体测评与平台治理演进（In Progress）
 
@@ -20,7 +20,7 @@ v3.1“业务智能体测评与平台治理演进”从前序 Phase 5 之后继�
 **Phase numbering:** 前序 Phase 0-5 已完成并移入里程碑摘要；本里程碑从 6 连续编号，不重置。
 
 - [x] **Phase 6: P0-W1 安全 Workspace 基线修复** - 让精确 commit 的完整安全 Workspace suite 在当前权威配置下零未分类失败。 (completed 2026-08-09)
-- [ ] **Phase 7: per-Agent 最小权限隔离测试 lane** - 让平台在无 root、无继承 secret、无可写 live data 的环境中执行 exact-commit suite 并形成发布门回执。
+- [x] **Phase 7: per-Agent 最小权限隔离测试 lane** - 让平台在无 root、无继承 secret、无可写 live data 的环境中执行 exact-commit suite，并形成发布所需但不冒充独立测评的 execution provenance。 (completed 2026-08-13)
 - [ ] **Phase 8: P0-MCP 精确两工具回执** - 以固定上游、过滤 OpenAPI、真实 Claude Runtime 和强制清理证明窄 capability tuple。
 - [ ] **Phase 9: P0 状态语义与双门准入收口** - 冻结 run/session/facts 语义并以 Workspace 与 MCP 两个独立门关闭 P0。
 - [ ] **Phase 10: P1 独立测评领域与 API** - 建立 evaluator-owned 协议、typed execution/assessment/comparison、确定性安全门和 finding 关系。
@@ -56,15 +56,16 @@ Phase 10-11（P1）与 Phase 12（P2A）在 Phase 9 退出后具备并行前置�
 
 ### Phase 7: per-Agent 最小权限隔离测试 lane
 
-**Goal**: 平台可在不信任业务 Agent 测试代码的前提下，隔离执行任意 Agent 精确 commit 的完整 suite，并让回执成为可靠发布条件。
+**Goal**: 平台可在不信任业务 Agent 测试代码的前提下，隔离启动任意 Agent 精确 commit 的固定 Workspace pytest 命令，并让后端回执成为可靠的发布必要工程卫生条件；Agent-owned 报告不得冒充独立正确性或安全结论。
 **Depends on**: Phase 6
 **Requirements**: LANE-01, LANE-02, LANE-03, LANE-04, LANE-05, LANE-06, LANE-07, LANE-08
 **Success Criteria** (what must be TRUE):
-  1. 平台维护者只选择 Agent 与精确 commit，即可运行固定 pytest 命令并获得完整 suite 结果，无需把该 Agent 的 leaf 复制进平台根 collection。
+  1. 平台维护者只选择 Agent 与精确 commit，即可运行固定 pytest 命令并获得有界的 Agent-owned suite 诊断，无需把该 Agent 的 leaf 复制进平台根 collection；收据明确只声明 execution provenance。
   2. 回执证明执行进程非 root、无继承 secret、无可写 live `/data`/runtime root、无宿主机控制能力，并且 hostile 测试无法越出 Workspace。
   3. 每次运行都有可复现的 commit/suite/image/invocation/isolation/cleanup 摘要，敏感值不进入回执。
   4. 发布门拒绝历史或 digest 错配的通过记录；缺失 Docker/镜像/隔离前置时严格失败且不遗留临时资产。
-**Plans**: 0/3 plans complete
+**Plans**: 3/3 plans complete
+**Tasks**: 12/12 tasks complete
 
 ### Phase 8: P0-MCP 精确两工具回执
 
@@ -178,8 +179,8 @@ Phase 10-11（P1）与 Phase 12（P2A）在 Phase 9 退出后具备并行前置�
 | Phase | Milestone | Plans Complete | Status | Completed |
 | --- | --- | --- | --- | --- |
 | 6. P0-W1 安全 Workspace 基线修复 | v3.1 | 1/1 | Complete | 2026-08-09 |
-| 7. per-Agent 最小权限隔离测试 lane | v3.1 | 0/3 | Planned | - |
-| 8. P0-MCP 精确两工具回执 | v3.1 | 0/TBD | Not started | - |
+| 7. per-Agent 最小权限隔离测试 lane | v3.1 | 3/3（12/12 tasks） | Complete | 2026-08-13 |
+| 8. P0-MCP 精确两工具回执 | v3.1 | 0/TBD | Ready | - |
 | 9. P0 状态语义与双门准入收口 | v3.1 | 0/TBD | Not started | - |
 | 10. P1 独立测评领域与 API | v3.1 | 0/TBD | Not started | - |
 | 11. P1 单 Agent 测评 UI 与发布闭环 | v3.1 | 0/TBD | Not started | - |

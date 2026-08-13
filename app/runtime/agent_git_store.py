@@ -4,7 +4,7 @@ import difflib
 import hashlib
 import os
 import shutil
-import subprocess
+import stat
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -12,8 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Protocol
 
-from app.runtime.advisory_lock import advisory_lock
-from app.runtime.agent_git_raw_storage import RawGitStorageError, configure_raw_git_storage
+from app.runtime.agent_git_command_mixin import AgentGitCommandMixin
+from app.runtime.agent_git_environment import GovernedGitEnvironmentError, require_governed_repository
+from app.runtime.agent_git_errors import AgentGitError, AgentGitInitializationConflict
 from app.runtime.agent_git_workspace_diff import (
     MAX_FILE_DIFF_BYTES,
     parse_workspace_changes,
@@ -21,9 +22,9 @@ from app.runtime.agent_git_workspace_diff import (
     untracked_workspace_file_diff,
     workspace_diff_error,
 )
+from app.runtime.agent_repository_guard import AgentRepositoryGuardError, AgentRepositoryMutationGuard
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import utc_now
-from app.runtime.workspace_policy import WORKSPACE_EXCLUDED_NAMES, WORKSPACE_EXCLUDED_PATTERNS
 
 MAX_REPOSITORY_STATUS_DIFFS = 20
 
@@ -36,10 +37,6 @@ class AgentVersionProvider(Protocol):
     def is_maintenance_active(self) -> bool: ...
 
 
-class AgentGitError(RuntimeError):
-    """Raised when Git-backed Agent governance cannot complete an operation."""
-
-
 @dataclass(frozen=True)
 class GitWorktreeRef:
     change_set_id: str
@@ -48,13 +45,39 @@ class GitWorktreeRef:
     base_commit_sha: str
 
 
-class GitAgentVersionStore:
-    """Git-backed Agent version provider.
+def _worktree_registration_matches(raw: str, *, worktree_path: Path, head: str, branch: str) -> bool:
+    expected = {f"worktree {worktree_path}", f"HEAD {head}", f"branch {branch}"}
+    return any(expected.issubset(set(record.splitlines())) for record in raw.strip().split("\n\n"))
 
-    The repository is rooted at one business Agent Workspace. Candidate changes
-    are applied in separate Git worktrees and only merged into that Workspace at
-    publish time.
-    """
+
+def _canonical_nofollow_path(path: Path) -> Path:
+    lexical = Path(os.path.abspath(path.expanduser()))
+    try:
+        resolved = path.expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise AgentGitError("Candidate worktree authority rejected") from exc
+    if lexical != resolved:
+        raise AgentGitError("Candidate worktree authority rejected")
+    return lexical
+
+
+def _read_canonical_pointer(path: Path, *, base: Path, prefix: str = "") -> Path:
+    try:
+        metadata = path.lstat()
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise AgentGitError("Candidate worktree authority rejected") from exc
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode) or len(lines) != 1:
+        raise AgentGitError("Candidate worktree authority rejected")
+    value = lines[0]
+    if prefix and not value.startswith(prefix):
+        raise AgentGitError("Candidate worktree authority rejected")
+    target = Path(value.removeprefix(prefix))
+    return _canonical_nofollow_path(target if target.is_absolute() else base / target)
+
+
+class GitAgentVersionStore(AgentGitCommandMixin):
+    """Git-backed per-Agent version provider with stable mutation authority."""
 
     def __init__(
         self,
@@ -68,6 +91,9 @@ class GitAgentVersionStore:
         repository_name: str = "business-agent-config",
         git_user_name: str = "AgentGov",
         git_user_email: str = "agent-runtime@example.local",
+        process_lock_path: Path | None = None,
+        mutation_precondition: Callable[[], bool] | None = None,
+        activation_precondition: Callable[[], bool] | None = None,
     ) -> None:
         self.repository_dir = repository_dir
         self.worktrees_dir = worktrees_dir
@@ -80,16 +106,21 @@ class GitAgentVersionStore:
         self.git_user_email = git_user_email
         self._maintenance = False
         self._lock = threading.RLock()
-        self._process_lock_path = self.worktrees_dir.parent / ".repository.lock"
-        self.repository_dir.mkdir(parents=True, exist_ok=True)
-        self.worktrees_dir.mkdir(parents=True, exist_ok=True)
-        self.releases_dir.mkdir(parents=True, exist_ok=True)
+        self._activation_precondition = activation_precondition or mutation_precondition
+        self._mutation = AgentRepositoryMutationGuard(
+            lock_path=process_lock_path or self.worktrees_dir.parent / ".repository.lock",
+            repository_dir=self.repository_dir,
+            worktrees_dir=self.worktrees_dir,
+            releases_dir=self.releases_dir,
+            thread_lock=self._lock,
+            precondition=mutation_precondition,
+        )
 
     def is_maintenance_active(self) -> bool:
         return self._maintenance
 
     def ensure_bootstrap(self) -> JsonObject:
-        with self._mutation_guard():
+        with self.initialization_guard():
             self._ensure_git_available()
             if not (self.repository_dir / ".git").exists():
                 self._git(["init"], cwd=self.repository_dir)
@@ -144,7 +175,7 @@ class GitAgentVersionStore:
             "maintenance_active": self._maintenance,
         }
         try:
-            self.ensure_bootstrap()
+            self._ensure_repo_ready()
             changes = self._workspace_changes()
             status["current_commit_sha"] = self.current_commit_sha()
             status["current_branch"] = self._git(["branch", "--show-current"], cwd=self.repository_dir).strip() or None
@@ -215,7 +246,12 @@ class GitAgentVersionStore:
             return result
         if bool(change.get("untracked")):
             return untracked_workspace_file_diff(self.repository_dir, safe_path, status)
-        diff = self._git(["diff", "--no-ext-diff", "--no-renames", "HEAD", "--", safe_path], cwd=self.repository_dir, check=False)
+        diff = self._git(
+            ["diff", "--no-ext-diff", "--no-renames", "HEAD", "--", safe_path],
+            cwd=self.repository_dir,
+            check=False,
+            optional_locks=False,
+        )
         if len(diff.encode("utf-8")) > MAX_FILE_DIFF_BYTES:
             result.update({"status": "binary_or_too_large", "truncated": True, "reason": f"diff 超过 {MAX_FILE_DIFF_BYTES} bytes，未展开内容。"})
             return result
@@ -268,51 +304,137 @@ class GitAgentVersionStore:
         }
 
     def create_worktree(self, change_set_id: str, *, base_ref: str | None = None) -> GitWorktreeRef:
+        if not change_set_id or any(part in change_set_id for part in ("/", "\\", "..")):
+            raise AgentGitError("Invalid change set id for worktree creation")
         with self._mutation_guard():
             self._ensure_repo_ready()
             base_commit = self._resolve_ref(base_ref or "HEAD")
             branch_name = f"change-set/{change_set_id}"
-            worktree_path = self.worktrees_dir / change_set_id
+            worktree_path = self._owned_worktree_path(self.worktrees_dir / change_set_id)
             if worktree_path.exists() and (worktree_path / ".git").exists():
-                return GitWorktreeRef(change_set_id, branch_name, worktree_path, base_commit)
+                return self._require_existing_worktree_authority(
+                    change_set_id,
+                    worktree_path,
+                    expected_head=base_commit,
+                )
             if worktree_path.exists():
-                shutil.rmtree(worktree_path)
+                raise AgentGitError("Candidate worktree path already exists without linked Git authority")
             self._git(["worktree", "prune"], cwd=self.repository_dir, check=False)
             branch_exists = bool(self._git(["show-ref", "--verify", f"refs/heads/{branch_name}"], cwd=self.repository_dir, check=False).strip())
             if branch_exists:
+                if self._resolve_ref(branch_name) != base_commit:
+                    raise AgentGitError("Candidate worktree branch conflicts with its requested base commit")
                 self._git(["worktree", "add", str(worktree_path), branch_name], cwd=self.repository_dir)
             else:
                 self._git(["worktree", "add", "-b", branch_name, str(worktree_path), base_commit], cwd=self.repository_dir)
             self._configure_repo(worktree_path)
             self._write_info_exclude(worktree_path)
-            return GitWorktreeRef(change_set_id, branch_name, worktree_path, base_commit)
+            return self._require_existing_worktree_authority(
+                change_set_id,
+                worktree_path,
+                expected_head=base_commit,
+            )
 
     def worktree_commit_sha(self, worktree_path: Path) -> str | None:
         """Return a candidate worktree HEAD so interrupted commits can be reconciled."""
-        with self._lock:
+        with self._mutation_guard():
             safe_path = self._owned_worktree_path(worktree_path)
             if not safe_path.exists() or not (safe_path / ".git").exists():
                 return None
-            commit = self._git(["rev-parse", "HEAD"], cwd=safe_path, check=False).strip()
-            return commit or None
+            authority = self._require_existing_worktree_authority(
+                safe_path.name,
+                safe_path,
+                expected_head=None,
+            )
+            return authority.base_commit_sha
+
+    def _require_existing_worktree_authority(
+        self,
+        change_set_id: str,
+        worktree_path: Path,
+        *,
+        expected_head: str | None,
+    ) -> GitWorktreeRef:
+        """Require one exact linked worktree owned by this repository and change set."""
+
+        if not change_set_id or any(part in change_set_id for part in ("/", "\\", "..")) or expected_head == "":
+            raise AgentGitError("Candidate worktree authority rejected")
+        with self._mutation_guard():
+            repository_path = _canonical_nofollow_path(self.repository_dir)
+            worktrees_path = _canonical_nofollow_path(self.worktrees_dir)
+            expected_path = _canonical_nofollow_path(worktrees_path / change_set_id)
+            safe_path = _canonical_nofollow_path(worktree_path)
+            if safe_path != expected_path:
+                raise AgentGitError("Candidate worktree authority rejected")
+            try:
+                main_scope = require_governed_repository(self.repository_dir)
+                linked_scope = require_governed_repository(safe_path)
+                main_common = main_scope.common_git_dir.resolve(strict=True)
+                linked_common = linked_scope.common_git_dir.resolve(strict=True)
+                linked_git_dir = linked_scope.git_dir.resolve(strict=True)
+            except (GovernedGitEnvironmentError, OSError) as exc:
+                raise AgentGitError("Candidate worktree authority rejected") from exc
+            pointer_git_dir = _read_canonical_pointer(safe_path / ".git", base=safe_path, prefix="gitdir: ")
+            pointer_common = _read_canonical_pointer(linked_git_dir / "commondir", base=linked_git_dir)
+            if (
+                main_common != repository_path / ".git"
+                or linked_git_dir != pointer_git_dir
+                or linked_common != pointer_common
+                or linked_git_dir == linked_common
+                or linked_common != main_common
+                or linked_git_dir.parent != main_common / "worktrees"
+            ):
+                raise AgentGitError("Candidate worktree authority rejected")
+            expected_branch = f"refs/heads/change-set/{change_set_id}"
+            branch = self._git(["symbolic-ref", "-q", "HEAD"], cwd=safe_path, check=False).strip()
+            head = self._git(["rev-parse", "--verify", "HEAD"], cwd=safe_path, check=False).strip()
+            registrations = self._git(["worktree", "list", "--porcelain"], cwd=self.repository_dir)
+            try:
+                post_scope = require_governed_repository(safe_path)
+            except GovernedGitEnvironmentError as exc:
+                raise AgentGitError("Candidate worktree authority rejected") from exc
+            if (
+                post_scope != linked_scope
+                or branch != expected_branch
+                or (expected_head is not None and head != expected_head)
+                or not _worktree_registration_matches(
+                    registrations,
+                    worktree_path=safe_path,
+                    head=head,
+                    branch=expected_branch,
+                )
+            ):
+                raise AgentGitError("Candidate worktree authority rejected")
+            return GitWorktreeRef(change_set_id, expected_branch.removeprefix("refs/heads/"), safe_path, head)
 
     def reset_worktree(self, worktree_path: Path, *, base_ref: str) -> None:
         """Discard an interrupted, uncommitted automatic apply before its fenced retry."""
-        with self._lock:
+        with self._mutation_guard():
             safe_path = self._owned_worktree_path(worktree_path)
             if not safe_path.exists() or not (safe_path / ".git").exists():
                 raise AgentGitError("Candidate worktree is missing")
+            authority = self._require_existing_worktree_authority(
+                safe_path.name,
+                safe_path,
+                expected_head=None,
+            )
             base_commit = self._resolve_ref(base_ref)
-            self._git(["reset", "--hard", base_commit], cwd=safe_path)
-            self._git(["clean", "-fd"], cwd=safe_path)
+            self._git(["reset", "--hard", base_commit], cwd=authority.worktree_path)
+            self._git(["clean", "-fd"], cwd=authority.worktree_path)
 
     def remove_worktree(self, change_set_id: str, *, delete_branch: bool = True) -> None:
         """Compensate an abandoned automatic change set outside the DB transaction."""
         if not change_set_id or any(part in change_set_id for part in ("/", "\\", "..")):
             raise AgentGitError("Invalid change set id for worktree cleanup")
-        with self._lock:
+        with self._mutation_guard():
             worktree_path = self._owned_worktree_path(self.worktrees_dir / change_set_id)
             branch_name = f"change-set/{change_set_id}"
+            if worktree_path.exists():
+                self._require_existing_worktree_authority(
+                    change_set_id,
+                    worktree_path,
+                    expected_head=None,
+                )
             self._git(["worktree", "remove", "--force", str(worktree_path)], cwd=self.repository_dir, check=False)
             if worktree_path.exists():
                 shutil.rmtree(worktree_path)
@@ -322,12 +444,18 @@ class GitAgentVersionStore:
 
     def commit_worktree(self, worktree_path: Path, *, message: str) -> str:
         with self._mutation_guard():
-            self._configure_repo(worktree_path)
-            self._write_info_exclude(worktree_path)
-            self._stage_complete_workspace(worktree_path)
-            if self._has_staged_changes(worktree_path):
-                self._git(["commit", "-m", message], cwd=worktree_path)
-            commit = self._git(["rev-parse", "HEAD"], cwd=worktree_path).strip()
+            safe_path = self._owned_worktree_path(worktree_path)
+            authority = self._require_existing_worktree_authority(
+                safe_path.name,
+                safe_path,
+                expected_head=None,
+            )
+            self._configure_repo(authority.worktree_path)
+            self._write_info_exclude(authority.worktree_path)
+            self._stage_complete_workspace(authority.worktree_path)
+            if self._has_staged_changes(authority.worktree_path):
+                self._git(["commit", "-m", message], cwd=authority.worktree_path)
+            commit = self._git(["rev-parse", "HEAD"], cwd=authority.worktree_path).strip()
             if not commit:
                 raise AgentGitError("Candidate worktree has no commit")
             return commit
@@ -505,24 +633,25 @@ class GitAgentVersionStore:
             return tagged_commit == candidate and merge_base == candidate
 
     def archive_ref(self, ref: str) -> JsonObject:
-        resolved = self._resolve_commit(ref)
-        ref_digest = hashlib.sha256(ref.encode("utf-8")).hexdigest()[:16]
-        archive_path = self.releases_dir / f"release-{ref_digest}-{resolved[:16]}.tar.gz"
-        temporary_path = archive_path.with_name(f".{archive_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-        try:
-            self._git(
-                ["archive", "--format=tar.gz", "-o", str(temporary_path), resolved],
-                cwd=self.repository_dir,
-            )
-            os.replace(temporary_path, archive_path)
-        finally:
-            temporary_path.unlink(missing_ok=True)
-        return {
-            "ref": ref,
-            "commit_sha": resolved,
-            "archive_path": str(archive_path),
-            "sha256": self._sha256_file(archive_path),
-        }
+        with self._mutation_guard():
+            resolved = self._resolve_commit(ref)
+            ref_digest = hashlib.sha256(ref.encode("utf-8")).hexdigest()[:16]
+            archive_path = self.releases_dir / f"release-{ref_digest}-{resolved[:16]}.tar.gz"
+            temporary_path = archive_path.with_name(f".{archive_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+            try:
+                self._git(
+                    ["archive", "--format=tar.gz", "-o", str(temporary_path), resolved],
+                    cwd=self.repository_dir,
+                )
+                os.replace(temporary_path, archive_path)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+            return {
+                "ref": ref,
+                "commit_sha": resolved,
+                "archive_path": str(archive_path),
+                "sha256": self._sha256_file(archive_path),
+            }
 
     def rollback_to_ref(
         self,
@@ -584,20 +713,41 @@ class GitAgentVersionStore:
     @contextmanager
     def mutation_guard(self) -> Iterator[None]:
         """Hold this Agent repository's in-process and cross-process mutation lease."""
-
         with self._mutation_guard():
             yield
 
     @contextmanager
-    def _mutation_guard(self) -> Iterator[None]:
-        with self._lock:
-            with advisory_lock(self._process_lock_path, mode="exclusive"):
+    def workspace_activation_guard(self) -> Iterator[None]:
+        """Hold the stable lock under exact activation/recovery authority."""
+
+        try:
+            with self._mutation.activation(precondition=self._activation_precondition):
                 yield
+        except AgentRepositoryGuardError as exc:
+            raise AgentGitError(str(exc)) from exc
+
+    @contextmanager
+    def _mutation_guard(self) -> Iterator[None]:
+        try:
+            with self._mutation.existing():
+                yield
+        except AgentRepositoryGuardError as exc:
+            raise AgentGitError(str(exc)) from exc
+
+    @contextmanager
+    def initialization_guard(self, *, require_new_repository: bool = False) -> Iterator[None]:
+        """Create the repository layout under an explicit lifecycle authority."""
+        try:
+            with self._mutation.initialization(require_new_repository=require_new_repository):
+                yield
+        except AgentRepositoryGuardError as exc:
+            raise AgentGitInitializationConflict(str(exc)) from exc
 
     def _workspace_changes(self) -> list[JsonObject]:
         raw = self._git(
             ["status", "--porcelain=v1", "--untracked-files=all", "--no-renames", "--ignored"],
             cwd=self.repository_dir,
+            optional_locks=False,
         )
         return parse_workspace_changes(raw, normalize_path=self._safe_relative_path)
 
@@ -614,176 +764,7 @@ class GitAgentVersionStore:
         return requested
 
     def _ensure_repo_ready(self) -> None:
-        self.ensure_bootstrap()
-
-    def _ensure_git_available(self) -> None:
-        if shutil.which("git") is None:
-            raise AgentGitError("git executable is not available")
-
-    def _git(self, args: list[str], *, cwd: Path, check: bool = True) -> str:
-        env = dict(os.environ)
-        env.setdefault("GIT_TERMINAL_PROMPT", "0")
-        proc = subprocess.run(
-            ["git", *args],
-            cwd=str(cwd),
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if check and proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or "").strip()
-            raise AgentGitError(detail or f"git {' '.join(args)} failed with {proc.returncode}")
-        return proc.stdout
-
-    def _configure_repo(self, cwd: Path) -> None:
-        self._ensure_safe_directory(cwd)
-        self._git(["config", "user.name", self.git_user_name], cwd=cwd)
-        self._git(["config", "user.email", self.git_user_email], cwd=cwd)
         try:
-            configure_raw_git_storage(
-                cwd,
-                run_git=lambda args, repository: self._git(args, cwd=repository),
-            )
-        except RawGitStorageError as exc:
+            self._mutation.validate_existing()
+        except AgentRepositoryGuardError as exc:
             raise AgentGitError(str(exc)) from exc
-
-    def _ensure_safe_directory(self, cwd: Path) -> None:
-        safe_path = str(cwd.resolve())
-        probe = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=str(cwd),
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if probe.returncode == 0:
-            return
-        diagnostic = f"{probe.stdout}\n{probe.stderr}".lower()
-        if "dubious ownership" not in diagnostic and "safe.directory" not in diagnostic:
-            # This helper only owns safe.directory recovery.  A missing or otherwise
-            # invalid repository is reported by the following repository-local Git
-            # command with its normal, more precise error; it must not grow the global
-            # safe.directory list.
-            return
-        existing = self._git(["config", "--global", "--get-all", "safe.directory"], cwd=cwd, check=False)
-        if safe_path in existing.splitlines() or "*" in existing.splitlines():
-            return
-        self._git(["config", "--global", "--add", "safe.directory", safe_path], cwd=cwd, check=False)
-
-    def _write_info_exclude(self, cwd: Path) -> None:
-        git_dir = self._git(["rev-parse", "--git-dir"], cwd=cwd).strip()
-        exclude_path = (cwd / git_dir / "info" / "exclude").resolve()
-        exclude_path.parent.mkdir(parents=True, exist_ok=True)
-        existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
-        lines = ["# Agent runtime managed excludes"]
-        lines.extend(sorted(WORKSPACE_EXCLUDED_NAMES))
-        lines.extend(WORKSPACE_EXCLUDED_PATTERNS)
-        addition = "\n".join(lines) + "\n"
-        if "Agent runtime managed excludes" not in existing:
-            exclude_path.write_text(existing.rstrip() + "\n" + addition if existing else addition, encoding="utf-8")
-
-    def _has_head(self, cwd: Path) -> bool:
-        return bool(self._git(["rev-parse", "--verify", "HEAD"], cwd=cwd, check=False).strip())
-
-    def _stage_complete_workspace(self, cwd: Path) -> None:
-        self._git(["add", "-A", "-f", "--", "."], cwd=cwd)
-        self._git(["add", "--renormalize", "--ignore-errors", "--", "."], cwd=cwd)
-
-    def _has_staged_changes(self, cwd: Path) -> bool:
-        proc = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=str(cwd), check=False)
-        return proc.returncode == 1
-
-    def _commit_empty(self, message: str, *, cwd: Path) -> None:
-        self._git(["commit", "--allow-empty", "-m", message], cwd=cwd)
-
-    def _resolve_ref(self, ref: str) -> str:
-        value = self._git(["rev-parse", "--verify", ref], cwd=self.repository_dir).strip()
-        if not value:
-            raise AgentGitError(f"Unknown git ref: {ref}")
-        return value
-
-    def _resolve_commit(self, ref: str) -> str:
-        value = self._git(["rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=self.repository_dir, check=False).strip()
-        if not value:
-            raise AgentGitError(f"Unknown git commit: {ref}")
-        return value
-
-    def _validate_tag_name(self, tag_name: str) -> None:
-        if not tag_name or tag_name.startswith("-"):
-            raise AgentGitError(f"Invalid release tag name: {tag_name!r}")
-        try:
-            self._git(["check-ref-format", f"refs/tags/{tag_name}"], cwd=self.repository_dir)
-        except AgentGitError as exc:
-            raise AgentGitError(f"Invalid release tag name: {tag_name!r}") from exc
-
-    def _commit_created_at(self, commit_sha: str) -> str:
-        raw = self._git(["show", "-s", "--format=%cI", commit_sha], cwd=self.repository_dir, check=False).strip()
-        return raw or utc_now()
-
-    def _commit_parent(self, commit_sha: str) -> Optional[str]:
-        raw = self._git(["rev-list", "--parents", "-n", "1", commit_sha], cwd=self.repository_dir, check=False).strip()
-        parts = raw.split()
-        return parts[1] if len(parts) > 1 else None
-
-    def _tracked_file_count(self, commit_sha: str) -> int:
-        raw = self._git(["ls-tree", "-r", "--name-only", commit_sha], cwd=self.repository_dir, check=False)
-        return sum(1 for line in raw.splitlines() if line.strip())
-
-    def _file_entry(self, ref: str, path: str) -> JsonObject | None:
-        data = self._read_file_at_ref(ref, path)
-        if data is None:
-            return None
-        return {
-            "path": path,
-            "type": "file",
-            "sha256": hashlib.sha256(data).hexdigest(),
-            "size": len(data),
-        }
-
-    def _read_file_at_ref(self, ref: str, path: str) -> bytes | None:
-        safe_path = self._safe_relative_path(path)
-        if not safe_path:
-            return None
-        proc = subprocess.run(
-            ["git", "show", f"{ref}:{safe_path}"],
-            cwd=str(self.repository_dir),
-            capture_output=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            return None
-        return proc.stdout
-
-    def _file_diff_status(self, before: bytes | None, after: bytes | None) -> str:
-        if before is None and after is None:
-            return "missing"
-        if before is None:
-            return "added"
-        if after is None:
-            return "deleted"
-        return "unchanged" if before == after else "modified"
-
-    def _safe_relative_path(self, path: str) -> str | None:
-        raw = str(path or "").strip().replace("\\", "/")
-        if raw.startswith("workspace/"):
-            raw = raw.removeprefix("workspace/")
-        rel = Path(raw)
-        if not raw or rel.is_absolute() or ".." in rel.parts:
-            return None
-        return rel.as_posix()
-
-    def _owned_worktree_path(self, path: Path) -> Path:
-        resolved = path.expanduser().resolve()
-        worktrees_root = self.worktrees_dir.expanduser().resolve()
-        if resolved.parent != worktrees_root:
-            raise AgentGitError("Candidate worktree path escapes the governed worktree root")
-        return resolved
-
-    def _sha256_file(self, path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()

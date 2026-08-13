@@ -2,49 +2,40 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-DEFAULT_HOST="172.16.112.232"
-DEFAULT_REMOTE_DIR="~/work/agent-gov"
 COMPOSE_FILE="docker/docker-compose.yml"
 LOCAL_COMPOSE_ENV_FILE="${LOCAL_COMPOSE_ENV_FILE:-docker/.env}"
+DEPLOY_TARGET=""
+DEPLOY_USER=""
+REMOTE_DIR=""
+KNOWN_HOSTS_FILE=""
+SOURCE_COMMIT=""
+COMPOSE_PROJECT_NAME=""
+CHANGE_ID=""
+CONFIRM_TARGET=""
+DEPLOY_TARGET_MARKER=".agentgov-deploy-target"
+DEPLOY_RECEIPT=".agentgov-deploy-receipt"
+SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
+SSH_OPTIONS=()
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/deploy_agent_gov_to_host [host]
+Usage: scripts/deploy_agent_gov_to_host \
+  --target HOST --user USER --remote-dir ABSOLUTE_PATH \
+  --known-hosts-file ABSOLUTE_PATH --source-commit FULL_COMMIT_SHA \
+  --project-name COMPOSE_PROJECT --change-id CHANGE_ID \
+  --confirm-target USER@HOST:ABSOLUTE_PATH
 
-Deploy latest origin/master to a remote Docker Compose host.
+Deploy one explicit local Git commit to one trusted Docker Compose host.
 
-Defaults:
-  host        172.16.112.232
-  user        root          (override with DEPLOY_USER)
-  remote dir  ~/work/agent-gov (override with REMOTE_DIR)
+All target, identity, source, project, and change fields are required. The
+known_hosts file must already contain HOST; host keys are never accepted on
+first use. --confirm-target must exactly repeat USER@HOST:ABSOLUTE_PATH.
 
 The script preserves the remote private docker/.env, stores image archives in
-remote images/, loads the images on the remote host, removes existing agent-gov
-containers, starts the full Compose stack including Langfuse, and validates
-API/UI/Langfuse endpoints.
+the marked project directory, loads the images, restarts only the named Compose
+project, and validates API/UI/Langfuse endpoints.
 USAGE
 }
-
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
-
-if (( $# > 1 )); then
-  usage >&2
-  exit 2
-fi
-
-DEPLOY_HOST="${1:-${DEPLOY_HOST:-$DEFAULT_HOST}}"
-DEPLOY_USER="${DEPLOY_USER:-root}"
-REMOTE_DIR="${REMOTE_DIR:-$DEFAULT_REMOTE_DIR}"
-REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
-SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
-SSH_OPTIONS=(
-  -o StrictHostKeyChecking=accept-new
-  -o BatchMode=yes
-  -o "ConnectTimeout=${SSH_CONNECT_TIMEOUT}"
-)
 
 log() {
   printf '[deploy] %s\n' "$*"
@@ -55,8 +46,108 @@ die() {
   exit 1
 }
 
+die_usage() {
+  printf '[deploy] ERROR: %s\n' "$*" >&2
+  usage >&2
+  exit 2
+}
+
 quote() {
   printf '%q' "$1"
+}
+
+require_command() {
+  local name=$1
+  command -v "$name" >/dev/null 2>&1 || die "required command not found: $name"
+}
+
+parse_args() {
+  while (( $# > 0 )); do
+    case "$1" in
+      --target)
+        (( $# >= 2 )) || die_usage "--target requires a value"
+        DEPLOY_TARGET=$2
+        shift 2
+        ;;
+      --user)
+        (( $# >= 2 )) || die_usage "--user requires a value"
+        DEPLOY_USER=$2
+        shift 2
+        ;;
+      --remote-dir)
+        (( $# >= 2 )) || die_usage "--remote-dir requires a value"
+        REMOTE_DIR=$2
+        shift 2
+        ;;
+      --known-hosts-file)
+        (( $# >= 2 )) || die_usage "--known-hosts-file requires a value"
+        KNOWN_HOSTS_FILE=$2
+        shift 2
+        ;;
+      --source-commit)
+        (( $# >= 2 )) || die_usage "--source-commit requires a value"
+        SOURCE_COMMIT=$2
+        shift 2
+        ;;
+      --project-name)
+        (( $# >= 2 )) || die_usage "--project-name requires a value"
+        COMPOSE_PROJECT_NAME=$2
+        shift 2
+        ;;
+      --change-id)
+        (( $# >= 2 )) || die_usage "--change-id requires a value"
+        CHANGE_ID=$2
+        shift 2
+        ;;
+      --confirm-target)
+        (( $# >= 2 )) || die_usage "--confirm-target requires a value"
+        CONFIRM_TARGET=$2
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die_usage "unknown or positional argument: $1"
+        ;;
+    esac
+  done
+}
+
+validate_args() {
+  local required_name
+  for required_name in DEPLOY_TARGET DEPLOY_USER REMOTE_DIR KNOWN_HOSTS_FILE SOURCE_COMMIT COMPOSE_PROJECT_NAME CHANGE_ID CONFIRM_TARGET; do
+    [[ -n "${!required_name}" ]] || die_usage "missing required deployment field: $required_name"
+  done
+
+  [[ "$DEPLOY_TARGET" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || die_usage "--target must be a host name or IPv4 address without user or options"
+  [[ "$DEPLOY_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || die_usage "--user contains unsupported characters"
+  [[ "$REMOTE_DIR" == /* && "$REMOTE_DIR" != "/" && "$REMOTE_DIR" != *:* && "$REMOTE_DIR" != *[[:space:]]* ]] \
+    || die_usage "--remote-dir must be a non-root absolute path without whitespace or colon"
+  [[ "$KNOWN_HOSTS_FILE" == /* ]] || die_usage "--known-hosts-file must be absolute"
+  [[ "$SOURCE_COMMIT" =~ ^[0-9A-Fa-f]{40}$ ]] || die_usage "--source-commit must be a full 40-character commit SHA"
+  SOURCE_COMMIT=${SOURCE_COMMIT,,}
+  [[ "$COMPOSE_PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]] || die_usage "--project-name is invalid"
+  [[ "$CHANGE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$ ]] || die_usage "--change-id is invalid"
+  [[ "$CONFIRM_TARGET" == "${DEPLOY_USER}@${DEPLOY_TARGET}:${REMOTE_DIR}" ]] \
+    || die_usage "--confirm-target does not exactly match the requested deployment target"
+}
+
+configure_ssh_trust() {
+  [[ -f "$KNOWN_HOSTS_FILE" && ! -L "$KNOWN_HOSTS_FILE" ]] || die "known_hosts file must be a regular non-symlink file"
+  local canonical_known_hosts
+  canonical_known_hosts=$(realpath -e -- "$KNOWN_HOSTS_FILE")
+  [[ "$canonical_known_hosts" == "$KNOWN_HOSTS_FILE" ]] || die "known_hosts file path must already be canonical"
+  ssh-keygen -F "$DEPLOY_TARGET" -f "$KNOWN_HOSTS_FILE" >/dev/null \
+    || die "trusted host identity is absent from the supplied known_hosts file"
+  SSH_OPTIONS=(
+    -o StrictHostKeyChecking=yes
+    -o "UserKnownHostsFile=${KNOWN_HOSTS_FILE}"
+    -o GlobalKnownHostsFile=/dev/null
+    -o BatchMode=yes
+    -o "ConnectTimeout=${SSH_CONNECT_TIMEOUT}"
+  )
 }
 
 remote_run() {
@@ -72,17 +163,20 @@ rsync_ssh_command() {
   printf '%s' "$command"
 }
 
-require_command() {
-  local name=$1
-  command -v "$name" >/dev/null 2>&1 || die "required command not found: $name"
+load_source_commit() {
+  git cat-file -e "${SOURCE_COMMIT}^{commit}" 2>/dev/null || die "source commit is not available in the local repository"
+  VERSION=$(git show "${SOURCE_COMMIT}:VERSION" | tr -d '[:space:]')
+  [[ -n "$VERSION" ]] || die "source commit VERSION is empty"
 }
 
-fetch_origin_master() {
-  git fetch origin master --prune --tags
-
-  ORIGIN_MASTER=$(git rev-parse origin/master)
-  VERSION=$(git show origin/master:VERSION | tr -d '[:space:]')
-  [[ -n "$VERSION" ]] || die "origin/master VERSION is empty"
+cleanup_tmp_dir() {
+  [[ -n "${TMP_DIR:-}" && -d "$TMP_DIR" && ! -L "$TMP_DIR" && -O "$TMP_DIR" ]] || return 0
+  [[ "$TMP_DIR" =~ ^/tmp/agent-gov-deploy\.[A-Za-z0-9]{6}$ ]] || return 0
+  local canonical_tmp_dir
+  canonical_tmp_dir=$(realpath -e -- "$TMP_DIR") || return 0
+  [[ "$canonical_tmp_dir" == "$TMP_DIR" ]] || return 0
+  find "$canonical_tmp_dir" -xdev -depth -mindepth 1 -delete
+  rmdir -- "$canonical_tmp_dir"
 }
 
 ensure_local_image() {
@@ -125,23 +219,71 @@ upload_image_archive() {
   ' bash $(quote "$REMOTE_PATH") $(quote "$archive")"
 }
 
+prepare_remote_target() {
+  remote_run "bash -s -- $(quote "$REMOTE_DIR") $(quote "$COMPOSE_PROJECT_NAME") $(quote "$DEPLOY_TARGET_MARKER")" <<'REMOTE_TARGET'
+set -euo pipefail
+requested_path=$1
+project_name=$2
+marker_name=$3
+
+[ -n "$requested_path" ] && [ "$requested_path" != "/" ] || { echo "invalid remote project path" >&2; exit 1; }
+[ ! -L "$requested_path" ] || { echo "remote project path must not be a symlink" >&2; exit 1; }
+canonical_path=$(python3 - "$requested_path" <<'PY'
+import os
+import sys
+
+print(os.path.realpath(sys.argv[1]))
+PY
+)
+[ "$canonical_path" = "$requested_path" ] || { echo "remote project path must already be canonical" >&2; exit 1; }
+if [ -e "$requested_path" ]; then
+  [ -d "$requested_path" ] || { echo "remote project path is not a directory" >&2; exit 1; }
+else
+  mkdir -p -- "$requested_path"
+fi
+
+marker_path="$requested_path/$marker_name"
+if [ -e "$marker_path" ]; then
+  [ -f "$marker_path" ] && [ ! -L "$marker_path" ] || { echo "remote project marker is invalid" >&2; exit 1; }
+  grep -Fqx -- "project=$project_name" "$marker_path" || { echo "remote project marker has another project" >&2; exit 1; }
+  grep -Fqx -- "path=$requested_path" "$marker_path" || { echo "remote project marker has another path" >&2; exit 1; }
+else
+  [ -z "$(find "$requested_path" -mindepth 1 -maxdepth 1 -print -quit)" ] \
+    || { echo "unmarked remote project path must be empty" >&2; exit 1; }
+  umask 077
+  marker_tmp="${marker_path}.tmp.$$"
+  printf 'project=%s\npath=%s\n' "$project_name" "$requested_path" > "$marker_tmp"
+  mv -- "$marker_tmp" "$marker_path"
+fi
+mkdir -p -- "$requested_path/images"
+printf '%s\n' "$requested_path"
+REMOTE_TARGET
+}
+
+parse_args "$@"
+validate_args
 cd "$ROOT_DIR"
 
-for command_name in git docker gzip rsync ssh tar; do
+for command_name in git docker gzip realpath rsync ssh ssh-keygen tar; do
   require_command "$command_name"
 done
 
 [[ -f VERSION ]] || die "VERSION file not found"
 [[ -f "$COMPOSE_FILE" ]] || die "$COMPOSE_FILE not found"
 
+configure_ssh_trust
+REMOTE="${DEPLOY_USER}@${DEPLOY_TARGET}"
 log "Consumer x Mode x Boundary: remote containers use docker/.env, runtime root stays on the remote host, secrets stay in private env files"
-fetch_origin_master
+load_source_commit
 
-TMP_DIR=$(mktemp -d /tmp/agent-gov-master.XXXXXX)
-trap 'rm -rf "$TMP_DIR"' EXIT
+TMP_DIR=$(mktemp -d /tmp/agent-gov-deploy.XXXXXX)
+trap cleanup_tmp_dir EXIT
+TMP_DIR=$(realpath -e -- "$TMP_DIR")
+[[ "$TMP_DIR" =~ ^/tmp/agent-gov-deploy\.[A-Za-z0-9]{6}$ && -d "$TMP_DIR" && ! -L "$TMP_DIR" && -O "$TMP_DIR" ]] \
+  || die "temporary deployment directory failed validation"
 
-log "Exporting origin/master ${ORIGIN_MASTER}"
-git archive origin/master | tar -x -C "$TMP_DIR"
+log "Exporting source commit ${SOURCE_COMMIT} for approved change ${CHANGE_ID}"
+git archive "$SOURCE_COMMIT" | tar -x -C "$TMP_DIR"
 
 if [[ "$LOCAL_COMPOSE_ENV_FILE" = /* ]]; then
   LOCAL_COMPOSE_ENV_PATH="$LOCAL_COMPOSE_ENV_FILE"
@@ -151,26 +293,21 @@ fi
 
 if [[ ! -f "$LOCAL_COMPOSE_ENV_PATH" ]]; then
   LOCAL_COMPOSE_ENV_PATH="$TMP_DIR/docker/.env.example"
-  log "$LOCAL_COMPOSE_ENV_FILE not found; using origin/master docker/.env.example for local build interpolation"
+  log "$LOCAL_COMPOSE_ENV_FILE not found; using source commit docker/.env.example for local build interpolation"
 fi
 [[ -f "$LOCAL_COMPOSE_ENV_PATH" ]] || die "compose env file not found"
 
-log "Checking remote prerequisites on $REMOTE"
+log "Checking trusted remote prerequisites on $REMOTE"
 remote_run "command -v python3 >/dev/null && command -v docker >/dev/null && docker compose version >/dev/null"
 
-REMOTE_PATH=$(remote_run "REMOTE_DIR=$(quote "$REMOTE_DIR") python3 - <<'PY'
-import os
-
-print(os.path.abspath(os.path.expanduser(os.environ['REMOTE_DIR'])))
-PY
-")
+REMOTE_PATH=$(prepare_remote_target)
 [[ -n "$REMOTE_PATH" ]] || die "failed to resolve remote path"
 
 log "Remote path: $REMOTE:$REMOTE_PATH"
-remote_run "mkdir -p $(quote "$REMOTE_PATH") $(quote "$REMOTE_PATH/images")"
 
 log "Building project images for version $VERSION"
-APP_VERSION="$VERSION" docker compose --env-file "$LOCAL_COMPOSE_ENV_PATH" -f "$TMP_DIR/$COMPOSE_FILE" build \
+APP_VERSION="$VERSION" docker compose --project-name "$COMPOSE_PROJECT_NAME" \
+  --env-file "$LOCAL_COMPOSE_ENV_PATH" -f "$TMP_DIR/$COMPOSE_FILE" build \
   agent-gov-litellm-sidecar \
   claude-agent-api \
   claude-agent-ui
@@ -184,20 +321,26 @@ for image in "${PROJECT_IMAGES[@]}"; do
   ensure_local_image "$image"
 done
 
-log "Syncing origin/master tracked code"
+log "Syncing tracked code from source commit $SOURCE_COMMIT"
 rsync -az --delete \
   -e "$(rsync_ssh_command)" \
   --exclude='/.git/' \
+  --exclude="/${DEPLOY_TARGET_MARKER}" \
+  --exclude="/${DEPLOY_RECEIPT}" \
   --exclude='/images/' \
   --exclude='/docker/.env' \
   --exclude='/docker/.env.local-debug' \
   --exclude='/frontend/.env.local' \
   "$TMP_DIR"/ "${REMOTE}:${REMOTE_PATH}/"
 
-remote_run "bash -s -- $(quote "$REMOTE_PATH")" <<'REMOTE_SYNC'
+remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$COMPOSE_PROJECT_NAME") $(quote "$DEPLOY_TARGET_MARKER")" <<'REMOTE_SYNC'
 set -euo pipefail
 remote_path=$1
+project_name=$2
+marker_name=$3
 cd "$remote_path"
+grep -Fqx -- "project=$project_name" "$marker_name"
+grep -Fqx -- "path=$remote_path" "$marker_name"
 mkdir -p images
 cp -n docker/.env.example docker/.env
 printf 'remote VERSION=%s\n' "$(tr -d '[:space:]' < VERSION)"
@@ -243,12 +386,19 @@ DEPENDENCY_ARCHIVE="agent-gov-${VERSION}-langfuse-deps-images.tar.gz"
 upload_image_archive "$PROJECT_ARCHIVE" "${PROJECT_IMAGES[@]}"
 upload_image_archive "$DEPENDENCY_ARCHIVE" "${DEPENDENCY_IMAGES[@]}"
 
-log "Loading images and restarting all agent-gov services on $REMOTE"
-remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$VERSION")" <<'REMOTE_DEPLOY'
+log "Loading images and restarting Compose project $COMPOSE_PROJECT_NAME on $REMOTE"
+remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$VERSION") $(quote "$COMPOSE_PROJECT_NAME") $(quote "$SOURCE_COMMIT") $(quote "$CHANGE_ID") $(quote "$DEPLOY_TARGET_MARKER") $(quote "$DEPLOY_RECEIPT")" <<'REMOTE_DEPLOY'
 set -euo pipefail
 remote_path=$1
 version=$2
+project_name=$3
+source_commit=$4
+change_id=$5
+marker_name=$6
+receipt_name=$7
 cd "$remote_path"
+grep -Fqx -- "project=$project_name" "$marker_name"
+grep -Fqx -- "path=$remote_path" "$marker_name"
 
 project_archive="images/agent-gov-${version}-images.tar.gz"
 dependency_archive="images/agent-gov-${version}-langfuse-deps-images.tar.gz"
@@ -286,20 +436,18 @@ expand_remote_value() {
 }
 
 export APP_VERSION="$version"
-docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse down --remove-orphans || true
-leftover_containers=$(docker ps -aq --filter "name=agent-gov" || true)
-if [ -n "$leftover_containers" ]; then
-  docker rm -f $leftover_containers
-fi
+docker compose --project-name "$project_name" --env-file docker/.env -f docker/docker-compose.yml \
+  --profile langfuse down --remove-orphans
 
+COMPOSE_PROJECT_NAME="$project_name" \
 COMPOSE_ENV_FILE=docker/.env \
 COMPOSE_UP_FLAGS="--no-build --pull never" \
 make --no-print-directory all-up
-docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse ps
+docker compose --project-name "$project_name" --env-file docker/.env -f docker/docker-compose.yml --profile langfuse ps
 
-host_port=$(expand_remote_value "$(read_env HOST_PORT 48080)")
-frontend_port=$(expand_remote_value "$(read_env FRONTEND_HOST_PORT 45173)")
-langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 43000)")
+host_port=$(expand_remote_value "$(read_env HOST_PORT 58080)")
+frontend_port=$(expand_remote_value "$(read_env FRONTEND_HOST_PORT 55173)")
+langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 53000)")
 
 python3 - <<PY
 from urllib.error import HTTPError
@@ -332,6 +480,12 @@ for name, url, attempts, print_body in checks:
     else:
         raise SystemExit(f"{name} failed: {url}: {last_error!r}")
 PY
+
+umask 077
+receipt_tmp="${receipt_name}.tmp.$$"
+printf 'project=%s\nsource_commit=%s\nversion=%s\nchange_id=%s\n' \
+  "$project_name" "$source_commit" "$version" "$change_id" > "$receipt_tmp"
+mv -- "$receipt_tmp" "$receipt_name"
 REMOTE_DEPLOY
 
 log "Deployment completed on ${REMOTE}:${REMOTE_PATH}"

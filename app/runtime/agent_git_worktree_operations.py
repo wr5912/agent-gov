@@ -21,6 +21,12 @@ def commit_squashed_worktree(
         safe_path = store._owned_worktree_path(worktree_path)
         if not safe_path.exists() or not (safe_path / ".git").exists():
             raise AgentGitError("Candidate worktree is missing")
+        authority = store._require_existing_worktree_authority(
+            safe_path.name,
+            safe_path,
+            expected_head=None,
+        )
+        safe_path = authority.worktree_path
         base_commit = store._resolve_ref(base_ref)
         store._configure_repo(safe_path)
         store._write_info_exclude(safe_path)

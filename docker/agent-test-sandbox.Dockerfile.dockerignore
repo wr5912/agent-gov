@@ -1,0 +1,10 @@
+**
+!VERSION
+!docker/
+!docker/agent-test-sandbox.Dockerfile
+!packages/
+!packages/agentgov-testkit/
+!packages/agentgov-testkit/pyproject.toml
+!packages/agentgov-testkit/src/
+!packages/agentgov-testkit/src/agentgov_testkit/
+!packages/agentgov-testkit/src/agentgov_testkit/*.py

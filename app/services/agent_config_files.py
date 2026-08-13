@@ -15,7 +15,7 @@ from pathlib import Path
 from scripts.bootstrap_runtime_volume import load_runtime_env
 
 from app.runtime.advisory_lock import advisory_lock
-from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
+from app.runtime.agent_paths import InvalidAgentId, business_agent_repository_lock_path, validate_agent_id
 from app.runtime.config_file_schemas import (
     AgentConfigFileResponse,
     AgentConfigFileUpdateRequest,
@@ -73,7 +73,7 @@ class AgentConfigFileService:
         self._session_store = session_store
 
     def read_file(self, *, agent_id: str, path: str) -> AgentConfigFileResponse:
-        safe_agent_id, target = self._resolve_target(agent_id=agent_id, path=path)
+        safe_agent_id, target, _ = self._resolve_target(agent_id=agent_id, path=path)
         with self._locked_parent(target, exclusive=False) as directory_fd:
             snapshot = self._read_snapshot(directory_fd=directory_fd, target_name=target.name)
         content = self._decode_snapshot(snapshot)
@@ -95,11 +95,20 @@ class AgentConfigFileService:
         path: str,
         request: AgentConfigFileUpdateRequest,
     ) -> AgentConfigFileUpdateResponse:
-        safe_agent_id, target = self._resolve_target(agent_id=agent_id, path=path)
+        safe_agent_id, target, expected_etag = self._resolve_target(agent_id=agent_id, path=path)
         self._validate_content(agent_id=safe_agent_id, path=path, content=request.content)
         replacement_data = request.content.encode("utf-8")
-        lock_path = business_agent_layout(self._settings.data_dir, safe_agent_id).version_base / ".repository.lock"
+        lock_path = business_agent_repository_lock_path(self._settings.data_dir, safe_agent_id)
+        mutation_precondition = self._agent_registry_store.mutation_precondition(
+            agent_id=safe_agent_id,
+            expected_instance_etag=expected_etag,
+        )
         with advisory_lock(lock_path, mode="exclusive"):
+            if not mutation_precondition():
+                raise AgentConfigFileError(409, "Business Agent repository is no longer mutable")
+            _, locked_target, current_etag = self._resolve_target(agent_id=safe_agent_id, path=path)
+            if locked_target != target or current_etag != expected_etag:
+                raise AgentConfigFileError(409, "Business agent instance changed before config update")
             with self._locked_parent(target, exclusive=True) as directory_fd:
                 original = self._read_snapshot(directory_fd=directory_fd, target_name=target.name)
                 if request.expected_sha256 is not None and request.expected_sha256 != original.sha256:
@@ -144,7 +153,7 @@ class AgentConfigFileService:
             sdk_session_invalidated=invalidated,
         )
 
-    def _resolve_target(self, *, agent_id: str, path: str) -> tuple[str, Path]:
+    def _resolve_target(self, *, agent_id: str, path: str) -> tuple[str, Path, str]:
         safe_agent_id = self._validate_agent_id(agent_id)
         if path not in EDITABLE_AGENT_CONFIG_FILES:
             raise AgentConfigFileError(422, "Only project .mcp.json is editable from this endpoint")
@@ -164,7 +173,7 @@ class AgentConfigFileService:
         relative = policy.relative_path(path)
         if relative is None or policy.rel_excluded(relative):
             raise AgentConfigFileError(403, "unsafe_target_path")
-        return safe_agent_id, workspace / relative
+        return safe_agent_id, workspace / relative, record.instance_etag
 
     def _validate_agent_id(self, agent_id: str) -> str:
         try:

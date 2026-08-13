@@ -44,8 +44,8 @@ class FeedbackStore(
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.default_workspace_dir = workspace_dir or business_agent_layout(data_dir, DEFAULT_BUSINESS_AGENT_ID).workspace
-        # 默认业务 Agent Workspace 在 /data 下；执行/证据兼容投影依赖该入口。
-        self.default_workspace_dir.mkdir(parents=True, exist_ok=True)
+        # Workspace 生命周期由 registry/bootstrap 在 stable per-Agent lock 内管理；
+        # store 构造只绑定路径，不能在启动或只读装配时复活缺失的业务 Agent 目录。
         self.execution_targets = WorkspaceExecutionTargetPolicy(self.default_workspace_dir)
         self.db_path = runtime_db_path_from_data_dir(data_dir)
         self.Session = make_session_factory(self.db_path)

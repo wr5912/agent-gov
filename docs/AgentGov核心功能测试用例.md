@@ -12,7 +12,9 @@
 ## 使用方式
 
 - 每个新增功能、重构或治理改动，都应至少挂接到本文档中的一个核心用例。
-- 每个改进事项、版本发布或重大方案评审，都应检查是否增强了至少一个目标用例，且没有破坏已有 `current` 用例；涉及当前迁移前优化批次时，按 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md) 映射到改进事项闭环。
+- 每个改进事项、版本发布或重大方案评审，都应检查是否增强了至少一个目标用例，且没有破坏已有
+  `current` 用例；历史材料若出现旧优化批次，只能按
+  [AgentGov 术语与版本边界](./AgentGov术语与版本边界.md) 映射到改进事项闭环，不能作为活跃对象。
 - 本文档中的 `gap` 和 `future` 用例不要求当前版本全部通过，但它们定义了后续研发要逼近的方向。
 - 当功能从 `gap` 或 `future` 进入可验证状态时，应把状态更新为 `current`，并补充可运行测试、API 验证、UI 验证或人工验收路径。
 
@@ -23,6 +25,10 @@
 | `current` | 当前系统应具备，适合作为回归验收项 | 发布前应验证，失败需修复或说明例外 |
 | `gap` | 目标明确但当前能力不足或不完整 | 作为近期迭代、方案设计和验收标准 |
 | `future` | 属于长期愿景或成熟度演进 | 作为路线图牵引，不阻断当前版本 |
+
+这里的 `current` 是“该成功标准应持续回归”，不是“任意当前工作树已经完成全部真实容器终验”。
+当前候选状态仍以 [`.planning/STATE.md`](../.planning/STATE.md) 为准；用例正文中的局部自动测试
+不能替代完整发布回执。
 
 ## 覆盖矩阵
 
@@ -35,16 +41,16 @@
 | 三大核心能力 | Runtime、Feedback Loop、Version Governance 构成治理链路 | AGV-014, AGV-015, AGV-016 |
 | 多 Agent 治理对象 | 区分业务 Agent 和治理 Agent，支持多业务 Agent 治理 | AGV-017, AGV-018, AGV-019 |
 | Agent 生命周期 | 支持 draft、active、evaluating、deprecated、archived 等治理状态 | AGV-020, AGV-021 |
-| Agent 资产 Registry | 建立 Agent、prompt、skill、SOP、eval、release 等资产关联 | AGV-022, AGV-023 |
+| Agent 资产 Registry | 建立 Agent、prompt、skill、SOP、Workspace pytest、release 等当前资产关联；独立 EvalOps 另见 AGV-051 | AGV-022, AGV-023, AGV-051 |
 | 反馈路由与归属 | 每条反馈可归属到 Agent、version、run、session、task 和场景 | AGV-024, AGV-025 |
 | 能力域与场景包 | 按能力域组织可迁移、可复制、可审计的能力包 | AGV-026, AGV-027 |
 | 反馈到资产闭环 | 从运行、反馈、归因、优化、评估到版本和 Registry 闭环 | AGV-028, AGV-029, AGV-030 |
-| 核心目标 | 创建 Agent、运行可复盘、反馈归因、优化资产化、评估门禁、版本固化、API 集成 | AGV-031 至 AGV-040 |
+| 核心目标 | 创建 Agent、运行可复盘、反馈归因、优化资产化、Workspace 回归门、版本固化、API 集成 | AGV-031 至 AGV-040 |
 | 治理边界与审批 | 高风险变更需人工或外部系统确认，不绕过责任边界 | AGV-041, AGV-042 |
 | 治理成熟度路径 | 内置业务 Agent 闭环、多业务 Agent、场景包、跨 Agent 方法论沉淀 | AGV-043, AGV-044, AGV-045 |
 | 典型落地场景 | 安全运营只是典型场景之一，平台不绑定单一行业 | AGV-046 |
 | 产品边界 | AgentGov 负责治理能力，外部系统负责业务界面、权限、生产系统和高风险动作责任；当前不建设通用协作模型 | AGV-047, AGV-048, AGV-049 |
-| OpenAI 兼容主路径 | Responses-first 接口可承载 Playground 主运行、会话恢复、外部 API 集成，并保留原生 Chat 兼容面 | AGV-050 |
+| Runtime 与兼容投影 | SDK-native 接口承载 Playground 主运行，conversation 承载会话恢复；Responses 是过渡外部投影，Chat 是 deprecated 兼容面 | AGV-050 |
 | 平台发布评测与 EvalOps | 业务 Agent、evaluator-owned 评测基准和平台发布裁决职责分离 | AGV-051 |
 | 平台控制面与数据治理 | 单组织先行仍保留 backend-owned 身份、resource scope 和数据全生命周期边界 | AGV-052, AGV-053 |
 | 扩展集成与可运营性 | 外部集成遵循通用可靠性契约，规模化扩展具有 SLO、容量和经济性证据 | AGV-054, AGV-055 |
@@ -116,7 +122,8 @@
 
 成功标准：
 
-- 前端支持 Playground、改进治理工作台（当前实现可表现为迁移前反馈工作台）、评估和版本治理视图等治理观察能力。
+- 前端支持 Playground、四阶段改进治理工作台、Workspace 测试运行和版本治理等观察能力；
+  evaluator-owned 独立测评中心仍是 `gap`。
 - 文档明确外部业务系统承载最终用户业务界面和生产流程。
 - 文档明确 AgentGov 当前不提供通用协作看板，也不接入外部研发协作平台。
 - 高风险业务动作不由 AgentGov 前端绕过外部系统审批。
@@ -142,7 +149,8 @@
 成功标准：
 
 - 新 Agent 具有稳定身份和配置。
-- Agent 定义能作为后续运行、反馈、评估和版本治理的归属对象。
+- Agent 定义能作为后续运行、反馈、Workspace 测试和版本治理的归属对象；未来独立测评也必须复用
+  同一稳定身份，不能另造 Agent 身份源。
 - 仓库运行卷初始化源不泄露 API key、凭据型 MCP header 或本机私有路径。
 - live workspace 与 per-Agent Git 可原样保存业务运行所需私有配置，平台导入、导出和摘要不得
   在日志或回执中回显正文。
@@ -170,7 +178,8 @@
 - 业务 Agent 是被治理对象。
 - 治理 Agent 是闭环流程的执行者。
 - 业务 Agent 是被治理对象，治理 Agent 是平台内部的闭环执行者；当前不预设二者在后期协作系统中的成员模型。
-- 治理 Agent 的输出不直接变成生产事实，必须经过后端校验、评估和版本治理。
+- 治理 Agent 的输出不直接变成生产事实，必须经过后端校验、用户确认、Workspace 回归门和版本治理；
+  未来 evaluator-owned 独立测评仍由独立权威裁决，不能由治理 Agent 自评替代。
 
 证据要求：governor profile、输入输出、Trace 和最终投影记录。
 
@@ -212,13 +221,15 @@
 
 1. 使用 API 发起 Agent 运行或查询运行记录。
 2. 通过 API 提交反馈信号或查询反馈 case。
-3. 查询 agent job、eval run 或 version governance 相关资源。
+3. 查询改进事项、Workspace 测试运行或 version governance 相关资源。
 
 成功标准：
 
-- 外部系统不需要使用 AgentGov 前端即可接入运行、反馈、评估或版本治理能力。
+- 外部系统不需要使用 AgentGov 前端即可接入运行、反馈、Workspace 回归或版本治理能力。
 - API 响应包含可继续流转的 ID、状态和错误信息。
 - 未授权请求返回 401 或等价鉴权错误。
+
+evaluator-owned 独立测评仍是规划能力，不属于本项 `current` API 接入结论。
 
 证据要求：curl 记录、API 响应或 OpenAPI 路径检查。
 
@@ -274,7 +285,10 @@
 
 证据要求：失败 case、归因输出、沉淀资产、测试文件和后续平台运行结果。
 
-当前实现能把已确认的 `RegressionTestDesign` 新增为 `tests/test_feedback_*.py`，提交更新后的待发布版本并自动排队运行；已有文件不会被覆盖、删除或弱化。仍缺把失败经验自动提升为 SOP、prompt、skill 或跨事项复用治理规则的联合证据。
+当前实现能把已确认的 `RegressionTestDesign` 新增为 `tests/test_feedback_*.py`，并提交更新后的
+待发布版本；确认动作不隐式创建或运行 `AgentTestRun`，用户需对精确待发布 commit 显式触发平台
+测试。已有文件不会被覆盖、删除或弱化。仍缺把失败经验自动提升为 SOP、prompt、skill 或跨事项
+复用治理规则的联合证据。
 ### AGV-010 跨 Agent 共享已验证的治理经验
 
 状态：`gap`
@@ -328,7 +342,7 @@
 
 目标来源：三层资产模型。
 
-前置条件：存在归因方法、优化 SOP、评估规程或发布准入规则。
+前置条件：存在归因方法、优化 SOP、Workspace 回归用例设计或发布准入规则。
 
 测试步骤：
 
@@ -368,7 +382,7 @@
 
 证据要求：调用记录、资产版本和评估结果。
 
-自动验收（部分）：`tests/test_agent_governance_publish.py::test_restore_release_switches_current_workspace_without_mutating_release_history` 证明 release 恢复不改历史。仍缺当前 execution apply API 对真实候选 worktree、文件 diff、version/change set 持久化和源 workspace 不变的端到端验收。
+自动验收（部分）：`tests/test_agent_governance_agent_boundaries.py::test_restore_release_switches_current_workspace_without_mutating_release_history` 证明 release 恢复不改历史。仍缺当前 execution apply API 对真实候选 worktree、文件 diff、version/change set 持久化和源 workspace 不变的端到端验收。
 
 ### AGV-014 Runtime 运行可复盘
 
@@ -449,7 +463,7 @@
 
 ### AGV-017 多业务 Agent 接入统一治理闭环
 
-状态：`current`
+状态：`gap`
 
 目标来源：多 Agent 治理对象、核心目标。
 
@@ -465,11 +479,15 @@
 
 - 每个业务 Agent 的反馈和版本治理互不混淆。
 - 治理 Agent 可以服务不同业务 Agent。
-- 查询时能按 Agent 维度过滤 run、feedback、eval、release。
+- 查询时能按 Agent 维度过滤 run、feedback、Workspace test run 和 release；独立评测仍是本项缺口。
 
 证据要求：两个 Agent 的独立闭环记录。
 
-自动验收：`tests/test_agent_governance_publish.py::test_governance_serves_multiple_business_agents_with_isolated_closed_loops`（两个业务 Agent 各建 run→反馈→优化批次→评估→change set→release 独立闭环：①各维度按 Agent 过滤只见自身记录、版本链落各自独立 store 物理隔离=互不混淆；②单一 `AgentGovernanceService` 为两个 Agent 各自管理版本 store=治理 Agent 服务不同业务 Agent；③run/feedback/eval/change set/release 均可按 Agent 维度过滤）。归属沿 run.agent_id→signal→case→batch→task→change set→eval 全链路传播（B2 + B3.1~B3.4），优化执行流水线已 per-agent 参数化（B3.4-exec）。
+自动验收（部分）：
+`tests/test_agent_governance_agent_boundaries.py::test_governance_serves_multiple_business_agents_with_isolated_closed_loops`
+证明两个业务 Agent 的 run、signal、case、平台测试门、change set 和 release 按 Agent 隔离，版本链
+落到不同 per-Agent store。该测试没有生成归因、优化或独立评测对象，不能证明本用例要求的完整
+统一闭环；在四阶段产物与 evaluator-owned assessment 都有双 Agent 端到端证据前，本项保持 `gap`。
 
 ### AGV-018 业务 Agent 不按历史 ID 特殊化
 
@@ -529,10 +547,10 @@
 
 测试步骤：
 
-1. 创建 draft Agent。
-2. 激活为 active。
-3. 提交候选变更进入 evaluating。
-4. 将旧版本 deprecated 或 archived。
+1. 通过 Workspace 包导入业务 Agent，确认当前创建态为 active。
+2. 从 active 切换到 evaluating，再按合法路径切换到 deprecated 或 archived。
+3. 尝试从 archived 回到 active 等非法转移。
+4. 验证 archived Agent 仍可查询，但不能用于新运行。
 
 成功标准：
 
@@ -542,7 +560,12 @@
 
 证据要求：状态转移记录和非法转移测试。
 
-自动验收（按三条成功标准）：①明确合法转移——`agent_lifecycle` 状态机（draft→active→evaluating→deprecated→archived，archived 终态）+ API `POST /api/agent-registry/{id}/lifecycle`；②非法转移被拒并返回可理解错误——`tests/test_agent_registry_store.py::test_business_agent_lifecycle_transitions_and_archived_excluded_from_run`（archived→active 被 StateTransitionError 拒绝，409 带转移说明）；③archived 仍可审计但不参与新运行——同测试断言 archived Agent 仍在注册表可查、但 `/api/chat?agent_id=` 拒绝运行（`AGENT_RUNNABLE_LIFECYCLE_STATES`）。状态列由迁移 0009 持久化；`main-agent` 与其他普通业务 Agent 使用同一状态机。
+自动验收（按三条成功标准）：①当前创建入口产生 active Agent，公开 lifecycle API 只接受
+`active/evaluating/deprecated/archived` 目标；②非法转移被拒并返回可理解错误——
+`tests/test_agent_registry_store.py::test_business_agent_lifecycle_transitions_and_archived_excluded_from_run`
+断言 archived→active 被 `StateTransitionError` 拒绝，409 带转移说明；③ archived 仍可审计但不参与
+新运行——同测试断言 archived Agent 仍在注册表可查、但运行入口拒绝选择。`draft` 只作为底层状态机
+的历史/内部起点，不是当前公开创建结果或 lifecycle target。
 
 ### AGV-021 Agent 生命周期围绕版本治理运转
 
@@ -555,7 +578,7 @@
 测试步骤：
 
 1. 对 active Agent 生成候选变更。
-2. 执行评估和回归。
+2. 执行当前精确提交的 Workspace 回归门。
 3. 发布新版本并归档旧版本。
 4. 触发 rollback 或 restore。
 
@@ -567,11 +590,11 @@
 
 证据要求：version graph、release archive、rollback event。
 
-自动验收：`tests/test_agent_governance_publish.py::test_business_agent_version_lifecycle_preserves_history_through_rollback`（业务 Agent 经候选→发布 v1/v2→restore→rollback：候选/已发布/回滚版本状态可区分，restore 切换当前版本不改写 release 历史，rollback 仅标记 `rolled_back` 而不物理删除 release，两条 release 在 Agent 维度仍可追溯）。per-agent 版本链由 `AgentGovernanceService._store_for(agent_id)` 提供物理隔离（业务 Agent 版本 store 根 `data_dir/business-agents/{agent_id}/version`），与 main agent 版本链互不混淆。
+自动验收：`tests/test_agent_governance_agent_boundaries.py::test_business_agent_version_lifecycle_preserves_history_through_rollback`（业务 Agent 经候选→发布 v1/v2→restore→rollback：候选/已发布/回滚版本状态可区分，restore 切换当前版本不改写 release 历史，rollback 仅标记 `rolled_back` 而不物理删除 release，两条 release 在 Agent 维度仍可追溯）。per-agent 版本链由 `AgentGovernanceService._store_for(agent_id)` 提供物理隔离（业务 Agent 版本 store 根 `data_dir/business-agents/{agent_id}/version`），与 main agent 版本链互不混淆。
 
 ### AGV-022 Agent 资产 Registry 记录资产关系
 
-状态：`current`
+状态：`gap`
 
 目标来源：Agent 资产 Registry。
 
@@ -591,7 +614,13 @@
 
 证据要求：Registry 查询结果、Workspace suite 摘要和平台测试运行。
 
-自动验收：`tests/test_agent_registry_store.py::test_feedback_asset_provenance_traces_agent_and_relationship` 证明反馈可追溯到所属 Agent、改进事项及 change set；`tests/test_agent_testing.py::test_suite_inspection_treats_workspace_tests_as_versioned_source_of_truth` 证明测试内容从指定提交派生，不写入第二套 Registry body。
+自动验收（部分）：
+`tests/test_agent_registry_store.py::test_feedback_asset_provenance_traces_agent_and_relationship` 只证明反馈
+可追溯到所属 Agent、改进事项及 change set；
+`tests/test_agent_testing.py::test_suite_inspection_treats_workspace_tests_as_versioned_source_of_truth` 只证明
+测试内容从指定提交派生，不写入第二套 Registry body。当前 `/api/asset-registry/feedback/{id}` 尚未
+关联配置、方法论、test run 或 release，通用 `/api/assets` 也只有弱来源/继承引用，不能回答完整的
+“改了哪些资产、如何验证、进入哪个版本”，因此本项保持 `gap`。
 ### AGV-023 Registry 防止资产散落和重复沉淀
 
 状态：`gap`
@@ -634,12 +663,12 @@
 成功标准：
 
 - 反馈不会进入无归属全局问题池。
-- 归因、优化、评估和版本治理都能基于同一归属链路。
+- 归因、优化、Workspace 测试和版本治理都能基于同一归属链路；未来独立评测也必须复用该归属。
 - 无法归属的反馈会被标记为待人工处理或需要补充上下文。
 
 证据要求：feedback signal、feedback case 和 optimization task 关联字段。
 
-自动验收（部分）：`tests/test_agent_governance_publish.py::test_governance_serves_multiple_business_agents_with_isolated_closed_loops` 证明已匹配 run 的多 Agent 隔离。仍缺无 source locator 拒绝、无匹配 run 的显式人工兜底，以及 signal/case 投影归属一致性证据。
+自动验收（部分）：`tests/test_agent_governance_agent_boundaries.py::test_governance_serves_multiple_business_agents_with_isolated_closed_loops` 证明已匹配 run 的多 Agent 隔离。仍缺无 source locator 拒绝、无匹配 run 的显式人工兜底，以及 signal/case 投影归属一致性证据。
 
 ### AGV-025 反馈路由错误不会污染其他 Agent
 
@@ -652,13 +681,13 @@
 测试步骤：
 
 1. 对 Agent A 提交反馈。
-2. 尝试把该反馈错误关联到 Agent B 的优化批次。
+2. 尝试把该 feedback case 错误挂接到 Agent B 的 `ImprovementItem`。
 3. 查看系统是否拒绝或要求人工确认。
 
 成功标准：
 
 - 跨 Agent 反馈误路由被阻止或显式审计。
-- Agent B 的评估和版本不受 Agent A 反馈污染。
+- Agent B 的改进事项、测试运行和版本不受 Agent A 反馈污染。
 - 管理员可以修正反馈归属并保留审计记录。
 
 证据要求：错误响应、审计事件和修正记录。
@@ -667,8 +696,10 @@
 `tests/test_improvement_content.py::test_attach_feedback_case_rejects_cross_business_agent_without_side_effects`
 证明跨 Agent 挂接被拒绝且无副作用；
 `tests/test_improvement_content.py::test_feedback_case_assignment_is_unique_and_reassign_moves_authoritative_ref`
-证明唯一 assignment 关系和重新归属会同步权威引用。仍缺管理员修正原始 feedback signal/case
-Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`。
+证明唯一 assignment 关系和重新归属会同步权威引用。当前已有
+`POST /api/feedback-signals/{signal_id}/reassign-agent` 和 `attribution_corrections` 审计，但缺少成功
+重分配及审计内容的正向测试、管理员权限证明，且已进入 feedback case 的 signal 不能通过该入口
+修正；因此本项保持 `gap`。
 
 ### AGV-026 能力域或场景包可组织治理资产
 
@@ -769,7 +800,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：error_json、状态机事件、补偿或回滚记录。
 
-自动验收（部分）：`tests/test_responses_stream.py::test_stream_finalization_exhaustion_interrupts_and_allows_immediate_retry`、
+自动验收（部分）：`tests/test_responses_stream_endpoint.py::test_stream_finalization_exhaustion_interrupts_and_allows_immediate_retry`、
 `tests/test_runtime_db_0040.py::test_0040_archive_and_destructive_changes_roll_back_together`、
 `tests/test_agent_governance_publish.py::test_publish_db_finalize_failure_rolls_back_metadata_and_retry_reconciles` 和
 `tests/test_agent_maintenance_recovery.py::test_restore_reconciles_crash_after_git_before_operation_persistence`、
@@ -802,7 +833,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：`RegressionTestDesign`、Workspace 测试提交、`AgentTestRun` 和发布审计。
 
-自动验收（部分）：`tests/test_improvement_execution_service.py::test_generated_feedback_tests_are_flat_immutable_and_idempotent` 和 `test_materialized_feedback_test_rebinds_same_unpublished_change_set` 证明反馈测试文件扁平、不可覆盖且推进同一未发布 change set；`tests/test_agent_governance_publish.py::test_publish_requires_passed_platform_test_for_exact_candidate_commit` 证明旧提交或非通过运行不能满足发布条件；`test_feedback_publication_cannot_force_bypass_complete_agent_test_suite` 证明反馈闭环版本不能强制绕过测试；`test_force_publish_requires_reason_and_persists_warning_audit` 只证明未关联反馈的手工待发布版本例外仍有原因和审计。仍缺 flaky、测试过时和能力退化的自动分类解释。
+自动验收（部分）：`tests/test_improvement_execution_service.py::test_generated_feedback_tests_are_flat_immutable_and_idempotent` 和 `test_materialized_feedback_test_rebinds_same_unpublished_change_set` 证明反馈测试文件扁平、不可覆盖且推进同一未发布 change set；`tests/test_agent_governance_publish.py::test_publish_requires_passed_platform_test_for_exact_candidate_commit` 证明旧提交或非通过运行不能满足发布条件；`test_feedback_publication_cannot_force_bypass_complete_agent_test_suite` 证明反馈闭环版本不能强制绕过测试；`tests/test_agent_governance_publish.py::test_force_publish_cannot_bypass_platform_test_and_requires_reason_for_audited_force` 证明 force 不能绕过平台测试，且在其他门已满足时仍必须提供原因并留下审计。仍缺 flaky、测试过时和能力退化的自动分类解释。
 ### AGV-031 Agent 创建、配置、运行、治理统一入口
 
 状态：`current`
@@ -821,7 +852,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 成功标准：
 
 - 用户不需要在多个不相关入口之间手工拼接治理对象。
-- Agent ID 在运行、反馈、评估、版本中保持一致。
+- Agent ID 在运行、反馈、Workspace 测试和版本中保持一致。
 - 删除或归档 Agent 前有影响面提示。
 
 证据要求：Agent 管理 UI/API 记录。
@@ -928,7 +959,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：Workspace suite、`AgentTestRun`、发布阻塞原因和 release 审计。
 
-自动验收：`tests/test_agent_testing.py::test_test_run_store_uses_independent_lifecycle_and_exact_commit_gate`、`test_test_run_cancel_and_restart_recovery_are_explicit`、`tests/test_agent_governance_publish.py::test_publish_requires_passed_platform_test_for_exact_candidate_commit` 和 `test_feedback_publication_cannot_force_bypass_complete_agent_test_suite`。
+自动验收：`tests/test_agent_testing.py::test_test_run_store_uses_independent_lifecycle_and_exact_commit_gate`、`tests/test_agent_testing.py::test_test_run_cancel_and_worker_claim_fencing_are_explicit`、`tests/test_agent_test_worker.py::test_worker_restart_recovers_running_claim_and_removes_labeled_containers_and_temp_paths`、`tests/test_agent_governance_publish.py::test_publish_requires_passed_platform_test_for_exact_candidate_commit` 和 `test_feedback_publication_cannot_force_bypass_complete_agent_test_suite`。
 ### AGV-036 版本治理提供 diff、发布、恢复和回滚
 
 状态：`current`
@@ -952,7 +983,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：agent governance API 响应。
 
-自动验收：`tests/test_agent_governance_publish.py::test_restore_release_switches_current_workspace_without_mutating_release_history`、`tests/test_agent_git_store.py::test_git_store_file_diff_returns_unified_diff`。
+自动验收：`tests/test_agent_governance_agent_boundaries.py::test_restore_release_switches_current_workspace_without_mutating_release_history`、`tests/test_agent_git_store.py::test_git_store_file_diff_returns_unified_diff`。
 
 ### AGV-037 外部业务系统责任边界清晰
 
@@ -1014,12 +1045,12 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 测试步骤：
 
 1. 打开前端。
-2. 查看 Playground、四阶段改进治理工作台，以及必要的全局审计入口。
+2. 查看 Playground、四阶段改进治理工作台、Workspace 测试运行和必要的全局审计入口。
 3. 执行或查看一条反馈优化流程。
 
 成功标准：
 
-- 前端能观察运行、反馈、评估和版本状态。
+- 前端能观察运行、反馈、Workspace 测试运行和版本状态；独立测评中心仍属规划能力。
 - 关键失败态有错误详情或可追踪 Trace。
 - 前端不要求用户必须在 AgentGov 内完成所有业务操作。
 
@@ -1038,7 +1069,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 测试步骤：
 
 1. 启动 API、UI 和必要本地服务。
-2. 发起运行、反馈、归因或评估动作。
+2. 发起运行、反馈、归因或 Workspace 回归动作。
 3. 验证流程不依赖公网远程服务。
 
 成功标准：
@@ -1053,7 +1084,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 ### AGV-041 高风险动作需要审批
 
-状态：`current`
+状态：`gap`
 
 目标来源：治理边界与审批。
 
@@ -1073,7 +1104,13 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：approval、reject、abandon 或 external confirmation 记录。
 
-自动验收：`tests/test_agent_governance_publish.py::test_high_risk_change_set_requires_approval_before_publish`、`tests/test_agent_governance_publish.py::test_rejected_change_set_records_audit_event`。
+自动验收（部分）：
+`tests/test_agent_governance_agent_boundaries.py::test_high_risk_change_set_requires_approval_before_publish` 和
+`tests/test_agent_governance_agent_boundaries.py::test_rejected_change_set_records_audit_event` 证明 change set
+一旦由内部方法进入 `pending_approval`，发布会被阻断，approve/reject 也会留事件。但当前没有生产
+风险识别或公开 request-approval 入口，`candidate_committed` 仍可直接发布，公开 approve 的
+`operator` 也不是 backend-owned principal；因此这些测试只证明局部状态机，不足以把本项标为
+`current`。
 
 ### AGV-042 权限和敏感信息边界
 
@@ -1115,7 +1152,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 测试步骤：
 
 1. 对 `security-operations-expert` 发起运行。
-2. 提交反馈并进入归因、优化、评估和版本治理。
+2. 提交反馈并进入归因、优化、Workspace 回归和版本治理。
 3. 查询完整链路。
 
 成功标准：
@@ -1140,17 +1177,24 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 1. 验证通用治理模型不依赖内置业务 Agent ID。
 2. 通过 Workspace 包接入一个新的业务 Agent。
-3. 重用运行、反馈、归因、优化、评估和版本治理能力。
+3. 重用运行、反馈、Workspace 测试和版本治理能力。
 
 成功标准：
 
 - 多业务 Agent 不需要复制内置业务 Agent 的硬编码路径。
-- 反馈、版本、评估都按 Agent 维度隔离。
+- 反馈、Workspace 测试和版本都按 Agent 维度隔离。
 - 新 Agent 接入有明确迁移和验收步骤。
 
 证据要求：多 Agent API、配置和回归结果。
 
-自动验收：`tests/test_agent_registry_store.py::test_workspace_imported_business_agents_share_governance_without_builtin_special_cases`（通过 Workspace 包接入新业务 Agent，复用 run/feedback/eval/version 能力且全部经 `agent_id` 归属；新 Agent 与内置 Agent 的版本 store 经同一 `_store_for` 工厂取得不同实例、物理隔离）。配套：多 Agent 独立闭环隔离 `test_governance_serves_multiple_business_agents_with_isolated_closed_loops`（AGV-017）、接入配置面 `test_create_accepts_exact_manifest_identity_without_rewriting_package`（AGV-004）、统一入口与影响面 `test_delete_business_agent_reports_impact_and_protects_builtin_agent`（AGV-031）。
+自动验收：
+`tests/test_agent_registry_store.py::test_workspace_imported_business_agents_share_governance_without_builtin_special_cases`
+证明通过 Workspace 包接入的新业务 Agent 复用 run、feedback、Workspace test 和 version 能力，且
+全部经 `agent_id` 归属；新 Agent 与内置 Agent 的版本 store 经同一 `_store_for` 工厂取得不同实例、
+物理隔离。它不证明独立评测已经存在。配套：多 Agent 隔离切片
+`test_governance_serves_multiple_business_agents_with_isolated_closed_loops`（AGV-017）、接入配置面
+`test_create_accepts_exact_manifest_identity_without_rewriting_package`（AGV-004）、统一入口与影响面
+`test_delete_business_agent_reports_impact_and_protects_builtin_agent`（AGV-031）。
 
 ### AGV-045 第三与第四阶段场景包和跨 Agent 方法论沉淀
 
@@ -1246,7 +1290,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 - 前端不接管 Claude Code CLI 进程。
 - 前端不编辑宿主机敏感文件。
-- 聊天、反馈、评估和版本治理通过后端治理 API 完成。
+- Runtime、反馈、Workspace 测试和版本治理通过后端治理 API 完成；独立评测不冒充当前 UI 能力。
 
 证据要求：前端页面、代码检索或手工验证记录。
 
@@ -1297,7 +1341,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 3. 确认 Playground live turn 只走 `POST /api/agent-runtime/sdk-events`，不调用 `/v1/responses` 或旧 `/api/chat/stream`；每个官方 SDK yield 原序对应一帧 `claude.sdk.<ClassName>`。
 4. 通过 `/v1/conversations` 读取会话列表，并通过 `/v1/conversations/{conversation_id}/items` 验证会话 items 契约可用。
 5. 通过 `GET /v1/responses/{response_id}` 验证 `resp_<run_id>` 可从持久化 run 重建响应。
-6. 发起对抗式与边界请求：strict 模式 `instructions`、control 缺 `agentgov.agent_id`、`agentgov` 未知字段、非法 `max_turns`、保留 metadata 注入、旧 `/api/chat`/`/api/chat/stream` 缺 `agent_id`。
+6. 发起异常与边界请求：strict 模式 `instructions`、control 缺 `agentgov.agent_id`、`agentgov` 未知字段、非法 `max_turns`、保留 metadata 注入、旧 `/api/chat`/`/api/chat/stream` 缺 `agent_id`。
 7. 分别调用 Responses control 流与 SDK-native 流，构造 thinking delta/ThinkingBlock signature、同消息多个工具 block 与 input JSON delta、tool result、hook/task/result，并同时产生大量 `SystemMessage:thinking_tokens`；验证 Responses 输出 reasoning 生命周期和 `agentgov.tool_call.*`，且没有标准 `function_call`。
 8. 在 Playground 记录 live evidence：block key 不依赖每帧 `StreamEvent.uuid`，顶层 text 才进入回答，subagent text 只进证据，thinking_tokens 只作指标；完成后调用 `GET /api/agent-runs/{run_id}/trace`，仅在 `completeness=complete` 时校准替换，刷新后再次打开同一 run 的 Trace。
 9. 分别制造 failed、cancelled、interrupted 终态，确认运行列表和 Trace API 返回持久化终态/错误；制造缺失 `messages` 的旧 run，确认明确返回 `completeness=unavailable`。

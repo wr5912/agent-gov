@@ -1,34 +1,16 @@
 // 四阶段改进治理 W3 资产 Registry 复利中心 UI 验收：沉淀资产 → 跨 Agent 继承复用。
-// 默认启动 Vite + mock 后端；设置 RUNTIME_UI_BASE/RUNTIME_API_BASE 时直连真实容器。
+// 启动 Vite + mock 后端，验证资产 Registry 的浏览器行为。
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
 import process from "node:process";
-import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
 const repoRoot = new URL("..", import.meta.url).pathname;
 const port = Number(process.env.ASSET_UI_PORT || 55193);
-const REAL = !!process.env.RUNTIME_UI_BASE;
-requireContainerAcceptance(REAL);
-const ui = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${port}`).replace(/\/$/, "");
-const apiBase = (process.env.RUNTIME_API_BASE || "http://runtime.test").replace(/\/$/, "");
-const apiKey = process.env.RUNTIME_API_KEY || dockerEnvValue("FRONTEND_RUNTIME_API_KEY") || dockerEnvValue("API_KEY") || "";
+const ui = `http://127.0.0.1:${port}`;
+const apiBase = "http://runtime.test";
+const apiKey = "";
 const ts = "2026-06-17T00:00:00Z";
-
-function dockerEnvValue(name) {
-  try {
-    const content = readFileSync(new URL("../docker/.env", import.meta.url), "utf8");
-    for (const rawLine of content.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith("#")) continue;
-      const i = line.indexOf("=");
-      if (i <= 0) continue;
-      if (line.slice(0, i).trim() === name) return line.slice(i + 1).trim().replace(/^['"]|['"]$/g, "");
-    }
-  } catch { /* ignore */ }
-  return "";
-}
 
 function startVite() {
   const c = spawn("pnpm", ["--dir", "frontend", "exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], detached: true });
@@ -120,39 +102,6 @@ async function assertAssetMobileReachable(page, label) {
   await shell.evaluate((element) => { element.scrollTop = 0; });
 }
 
-function authHeaders(extra = {}) {
-  return {
-    Accept: "application/json",
-    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    ...extra,
-  };
-}
-
-async function apiJson(path, init = {}) {
-  const res = await fetch(`${apiBase}${path}`, {
-    ...init,
-    headers: authHeaders(init.headers || {}),
-  });
-  if (!res.ok) {
-    let detail = "";
-    try { detail = await res.text(); } catch { /* ignore */ }
-    throw new Error(`${init.method || "GET"} ${path} failed: ${res.status} ${detail}`);
-  }
-  return res.json();
-}
-
-async function ensureRealTargetAgent() {
-  if (!REAL) return "shop-bot";
-  const stamp = Date.now().toString(36);
-  const agentId = `asset-audit-${stamp}`;
-  await apiJson("/api/agent-registry", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: `资产验收 Agent ${stamp}`, agent_id: agentId }),
-  });
-  return agentId;
-}
-
 const agents = [{ agent_id: "soc-ops", name: "SOC 运营", category: "", workspace_dir: "", created_at: ts, status: "active" }, { agent_id: "shop-bot", name: "电商客服", category: "", workspace_dir: "", created_at: ts, status: "active" }];
 const testAssets = Array.from({ length: 24 }, (_, index) => {
   const agentId = index === 0 ? "soc-ops" : `batch-agent-${String(index).padStart(2, "0")}`;
@@ -195,20 +144,31 @@ function defaultPayload(path) {
   return {};
 }
 
+async function withBrowser(callback) {
+  const options = { headless: true };
+  const browser = await chromium.launch(options);
+  try {
+    return await callback(browser);
+  } finally {
+    await browser.close();
+  }
+}
+
 async function main() {
-  const server = REAL ? null : startVite();
+  const server = startVite();
   try {
     await waitForUi();
-    const inheritTargetAgentId = await ensureRealTargetAgent();
+    const inheritTargetAgentId = "shop-bot";
     const assetTitle = `误报归因法 ${Date.now().toString(36)}`;
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    page.on("console", (m) => { if (m.type() === "error") console.error("PAGE_CONSOLE_ERR:", m.text()); });
-    page.on("pageerror", (e) => console.error("PAGE_ERR:", e.message));
+    await withBrowser(async (browser) => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      page.on("console", (message) => {
+        if (message.type() === "error") console.error("PAGE_CONSOLE_ERR:", message.text());
+      });
+      page.on("pageerror", (error) => console.error("PAGE_ERR:", error.message));
     await page.addInitScript(([b, key]) => { window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: b, apiKey: key })); }, [apiBase, apiKey]);
     const stateRef = { assets: [], count: 0 };
     const requestCounts = { testAssets: 0, history: 0, scheduleEvents: 0, governance: 0 };
-    if (!REAL) {
       await page.route("**/*", async (route) => {
         const req = route.request();
         const url = new URL(req.url());
@@ -242,14 +202,11 @@ async function main() {
         }
         return json(route, defaultPayload(path));
       });
-    }
-    try {
       await page.goto(ui, { waitUntil: "domcontentloaded" });
       await page.getByTestId("topbar-agent-switcher").waitFor({ timeout: 20000 });
       // 资产 Registry 经一级导航「资产复利」(nav-asset) 进入（四阶段改进治理 W3 修订，资产复利为第三支柱）。
       await page.getByTestId("nav-asset").click();
       await page.getByTestId("asset-registry").waitFor({ timeout: 20000 });
-      if (!REAL) {
         await page.getByTestId("agent-test-assets").waitFor({ timeout: 15000 });
         await page.getByTestId("test-asset-workspace").waitFor({ timeout: 15000 });
         if (await page.getByTestId("test-asset-card-grid").count()) throw new Error("旧测试资产卡片网格不应继续存在");
@@ -355,10 +312,8 @@ async function main() {
         }
         await assertAssetMobileReachable(page, "移动端");
         await page.setViewportSize({ width: 1440, height: 900 });
-      }
       await page.getByTestId("asset-center-tab-governance").click();
       await page.getByTestId("governance-asset-registry").waitFor({ timeout: 15000 });
-      if (!REAL) {
         const beforeGovernanceRefresh = { ...requestCounts };
         const governanceRefresh = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/assets" && response.request().method() === "GET");
         await page.getByTestId("topbar-refresh").click();
@@ -366,7 +321,6 @@ async function main() {
         if (requestCounts.governance <= beforeGovernanceRefresh.governance) throw new Error("Topbar 未刷新治理资产当前页签");
         if (requestCounts.testAssets !== beforeGovernanceRefresh.testAssets) throw new Error("刷新治理资产时不应请求隐藏的测试资产页签");
         if ((await page.getByRole("button", { name: "刷新", exact: true }).count()) !== 1) throw new Error("治理资产页只应保留 Topbar 刷新入口");
-      }
       // Playground 的顶栏运行 Agent 必须是具体对象；资产页用自己的范围筛选查看跨 Agent 资产。
       await page.getByTestId("asset-scope-filter").selectOption("");
       await page.getByTestId("asset-browser-toolbar").waitFor({ timeout: 15000 });
@@ -376,7 +330,6 @@ async function main() {
       // 沉淀一个方法论资产。
       await page.getByTestId("asset-create-open").click();
       await page.getByTestId("asset-create-drawer").waitFor({ timeout: 15000 });
-      if (REAL) await page.getByTestId("asset-create-agent").selectOption("security-operations-expert");
       if (await page.getByTestId("asset-create-type").locator('option[value="test_dataset"]').count()) {
         throw new Error("removed database-backed test asset must not be creatable through the generic asset form");
       }
@@ -404,7 +357,6 @@ async function main() {
 
       // 负路径（仅 mock）：业务 Agent 列表为空时，「沉淀」按钮应禁用 + 给空态提示 + 不发 POST /api/assets（不静默吞）。
       const scenarios = ["test_asset_projection", "test_asset_master_detail_layout", "test_asset_many_agent_scroll", "test_asset_detail_compact_commit", "test_asset_desktop_contained", "test_asset_compact_desktop_contained", "test_asset_column_bottom_alignment", "test_source_internal_scroll", "test_asset_mobile_vertical_reachability", "test_topbar_fixed_height", "test_source_full_width", "test_source_view", "test_source_symbol_rail", "test_source_symbol_inactive_visibility", "test_source_symbol_keyboard_navigation", "test_source_symbol_scroll_tracking", "test_source_symbol_mobile_bounds", "test_topbar_refresh_current_asset_tab", "test_local_refresh_removed", "test_source_persists_after_history_filter", "test_run_history", "test_schedule_view", "asset_create", "asset_inherit", "asset_provenance"];
-      if (!REAL) {
         const page2 = await browser.newPage({ viewport: { width: 1440, height: 900 } });
         await page2.addInitScript(([b, key]) => { window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: b, apiKey: key })); }, [apiBase, apiKey]);
         let assetPosts = 0;
@@ -438,14 +390,14 @@ async function main() {
         } finally {
           await page2.close();
         }
-      }
 
-      console.log(JSON.stringify({ status: "passed", mode: REAL ? "real-container" : "mock", ui_base: ui, scenarios }, null, 2));
-    } finally {
-      await browser.close();
-    }
+      console.log(JSON.stringify({ status: "passed", mode: "mock", ui_base: ui, scenarios }, null, 2));
+    });
   } finally {
     await stopChild(server);
   }
 }
-main().then(() => process.exit(0)).catch((e) => { console.error(e instanceof Error ? e.stack || e.message : e); process.exit(1); });
+main().then(() => process.exit(0)).catch((error) => {
+  console.error(error instanceof Error ? error.stack || error.message : error);
+  process.exit(1);
+});

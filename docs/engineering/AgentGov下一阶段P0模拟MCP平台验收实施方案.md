@@ -50,20 +50,21 @@ P0-MCP 只对以下精确组合作出肯定结论：
 
 以下能力在 P0-MCP 退出后仍保持 `GAP`：认证与授权、凭据/header 传递、多组织隔离、
 写操作与人工审批、resources/templates 消费、生产 endpoint/allowlist、第二 Runtime、
-动态安全场景和真实业务质量。空 resources/templates 只是本次工具面收缩断言，不是对该
+防御性状态回放场景和真实业务质量。空 resources/templates 只是本次工具面收缩断言，不是对该
 能力的支持证据。
 
 ## 2. 实际问题、替代方案与退出条件
 
 ### 2.1 实际问题
 
-P0 当前有两类互不替代的 GAP：
+P0 初始评审时有两类互不替代的 GAP：
 
-1. Workspace 29 个静态测试中 14 个失败，需要按安全缺陷、环境缺陷和陈测分别收口；
+1. Workspace 29 个静态测试中 14 个失败；该历史缺口已由 Phase 6/7 的 exact-commit
+   Workspace lane 收口；
 2. 即使静态测试全绿，仍缺一条对第 1.1 节 capability tuple 的“真实 Runtime
    加载 MCP → Agent 调用 → AgentGov 采集原生证据”平台验收。
 
-模拟 MCP 只关闭第二类 GAP，不能抵消第一类失败，也不能把静态测试的红灯改判为通过。
+本阶段只关闭仍未交付的第二类 GAP；它不能替代或重判第一类 Workspace 阶段回执。
 
 ### 2.2 本期选择
 
@@ -84,7 +85,7 @@ OpenAPI，是因为上游 MCP 原始实现不提供方法或 tag 过滤，完整
 - 使用真实凭据、客户数据、内网 endpoint 或生产系统；
 - 暴露 POST、PUT、PATCH、DELETE 或其他有副作用的 operation；
 - 声明或验证 MCP 认证、授权、多租户、审计合规或生产可用性；
-- 评估真实告警研判、多跳调查、高风险动作审批或动态 Cyber Range；
+- 评估真实告警研判、多跳调查、高风险动作审批或合成威胁事件/脱敏日志状态回放；
 - 上游固定提交出现不可接受的供应链、安全或许可证风险。
 
 ## 3. 治理对象与资产归属
@@ -100,7 +101,7 @@ OpenAPI，是因为上游 MCP 原始实现不提供方法或 tag 过滤，完整
 | 执行资产 | 过滤 OpenAPI、Compose fixture、固定镜像、测试 prompt 和验收脚本 |
 | 横切治理维度 | Agent/upstream commit、suite/image/OpenAPI digest、provenance、scope、审计时间、cleanup 结果与夹具生命周期 |
 | 能力回执 | `claude-code / streamable-http / tools / GET-read-only / no-auth-fixture` |
-| 不归属内容 | 生产 MCP、真实安全数据、业务 Agent 领域能力、P1 Scorecard、P3 动态场景及第 1.1 节所列 GAP |
+| 不归属内容 | 生产 MCP、真实安全数据、业务 Agent 领域能力、P1 Scorecard、P3 状态回放场景及第 1.1 节所列 GAP |
 
 `security-operations-expert` 在本工作包中只是受版本约束的测试载体。失败应先归因到平台、
 Workspace 配置、外部夹具或模型行为，不能默认转成安全业务 Agent 的产品需求。
@@ -275,4 +276,4 @@ P0-MCP 只有同时满足以下条件才通过：
 
 本回执证明的是“AgentGov 在第 1.1 节精确 capability tuple 下可完成 MCP 工具闭环”，
 未覆盖能力继续保持 `GAP`；它不证明 P1 的 8 个静态案例、
-P3 动态安全 MVP、生产 MCP 或该安全 Agent 的业务能力已经通过。
+P3 防御性状态回放 MVP、生产 MCP 或该安全 Agent 的业务能力已经通过。

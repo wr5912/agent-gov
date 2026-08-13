@@ -7,6 +7,17 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def _release_workbench_source() -> str:
+    return "\n".join(
+        _read(path)
+        for path in (
+            "frontend/src/components/ReleaseWorkbench.tsx",
+            "frontend/src/components/ReleaseWorkbenchPanels.tsx",
+            "frontend/src/components/releaseWorkbenchController.ts",
+        )
+    )
+
+
 def test_workspace_tests_are_the_only_active_business_agent_test_asset() -> None:
     asset_api = _read("frontend/src/api/assets.ts")
     registry = _read("frontend/src/components/AssetRegistry.tsx")
@@ -105,18 +116,60 @@ def test_asset_center_keeps_many_agents_in_a_scrollable_master_detail_layout() -
     assert "test_topbar_fixed_height" in e2e
 
 
+def test_asset_center_distinguishes_unavailable_and_invalid_test_suites() -> None:
+    test_assets = _read("frontend/src/components/AgentTestAssets.tsx")
+    table = _read("frontend/src/components/BusinessAgentTable.tsx")
+    styles = _read("frontend/src/agent-test-assets.css")
+
+    assert 'const INSPECTION_UNAVAILABLE_CODE = "AGENT_TEST_SUITE_INSPECTION_UNAVAILABLE"' in test_assets
+    assert 'unavailable: "检查不可用"' in test_assets
+    assert 'invalid: "套件无效"' in test_assets
+    assert 'data-testid="test-asset-suite-state"' in test_assets
+    assert 'data-testid="test-asset-suite-summary"' in test_assets
+    assert "data-suite-state={selectedSuiteState}" in test_assets
+    assert "测试套件检查不可用，当前没有可读取的测试源码。" in test_assets
+    assert "测试套件无效；请根据错误诊断修复测试文件。" in test_assets
+    assert "data-diagnostic-level={item.level}" in test_assets
+    assert 'item.level === "error" ? "错误" : "警告"' in test_assets
+    assert "<code>{item.code}</code>" in test_assets
+    assert "{item.message}" in test_assets
+    assert '{item.path || "—"}' in test_assets
+
+    load_source = test_assets[test_assets.index("const loadSource") : test_assets.index("const runNow")]
+    assert "if (!sourceAgentId || !sourceCommitSha) return;" in load_source
+    assert load_source.index("if (!sourceAgentId || !sourceCommitSha) return;") < load_source.index("getAgentTestSuiteFile")
+    assert "Boolean(asset.suite.commit_sha)" in test_assets
+
+    assert 'const INSPECTION_UNAVAILABLE_CODE = "AGENT_TEST_SUITE_INSPECTION_UNAVAILABLE"' in table
+    assert 'diagnostics.filter((item) => item.level === "error").length' in table
+    assert 'diagnostics.filter((item) => item.level === "warning").length' in table
+    assert "检查不可用，测试不可运行" in table
+    assert "套件无效" in table
+    assert "{errorCount} 项错误 · 测试不可运行" in table
+    assert table.index("{errorCount ?") < table.index("{warningCount ?")
+    assert ".test-asset-status.is-suite-unavailable" in styles
+    assert ".test-asset-suite-summary.is-invalid" in styles
+    assert ".test-asset-diagnostic-heading" in styles
+
+
 def test_release_workbench_runs_fixed_commit_bound_platform_tests() -> None:
-    release = _read("frontend/src/components/ReleaseWorkbench.tsx")
+    release = _release_workbench_source()
+    test_assets = _read("frontend/src/components/AgentTestAssets.tsx")
     runtime_api = _read("frontend/src/api/runtime.ts") + _read("frontend/src/api/agentTesting.ts")
 
     assert "inspectAgentTestSuite" in release
     assert "createAgentChangeSetTestRun" in release
     assert "listAgentTestRuns" in release
     assert "currentTestRun = latestExactRun(testRuns, selectedChangeSet?.candidate_commit_sha)" in release
+    assert "selection.selectedChangeSet?.latest_test_run_id === tests.currentTestRun.test_run_id" in release
+    assert "commit_sha: selected.suite.commit_sha" in test_assets
     assert 'data-testid="release-action-run-tests"' in release
     assert 'data-testid="release-action-cancel-tests"' in release
     assert 'data-testid="release-test-output"' in release
     assert "只认可当前待发布 commit 的运行记录" in release
+    assert 'data-testid="release-test-eligibility"' in release
+    assert 'data-testid="release-test-receipt"' in release
+    assert "回执可信状态" in release
     assert "修复前版本" in release
     assert "待发布版本" in release
     assert "/test-suite" in runtime_api
@@ -130,6 +183,8 @@ def test_agent_settings_show_workspace_test_status_and_import_audit() -> None:
     management = _read("frontend/src/components/BusinessAgentManagementPanel.tsx")
     table = _read("frontend/src/components/BusinessAgentTable.tsx")
     drawer = _read("frontend/src/components/AgentWorkspaceImportDrawer.tsx")
+    runtime_types = _read("frontend/src/types/runtime.ts")
+    api_types = _read("frontend/src/types/api.ts")
 
     assert "inspectAgentTestSuite" in management
     assert "listAgentTestRuns" in management
@@ -141,19 +196,40 @@ def test_agent_settings_show_workspace_test_status_and_import_audit() -> None:
     assert 'setActiveWindow("asset")' in _read("frontend/src/App.tsx")
     assert "receipt.import_record_id" in drawer
     assert "receipt.test_suite_status" in drawer
+    assert 'ready: "测试套件已就绪"' in drawer
+    assert 'warning: "测试套件有警告"' in drawer
+    assert 'invalid: "测试套件不可用"' in drawer
+    assert "receipt.test_suite_diagnostics.map" in drawer
+    assert "diagnostic.code" in drawer
+    assert "diagnostic.message" in drawer
+    assert "diagnostic.path" in drawer
+    assert 'diagnostic.level === "error" ? "错误" : "警告"' in drawer
+    assert "data-test-suite-status={receipt.test_suite_status}" in drawer
+    assert "Workspace 已生效，但测试套件不可用" in management
+    assert "Workspace 已生效，测试套件有警告" in management
+    assert "Workspace 已生效，测试套件已就绪" in management
+    assert "export type WorkspaceImportResponse = OpenApiWorkspaceImportResponse;" in runtime_types
+    assert "test_suite_warnings" not in drawer
+    assert "test_suite_warnings" not in runtime_types
+    assert "test_suite_diagnostics" in api_types
+    assert "test_suite_warnings" not in api_types
 
 
 def test_feedback_release_hides_force_publish_and_keeps_historical_audit() -> None:
-    release = _read("frontend/src/components/ReleaseWorkbench.tsx")
+    release = _release_workbench_source()
 
     assert 'data-testid="release-action-force"' not in release
     assert 'data-testid="release-force-reason"' not in release
     assert "force: true" not in release
     assert "release.force_published" in release
-    assert "测试条件被管理员绕过" in release
+    assert "历史旧策略记录：该发布曾绕过当时阻断项" in release
+    assert "当前策略不可绕过发布条件" in release
+    assert "管理员加急发布" in release
+    assert "force 仅记录加急与审批审计，不可绕过发布条件" in release
     assert "release.force_publication_blocker" in release
     assert "release.force_publish_reason" in release
     assert "release.operator" in release
+    assert 'selection.selectedChangeSet.status === "publishing"\n    && !selection.selectedChangeSet.publication_blocker' in release
 
 
 def test_governance_workbenches_keep_tablet_and_mobile_width_bounded() -> None:

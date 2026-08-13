@@ -8,13 +8,16 @@
 
 ## 1. AgentGov 是什么 / 不是什么
 
-AgentGov 是**智能体治理平台**，对外作为 agent 运行治理底座，负责被治理 Agent 的运行（Runtime）、反馈闭环（Feedback Loop）和版本治理（Version Governance），并把运行、反馈、归因、优化、评估、发布沉淀为数据资产、方法论资产和执行资产。
+AgentGov 是**智能体治理平台**，对外作为 agent 运行治理底座，负责被治理 Agent 的运行（Runtime）、
+反馈闭环（Feedback Loop）和版本治理（Version Governance），并把运行、反馈、归因、优化、
+Workspace 回归和发布沉淀为治理资产。evaluator-owned 独立测评仍是规划能力，不能由 Workspace
+pytest 或治理 Agent 自评冒充。
 
 | 维度 | AgentGov 底座负责 | 上层业务系统负责 |
 | --- | --- | --- |
 | 运行 | 跑所有注册业务 Agent（含 `main-agent`），产出 run、session、trace | 决定何时跑、传入业务上下文、承载业务工作流 |
 | 会话 | 持有会话事实（SDK session transcript 为权威源）、按 `conversation_id` 投影历史 | 展示对话、回放气泡、组织业务级会话 |
-| 反馈闭环 | 归因、优化、评估、回归（治理 Agent + DSPy，底座内部） | 采集用户反馈并提交、在确认门上做业务决策 |
+| 反馈闭环 | 归因、优化、回归测试设计与 Workspace 发布门（治理 Agent + DSPy，底座内部） | 采集用户反馈并提交、在确认门上做业务决策 |
 | 版本治理 | change set / release / 回滚 / 审计 | 触发发布、按业务规则决定是否发布 |
 | 审批 | 记录 operator/reason/审计事件 | **高风险动作的人审批**（划归外部业务系统，见 §6） |
 | 资产 | 沉淀与跨 Agent 复用 | 消费资产、按场景复用 |
@@ -32,16 +35,20 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 ## 3. 概念模型与所有权
 
 ```
-业务Agent ──运行──▶ session / run ──反馈──▶ feedback-case ──归因/优化/评估──▶ change set / release ──沉淀──▶ asset registry
+业务Agent ──运行──▶ session / run ──反馈──▶ feedback-case ──归因/优化/回归──▶ change set / release ──沉淀──▶ asset registry
 ```
 
 - **Agent**：集成方编排的是**业务 Agent**（被治理的长期对象，经 `/api/agent-registry` 查询）。`security-operations-expert` 是当前唯一内置、默认且受保护的业务 Agent，这三个属性彼此独立；`main-agent` 只是普通历史示例。治理 Agent `governor` 治理所有业务 Agent，不对集成方暴露为可编排对象。
 - **conversation**：新集成使用 `conversation_id`（`conv_*`）作为对外会话标识，通过 `/v1/conversations` 创建、查询和恢复。过渡 Responses control 响应中的 `agentgov.session_id` 是 AgentGov 内部关联 ID，`sdk_session_id` 是更底层的 SDK resume id；两者都不应替代 `conversation_id` 作为新集成的会话 URL 参数。
 - **run**：一次运行，带 `run_id`，是反馈与归因的归属锚点。
-- **会话正文**：权威源是 agent 自己的 SDK session transcript；底座按需投影，**不另存副本**。集成方也不应缓存一份并行会话存储（会双轨漂移）。
+- **会话正文**：权威源是 agent 自己的 SDK session transcript。底座会把一次受管运行所需的
+  消息快照和状态写入治理记录，用于反馈、错误和审计投影，但不把它解释成第二套可续聊的原生
+  session authority。集成方也不应另建会话真相源；回放从 conversation items 读取，运行失败或
+  取消状态从 Agent run 读取。
 - **所有权（重要）**：
   - `agent_id`（会话归属哪个 Agent）是 **backend-owned**：新会话首次运行时由底座原子绑定，绑定后不可变。`conversation` / `previous_response_id` 只能由同一业务 Agent 续接，跨 Agent 请求返回 `409`。**集成方读历史时不传 `agent_id`**，只凭 `conversation_id`（见 §4.3、§6）。
-  - 反馈/评估/版本仍可使用 Responses control 扩展返回的 `run_id` / `session_id` / `agent_id` 关联到对应 Agent 与 version。
+  - 反馈、Workspace 回归和版本仍可使用 Responses control 扩展返回的 `run_id` / `session_id` /
+    `agent_id` 关联到对应 Agent 与 version。
 
 ## 4. 集成旅程（任务式）
 
@@ -125,8 +132,9 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
 流式 Speech Summary 是另一项独立、显式 opt-in 的 TTS 文本辅助：
 
 - `/api/agent-runtime/sdk-events` 和 `/api/chat/stream` 在各自请求体传
-  `with_speech_summary=true`；后者的 `raw` 与 `semantic` 模式都直接输出 canonical
-  `event: agentgov.speech_summary`。
+  `with_speech_summary=true`；后者的 `raw` 与 `semantic` 模式都支持同一 canonical
+  `event: agentgov.speech_summary`。它是 best-effort 事件，仅在摘要生成、校验与安全过滤成功后输出，
+  单个 surface 没有该事件不表示主 Run 失败。
 - `/v1/responses` 仅在 control mode、`stream=true` 时接受
   `agentgov.with_speech_summary=true`；非流式开启返回 `422`，strict mode 不接受且不输出该
   AgentGov 扩展。
@@ -138,7 +146,12 @@ AgentGov **不**提供通用协作看板、不替代协作平台、不承载上�
   不包含音频，不写入 SDK session、SQLite、response retrieve，也不混入 Claude SDK
   usage/cost。超时、模型错误或安全过滤失败均静默丢弃。
 - 实际启用边界由 `SPEECH_SUMMARY_BOUNDARIES` 决定；请求开关与环境边界必须同时开启。官方
-  容器和本机调试 env 示例保持相同边界，默认超时/终态排空为 15/5 秒。
+  容器和本机调试 env 示例保持相同边界，默认超时/终态排空为 15/20 秒；单任务总超时必须小于
+  60 秒，排空预算必须严格大于该超时且不超过 60 秒，确保由 Speech Summary 自身先完成或超时，
+  不能被外层终态提前取消。
+- 真实容器验收要求 SDK SSE、Chat Stream `raw`、Chat Stream `semantic` 与 Responses control
+  各自正确到达终态；出现的每个 Speech Summary 都必须满足 canonical 契约，并且整轮至少出现一个
+  合法摘要。该整轮下限不构成单个 surface 的事件存在性承诺。
 
 #### 4.2.2 Claude SDK-native 受管事件 — OpenAPI tag `claude-sdk-events`
 
@@ -280,13 +293,21 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 - 目标：把已确认的 `RegressionTestDesign` 物化为待发布版本中的 pytest 文件，并在精确 Git 提交上执行平台测试。
 - 最短路径：调用 `POST /api/improvements/{improvement_id}/regression-test-design/confirm`。底座会在同一未发布 change set 的 worktree 中新增 `tests/test_feedback_*.py` 并提交更新后的待发布版本，但不隐式创建或运行 `AgentTestRun`。使用 `GET /api/agent-test-assets` 查询各业务 Agent 的当前测试资产摘要，使用 `GET /api/agent-registry/{agent_id}/test-suite?commit_sha=<sha>` 检查指定提交，使用 `/test-suite/file` 读取 suite 内单个源码文件；手工运行调用 `POST /api/agent-test-runs`，待发布变更运行调用 `POST /api/agent-change-sets/{change_set_id}/test-runs`；轻量分页历史使用 `GET /api/agent-test-runs/history`，单次详情使用 `GET /api/agent-test-runs/{test_run_id}`，取消使用 `POST /api/agent-test-runs/{test_run_id}/cancel`。
 - 定时策略：`GET/PUT /api/agent-registry/{agent_id}/test-schedule` 读取或保存每 Agent 唯一五字段 Cron + IANA 时区策略；`GET /api/agent-registry/{agent_id}/test-schedule/events` 查询触发审计。保存不立即运行。触发时只固定当前有效 commit，运行来源为 `scheduled` 且不绑定 `change_set_id`；策略不得推进、发布或回滚 change set。
-- 固定执行：底座只执行 `python -m pytest -q -p agentgov_testkit.pytest_plugin tests`，即完整执行该提交的 `workspace/tests/`，不会按本次 Diff 只选新增或修改的用例。创建运行可省略 `commit_sha`，但底座会在请求内固定当时版本，不会在稍后执行时重新取“最新”。
-- 边界：`workspace/tests/` 是测试内容唯一真相源。集成方不能提交命令、工作目录、测试状态、报告、任意文件路径或 backend-owned 提交绑定；源码读取路径必须属于指定 suite。`commit_sha` 是被测版本权威标识；`suite_digest` 是派生摘要，`change_set_id` 是业务关联。服务重启后 running 记录变为 `interrupted`，queued 重新入队，未完成调度事件幂等恢复，临时测试 session 返回明确不可用错误；运行超时以 `error/AGENT_TEST_RUN_TIMEOUT` 记录。
+- 执行边界：手工运行必须提交完整 40 位 `commit_sha`；待发布和定时入口由后端固定各自的
+  commit。客户端不能提供命令、工作目录、测试状态、报告或平台权威字段。运行回执只证明指定
+  版本在固定隔离环境中的执行 provenance，不等于独立证明业务正确性、能力质量或真实 Agent 行为。
+- 当前状态：隔离 lane 的 Phase 7 已在同一 v3.1 候选上完成串行 `make test` 和全部适用公共容器门，
+  但尚未随当前发布版本 `3.0.3` 发布；集成方不得把工作树验收结论宣传为已发布能力，也不得据此
+  声称 P0-MCP 或 evaluator-owned 发布测评已经完成。
+  pytest 命令、worker/sandbox authority、回执字段、恢复和公共容器验收协议只在
+  [业务 Agent Workspace 原生 pytest 测试资产实现方案](./engineering/业务AgentWorkspace原生pytest测试资产实现方案.md)
+  维护；测试与正式测评分权见
+  [测试资产组合治理](./engineering/测试资产组合治理.md)。
 
 ### 4.6 版本发布与回滚 — OpenAPI tag `feedback`
 - 目标：把确认的改动发布为新版本，可回滚。
 - 最短路径：`/api/agent-change-sets/...`（`diff`/`file-diff`/`approve`/`reject`/`publish`）；`/api/agent-releases/...`（`restore`/`rollback`）；`/api/agent-repository/...`（`snapshot`/`current`/`discard-changes`，可选 `?agent_id=` 指定业务 Agent，默认 `security-operations-expert`）。
-- 边界：版本治理按 `agent_id` 落到各业务 Agent 自己的 per-Agent 版本库。发布必须存在同一业务 Agent、当前待发布 `commit_sha` 上完整测试集通过的平台运行；旧提交通过不能放行新提交，已有失败和新增失败都必须修复。反馈闭环待发布版本不能强制绕过测试条件，Playground 的反馈发布工作台不提供强制发布入口；未关联反馈、由版本治理 API 手工创建的待发布版本仍可通过受保护 API 强制发布，但必须填写非空原因并持久化原阻塞项和警告。provenance 不完整始终不可绕过。审批/发布的业务决策在上层；底座负责执行、记录、审计与原子性。
+- 边界：版本治理按 `agent_id` 落到各业务 Agent 自己的 per-Agent 版本库。发布必须存在同一业务 Agent、当前待发布 `commit_sha` 上 Workspace 固定命令观察退出为 0、Agent-owned 报告协议一致，且 typed receipt、source/suite digest、worker/container 绑定、cleanup 均经后端校验的平台运行；这是必要工程卫生门，不是独立能力或安全结论。Phase 10/11 后的最终发布门还必须组合 evaluator-owned assessment、同协议 comparison 与 safety gate。旧提交或无可信回执的历史通过记录不能放行新提交，已有失败和新增失败都必须修复。Playground 的反馈发布工作台不提供 force 入口；受保护 API 的 `force=true` 也只记录全部门禁已满足后的管理员加急与审批审计，必须填写非空原因，不能豁免测试、provenance 或其他阻塞项。`force_publication_blocker` 非空只表示升级前 release 的旧策略审计记录，不能用于新发布。审批/发布的业务决策在上层；底座负责执行、记录、审计与原子性。
 
 ### 4.7 资产沉淀与跨 Agent 复用 — OpenAPI tag `assets` / `agent-testing`
 - 目标：资产复利中心统一承载测试资产只读投影，以及方法论、执行资产的复用和审计记录投影；审计记录只可追溯，不可继承。测试文件始终随对应业务 Agent Workspace Git 管理。长期一级分类是数据/证据、方法论和执行资产，version/provenance/audit/scope/lifecycle 是横切治理维度。
@@ -329,7 +350,9 @@ Playground 可调用 `GET /api/agent-registry/{agent_id}/presentation` 获取结
 - **在 AgentGov 内做高风险动作的人审批**：审批划归外部业务系统（见愿景与生产化清单）；底座只记录 operator/reason/审计事件。
 - **绕过 OpenAPI 自造 schema**：客户端类型应由 OpenAPI 生成，避免 schema 双轨漂移。
 - **把 `main-agent` 特殊化**：它只是普通历史示例；默认、内置和受保护属性当前属于 `security-operations-expert`，且必须分别判断。
-- **在上层另存一份会话/消息副本**：会话事实的单一真相源是 agent 的 SDK transcript，按 `conversation_id` 向底座取，不要并行存储。
+- **把上层会话投影当成恢复权威**：集成方可以为业务审计、缓存或搜索保存只读投影，但不能用它
+  决定 resume、消息顺序或 Agent 归属。投影必须保留 `conversation_id`、`run_id` 和 provenance，
+  并与 AgentGov 的 SDK transcript 对账；会话事实仍按 `conversation_id` 从底座读取。
 - **用 `session_id` 或 `sdk_session_id` 当新集成的会话 URL id**：二者是 AgentGov/SDK 内部关联值；新集成使用 `conversation_id`。
 
 ## 7. 已弃用兼容接口附录

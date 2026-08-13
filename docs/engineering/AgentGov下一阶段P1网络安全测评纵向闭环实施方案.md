@@ -75,7 +75,7 @@ Ground Truth、变体和排序只对评测执行器可见。
 
 ### 2.3 明确不包含
 
-- 受控查询工具、多跳调查、动态 Cyber Range；
+- 受控查询工具、多跳调查、合成威胁事件/脱敏日志状态回放；
 - 生产系统真实动作或自动处置；
 - 模型裁判主导的开放式评分；
 - 独立人工评审工作台和公开排行榜；
@@ -85,7 +85,7 @@ Ground Truth、变体和排序只对评测执行器可见。
 
 这些内容只有在 P3 完整 MVP 准入后才能实施。
 
-P0-MCP 的两个只读模拟工具是平台 smoke 的窄例外，不属于上述“动态工具测试”。它不进入
+P0-MCP 的两个只读模拟工具是平台 smoke 的窄例外，不属于上述“状态回放工具测试”。它不进入
 P1 协议、不扩大 `allowed_tools`，也不把 `mock_service` 的合成结果转成 Ground Truth 或领域
 评分数据。
 
@@ -243,7 +243,7 @@ P1 另对 baseline 和 candidate 各做 `execution_sample_count=3` 次独立 Age
 `AgentTestRun` 是 P1 的第一个 sample adapter，不是所有未来测评形态的领域模型。每个独立
 Agent 执行样本对应一个不可变 `AgentTestRun`；同一 `EvaluationExecution` 聚合协议规定的全部
 sample test run，完成后产生唯一 Assessment。一个 comparison 再配对 baseline/candidate 两个
-execution/assessment。后续动态场景、人工评审或其他执行器可实现新 sample adapter，不需
+execution/assessment。后续状态回放场景、人工评审或其他执行器可实现新 sample adapter，不需
 改写业务 Agent 和基准关系。
 
 `agentgov_testkit` 提供 typed `evaluation_recorder` fixture。Workspace regression 与 evaluator runner 共用记录
@@ -369,7 +369,7 @@ Hostile 输出包含伪造 ID、commit、score、approval、status 或 provenanc
 - 新评测模型、评分与投影进入 Agent testing 独立模块，不继续扩大 Runtime 或 Governor 中心服务。
 - 不恢复 `TestDataset`、`EvalRun`、旧 proposal job 或数据库测试正文。
 - `EvaluationExecution`、`Assessment` 和 `EvaluationComparisonGroup` 是协议中立的 typed 领域对象；
-  `AgentTestRun` 只是 P1 sample adapter，以后的动态环境或人工 evaluator 通过新 adapter 接入，
+  `AgentTestRun` 只是 P1 sample adapter，以后的状态回放环境或人工 evaluator 通过新 adapter 接入，
   不得把 pytest 字段固化到通用测评领域。
 - evaluator-owned benchmark 与业务 Agent checkout 分离挂载；隔离测试必须证明 Agent 文件工具和
   Subagent 都无法枚举、读取或将 holdout 包带出执行环境。
@@ -466,7 +466,7 @@ P1 完成后仍只称“静态纵向切片”。进入完整 MVP 前至少需要
 - 50 个以上高质量版本化案例；
 - 两名独立安全专家复核；
 - 在 P1 最小 8-case holdout 之上建立开发、公开测试与隐藏测试的大规模分层语料库；
-- 动态工具和隔离场景另行设计；
+- 只读查询工具和防御性状态回放场景另行设计；
 - 外部审批与人工裁决契约；
 - 数据授权、保留和销毁策略。
 

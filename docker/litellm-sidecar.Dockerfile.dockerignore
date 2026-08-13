@@ -1,0 +1,4 @@
+**
+!docker/
+!docker/litellm-sidecar.Dockerfile
+!docker/litellm_sidecar_entrypoint.py

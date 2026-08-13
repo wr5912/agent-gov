@@ -31,7 +31,7 @@ class InputDoc:
 _COMPONENT_DESCRIPTIONS: Mapping[str, str] = {
     "AgentChangeSetActionRequest": "Operator decision recorded against one Agent change set.",
     "AgentChangeSetCreateRequest": "Create a Git-backed candidate change set from the current Agent repository state.",
-    "AgentChangeSetPublishRequest": "Publish an approved Agent change set, with an explicit forced-publication escape hatch.",
+    "AgentChangeSetPublishRequest": "Publish an approved Agent change set; force only records an administrator-expedited path after every publication gate passes.",
     "AgentConfigFileUpdateRequest": "Complete replacement of one editable Agent configuration file with optimistic concurrency.",
     "AgentGovDebug": "Control-mode debug switches for the transitional Responses stream.",
     "AgentLifecycleTransitionRequest": "Requested lifecycle transition for one registered business Agent.",
@@ -117,8 +117,14 @@ _FIELD_DOCS: Mapping[str, InputDoc] = {
     "expected_sha256": InputDoc("SHA-256 returned by the preceding read; rejects stale replacement writes.", "7f83b1657ff1fc53b92dc18148a1d65dfa13514e"),
     "feedback_case_id": InputDoc("Existing first-class feedback case identifier.", "fbc-20260729-001"),
     "feedback_ref": InputDoc("Feedback reference to move into a new split improvement.", "feedback-20260729-001"),
-    "force": InputDoc("Whether to use the audited forced-publication path.", False),
-    "force_reason": InputDoc("Required audit reason when force is true.", "紧急修复已由值班负责人复核。"),
+    "force": InputDoc(
+        "Whether to record an administrator-expedited publication after all gates pass; it never waives a gate.",
+        False,
+    ),
+    "force_reason": InputDoc(
+        "Required audit reason for administrator-expedited publication; it does not authorize bypassing a gate.",
+        "全部发布门禁已通过，值班负责人批准加急执行。",
+    ),
     "impact": InputDoc("Observed or expected impact.", "高：停止后的下一轮无法继续会话。"),
     "include_trace": InputDoc("Whether control mode emits complete semantic trace-event envelopes.", True),
     "input": InputDoc("Current prompt string or typed message items containing a user message.", "请核查当前告警并给出处置建议"),
@@ -200,6 +206,10 @@ _FIELD_OVERRIDES: Mapping[tuple[str, str], InputDoc] = {
         "Target lifecycle status: active, evaluating, deprecated, or archived.",
         "evaluating",
     ),
+    ("AgentTestRunCreateRequest", "commit_sha"): InputDoc(
+        "Exact full 40-character Git commit SHA selected by the caller; this request never resolves a moving current revision.",
+        "0123456789abcdef0123456789abcdef01234567",
+    ),
     ("AgentTestMessageRequest", "metadata"): InputDoc(
         "Test-only message metadata retained inside the isolated test session.",
         {"case": "stop-and-resend"},
@@ -238,6 +248,7 @@ _PATH_PARAMETER_DOCS: Mapping[str, InputDoc] = {
     "improvement_id": InputDoc("Improvement item identifier addressed by this operation.", "imp-20260729-001"),
     "job_id": InputDoc("Historical Agent job identifier addressed by this read-only operation.", "job-20260729-001"),
     "pending_id": InputDoc("Pending-correlation identifier addressed by this operation.", "pending-20260729-001"),
+    "operation_id": InputDoc("Opaque durable operation identifier addressed by this status read.", "adop-20260729-001"),
     "release_id": InputDoc("Agent release identifier addressed by this operation.", "rel-20260729-001"),
     "request_id": InputDoc("Exact waiting Claude user-input request identifier.", "uir-20260729-001"),
     "response_id": InputDoc("AgentGov response projection identifier (resp_<run_id>).", "resp_run-20260729-001"),
@@ -285,6 +296,14 @@ _QUERY_PARAMETER_DOCS: Mapping[str, InputDoc] = {
 
 
 _QUERY_PARAMETER_OVERRIDES: Mapping[tuple[str, str, str], InputDoc] = {
+    ("/api/agent-deletion-operations", "get", "state"): InputDoc(
+        "Durable deletion state to discover; pending is the recovery default.",
+        "cleanup_pending",
+    ),
+    ("/api/agent-deletion-operations", "get", "limit"): InputDoc(
+        "Maximum number of newest deletion operations to return.",
+        20,
+    ),
     ("/api/claude-user-input-requests", "get", "status"): InputDoc(
         "Filter Claude user-input requests by waiting, resolved, or cancelled state.",
         "waiting",

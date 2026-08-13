@@ -19,6 +19,8 @@ const RUN_STATUS: Record<string, string> = {
   interrupted: "服务中断",
 };
 
+const INSPECTION_UNAVAILABLE_CODE = "AGENT_TEST_SUITE_INSPECTION_UNAVAILABLE";
+
 export interface AgentTestStatus {
   suite?: AgentTestSuite;
   latestRun?: AgentTestRun;
@@ -143,15 +145,35 @@ function BusinessAgentRow({
 
 function AgentTestStatusLine({ status }: { status?: AgentTestStatus }) {
   if (!status) return <span className="settings-agent-test-status">测试状态加载中…</span>;
-  if (status.error) return <span className="settings-agent-test-status is-error">测试状态不可用：{status.error}</span>;
+  if (status.error) {
+    return (
+      <span className="settings-agent-test-status is-error" data-testid="settings-agent-test-status">
+        <strong>检查不可用，测试不可运行</strong>
+        <span>{status.error}</span>
+      </span>
+    );
+  }
   const suite = status.suite;
   const latest = status.latestRun;
-  const warningCount = (suite?.diagnostics ?? []).filter((item) => item.level === "warning").length;
+  const diagnostics = suite?.diagnostics ?? [];
+  const errorCount = diagnostics.filter((item) => item.level === "error").length;
+  const warningCount = diagnostics.filter((item) => item.level === "warning").length;
+  const inspectionUnavailable = diagnostics.some((item) => item.code === INSPECTION_UNAVAILABLE_CODE);
+  const testsMissing = !suite?.tests_directory_present || suite.test_file_count === 0;
+  const suiteLabel = inspectionUnavailable
+    ? "检查不可用"
+    : errorCount
+      ? "套件无效"
+      : testsMissing
+        ? "缺少 tests/"
+        : `${suite.test_file_count} 个测试文件`;
   return (
     <span className="settings-agent-test-status" data-testid="settings-agent-test-status">
-      <span>{suite?.tests_directory_present ? `${suite.test_file_count} 个测试文件` : "缺少 tests/"}</span>
+      <span className={errorCount ? "is-error" : testsMissing ? "is-warning" : undefined}>{suiteLabel}</span>
       <code title={suite?.commit_sha || ""}>{suite?.commit_sha?.slice(0, 12) || "-"}</code>
       <span>{latest ? `最近：${RUN_STATUS[latest.status] || latest.status}` : "尚未运行"}</span>
+      {errorCount ? <strong className="is-error">{errorCount} 项错误 · 测试不可运行</strong> : null}
+      {!errorCount && testsMissing ? <strong className="is-warning">测试不可运行</strong> : null}
       {warningCount ? <span className="is-warning">{warningCount} 项警告</span> : null}
     </span>
   );

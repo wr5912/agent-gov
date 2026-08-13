@@ -1,30 +1,32 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
-    "defaultMode": "default",
+    "defaultMode": "dontAsk",
     "disableBypassPermissionsMode": "disable",
     "allow": [
-      "Read(./**)",
-      "Read(/data/uploads/**)",
-      "Read(/data/outputs/security-operations-expert/**)",
-      "Glob",
-      "Grep",
       "Skill",
-      "Bash(jq *)",
-      "Bash(date *)",
-      "Bash(date)",
-      "Bash(pwd)",
-      "Bash(mkdir -p /data/outputs/security-operations-expert/**)",
+      "Task(response-playbook-planning)",
+      "Task(response-playbook-builder)",
       "Edit(/data/outputs/security-operations-expert/**)",
-      "Write(/data/outputs/security-operations-expert/**)",
-      "mcp__sec-ops__*"
+      "Write(/data/outputs/security-operations-expert/**)"
     ],
     "ask": [],
     "deny": [
       "AskUserQuestion",
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash",
+      "WebFetch",
+      "WebSearch",
+      "mcp__*",
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./secrets/**)",
+      "Read(./.mcp.json)",
+      "Read(./.mcp.*.json)",
+      "Read(./.claude/settings.json)",
+      "Read(./.claude/settings.*.json)",
       "Read(/data/business-agents/security-operations-expert/claude-root/.claude.json)",
       "Read(/data/business-agents/security-operations-expert/claude-root/.claude/projects/**)",
       "Edit(./.mcp.json)",
@@ -41,64 +43,19 @@
       "NotebookEdit(./.claude/**)",
       "Edit(./hooks/**)",
       "Write(./hooks/**)",
-      "NotebookEdit(./hooks/**)",
-      "Bash(cat *claude-root*)",
-      "Bash(head *claude-root*)",
-      "Bash(tail *claude-root*)",
-      "Bash(less *claude-root*)",
-      "Bash(grep *claude-root*)",
-      "Bash(cat *.claude/projects*)",
-      "Bash(rm -rf /*)",
-      "Bash(rm -rf /)",
-      "Bash(:(){ :|:& };:*)",
-      "Bash(curl *|sh*)",
-      "Bash(wget *|sh*)",
-      "Bash(curl *)",
-      "Bash(wget *)",
-      "Bash(http *)",
-      "Bash(httpie *)",
-      "Bash(nc *)",
-      "Bash(ncat *)",
-      "Bash(socat *)",
-      "mcp__sec-ops__soc_api__create*",
-      "mcp__sec-ops__soc_api__manual",
-      "mcp__sec-ops__soc_api__execute",
-      "mcp__sec-ops__soc_api__post_*",
-      "mcp__sec-ops__soc_api__put_*",
-      "mcp__sec-ops__soc_api__delete_*",
-      "mcp__sec-ops__soc_api__patch_*",
-      "mcp__sec-ops__soc_api__create_1",
-      "mcp__sec-ops__soc_api__update*",
-      "mcp__sec-ops__soc_api__delete*",
-      "mcp__sec-ops__soc_api__upload*",
-      "mcp__sec-ops__soc_api__cancel*",
-      "mcp__sec-ops__soc_api__rollback"
+      "NotebookEdit(./hooks/**)"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\"",
             "timeout": 10,
-            "statusMessage": "检查安全运营动作风险"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash|mcp__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/post_tool_audit.py\"",
-            "async": true,
-            "timeout": 10,
-            "statusMessage": "记录安全运营工具调用审计摘要"
+            "statusMessage": "保护业务 Agent 治理文件"
           }
         ]
       }
@@ -126,17 +83,14 @@
         "/data/outputs/security-operations-expert"
       ],
       "denyRead": [
-        "./.env",
-        "./secrets",
-        "/data/business-agents/security-operations-expert/claude-root/.claude.json"
+        "./**",
+        "/data/uploads/**",
+        "/data/business-agents/security-operations-expert/claude-root/**"
       ]
     },
     "network": {
-      "allowedDomains": [
-        "${SERVICE_HOST}",
-        "${INTERNAL_DOMAIN}"
-      ],
-      "deniedDomains": []
+      "allowedDomains": [],
+      "deniedDomains": ["*"]
     },
     "allowUnsandboxedCommands": false
   },
@@ -144,9 +98,8 @@
     "excludeDefault": false,
     "tips": [
       "安全运营先区分事实、推断和行动。",
-      "响应处置先查实 SOC 能力，再规划、再预演。",
-      "高危处置动作需四要素：证据、审批、先 dry-run、回滚方案。",
-      "Agent 只形成整本剧本候选；保存、SOC manual 执行（内含预检）和监控由 RO 状态机完成。"
+      "Agent 只读取授权证据并形成响应方案，不执行 SOC 动作。",
+      "所有系统变更由平台在独立权限与审批边界内完成。"
     ]
   },
   "includeGitInstructions": false

@@ -8,6 +8,7 @@ from claude_agent_sdk import project_key_for_directory
 
 from .agent_admission import AgentMaintenanceActiveError
 from .agent_profiles import AgentRuntimeProfile
+from .business_agent_lifecycle import BusinessAgentLifecycleFenceError
 from .errors import RuntimeFinalizationError, RuntimeUnavailableError
 from .json_types import JsonObject
 from .records.source_records import AgentRunRecord
@@ -18,6 +19,7 @@ from .sdk_session_store import SqliteSdkSessionStore
 if TYPE_CHECKING:
     from .claude_runtime import RuntimeQueryState, RuntimeRequestContext
     from .schemas import ChatRequest
+    from .session_store import LocalSession, PersistedTurnAdmission
 
 _PERSISTENCE_FINALIZATION_ATTEMPTS = 3
 
@@ -82,19 +84,12 @@ class RuntimeSessionPersistenceMixin:
         from .claude_runtime import RuntimeRequestContext
 
         await asyncio.to_thread(self._raise_if_version_maintenance, agent_id)
-        session = await asyncio.to_thread(
-            self.session_store.get_or_create_owned,
-            req.session_id,
+        expected_instance_etag = await self._read_public_instance_etag(agent_id)
+        session, create_session_if_missing = await self._prepare_runtime_session(
+            req,
+            profile=profile,
             agent_id=agent_id,
-            metadata=req.metadata,
         )
-        if session.sdk_session_id:
-            session = await ensure_sdk_store_ready(
-                self.session_store,
-                session,
-                workspace_dir=profile.workspace_dir,
-                claude_config_dir=profile.claude_config_dir,
-            )
 
         run_id = str(uuid.uuid4())
         new_sdk_session_id = str(uuid.uuid4())
@@ -107,22 +102,18 @@ class RuntimeSessionPersistenceMixin:
             "agent_id": agent_id,
             "metadata": req.metadata,
         }
-        try:
-            admission = await asyncio.to_thread(
-                self.session_store.begin_persisted_turn,
-                session,
-                run_id=run_id,
-                agent_id=agent_id,
-                new_sdk_session_id=new_sdk_session_id,
-                sdk_project_key=sdk_project_key,
-                resolve_agent_version_id=(
-                    (lambda: agent_version_id_override) if agent_version_id_override is not None else lambda: self._current_agent_version_id(agent_id)
-                ),
-                request=intent_request,
-                created_at=created_at,
-            )
-        except AgentMaintenanceActiveError as exc:
-            raise RuntimeUnavailableError("Agent version maintenance is in progress; retry after restore completes.") from exc
+        admission = await self._admit_runtime_turn(
+            session,
+            run_id=run_id,
+            agent_id=agent_id,
+            expected_instance_etag=expected_instance_etag,
+            new_sdk_session_id=new_sdk_session_id,
+            sdk_project_key=sdk_project_key,
+            agent_version_id_override=agent_version_id_override,
+            intent_request=intent_request,
+            created_at=created_at,
+            create_session_if_missing=create_session_if_missing,
+        )
         session = admission.session
         agent_version_id = admission.agent_version_id
         attempted_sdk_session_id = admission.attempted_sdk_session_id
@@ -145,6 +136,74 @@ class RuntimeSessionPersistenceMixin:
             prompt=prompt,
             telemetry_input=telemetry_input,
         )
+
+    async def _read_public_instance_etag(self, agent_id: str) -> str:
+        try:
+            return await asyncio.to_thread(
+                self.session_store.public_business_agent_instance_etag,
+                agent_id,
+            )
+        except BusinessAgentLifecycleFenceError as exc:
+            raise RuntimeUnavailableError("Business Agent is no longer available for a new runtime turn.") from exc
+
+    async def _prepare_runtime_session(
+        self,
+        req: ChatRequest,
+        *,
+        profile: AgentRuntimeProfile,
+        agent_id: str,
+    ) -> tuple[LocalSession, bool]:
+        candidate = await asyncio.to_thread(
+            self.session_store.prepare_owned_session,
+            req.session_id,
+            agent_id=agent_id,
+            metadata=req.metadata,
+        )
+        session = candidate.session
+        if session.sdk_session_id:
+            session = await ensure_sdk_store_ready(
+                self.session_store,
+                session,
+                workspace_dir=profile.workspace_dir,
+                claude_config_dir=profile.claude_config_dir,
+            )
+        return session, candidate.create_if_missing
+
+    async def _admit_runtime_turn(
+        self,
+        session: LocalSession,
+        *,
+        run_id: str,
+        agent_id: str,
+        expected_instance_etag: str,
+        new_sdk_session_id: str,
+        sdk_project_key: str,
+        agent_version_id_override: Optional[str],
+        intent_request: JsonObject,
+        created_at: str,
+        create_session_if_missing: bool,
+    ) -> PersistedTurnAdmission:
+        resolve_agent_version_id = (
+            (lambda: agent_version_id_override) if agent_version_id_override is not None else lambda: self._current_agent_version_id(agent_id)
+        )
+        try:
+            return await asyncio.to_thread(
+                self.session_store.begin_persisted_turn,
+                session,
+                run_id=run_id,
+                agent_id=agent_id,
+                expected_instance_etag=expected_instance_etag,
+                new_sdk_session_id=new_sdk_session_id,
+                sdk_project_key=sdk_project_key,
+                resolve_agent_version_id=resolve_agent_version_id,
+                request=intent_request,
+                created_at=created_at,
+                create_session_if_missing=create_session_if_missing,
+            )
+        except AgentMaintenanceActiveError as exc:
+            raise RuntimeUnavailableError("Agent version maintenance is in progress; retry after restore completes.") from exc
+        except BusinessAgentLifecycleFenceError as exc:
+            raise RuntimeUnavailableError("Business Agent changed or was deleted before the runtime turn was admitted.") from exc
 
     def _complete_runtime_request(
         self,

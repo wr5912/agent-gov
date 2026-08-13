@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,8 @@ from ._reporting import clear_invocations, invocation_records
 from ._transport import AgentGovTestkitError
 from .invoke import AgentTestAgent
 
+WORKSPACE_REPORT_LOG_PREFIX = "AGENTGOV_WORKSPACE_REPORT_V1:"
+
 
 class _PytestItemResult(TypedDict):
     nodeid: str
@@ -24,6 +27,7 @@ class _PytestItemResult(TypedDict):
 
 
 _RESULTS: list[_PytestItemResult] = []
+_REPORT_PAYLOAD_JSON: str | None = None
 
 
 @dataclass
@@ -46,8 +50,11 @@ class _AgentGovPytestContext:
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    global _REPORT_PAYLOAD_JSON
+
     del config
     _RESULTS.clear()
+    _REPORT_PAYLOAD_JSON = None
     clear_invocations()
 
 
@@ -103,6 +110,8 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    global _REPORT_PAYLOAD_JSON
+
     raw_path = os.getenv("AGENTGOV_TEST_REPORT_PATH")
     if not raw_path:
         return
@@ -113,7 +122,16 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     }
     path = Path(raw_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    payload_json = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+    path.write_text(payload_json, encoding="utf-8")
+    _REPORT_PAYLOAD_JSON = payload_json
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    del config
+    if not os.getenv("AGENTGOV_TEST_REPORT_PATH") or _REPORT_PAYLOAD_JSON is None:
+        return
+    print(f"{WORKSPACE_REPORT_LOG_PREFIX}{_REPORT_PAYLOAD_JSON}", file=sys.stdout, flush=True)
 
 
 def _create_session(

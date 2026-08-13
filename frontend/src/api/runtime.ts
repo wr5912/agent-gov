@@ -239,10 +239,40 @@ export function setBusinessAgentLifecycle(config: RuntimeClientConfig, agentId: 
   });
 }
 
-export function deleteBusinessAgent(config: RuntimeClientConfig, agentId: string) {
+export function deleteBusinessAgent(
+  config: RuntimeClientConfig,
+  agentId: string,
+  instanceEtag: string,
+) {
   return requestJson<AgentDeleteResponse>(config, `/api/agent-registry/${encodeURIComponent(agentId)}`, {
     method: "DELETE",
+    headers: {
+      "If-Match": `"${instanceEtag}"`,
+      "Idempotency-Key": `agent-delete:${instanceEtag}`,
+    },
   });
+}
+
+export function getBusinessAgentDeletionOperation(
+  config: RuntimeClientConfig,
+  operationId: string,
+) {
+  return requestJson<AgentDeleteResponse>(
+    config,
+    `/api/agent-deletion-operations/${encodeURIComponent(operationId)}`,
+  );
+}
+
+export function listBusinessAgentDeletionOperations(
+  config: RuntimeClientConfig,
+  state: "cleanup_pending" | "completed" = "cleanup_pending",
+  limit = 20,
+) {
+  const query = new URLSearchParams({ state, limit: String(limit) });
+  return requestJson<AgentDeleteResponse[]>(
+    config,
+    `/api/agent-deletion-operations?${query.toString()}`,
+  );
 }
 
 export function getSkills(config: RuntimeClientConfig, agentId?: string) {

@@ -24,6 +24,8 @@ from scripts.export_openapi import (
     build_openapi_schema,
 )
 
+from openapi_export_test_support import assert_current_openapi_schema
+
 
 def test_export_openapi_local_defaults_use_debug_volume_unless_container_mode(monkeypatch):
     monkeypatch.delenv("HOST_RUNTIME_VOLUME_ROOT", raising=False)
@@ -97,130 +99,7 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
     )
 
     schema = json.loads(output_path.read_text(encoding="utf-8"))
-    assert schema["openapi"].startswith("3.")
-    current_paths = {
-        "/health",
-        "/api/feedback-signals",
-        "/api/improvements",
-        "/api/improvements/{improvement_id}/attribution/generate",
-        "/api/improvements/{improvement_id}/optimization-plan/generate",
-        "/api/improvements/{improvement_id}/execution/apply",
-        "/api/improvements/{improvement_id}/regression-test-design/generate",
-        "/api/agent-registry/{agent_id}/test-suite",
-        "/api/agent-registry/{agent_id}/test-suite/file",
-        "/api/agent-registry/{agent_id}/presentation",
-        "/api/agent-registry/{agent_id}/test-schedule",
-        "/api/agent-registry/{agent_id}/test-schedule/events",
-        "/api/agent-test-assets",
-        "/api/agent-test-runs",
-        "/api/agent-test-runs/history",
-        "/api/agent-change-sets/{change_set_id}/test-runs",
-        "/api/agent-test-runs/{test_run_id}",
-        "/api/agent-test-runs/{test_run_id}/cancel",
-        "/api/agent-runs/{run_id}/cancel",
-        "/api/agent-test-sessions",
-        "/api/agent-test-sessions/{test_session_id}/messages",
-        "/api/langfuse/traces/{trace_id}",
-        "/api/agent-config-file",
-        "/api/agent-change-sets/{change_set_id}/publish",
-        "/api/agent-releases/{release_id}/restore",
-        "/api/claude-user-input-requests",
-        "/api/agent-runtime/sdk-events",
-        "/api/debug/agent-runtime/raw-events",
-        "/v1/agentgov/confirmation-requests/{request_id}/decision",
-        "/v1/chat/completions",
-        "/v1/responses",
-        "/v1/responses/{response_id}",
-        "/v1/conversations",
-        "/v1/conversations/{conversation_id}",
-        "/v1/conversations/{conversation_id}/items",
-    }
-    assert current_paths <= set(schema["paths"])
-
-    legacy_paths = {
-        "/api/automation-policy",
-        "/api/eval-datasets/feedback/sync",
-        "/api/eval-cases",
-        "/api/eval-cases/{eval_case_id}",
-        "/api/feedback-sources/eval-cases/generate",
-        "/api/improvements/{improvement_id}/auto-advance",
-        "/api/feedback-optimization-batches",
-        "/api/feedback-cases/{feedback_case_id}/proposal-jobs",
-        "/api/optimization-proposals",
-        "/api/optimization-tasks/{task_id}/execution-jobs",
-        "/api/claude-hitl-requests",
-        "/api/claude-hitl-requests/{request_id}/decision",
-        "/api/claude-user-input-requests/{request_id}/decision",
-    }
-    assert set(schema["paths"]).isdisjoint(legacy_paths)
-    assert not any(path.startswith(("/api/regression-assets", "/api/scenario-packs", "/api/test-datasets")) for path in schema["paths"])
-
-    for schema_name in (
-        "AutomationPolicyResponse",
-        "AutomationPolicyUpdateRequest",
-        "AutoAdvanceResponse",
-        "FeedbackOptimizationBatchResponse",
-        "OptimizationTaskResponse",
-        "OptimizationProposalResponse",
-        "ExternalGovernanceItemResponse",
-        "RegressionPlanResponse",
-        "EvalCaseResponse",
-        "FeedbackEvalCaseGenerateRequest",
-        "FeedbackEvalCaseUpdateRequest",
-        "RegressionAssetGovernanceActionRequest",
-        "ScenarioPackResponse",
-        "TestDatasetResponse",
-        "EvalRunResponse",
-    ):
-        assert schema_name not in schema["components"]["schemas"]
-
-    attribution = schema["components"]["schemas"]["AttributionResponse"]
-    optimization = schema["components"]["schemas"]["OptimizationPlanResponse"]
-    execution = schema["components"]["schemas"]["ExecutionResponse"]
-    regression = schema["components"]["schemas"]["RegressionTestDesignResponse"]
-    for component in (attribution, optimization, execution, regression):
-        assert "generation_trace_id" in component["properties"]
-        assert "generation_trace_url" in component["properties"]
-
-    agent_run = schema["components"]["schemas"]["AgentRunResponse"]
-    assert "langfuse_trace_id" in agent_run["properties"]
-    assert "langfuse_trace_url" in agent_run["properties"]
-    assert {"turn_status", "turn_index", "turn_error", "errors"} <= set(agent_run["properties"])
-    assert "/api/agent-runs/{run_id}/trace" in schema["paths"]
-    trace_response = schema["components"]["schemas"]["AgentRunTraceResponse"]
-    assert {"run_id", "completeness", "events", "turn_status", "turn_error"} <= set(trace_response["properties"])
-    assert "schema_version" not in trace_response["properties"]
-    trace_event = schema["components"]["schemas"]["AgentTraceEvent"]
-    assert {
-        "event_id",
-        "run_id",
-        "sequence",
-        "message_index",
-        "kind",
-        "source_event",
-        "scope",
-        "payload",
-    } <= set(trace_event["properties"])
-    assert schema["components"]["schemas"]["AgentGovRequestExtension"]["properties"]["include_trace"]["default"] is False
-    conversation_item = schema["components"]["schemas"]["ConversationItem"]
-    assert "agentgov" in conversation_item["properties"]
-    item_extension = schema["components"]["schemas"]["AgentGovConversationItemExtension"]
-    assert set(item_extension["properties"]) == {
-        "run_id",
-        "sdk_session_id",
-        "agent_version_id",
-        "langfuse_trace_id",
-        "langfuse_trace_url",
-    }
-    assert item_extension["required"] == ["run_id"]
-
-    test_file_symbol = schema["components"]["schemas"]["AgentTestFileSymbol"]
-    assert set(test_file_symbol["required"]) == {"kind", "name", "qualified_name", "line"}
-
-    agent_config_file = schema["paths"]["/api/agent-config-file"]
-    assert {"get", "put"} <= set(agent_config_file)
-    agent_config_update = schema["components"]["schemas"]["AgentConfigFileUpdateResponse"]
-    assert "sdk_session_invalidated" in agent_config_update["properties"]
+    assert_current_openapi_schema(schema)
 
 
 def test_openapi_contract_audit_passes_current_schema():
@@ -228,6 +107,53 @@ def test_openapi_contract_audit_passes_current_schema():
     expected_version = Path("VERSION").read_text(encoding="utf-8").strip()
 
     assert audit_schema(schema, expected_version=expected_version) == []
+
+
+def test_agent_deletion_openapi_requires_exact_headers_and_durable_receipt() -> None:
+    schema = build_openapi_schema()
+    operation = schema["paths"]["/api/agent-registry/{agent_id}"]["delete"]
+    headers = {parameter["name"]: parameter for parameter in operation["parameters"] if parameter.get("in") == "header"}
+
+    assert set(headers) == {"Idempotency-Key", "If-Match"}
+    assert all(parameter["required"] is True for parameter in headers.values())
+    assert all(parameter["schema"] == {"type": "string"} for parameter in headers.values())
+    assert "strong quoted entity-tag" in headers["If-Match"]["description"]
+    assert "exact Agent instance" in headers["Idempotency-Key"]["description"]
+    assert headers["Idempotency-Key"]["example"] == f"agent-delete:{'a' * 64}"
+    assert "Agent id" in headers["Idempotency-Key"]["description"]
+    assert {"200", "202", "409"} <= set(operation["responses"])
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AgentDeleteResponse"}
+    assert operation["responses"]["202"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AgentDeleteResponse"}
+    assert operation["responses"]["202"]["headers"]["Location"]["schema"] == {"type": "string"}
+    status_operation = schema["paths"]["/api/agent-deletion-operations/{operation_id}"]["get"]
+    assert {"200", "401", "404"} <= set(status_operation["responses"])
+    assert status_operation["responses"]["200"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/AgentDeleteResponse"}
+    discovery_operation = schema["paths"]["/api/agent-deletion-operations"]["get"]
+    assert {"200", "401", "422"} <= set(discovery_operation["responses"])
+    discovery_response = discovery_operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert discovery_response["type"] == "array"
+    assert discovery_response["items"] == {"$ref": "#/components/schemas/AgentDeleteResponse"}
+    discovery_parameters = {parameter["name"]: parameter for parameter in discovery_operation["parameters"]}
+    assert discovery_parameters["state"]["schema"]["enum"] == ["cleanup_pending", "completed"]
+    assert discovery_parameters["limit"]["schema"]["minimum"] == 1
+    assert discovery_parameters["limit"]["schema"]["maximum"] == 100
+    receipt = schema["components"]["schemas"]["AgentDeleteResponse"]
+    assert {
+        "operation_id",
+        "state",
+        "workspace_removed",
+        "cleanup_complete",
+        "last_error_code",
+        "attempt_count",
+        "updated_at",
+    } <= set(receipt["required"])
+    assert all(term in receipt["properties"]["last_error_code"]["description"] for term in ("路径", "token", "inode"))
+    assert receipt["properties"]["attempt_count"]["minimum"] == 0
+
+    create_operation = schema["paths"]["/api/agent-registry/{agent_id}/workspace/import"]["post"]
+    agent_id = next(parameter for parameter in create_operation["parameters"] if parameter["name"] == "agent_id")
+    assert agent_id["schema"]["maxLength"] == 128
+    assert agent_id["schema"]["pattern"]
 
 
 def test_every_request_body_has_named_runtime_valid_examples() -> None:
@@ -267,9 +193,7 @@ def test_responses_named_examples_explain_strict_and_control_modes() -> None:
     assert examples["agentgov_control_stream"]["value"]["agentgov"]["with_speech_summary"] is True
     assert examples["agentgov_control_stream"]["value"]["stream"] is True
     assert examples["agentgov_control_structured"]["value"]["instructions"]
-    assert {
-        type(message["content"]).__name__ for message in examples["agentgov_control_structured"]["value"]["input"]
-    } == {"str", "list"}
+    assert {type(message["content"]).__name__ for message in examples["agentgov_control_structured"]["value"]["input"]} == {"str", "list"}
     assert "agentgov" not in examples["strict_openai"]["value"]
     assert "previous_response_id" not in examples["continue_with_conversation"]["value"]
     assert "conversation" not in examples["continue_with_previous_response_id"]["value"]
@@ -391,10 +315,7 @@ def test_openapi_documents_streaming_media_types():
     assert {"401", "403", "404", "409", "413", "422", "501", "503"} <= set(raw_operation["responses"])
 
 
-def test_openapi_documents_complete_per_surface_sse_contracts() -> None:
-    schema = build_openapi_schema()
-    components = schema["components"]["schemas"]
-
+def _assert_speech_summary_sse_components(components) -> None:
     sdk_properties = components["ClaudeSdkEventsRequest"]["properties"]
     chat_stream_properties = components["ChatStreamRequest"]["properties"]
     targeted_chat_properties = components["AgentTargetedChatRequest"]["properties"]
@@ -417,6 +338,8 @@ def test_openapi_documents_complete_per_surface_sse_contracts() -> None:
     assert envelope["properties"]["v"]["const"] == 1
     assert envelope["properties"]["type"]["const"] == "agentgov.speech_summary"
 
+
+def _assert_surface_sse_event_names(schema) -> None:
     event_names = {
         path: {item["event"] for item in schema["paths"][path]["post"]["x-agentgov-sse-events"]}
         for path in (CHAT_STREAM_PATH, CLAUDE_SDK_EVENTS_PATH, RESPONSES_PATH)
@@ -479,6 +402,9 @@ def test_openapi_documents_complete_per_surface_sse_contracts() -> None:
     } == event_names[RESPONSES_PATH]
     assert schema["paths"][RESPONSES_PATH]["post"]["x-agentgov-contract-status"] == "transitional"
     assert schema["paths"][RESPONSES_PATH]["post"]["x-agentgov-known-deviations"]
+
+
+def _assert_sse_examples_and_deprecated_surfaces(schema) -> None:
     for path in (CHAT_STREAM_PATH, CLAUDE_SDK_EVENTS_PATH, RESPONSES_PATH):
         example = schema["paths"][path]["post"]["responses"]["200"]["content"]["text/event-stream"]["examples"]["event"]["value"]
         assert "\n" in example
@@ -493,6 +419,14 @@ def test_openapi_documents_complete_per_surface_sse_contracts() -> None:
         assert schema["paths"][path]["post"]["deprecated"] is True
     completion_failure = schema["paths"]["/v1/chat/completions"]["post"]["responses"]["502"]
     assert completion_failure["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/OpenAIErrorResponse"}
+
+
+def test_openapi_documents_complete_per_surface_sse_contracts() -> None:
+    schema = build_openapi_schema()
+    components = schema["components"]["schemas"]
+    _assert_speech_summary_sse_components(components)
+    _assert_surface_sse_event_names(schema)
+    _assert_sse_examples_and_deprecated_surfaces(schema)
 
 
 def test_openapi_public_request_models_express_runtime_validation() -> None:
@@ -579,9 +513,7 @@ def test_openapi_non_200_success_operations_do_not_gain_fake_200() -> None:
             "named request examples differ",
         ),
         (
-            lambda schema: schema["components"]["schemas"]["AgentRepositoryStatusResponse"]["properties"]["status"].update(
-                enum=["draft", "published"]
-            ),
+            lambda schema: schema["components"]["schemas"]["AgentRepositoryStatusResponse"]["properties"]["status"].update(enum=["draft", "published"]),
             "component AgentRepositoryStatusResponse.status enum",
         ),
     ],
@@ -687,6 +619,99 @@ def test_openapi_documents_agent_test_domain_errors() -> None:
     assert {"400", "401", "404", "409", "422"} <= set(change_set_responses)
     assert {"400", "401", "404", "409"} <= set(cancel_responses)
     assert {"400", "401", "409", "422"} <= set(session_responses)
+
+
+def test_openapi_requires_exact_manual_test_commit_and_exposes_typed_receipt() -> None:
+    schema = build_openapi_schema()
+    components = schema["components"]["schemas"]
+
+    create_request = components["AgentTestRunCreateRequest"]
+    assert {"agent_id", "commit_sha"} <= set(create_request["required"])
+    commit_schema = create_request["properties"]["commit_sha"]
+    assert commit_schema["pattern"] == "^[0-9a-f]{40}$"
+    assert len(commit_schema["examples"][0]) == 40
+    assert set(commit_schema["examples"][0]) <= set("0123456789abcdef")
+
+    operation = schema["paths"]["/api/agent-test-runs"]["post"]
+    assert "must supply an exact full 40-character commit" in operation["description"]
+    examples = operation["requestBody"]["content"]["application/json"]["examples"]
+    assert examples
+    for example in examples.values():
+        commit_sha = example["value"]["commit_sha"]
+        assert len(commit_sha) == 40
+        assert set(commit_sha) <= set("0123456789abcdef")
+
+    run_response = components["AgentTestRunResponse"]
+    assert run_response["properties"]["receipt"] == {
+        "anyOf": [
+            {"$ref": "#/components/schemas/AgentTestExecutionReceipt"},
+            {"type": "null"},
+        ]
+    }
+    receipt = components["AgentTestExecutionReceipt"]
+    assert receipt["additionalProperties"] is False
+    assert receipt["properties"]["contract"]["const"] == "agentgov.agent-test-execution-receipt.v1"
+    assert receipt["properties"]["lane"]["const"] == "p0-exact-commit"
+    assert receipt["properties"]["receipt_digest"]["anyOf"][0]["pattern"] == "^[0-9a-f]{64}$"
+    target = components["AgentTestTargetReceipt"]
+    assert {
+        "pre_source_digest",
+        "post_source_digest",
+        "source_observation",
+    } <= set(target["required"])
+    for field in ("pre_source_digest", "post_source_digest"):
+        assert target["properties"][field]["anyOf"] == [
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            {"type": "null"},
+        ]
+    assert target["properties"]["source_observation"]["enum"] == [
+        "not_observed",
+        "pre_only",
+        "stable",
+        "changed",
+    ]
+    mount = components["AgentTestSandboxMountReceipt"]
+    assert mount["additionalProperties"] is False
+    assert set(mount["required"]) == {
+        "target",
+        "read_only",
+        "mount_type",
+        "source_scope",
+    }
+    assert "propagation" not in mount["properties"]
+    assert mount["properties"]["read_only"]["const"] is True
+    assert mount["properties"]["mount_type"]["const"] == "volume"
+    assert mount["properties"]["source_scope"]["const"] == "run_workspace_subpath"
+    assert {"source_digest", "source_tree_sha"} <= set(run_response["properties"])
+
+    release = components["AgentReleaseResponse"]
+    assert {
+        "test_run_id",
+        "test_receipt_digest",
+        "test_suite_digest",
+        "test_source_digest",
+    } <= set(release["properties"])
+
+
+def test_openapi_force_is_expediting_audit_not_publication_gate_bypass() -> None:
+    schema = build_openapi_schema()
+    publish = schema["paths"]["/api/agent-change-sets/{change_set_id}/publish"]["post"]
+    request = schema["components"]["schemas"]["AgentChangeSetPublishRequest"]
+    wording = " ".join(
+        [
+            publish["description"],
+            request["description"],
+            request["properties"]["force"]["description"],
+            request["properties"]["force_reason"]["description"],
+        ]
+    ).lower()
+
+    assert "administrator-expedited" in wording
+    assert "never waives" in wording
+    assert "escape hatch" not in wording
+    force_example = publish["requestBody"]["content"]["application/json"]["examples"]["force_publish"]
+    assert "after all gates pass" in force_example["description"]
+    assert "接受当前已记录的非反馈测试阻塞项" not in force_example["value"]["force_reason"]
 
 
 def test_openapi_documents_feedback_case_unknown_typed_source() -> None:

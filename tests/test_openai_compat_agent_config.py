@@ -15,8 +15,8 @@ from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app as _base_load_app
-from business_agent_test_utils import LEGACY_MAIN_AGENT_ID
-from test_agent_workspace_packages import _import_new_agent
+from business_agent_test_utils import LEGACY_MAIN_AGENT_ID, delete_test_business_agent
+from workspace_package_test_utils import import_new_agent as _import_new_agent
 
 
 def _load_app(monkeypatch, tmp_path, **kwargs):
@@ -153,7 +153,7 @@ def test_v1_fail_loud_when_configured_agent_deleted(monkeypatch, tmp_path: Path)
     with TestClient(module.app) as client:
         _register_biz(client)
         client.put("/api/settings/openai-compat-agent", json={"agent_id": "soc-ops"})
-        assert client.delete("/api/agent-registry/soc-ops").status_code == 200
+        assert delete_test_business_agent(client, "soc-ops").status_code == 200
         # 出口 Agent 悬空 -> /v1 fail-loud 503，不静默回平台默认。
         resp = client.post("/v1/chat/completions", json={"model": "x", "messages": [{"role": "user", "content": "hi"}]})
         assert resp.status_code == 503

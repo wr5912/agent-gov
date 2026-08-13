@@ -1,11 +1,3 @@
 {
-  "mcpServers": {
-    "sec-ops": {
-      "type": "http",
-      "url": "${SEC_OPS_MCP_URL}",
-      "headers": {
-        "Authorization": "Bearer ${SEC_OPS_MCP_TOKEN}"
-      }
-    }
-  }
+  "mcpServers": {}
 }

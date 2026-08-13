@@ -27,6 +27,7 @@ from app.runtime.runtime_db import (
     AgentRunModel,
     SdkSessionEntryModel,
     SessionTurnIntentModel,
+    make_session_factory,
 )
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
@@ -36,7 +37,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect, Request
 
-from business_agent_test_utils import create_test_business_agent_workspace
+from business_agent_test_utils import (
+    create_test_business_agent_workspace,
+    register_test_business_agent_instance,
+)
 from claude_runtime_test_utils import route_interactive_client_through_query
 
 
@@ -55,6 +59,11 @@ def _settings(tmp_path: Path) -> AppSettings:
     settings.default_workspace_dir.joinpath(".mcp.json").write_text(
         json.dumps({"mcpServers": {}}),
         encoding="utf-8",
+    )
+    register_test_business_agent_instance(
+        make_session_factory(settings.runtime_db_path),
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        workspace_dir=str(settings.default_workspace_dir),
     )
     return settings
 
@@ -359,6 +368,7 @@ def test_cancel_api_is_idempotent_and_running_without_owner_fails_closed(
         session,
         run_id="ownerless-run",
         agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        expected_instance_etag=store.public_business_agent_instance_etag(DEFAULT_BUSINESS_AGENT_ID),
         new_sdk_session_id="ownerless-sdk",
         sdk_project_key="ownerless-project",
         resolve_agent_version_id=lambda: "version-1",
@@ -406,6 +416,7 @@ def test_cancel_times_out_when_owner_does_not_reach_durable_terminal(
         session,
         run_id="timeout-run",
         agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        expected_instance_etag=store.public_business_agent_instance_etag(DEFAULT_BUSINESS_AGENT_ID),
         new_sdk_session_id="timeout-sdk",
         sdk_project_key="timeout-project",
         resolve_agent_version_id=lambda: "version-1",
@@ -454,6 +465,7 @@ def test_startup_reconciliation_interrupts_previous_process_turn_immediately(
         session,
         run_id="restart-run",
         agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        expected_instance_etag=store.public_business_agent_instance_etag(DEFAULT_BUSINESS_AGENT_ID),
         new_sdk_session_id="restart-sdk",
         sdk_project_key="restart-project",
         resolve_agent_version_id=lambda: "version-1",

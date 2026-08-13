@@ -864,7 +864,7 @@ Multica 不作为以上阶段的前置依赖。只有 AgentGov 多 Runtime 核�
 
 ## 17. 最终目标判断
 
-当前“在 Claude Agent SDK 上包一层”的实现不是应被丢弃的临时方案，而是未来 `claude-code` adapter 的真实、成熟起点。需要替换的是它对路由、公共 schema、治理任务和模型绑定的直接渗透，不是 Claude 原生能力本身。
+当前“在 Claude Agent SDK 上包一层”的实现不是应被丢弃的临时方案，而是未来 `claude-code` adapter 的真实、成熟起点。需要替换的是它对路由、公共 schema、治理任务和模型绑定的直接侵入，不是 Claude 原生能力本身。
 候选 core 边界也不能因 Claude 委托和 fake contract tests 通过就被宣称为 Runtime 中立；
 真实第二协议的反证、两个生产 adapter 的等价/差异证据和同部署隔离验收，分别决定
 边界能否冻结、第二 Runtime 能否上线以及多 Runtime 能否同部署运行。

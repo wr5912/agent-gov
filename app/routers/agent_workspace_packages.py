@@ -10,6 +10,7 @@ from starlette.datastructures import FormData, UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.agent_testing.service import AgentTestingService
+from app.runtime.agent_paths import AgentId
 from app.runtime.agent_workspace_package_schemas import (
     WorkspaceImportResponse,
     WorkspaceRestoreRequest,
@@ -21,6 +22,7 @@ from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.services import agent_workspace_package_codec as package_codec
 from app.services.agent_change_set_queries import has_open_change_sets
 from app.services.agent_governance import TERMINAL_CHANGE_SET_STATES, AgentGovernanceService
+from app.services.agent_workspace_activation import WorkspaceActivationService
 from app.services.agent_workspace_packages import AgentWorkspacePackageService
 
 _IMPORT_MULTIPART_SCHEMA = {
@@ -61,6 +63,7 @@ def create_agent_workspace_packages_router(
     agent_governance: AgentGovernanceService,
     session_store: LocalSessionStore,
     agent_testing: AgentTestingService,
+    activation_service: WorkspaceActivationService,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agents"], dependencies=[Depends(require_api_key)])
@@ -70,6 +73,7 @@ def create_agent_workspace_packages_router(
         agent_governance=agent_governance,
         session_store=session_store,
         agent_testing=agent_testing,
+        activation_service=activation_service,
     )
     _register_export_route(router, service)
     _register_import_route(router, service)
@@ -84,14 +88,16 @@ def _create_workspace_package_service(
     agent_governance: AgentGovernanceService,
     session_store: LocalSessionStore,
     agent_testing: AgentTestingService,
+    activation_service: WorkspaceActivationService,
 ) -> AgentWorkspacePackageService:
     return AgentWorkspacePackageService(
         settings=settings,
         registry_store=agent_registry_store,
-        store_for=agent_governance._store_for,
+        store_for=agent_governance._store_for_existing,
         version_maintenance=agent_governance.version_maintenance,
         session_store=session_store,
         agent_testing=agent_testing,
+        activation_service=activation_service,
         has_open_change_sets=lambda agent_id: has_open_change_sets(
             agent_governance.feedback_store.Session,
             agent_id=agent_id,
@@ -124,7 +130,7 @@ def _register_export_route(router: APIRouter, service: AgentWorkspacePackageServ
         },
         summary="Export the current live business-Agent workspace",
     )
-    def export_workspace(agent_id: str) -> FileResponse:
+    def export_workspace(agent_id: AgentId) -> FileResponse:
         artifact = service.export_workspace(agent_id)
         return FileResponse(
             artifact.path,
@@ -148,7 +154,7 @@ def _register_import_route(router: APIRouter, service: AgentWorkspacePackageServ
         openapi_extra=_IMPORT_MULTIPART_SCHEMA,
     )
     async def import_workspace(
-        agent_id: str,
+        agent_id: AgentId,
         request: Request,
     ) -> WorkspaceImportResponse:
         _require_import_content_length(request)
@@ -177,7 +183,7 @@ def _register_restore_route(router: APIRouter, service: AgentWorkspacePackageSer
         response_model=WorkspaceRestoreResponse,
         summary="Restore a historical workspace tree as a new Git commit",
     )
-    def restore_workspace(agent_id: str, request: WorkspaceRestoreRequest) -> WorkspaceRestoreResponse:
+    def restore_workspace(agent_id: AgentId, request: WorkspaceRestoreRequest) -> WorkspaceRestoreResponse:
         return service.restore_workspace(agent_id=agent_id, request=request)
 
 

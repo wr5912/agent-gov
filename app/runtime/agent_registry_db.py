@@ -28,5 +28,7 @@ class AgentRegistryModel(Base):
     # DB + workspace 创建 saga 的内部状态；provisioning 行不得进入公开查询或运行路径。
     provision_state: Mapped[str] = mapped_column(String(32), default="ready", nullable=False, index=True)
     provision_token: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    # 最近一次成功 publish 的 reservation token，用于辨别 commit 成功但回执丢失。
+    provision_completed_token: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     provision_started_at: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     provision_previous_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True, default=None)

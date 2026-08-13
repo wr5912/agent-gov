@@ -1,23 +1,41 @@
 # 业务 Agent Workspace 原生 pytest 测试资产实现方案
 
-> 文档状态：当前实现与后续演进的权威工程契约。
+> 文档状态：当前实现基线与后续演进的权威工程契约。
 >
-> 适用对象：所有注册业务 Agent（含 `main-agent`）。治理 Agent 不进入业务 Agent 注册表、发布链或
-> 业务测试会话；其项目自测仍可使用同样的 `tests/` 目录约定。
+> 适用对象：所有注册业务 Agent（含 `main-agent`）。治理 Agent 不进入业务 Agent
+> 注册表、发布链或业务测试会话；其项目自测仍可使用同样的 `tests/` 目录约定。
 
-## 1. 裁决
+## 1. 裁决与产品边界
 
-业务 Agent 的测试必须与其 Claude 原生 Workspace 一起开发、评审、版本化、导入、导出和发布。
-`workspace/tests/` 是测试资产唯一真相源，平台不再维护数据库测试集、全局用例池或第二套测试内容副本。
+业务 Agent 的测试必须与其 Runtime 原生 Workspace 一起开发、评审、版本化、导入、
+导出和发布。`workspace/tests/` 是 Agent 自有可执行测试正文的唯一真相源，平台不另建
+数据库测试集、全局用例池或通用 Registry 正文副本。
 
-平台负责确定性执行和证据投影，不解释或重写 pytest：
+当前 Phase 7 的 `p0-exact-commit` lane 是工程回归门：它固定精确 Git commit、静态
+Workspace 源码和 pytest 执行环境，验证已知契约与发布工程卫生。它不是业务 Agent
+能力测评、评测基准或线上效果证明，也不产生可与其他 Agent 直接比较的能力总分。
+
+| 层次 | 当前对象 | 作用 | 权威所有者 |
+| --- | --- | --- | --- |
+| Agent 自有回归 | `WorkspaceTestFile` + `AgentTestRun` | 单元/契约测试、已知问题回归、精确 commit 工程门 | 测试正文归 Workspace Git，执行事实归平台 |
+| 评测基准 | `EvaluationBenchmark` + `EvaluationProtocolRevision` | 冻结能力维度、case/corpus、Ground Truth、scorer、安全门和环境约束 | 独立评测方或领域资产库，被测候选无权改写 |
+| 平台发布评测 | `EvaluationExecution` / `Assessment` / comparison / safety gate | 在同协议下比较修复前与待发布版本，形成发布裁决证据 | 评测方与平台后端，不回写 Workspace 测试事实 |
+| 线上效果 | `OnlineOutcome` | 观察发布后业务结果和回滚阈值 | 外部业务系统是事实源，AgentGov 保存受控引用或投影 |
+
+`AgentTestRun` 后续可作为 `EvaluationExecution` 中一个 sample run 的 adapter，但不会因此升级为
+`Assessment`。只有独立协议、评分、安全门、稳定性和版本比较证据齐备时，才能形成平台
+发布评测结论。
+
+平台在当前 lane 中只做确定性编排和证据投影，不解释或重写 pytest：
 
 ```text
 业务 Agent Workspace tests/
-  -> 精确 Git commit
-  -> 固定 pytest 命令
-  -> 持久化 AgentTestRun
-  -> 当前待发布 commit 的发布条件
+  -> 完整 40 位 Git commit
+  -> 确定性源码投影
+  -> durable queued AgentTestRun
+  -> 独立 worker + 一次性 sandbox
+  -> typed execution receipt
+  -> 当前待发布 commit 的工程发布条件
 ```
 
 ## 2. 对象与所有权
@@ -26,32 +44,35 @@
 | --- | --- | --- |
 | `tests/README.md` | Workspace 开发者 | 说明测试范围、依赖和人工复核边界；缺失只告警 |
 | `tests/conftest.py` | Workspace 开发者 | 可选，本 Agent 的本地 fixture |
-| `tests/test_*.py` | Workspace 开发者 | 可执行测试资产；首版只接受 `tests/` 下扁平文件 |
-| `agentgov_testkit` | AgentGov 平台 | 小型、版本化 Python 库和 pytest plugin |
-| `AgentTestSuiteSummary` | 平台派生 | 从指定 commit 扫描文件、诊断和 `suite_digest`，不单独存内容 |
-| `AgentTestRun` | AgentGov 平台 | 记录一次固定命令的状态、输出、条目和精确 commit |
-| `AgentTestSchedule` | AgentGov 平台 | 每个业务 Agent 唯一定时策略；保存 Cron、IANA 时区和下一次触发时间，不保存测试正文 |
-| `AgentTestScheduleEvent` | AgentGov 平台 | 一次计划窗口的持久化触发审计；记录跳过、合并、入队或失败结果 |
-| 回归测试代码候选 | 治理 Agent + 平台 | 治理 Agent 输出测试代码、测试意图和断言依据；平台确定目标路径。确认前不是 Workspace 资产 |
+| `tests/test_*.py` | Workspace 开发者 | 可执行测试资产；当前只接受 `tests/` 下扁平文件 |
+| `agentgov_testkit` | AgentGov 平台 | 小型、版本化 Python 库和 pytest plugin；不持有测试正文 |
+| `AgentTestSuiteSummary` | 平台派生 | 从指定 commit 扫描文件、诊断和 `suite_digest`，不单独存正文 |
+| `AgentTestRun` | AgentGov 平台 | 一次精确 commit 固定命令的 durable 队列与执行记录 |
+| `AgentTestExecutionReceipt` | AgentGov worker | 绑定 source/tree/suite、容器、隔离、结果和 cleanup 证据的 strict typed 回执 |
+| `AgentTestSchedule` | AgentGov 平台 | 每个业务 Agent 唯一定时策略；只产生 durable run，不保存测试正文 |
+| `AgentTestScheduleEvent` | AgentGov 平台 | 一次计划窗口的触发审计；记录跳过、合并、入队或失败结果 |
+| 回归测试代码候选 | 治理 Agent + 平台 | 治理 Agent 输出测试代码、意图和断言依据；用户确认前不是 Workspace 资产 |
 | `change_set_id` | AgentGov 平台 | 关联同一未发布变更；不是测试身份或版本身份 |
 
-权威版本标识是 Git `commit_sha`。`suite_digest` 是测试文件内容的派生校验值；`change_set_id` 只表达
-未发布变更的业务关联。三者职责不同，不组合成新的人工身份。
+被测版本的权威标识是 Git `commit_sha`。`source_tree_sha` 绑定该 commit 的完整 Git tree，
+`source_digest` 绑定实际允许进入 sandbox 的确定性源码投影，`suite_digest` 只绑定其中的
+`tests/` 套件内容；`change_set_id` 只表达未发布变更关联。这些摘要各自承载不同边界，
+不组合成新的人工版本身份。
 
 仓库测试与运行态测试按内容所有权分层，不按执行工具分层：
 
 | 测试位置 | 内容所有者 | 仓库质量策略 |
 | --- | --- | --- |
 | 根 `tests/` | AgentGov 平台开发者 | 收集，验证平台代码、API、迁移和契约 |
-| `docker/runtime-bootstrap/business-agents/<agent_id>/workspace/tests/` | 对应内置业务 Agent 开发者 | 不纳入系统质量策略；按该 Agent 的精确 Git commit 独立执行 |
+| `docker/runtime-bootstrap/business-agents/<agent_id>/workspace/tests/` | 对应内置业务 Agent 开发者 | 不纳入系统静态 collection；按精确 commit 独立执行 |
 | `docker/runtime-bootstrap/governor-workspace/tests/` | governor Workspace 开发者 | 原路径收集，不参与业务 Agent 发布条件 |
-| `${HOME}/volume-agent-gov/data/business-agents/<agent_id>/workspace/tests/` | 对应业务 Agent 开发者 | 不做仓库静态扫描；按该 Agent 的精确 Git commit 执行 |
+| `${HOME}/volume-agent-gov/data/business-agents/<agent_id>/workspace/tests/` | 对应业务 Agent 开发者 | 不做仓库静态扫描；按精确 commit 执行 |
 
-`tests/quality_policy.json` 的 `collection.selectors` 只声明根系统测试与 governor 测试。无论业务 Agent
-位于仓库初始化源还是运行卷，其自测都不进入平台源码提交门；平台按待发布 commit 执行完整
-`workspace/tests/`，不按本次 Diff 选择用例，并以全部通过作为该 Agent 版本发布条件。
+`tests/quality_policy.json` 的根 collection 只声明平台测试与 governor 测试。无论业务 Agent
+位于仓库初始化源还是运行卷，其自测都不进入平台源码提交门；平台按待发布 commit
+执行完整 `workspace/tests/`，不按本次 Diff 选择叶子用例。
 
-## 3. Workspace 契约
+## 3. Workspace 与 suite 契约
 
 ```text
 workspace/
@@ -66,17 +87,27 @@ workspace/
 
 规则：
 
-1. `tests/test_*.py` 必须是可解析 Python 文件，首版不递归发现子目录。
+1. `tests/test_*.py` 必须是可解析 UTF-8 Python 文件，当前不递归发现子目录。
 2. 每个测试文件、fixture 和辅助资产都随 Workspace Git 提交。
-3. 包导入缺少 `tests/` 或 `tests/README.md` 时成功但返回结构化 warning；没有测试文件时不能满足普通发布条件。
-4. 导入目标由 URL 中的 `agent_id` 指定，但包根目录 `agent.yaml.agent.id` 必须有效且与其逐字
-   一致；缺失、无效、格式错误或来源 ID 不一致均在目标 Workspace、注册表、Git 和会话状态
-   变更前拒绝，同时保留失败审计。
-5. `security-operations-expert` 初始化源和 governor Workspace 均提供自有 `tests/`；普通业务 Agent 只存在于运行卷和其导出包中。
+3. 包导入缺少 `tests/`、`tests/README.md` 或测试文件时可以生效，但返回结构化诊断；
+   没有可运行文件的版本不能满足工程发布条件。
+4. 导入目标由 URL 中的 `agent_id` 指定，包根目录 `agent.yaml.agent.id` 必须有效且与其逐字
+   一致；缺失、无效、格式错误或来源 ID 不一致均在 Workspace、注册表、Git 和会话状态
+   变更前拒绝，并保留失败审计。
+5. 套件使用 `agent` live fixture 时，平台会设置 `requires_live_agent=true` 和诊断
+   `AGENT_TEST_LIVE_FIXTURE_REQUIRES_P1`。当前 `p0-exact-commit` 静态 lane 必须整套拒绝，
+   不会在无网络 sandbox 中伪装成真实 Agent 行为验证。
+6. 单个 Agent 的 suite 检查异常不得拖垮 `/api/agent-test-assets` 整体列表。受影响 Agent 返回
+   `AGENT_TEST_SUITE_INSPECTION_UNAVAILABLE` 及稳定原因码，并以不可运行 suite 投影；其他 Agent
+   仍正常展示。修复并重新检查前，该 Agent 不得产生发布证据。
 
-## 4. agentgov_testkit
+导入成功响应与审计记录同时保留 `test_suite_status=ready|warning|invalid`、suite 和
+完整 diagnostics。如果候选 suite 检查不可用但该 Workspace 仍被允许激活，激活与 accepted audit
+必须处于同一一致性边界；suite 记为 `invalid`，不泄露内部异常详情、不自动启动测试，也不得获得发布资格。
 
-`packages/agentgov-testkit` 提供公共 Python API：
+## 4. `agentgov_testkit` 与 live 测试边界
+
+`packages/agentgov-testkit` 保留公共 Python API，供 Workspace 开发者编写业务行为测试：
 
 ```python
 from agentgov_testkit import invoke_agent
@@ -88,7 +119,7 @@ def test_alert_triage():
     assert "证据" in result.text
 ```
 
-pytest 测试可直接使用 `agent` fixture：
+pytest 测试也可使用 `agent` fixture：
 
 ```python
 def test_alert_triage(agent):
@@ -96,17 +127,21 @@ def test_alert_triage(agent):
     assert "证据" in result.text
 ```
 
-平台通过环境变量提供 `AGENTGOV_API_BASE`、`AGENTGOV_AGENT_ID`、可选的
-`AGENTGOV_COMMIT_SHA` 和 `AGENTGOV_API_KEY`。pytest session 创建时只解析一次目标 commit，后续
-全部用例固定使用该 commit，并显示 `resolved commit`；但 `agent` fixture 是 function scope，每个测试函数
-创建并关闭独立 Agent 会话，避免历史消息、工具状态和上下文窗口在用例间污染。平台内部运行可额外注入
-`AGENTGOV_CHANGE_SET_ID`；开发者不需要配置它。显式传入的 `AGENTGOV_TEST_SESSION_ID` 只供直接调用
-`invoke_agent()` 的开发者管理会话使用，pytest fixture 不复用该会话。
+开发者 live 测试使用 `AGENTGOV_API_BASE`、`AGENTGOV_AGENT_ID`、`AGENTGOV_COMMIT_SHA` 和可选的
+`AGENTGOV_API_KEY`。pytest session 只解析一次精确 commit，并显示 `resolved commit`；`agent`
+fixture 为 function scope，每个测试函数创建并关闭独立 Agent 会话，避免历史消息、工具状态
+和上下文窗口在用例间污染。
 
-开发者不需要 `AgentGovTestClient` 或独立 CLI。公共入口只有 `invoke_agent()` 和 pytest 的 `agent`
-fixture；HTTP client 与会话对象均由 testkit 内部封装。
+该 live 开发入口不是 Phase 7 的 `p0-exact-commit` 平台运行，开发者本地通过不会产生
+P0 typed receipt 或独立评测结论。使用 live fixture 的 Workspace suite 需要进入后续 P1 live lane；
+在该 lane 落地前，当前平台静态运行和发布门会 fail-closed，不以本地结果替代。
 
-## 5. 平台 API
+平台内部可额外注入 `AGENTGOV_CHANGE_SET_ID`；开发者不需要配置它。显式传入的
+`AGENTGOV_TEST_SESSION_ID` 只供直接调用 `invoke_agent()` 的开发者管理会话使用，pytest fixture
+不复用该会话。公共入口只有 `invoke_agent()` 和 pytest 的 `agent` fixture；HTTP client
+与会话对象由 testkit 内部封装。
+
+## 5. 平台 API 与 durable enqueue
 
 ```text
 GET    /api/agent-registry/{agent_id}/test-suite?commit_sha=<sha>
@@ -127,184 +162,285 @@ POST   /api/agent-test-sessions/{test_session_id}/messages
 DELETE /api/agent-test-sessions/{test_session_id}
 ```
 
-创建运行时可省略 `commit_sha`。平台在创建请求内读取当前 commit 并只钉住一次，后续运行、重试和结果
-均使用该 SHA，不把“当前版本”解释延迟到执行时。待发布变更测试入口从变更记录读取 `agent_id` 和
-待发布 commit，不接受客户端重复提交身份字段。
+对 `AgentTestRun` 执行链，API 只做身份/版本校验、suite 检查、指纹固定和 durable enqueue，
+不在 API 进程或 API 容器内启动 pytest、子进程或 sandbox 容器。
+
+### 5.1 手工运行和待发布运行
+
+手工 `POST /api/agent-test-runs` 必须同时提交 `agent_id` 和完整小写 40 位 `commit_sha`；
+缺失、短 SHA、不存在或不属于该 Agent 仓库的 commit 均在入队前拒绝。后端不会替手工
+调用方解析移动的“当前版本”。
+
+待发布入口 `POST /api/agent-change-sets/{change_set_id}/test-runs` 从后端已持久化的
+`AgentChangeSet` 解析 `agent_id` 和 `candidate_commit_sha`，不接受客户端重复提交身份字段。
+两个入口都会在入队前完成以下动作：
+
+1. 解析并验证精确 commit；
+2. 从 Git object 进行确定性投影，得到 `source_tree_sha` 和 `source_digest`；
+3. 检查 suite，固定 `suite_digest`，拒绝不可运行或需要 live fixture 的套件；
+4. 持久化 `status=queued`、固定命令和上述指纹。
 
 平台唯一执行命令为：
 
 ```bash
-python -m pytest -q -p agentgov_testkit.pytest_plugin tests
+/usr/local/bin/python -I -P -m pytest -q --import-mode=importlib -p agentgov_testkit.pytest_plugin tests
 ```
 
-客户端不能提交命令、工作目录、测试结果、通过状态或任意安装步骤。平台不在 API 容器内执行
-`pip install`，也不因上传或确认待发布变更而自动运行代码。测试运行只有两类合法来源：用户显式调用运行
-API 的 `manual` / `release_check`，以及用户预先保存并启用的每 Agent 定时策略所产生的 `scheduled`。
+`-I -P` 防止业务 commit 根目录的 `pytest.py` 或 `pytest/` 抢占平台 pytest，
+`--import-mode=importlib` 避免 pytest 把测试目录前插到 `sys.path`。客户端不能提交命令、
+工作目录、环境变量、测试结果、通过状态或任意安装步骤。
 
-### 5.1 资产复利中心投影
+### 5.2 定时策略
 
-“资产复利中心”默认展示“测试资产”，并保留“治理资产”页签中的方法论、执行资产和审计记录投影；
-当前 `audit` 过滤值属于横切审计维度，不定义长期第四类资产。测试页按业务 Agent 展示当前有效
-commit 的 suite、文件数、诊断、最近运行和定时状态；详情分为“测试文件”“运行历史”
-和“定时策略”。源码查看满足以下约束：
+每个业务 Agent 最多一条策略，支持常用频率和自定义五字段 Cron（分、时、日、月、周）。
+时区使用 IANA 名称，前端默认采用浏览器时区；两次计划窗口最短间隔为 15 分钟。保存策略
+只修改配置，不立即运行测试。
 
-- 只接受当前 suite 已声明的 `tests/test_*.py` 路径，拒绝绝对路径和目录穿越；
-- 通过 Workspace Git 在指定 commit 读取 UTF-8 正文，提供行号、Python 语法高亮、搜索和复制；后端 AST
-  投影顶层 class/function 与 `Test*` 类的直接 `test_*` 方法，前端右侧符号轨道负责预览并定位精确行号；
-- 不把源码复制到 `governance_assets`、运行记录或新的数据库测试集；
-- 历史列表只返回轻量摘要并分页，点击单次运行后再读取 stdout、stderr、pytest item、invocation 和错误详情；
-- 测试资产不提供跨 Agent“继承测试代码”动作；需要复用时仍通过 Workspace Git 评审和提交。
-- 资产中心页内不重复放置刷新入口；Topbar“刷新”按当前激活页签请求测试资产或治理资产，隐藏页签不请求。
+API lifespan 中的 scheduler 只持久化计划事件、解析触发时当前有效 commit 并通过同一
+`create_run` 契约入队；它不执行 pytest、不创建 sandbox。所有
+`manual` / `release_check` / `scheduled` 运行都由独立 worker 消费同一 durable queue。
 
-### 5.2 每 Agent 定时策略
+每个计划窗口先持久化唯一 `(schedule_id, scheduled_for)` 事件，再入队：
 
-每个业务 Agent 最多一条策略，支持常用频率和自定义五字段 Cron（分、时、日、月、周）。时区使用 IANA
-名称，前端默认采用浏览器时区；两次计划窗口最短间隔为 15 分钟。保存策略只修改配置，不立即运行测试。
-
-调度由 API lifespan 内的后台循环执行，复用现有 runtime SQLite 和 pytest runner，不新增 Celery、服务、
-环境变量或 Docker 卷。每个计划窗口先持久化唯一 `(schedule_id, scheduled_for)` 事件，再触发运行：
-
-1. 仅 `active`、`evaluating` Agent 可触发；其他生命周期记为 `skipped`，其中终态 `archived` 或已删除
-   Agent 会同步停用策略，避免后续窗口继续积累，也避免同 ID 重建时继承旧启用状态；
-2. 触发时读取该 Agent 当前有效 commit，只读取一次；未发布 `AgentChangeSet` 的候选 commit 不参与解析；
+1. 仅 `active`、`evaluating` Agent 可触发；终态 `archived` 或已删除 Agent 会停用策略并保留审计；
+2. 触发时只解析一次当前有效 commit，不读取候选 worktree，不绑定或推进待发布变更；
 3. 创建 `source=scheduled`、`change_set_id=null` 的 `AgentTestRun`，记录 `schedule_id` 和 `scheduled_for`；
-4. 同 Agent、同 commit 已有 `queued/running` 时不重复执行，事件记为 `coalesced` 并关联原运行；
-5. 服务停机错过多个窗口时只补一次最早待处理窗口，再把 `next_run_at` 推进到当前时间之后，避免无界补跑；
-6. 定时策略和事件不得推进、批准、发布或回滚任何待发布变更。
+4. 同 Agent、同 commit 已有 `queued/running` 时不重复执行，事件记为 `coalesced`；
+5. API 停机错过多个窗口时只补一次，并把 `next_run_at` 推进到当前时间之后；
+6. 定时事件的状态为 `pending -> enqueued | coalesced | skipped | failed`，不会推进、批准、发布
+   或回滚待发布变更。
 
-## 6. 运行生命周期与服务重启
+## 6. 独立 worker、源码投影与 sandbox
+
+### 6.1 worker-only run 根
+
+Compose 使用独立 `agent-test-worker` 服务。worker 挂载运行数据 `/data`、Docker socket 和专用
+Docker-managed named volume `/agent-test-runs`；API 只挂载 `/data`，不挂载也不能写该运行卷。
+`AGENT_TEST_RUNS_DIR=/agent-test-runs` 是 worker 对运行卷的唯一读写视图。worker 启动时通过自身
+Docker inspect 固定 volume identity，并拒绝非 `local` driver、带 driver options 的 bind 型 volume、
+只读或与 `/data` 混淆的挂载。sandbox 不再接收会被 Docker daemon 二次解析的宿主路径，而是复用
+同一 volume identity，仅把 `<test_run_id>/workspace` subpath 只读挂到 `/workspace`。
+
+Docker socket 只授予 worker 控制平面；sandbox 本身不挂载 Docker socket。每次运行使用
+`/agent-test-runs/<test_run_id>/workspace` 作为独立投影，完成后删除。Docker create 后、start 前还会
+核对 HostConfig 中的 volume name、只读标记与 subpath，以及实际 mount 的同一 volume name，防止
+路径别名重定向造成 worker 校验 A、sandbox 执行 B。
+
+该 named volume 是可清理的执行 scratch，不是新的业务持久化真源；队列、终态回执和调度审计仍在
+`/data/runtime.sqlite3`，测试正文仍在 per-Agent Git。worker 启动恢复与每次终态清理都删除 run
+投影，隔离验收使用独立 Compose project 并通过 `down --volumes` 删除整个临时 volume。
+
+### 6.2 完整 tree 与确定性源码投影
+
+worker 从 per-Agent Git 解析入队时的精确 commit，先校验完整 Git tree，再为当前静态 lane
+生成确定性源码投影：
+
+- `source_tree_sha` 绑定原始 commit 的完整 tree，不因投影排除私有文件而改变；
+- `source_digest` 绑定实际写入 worker run 根、允许进入 sandbox 的文件模式、路径和字节；
+- `.env`、local settings、私钥/凭据文件、凭据存储与 `secret` / `credential` 目录不进入投影；
+- `.mcp.json` 与 `.claude/settings.json` 使用结构化静态校验；安全字面量和环境变量引用可保留，
+  凭据字面量会使整个配置文件不进入投影，语法或结构歧义则 fail-closed；
+- live Workspace 和 per-Agent Git 仍按字节保留这些私有运行资产，投影不回写或脱敏源仓库。
+
+这是针对路径与两类结构化配置的确定性投影规则，不是通用 DLP。Agent-owned 测试源码和
+其他公开文件不因进入该 lane 就获得“全文无敏感信息”证明。
+
+### 6.3 真实 volume 目录观察
+
+在启动 sandbox 前，worker 使用 dir-fd、`O_NOFOLLOW` 和 `lstat/fstat` 身份校验，从实际
+named volume 目录重算摘要。容器终止并完成清理后，worker 对同一 run 根再次重算；不以两次
+读取 Git commit 代替执行期的实际 volume 目录校验。typed receipt 使用四态观察：
+
+| `source_observation` | 证据语义 | 允许的结果 |
+| --- | --- | --- |
+| `not_observed` | 没有完成执行前实际源摘要，例如执行前取消或 worker 重启接管历史 `running` | `cancelled`、`interrupted` 或 `error` |
+| `pre_only` | 执行前摘要已验证，但无法取得可信的执行后摘要 | 只允许 `error` |
+| `stable` | 执行前、执行后与入队 `source_digest` 三者相等 | 才可表达 pytest `passed` 或 `failed` |
+| `changed` | 执行前等于预期，执行后摘要不同 | 只允许 `error` |
+
+`post_source_digest` 只在真实观察到执行后源时存在，不会用入队摘要伪造“执行后稳定”。
+
+### 6.4 最小隔离与 typed receipt
+
+一次性 sandbox 只将当前 run 的 volume subpath 挂载为唯一源码挂载 `/workspace:ro`；`/output` 与 `/tmp` 都是
+限额 tmpfs，不存在可写 host output bind。容器固定无网络、非特权、非 root 用户、只读根文件系统、
+`cap_drop=ALL`、`no-new-privileges`、无设备、无端口、无 Docker socket，并限制 PID、内存、CPU、
+shared memory 和日志大小。Docker inspect 任一约束不匹配都 fail-closed。
+
+pytest plugin 将同一份有界 JSON report 先写入容器 tmpfs 临时报告，再从专用单行
+stdout envelope 发出。worker 只用 Docker logs `tail` 读取最后一行，严格限长和 schema 校验，
+并从诊断 stdout 中剔除 envelope。`receipt.result.workspace_report_authority` 固定为
+`agent_owned_unverified`，由回执声明 report/items/invocations 不能注入 status、worker、score、approval
+或发布事实。
+
+终态回执使用 `assurance_level=execution_provenance`，绑定精确 Agent/commit、tree/source/suite、worker fence、
+image ID、固定 argv/环境、Docker inspect 隔离观察、pytest 退出、输出摘要、四态源观察、
+容器删除、label 残留和临时路径清理。回执自身带完整性 digest。它只证明精确提交在
+该固定隔离环境中按固定命令执行及 Docker 观察结果，不等于独立证明业务正确性、
+能力质量、安全性或后续真实 Agent 行为。
+
+## 7. 运行生命周期与重启所有权
 
 状态集合：
 
 ```text
 queued -> running -> passed | failed | error | cancelled
-running --服务关闭/重启--> interrupted
+running --worker 重启恢复--> interrupted | error
 ```
 
-状态是平台执行记录，不映射 Claude Agent SDK 的权限生命周期。服务重启时：
+状态是平台执行记录，不映射 Claude Agent SDK 的权限生命周期。重启所有权固定为：
 
-- 已经 `running` 的进程不能被假定继续存在，记录明确转为 `interrupted`；
-- 尚未领取的 `queued` 记录由启动恢复器重新入队；
-- `cancel_requested` 持久化，取消会终止整个进程组；
-- `AGENT_TEST_RUN_TIMEOUT_SECONDS` 到期会终止整个进程组，并以 `error` 和
-  `AGENT_TEST_RUN_TIMEOUT` 记录；
-- 同一 Agent、同一 commit、同一待发布变更只能有一个 `queued/running` 记录，重复请求返回 `409`；
-- 临时测试会话只存在于当前进程，重启后调用返回明确的 session unavailable 错误；
-- stdout、stderr、结构化 pytest item 和错误详情均持久化，并有大小上限。
+- API 重启只清理它拥有的临时 test session 和检查 materialization，并恢复 durable
+  schedule `pending` 事件；它不接管、执行或改写 `queued/running` 运行；
+- worker 以专用 run 根的独占锁保证同一 Runtime 卷只有一个消费者。启动时它通过 worker fence
+  接管遗留 `running`，按 Docker labels 清理容器与 run 目录，再将记录收口为 `interrupted`
+  或 cleanup `error`；
+- worker 只在证明全局 label 残留和临时路径已清理后继续领取 durable `queued`；
+  清理无法证明时停止消费，不带病继续；
+- `cancel_requested` 持久化。已运行的 sandbox 由 worker 终止，超过
+  `AGENT_TEST_RUN_TIMEOUT_SECONDS` 同样由 worker 终止并记录 `AGENT_TEST_RUN_TIMEOUT`；
+- 同一 Agent、commit 和待发布目标只允许一个 `queued/running` 记录，重复请求返回 `409`；
+- 临时 testkit 会话属于 API 进程，API 重启后调用返回明确 session unavailable，不伪造恢复。
 
-调度事件使用独立终态：`pending -> enqueued | coalesced | skipped | failed`。重启先恢复 `pending` 事件；若
-对应 `(schedule_id, scheduled_for)` 的运行已经创建，则直接补记 `enqueued`，不会再次创建运行。
+已完成的 stdout、stderr、结构化 pytest item、错误详情和 typed receipt 均持久化且有大小上限。
 
-## 7. 反馈优化生成测试
+## 8. 资产复利中心投影
+
+“资产复利中心”默认展示“测试资产”，并保留“治理资产”页签中的方法论、执行资产和审计
+关系投影；当前 `audit` 过滤值属于横切审计维度，不定义长期第四类资产。
+
+测试页按业务 Agent 展示当前有效 commit 的 suite、文件数、完整诊断、最近运行和定时状态；
+详情分为“测试文件”“运行历史”和“定时策略”。单 Agent suite 不可用时，该导航项展示失效
+诊断，整个资产列表仍可用。源码查看满足以下约束：
+
+- 只接受当前 suite 已声明的 `tests/test_*.py` 路径，拒绝绝对路径和目录穿越；
+- 通过 Workspace Git 在指定 commit 读取 UTF-8 正文，提供行号、语法高亮、搜索、复制和符号定位；
+- 不把源码复制到 `governance_assets`、运行记录或新的数据库测试集；
+- 历史列表只返回轻量摘要并分页，点击单次运行后再读取 stdout、stderr、pytest item、
+  invocation、四态源观察、隔离和错误详情；
+- 不提供跨 Agent“继承测试代码”动作；需要复用时仍通过 Workspace Git 评审和提交。
+
+该页是 Agent 自有工程回归资产入口，不管理 evaluator-owned holdout 正文，不代替“业务 Agent
+详情 → 测评”的长期单 Agent 能力入口，也不以测试页的局部 state 构造独立评测中心。
+
+## 9. 反馈优化生成测试
 
 该阶段固定拆为三个独立动作：
 
-1. **生成回归测试**：治理 Agent 只输出完整 pytest 代码、测试意图和断言依据；后端校验 AST、依赖、
-   `agent.run(...)` 调用以及面向 `result.text` / `result.raw` 的业务断言，并确定
-   `tests/test_feedback_<id>_<digest>.py` 路径。生成结果以完整新增文件 Diff 展示，不写入 Workspace、
-   不提交 Git、也不运行测试。一次生成只形成一个不超过 60 行、仅含一个同步 `test_*` 的单焦点 pytest
-   模块；平台提供 `agent` fixture，生成代码不得定义或覆盖任何 fixture。该任务直接使用 Claude Agent SDK
-   原生 `output_format/json_schema` 和 `ResultMessage.structured_output`，避免第二个模型改写代码；后端再用
-   Pydantic 与 AST 做确定性校验。governor Trace 由后端投影完整 `sdk.tool.*` / `sdk.llm.*` I/O；其子进程
-   不再重复上报 I/O 为空且会产生误导性 `tool.blocked_on_user` 计时事件的 Claude Code 原生 OTEL span。
-   生成失败时返回结构化错误，不用启发式逻辑伪造测试。测试必须使用类型无关的
-   `assert not result.errors` 断言运行无错误；`errors` 是 tuple，不接受 `result.errors == []`。
-   自然语言回答中的标签可能因 Markdown 排版出现空格或换行，固定业务词先用
-   `normalized_text = "".join(result.text.split())` 做最小空白规范化，再对每个预期业务结果分别断言；这只消除格式差异，不得将多个可选结果宽松化为通过。
-   原始反馈、已确认整理和优化方案中每个独立可观察的修复结果必须分别有正向断言；`test_intent` 和 `assertion_rationale` 不能代替测试代码中的断言。
-   已给出全部判断事实的自包含用例，输入必须明确「仅依据已给定事实、不调用工具或读文件」，并断言 `result.raw["agent_activity"]["tool_calls"] == []`；避免本地和平台复跑因未声明 MCP、文件或网络状态发生漂移。
-   后端拒绝仅检查非空、恒等比较、嵌套死分支、辅助函数、`any(...)`
-   和 `A or B` 候选关键词等可误通过写法，也不能只断言相反结果未出现而遗漏目标结果。原始反馈已经给出判断事实时，测试输入必须内嵌这些事实；
-   除非上下文给出可运行的固定资源引用，不得把测试改写为依赖未声明 MCP、数据库或网络数据的查询。
-2. **确认待发布变更**：校验事项、业务 Agent、归因、优化方案、执行记录和待发布变更仍属于同一链路；
-   在隔离 worktree 新增已确认测试文件，不覆盖、删除或弱化已有测试；把配置修改和测试文件压缩为
-   相对修复前版本的单一待发布 Git commit。任一步失败时恢复原待发布提交。
-3. **运行测试**：由独立显式动作创建 `AgentTestRun`，平台 checkout 当前待发布 commit 并运行完整
-   `tests/`。确认动作不得隐式排队或运行 pytest。
+1. **生成回归测试**：治理 Agent 只输出完整 pytest 代码、测试意图和断言依据；后端校验
+   AST、依赖、`agent.run(...)` 调用与业务断言，并确定
+   `tests/test_feedback_<id>_<digest>.py` 路径。生成结果只以完整新文件 Diff 展示，
+   不写入 Workspace、不提交 Git、不运行测试。该候选使用 live fixture，属于后续 P1 live lane，
+   不得伪装为 P0 静态回执。
+2. **确认待发布变更**：校验事项、业务 Agent、归因、优化方案、执行记录和待发布变更仍属于
+   同一链路；在隔离 worktree 新增已确认测试文件，不覆盖、删除或弱化已有测试；
+   把配置修改与测试文件压缩为相对修复前版本的单一待发布 Git commit。
+3. **运行测试**：由独立显式动作创建 `AgentTestRun`；确认动作不得隐式排队、运行
+   pytest 或推进发布。当套件包含 live fixture 时，当前 P0 入口必须 fail-closed，由 P1
+   live lane 承载真实行为执行与评测证据。
 
-同一待发布变更可在返工后产生更新的待发布 commit。旧 commit 及其运行记录保持可审计，但只有
+生成代码继续受限为一个不超过 60 行、只含一个同步 `test_*` 的单焦点模块。后端拒绝只检查
+非空、恒等比较、嵌套死分支、辅助函数、`any(...)` 和 `A or B` 候选关键词等可误通过写法。
+原始反馈、已确认整理和优化方案中每个独立可观察修复结果必须分别有正向断言；
+`test_intent` 和 `assertion_rationale` 不能代替代码断言。
+
+同一待发布变更在返工后可产生更新的待发布 commit。旧 commit 和运行记录保持可审计，但只有
 当前待发布 commit 的结果参与发布条件判断。
 
-执行优化也受同一事项范围约束：确认后的优化方案决定本次可写目标，执行任务只能读取和修改这些目标；
-规范化反馈明确“仅修改”某个 Workspace 路径时，治理 Agent 不得扩展到 Skill、settings、MCP 或其他文件。
-对已有 Markdown 做整文件替换时，后端要求至少保留原文件一半非空行；该保真门只阻止明显截断，不能替代
-完整 Diff 的人工审查。
+## 10. 工程发布条件
 
-## 8. 发布条件
+当前 Workspace pytest 门只表达工程准入，必须同时满足：
 
-普通发布必须同时满足：
-
-- 归因与执行 provenance 完整；
-- 待发布变更有精确的待发布 commit；
-- 该 commit 的 Workspace 存在可运行测试文件；
-- 存在同 Agent、同待发布 `commit_sha` 的 `passed` 运行记录；
+- 归因、执行与待发布版本 provenance 完整；
+- 待发布变更有精确的 `candidate_commit_sha`；
+- 该 commit 的 Workspace 存在当前静态 lane 可运行的测试文件；
+- 存在同 Agent、同待发布 `commit_sha` 的 `passed` 运行；
+- 后端重新物化精确 commit 后，suite/source/tree 与持久化指纹一致；
+- typed receipt 完整性通过，worker/container 绑定一致，`assurance_level=execution_provenance`，
+  `receipt.result.workspace_report_authority=agent_owned_unverified`，cleanup 完整；
+- `source_observation=stable`，且 pre/post/queued `source_digest` 三者相等；
 - 没有其他发布阻塞项。
 
-`suite_digest` 作为该提交测试内容的派生完整性摘要，`change_set_id` 作为未发布改动的关联元数据；
-两者都不取代 `commit_sha`，也不组合成新的版本身份。旧 commit 的通过结果、仅有设计候选、空
-`tests/`、失败、错误、取消或重启中断均不能放行。UI 使用
-“修复前版本”“待发布版本”，不使用含义不清的“基线”“候选”作为用户标签。
+仅 `stable` 的 `passed` typed receipt 可作为发布工程证据。`not_observed`、`pre_only`、`changed`、
+旧历史无回执记录、旧 commit 的通过、空测试目录、只有测试设计、`failed`、`error`、
+`cancelled` 或 `interrupted` 均不能放行。
 
-反馈闭环待发布版本不允许强制绕过测试条件：完整 `workspace/tests/` 中无论是已有失败还是本次新增失败，
-都必须整改并在当前待发布 commit 上重新取得 `passed` 结果。反馈发布工作台不提供强制发布入口。
-未关联反馈、由版本治理 API 手工创建的待发布版本仍可通过受保护 API 强制发布，但必须提供非空原因，并把原阻塞项、原因、
-操作人和警告持久化到 release 与审计事件；provenance 不完整始终不得强制绕过。
+反馈发布工作台不提供强制绕过入口。受保护 API 的 `force=true` 也只表示全部门禁已满足
+后的管理员加急与审批审计，不能绕过测试、provenance 或其他阻塞项。UI 使用“修复前版本”
+和“待发布版本”，不使用含义不清的“基线”“候选”作为用户标签。
 
-## 9. 导入、远程开发与调试
+该门不得被文档或 UI 宣称为业务能力提升、评测基准通过或安全已独立证明。P1
+发布评测落地后，最终发布裁决还必须组合 evaluator-owned `Assessment`、同协议 comparison、
+safety gate 和所需人工决定。
 
-远程开发者可把 Workspace 包导入为一个此前不存在的 URL `agent_id`，再在本地 pytest 中连接平台：
+## 11. 远程开发与调试
+
+远程开发者可导入 Workspace 包，再在本地 pytest 中连接平台。为了使用与评审对象一致，
+文档与调试配置均显式固定完整 commit：
 
 ```bash
 export AGENTGOV_API_BASE=http://agent-gov.example
 export AGENTGOV_AGENT_ID=customer-support
+export AGENTGOV_COMMIT_SHA=<full-40-character-commit-sha>
 export AGENTGOV_API_KEY=...
-python -m pytest -q -p agentgov_testkit.pytest_plugin tests
+python -I -P -m pytest -q --import-mode=importlib -p agentgov_testkit.pytest_plugin tests
 ```
 
-省略 commit 时，创建测试会话或运行会固定当时的当前版本。本地预检不绑定待发布变更；平台发布检查
-统一调用待发布变更测试入口。测试断言在开发者本地 pytest 进程执行；平台只提供被测 Agent 调用、
-版本固定和运行证据，不上传或反向执行任意本地测试代码。
+本地断言在开发者 pytest 进程执行，平台只提供被测 Agent 调用和会话固定。该路径不会将
+本地代码上传给平台执行，也不产生 `p0-exact-commit` typed receipt。平台工程门只认可
+`POST /api/agent-test-runs` 或待发布入口经独立 worker 形成的稳定回执。
 
-## 10. 迁移与删除
+## 12. 迁移与旧设计删除
 
-该设计直接替换数据库 `TestDataset`、`EvalRun`、逐 case review API 和通用资产中的测试类型：
-
+本契约已替换数据库 `TestDataset`、`EvalRun`、逐 case review API 和通用资产中的测试正文类型。
 这里删除的是以数据库测试正文副本为权威的旧链路，不禁止后续建立协议中立的
-`EvaluationExecution/Assessment` 领域对象。当前 `AgentTestRun` 只是 Workspace pytest 的执行证据；
-P1 计划将其作为 `EvaluationExecution` 中独立 sample 的首个 adapter，并由最小协议中立聚合引用，
-而不是把全部评测语义塞回 `report_json`。正式评测包正文继续由独立版本化资产持有，不能借新名称
-恢复旧双轨。
+`EvaluationExecution` / `Assessment` 领域对象。新对象只引用 Workspace 或 evaluator-owned 资产与
+运行证据，不得借新名称恢复正文双轨。
 
-- 迁移 `0048` 归档旧行后删除旧表和待发布变更上的历史评测字段，并建立平台测试运行表；
-- 迁移 `0049` 把四阶段产物统一为 `RegressionTestDesign` 命名；
-- 迁移 `0050` 收敛重复活跃测试运行，并建立精确目标唯一索引；
-- 迁移 `0051` 原样归档旧的自然语言 `expected_behavior + checks_json` 回归设计，删除旧表并建立
-  测试代码、测试意图和断言依据的新契约；不把旧设计猜测转换为可执行测试；
-- 迁移 `0052` 增加每 Agent 唯一定时策略、调度事件表，以及运行记录上的 `schedule_id`、
-  `scheduled_for` 触发来源字段；测试正文仍只存在于 Workspace Git；
+- migration `0048` 归档旧行后删除旧表和待发布变更上的历史评测字段，建立平台测试运行表；
+- migration `0049` 把四阶段产物统一为 `RegressionTestDesign` 命名；
+- migration `0050` 收敛重复活跃测试运行，建立精确目标唯一索引；
+- migration `0051` 原样归档旧自然语言测试设计，删除旧表并建立测试代码、测试意图和断言依据契约；
+- migration `0052` 增加每 Agent 唯一定时策略、调度事件和运行触发来源字段；
+- migration `0053` 为运行增加 worker fence、source/tree、container 引用与 nullable typed receipt；
+  历史运行不回填回执，不获得发布资格；
+- migration `0054` 为 Workspace 导入审计增加 suite status 和完整 diagnostics 投影，不复制测试正文；
+- migration `0055` 为 Workspace 导入/恢复增加持久化激活日志，绑定原状态、候选提交、完整诊断与
+  runtime fence；prepared 后 graph identity 不可变，恢复使用平台自有 Git 环境校验 canonical
+  commit/tree/parent 关系和完整 index 语义，崩溃恢复无法证明一致时保持 `recovery_required`；
+- migration `0058` 不增加测试正文或新运行对象；它幂等重装 0055/0057 authority triggers，
+  避免已应用旧版迁移的持久卷遗漏 graph 冻结、合法转移、终态不可变/禁止删除与
+  recovery terminal-evidence 约束；
 - `make runtime-migrate-workspace-tests-scan` 只读扫描运行卷，确认后使用
-  `make runtime-migrate-workspace-tests` 将旧 `evals/` 归档到 Workspace 外，并为缺测试的内置安全运营
-  Agent 提交产品自带测试；已有普通业务 Agent 缺测试时仍只告警；迁移保留现有
-  `agent.yaml.agent.id`，不代替所有者补写、删除或改写身份；能够精确识别的历史平台弱断言测试会按内容
-  摘要归档到 Workspace 外的 `data/archived-legacy-test-assets/`，并从活跃 `tests/` 删除。迁移不把
-  `agent.invoke(...)` 机械改名为 `agent.run(...)`，不猜测业务断言；开发者编写的测试保持原样，带旧标记
-  但结构不明的文件失败关闭并要求人工处理；
-- 外部导入包必须声明有效的 `agent.yaml.agent.id`，且与 URL 目标 ID 逐字一致；平台保留包内容但
-  不自动修正身份，缺失、无效或不一致时返回明确错误和修复建议；
-- 旧 API、service、store、前端 hook、生命周期控件和 E2E 路径从活跃代码删除；
-- 历史迁移文件和归档文档可保留旧名，用于升级与审计，不构成兼容层。
+  `make runtime-migrate-workspace-tests` 将旧 `evals/` 归档到 Workspace 外，并为缺测试的内置业务
+  Agent 提交产品自带测试；普通业务 Agent 缺测试时仍只告警；
+- 旧 API 内执行链、本地执行 facade、旧 service/store、前端旧类型和 E2E 路径
+  从活跃代码删除；历史迁移和归档文档可保留旧名，但不构成兼容入口。
 
-## 11. 验收
+## 13. 验收
 
-- 新建或导入 Agent：URL ID 与包内 `agent.yaml.agent.id` 必须逐字一致；缺少测试只告警；包含测试时
-  suite 可按 commit 检查。
-- testkit：显式/环境变量调用、commit 一次固定、每用例会话隔离、错误透传和 pytest 报告均有单测。
-- 平台运行：固定命令、精确 commit、取消、输出限制、失败详情和服务重启恢复有专项测试。
-- 反馈闭环：生成只形成代码 Diff；确认只新增扁平测试文件并形成配置与测试同一 commit；运行由独立动作排队。
-- 发布：旧 commit 通过不能放行；当前 commit 的完整测试集通过才可发布；反馈闭环不可强制绕过，未关联反馈的手工待发布版本强制发布必须有原因和持久化警告。
-- UI：资产复利中心默认显示测试资产；测试文件、运行历史、定时策略和治理资产分层呈现；桌面、平板和
-  移动端无重叠或横向溢出，测试页不出现通用资产的“沉淀/继承”动作。
-- 调度：五字段 Cron、IANA 时区、15 分钟下限、每 Agent 唯一、重启错过窗口合并、持久化 pending 续处理、
-  重复活跃运行合并、非活跃 Agent 跳过、归档/删除停用和终态非法转移均有专项测试。
-- 工程门：专项 pytest、前端构建、`verify:design-parity`、`make main-flow-test`、`make codex-guard`
-  和真实 Compose `ui-feedback-smoke` 通过。
+- 测试权威：业务 Agent 的测试正文只来自 Workspace Git，数据库和 Registry 只保存指纹、证据和关系。
+- 版本绑定：手工运行缺少完整 commit 或提交短 SHA 时失败；待发布与定时入口由后端在入队前固定精确 commit。
+- 入队：API 只持久化已校验的 `queued` 运行，不在本进程启动 pytest 或 Docker sandbox。
+- 源码：完整 tree 和沙箱投影摘要分开绑定；私有路径与凭据字面量不进入投影，不宣称通用 DLP。
+- Git authority：受管命令固定 git-dir/work-tree，不执行 repository-local 外部驱动，不消费
+  alternates/非规范 commondir/grafts/partial clone；commit tree/parents 从 raw object header 解析，
+  activation refs 与 HEAD 保持 direct-ref canonical topology。
+- worker：独占锁、worker-only named volume `/agent-test-runs`、实际 volume 目录 pre/post 四态观察、claim fence、取消、
+  超时、残留清理和重启恢复都有正向与负向测试。
+- sandbox：固定命令与精确三项环境、同一 named volume 的 per-run `/workspace:ro` subpath、
+  `/output` / `/tmp` tmpfs、无网络、无 Docker socket、资源上限、
+  stdout envelope + `tail` 读取、Docker inspect 不匹配和 cleanup 失败都 fail-closed；父 orchestrator
+  的 SIGINT/SIGTERM 必须终止并 reap 当前子进程组，随后完成 exact teardown 并以 130/143 退出。
+- 回执与发布：只有同 commit、`stable`、完整性通过的 `passed` typed receipt 可满足工程门；
+  历史无回执记录和其他源观察状态不放行。
+- 资产列表：任一单 Agent suite 检查失败时只降级对应项，`/api/agent-test-assets` 其他 Agent
+  仍可见，受影响项显示结构化诊断。
+- 产品边界：工程回归运行不被声称为能力 benchmark、独立 Assessment、安全通过或线上业务效果。
+- 真实容器验收：公共 `make container-workspace-pytest-test` 基于当前工作树构建 API、worker 和 sandbox，
+  在独立临时 Runtime 根、Compose project 与临时 named volume 中执行，不读写现有 live volume，
+  入口先形成候选 Git tree 和 materialized snapshot，再用同一候选构建全部镜像；
+  `docker/runtime-bootstrap` 已构建进 API 镜像，Compose 不为 `/app/docker/runtime-bootstrap` 配置 host bind；
+  完成后验证容器、网络、卷、label 和临时目录无残留。
+- 工程门：目标 pytest、文档契约、OpenAPI/生成类型、前端构建、`make main-flow-test`、
+  `make codex-guard` 和提交前串行 `make test` 按风险分层通过。

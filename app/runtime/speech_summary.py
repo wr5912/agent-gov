@@ -328,12 +328,14 @@ class SpeechSummaryCoordinator:
         run_id: str,
         boundaries: tuple[SpeechSummaryBoundary, ...],
         enabled: bool,
+        task_timeout_seconds: float,
         emit: Callable[[AgentGovControlEvent], Awaitable[None]],
     ) -> None:
         self.service = service
         self.run_id = run_id
         self.boundaries = frozenset(boundaries)
         self.enabled = bool(enabled and boundaries)
+        self.task_timeout_seconds = task_timeout_seconds
         self.emit = emit
         self._current_main_message_id: str | None = None
         self._thinking_parts: dict[tuple[str, int], list[str]] = {}
@@ -460,14 +462,15 @@ class SpeechSummaryCoordinator:
         block_index: int | None,
     ) -> None:
         try:
-            async with self._serial_lock:
-                output = await self.service.generate(
-                    source_kind=source_kind,
-                    source_text=source_text,
-                    run_id=self.run_id,
-                    message_id=message_id,
-                    block_index=block_index,
-                )
+            async with asyncio.timeout(self.task_timeout_seconds):
+                async with self._serial_lock:
+                    output = await self.service.generate(
+                        source_kind=source_kind,
+                        source_text=source_text,
+                        run_id=self.run_id,
+                        message_id=message_id,
+                        block_index=block_index,
+                    )
             if output is None or self._closed:
                 return
             payload = _speech_payload(
@@ -486,6 +489,11 @@ class SpeechSummaryCoordinator:
             )
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            logger.warning(
+                "event=speech_summary.generate status=dropped reason=task_deadline source_kind=%s",
+                source_kind,
+            )
         except Exception as exc:
             logger.warning(
                 "event=speech_summary.emit status=dropped error_type=%s",

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -7,6 +8,65 @@ from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app as _load_app
 from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+
+
+@dataclass(frozen=True)
+class _ConfirmedImprovement:
+    improvement_id: str
+    base_commit_sha: str
+    optimization_plan_id: str
+    optimization_plan_updated_at: str
+    attribution_id: str
+    attribution_updated_at: str
+
+
+def _prepare_confirmed_improvement(module, agent_store) -> _ConfirmedImprovement:
+    improvement = module.improvement_store.create_improvement(
+        agent_id=ORDINARY_TEST_AGENT_ID,
+        title="执行取消",
+    )
+    module.improvement_content_store.upsert_normalized_feedback(
+        improvement.improvement_id,
+        problem="p",
+        advance_to_stage="triage",
+    )
+    module.improvement_content_store.upsert_attribution(
+        improvement.improvement_id,
+        summary="a",
+        advance_to_stage="attribution",
+    )
+    module.improvement_content_store.set_attribution_status(
+        improvement.improvement_id,
+        status="confirmed",
+    )
+    module.improvement_content_store.upsert_optimization_plan(
+        improvement.improvement_id,
+        summary="o",
+        changes=[{"target": "prompt", "change": "x"}],
+        advance_to_stage="optimization",
+    )
+    module.improvement_content_store.set_optimization_plan_status(
+        improvement.improvement_id,
+        status="confirmed",
+    )
+    plan = module.improvement_content_store.get_optimization_plan(improvement.improvement_id)
+    attribution = module.improvement_content_store.get_attribution(improvement.improvement_id)
+    assert plan is not None and attribution is not None
+    return _ConfirmedImprovement(
+        improvement_id=improvement.improvement_id,
+        base_commit_sha=str(agent_store.current_commit_sha()),
+        optimization_plan_id=plan.optimization_plan_id,
+        optimization_plan_updated_at=plan.updated_at,
+        attribution_id=attribution.attribution_id,
+        attribution_updated_at=attribution.updated_at,
+    )
+
+
+def _assert_abandoned_improvement(module, improvement_id: str) -> None:
+    execution = module.improvement_content_store.get_execution(improvement_id)
+    assert execution is not None and execution.status == "draft" and not execution.claim_token
+    archived = module.improvement_store.archive_improvement(improvement_id)
+    assert archived.improvement_status == "archived"
 
 
 def test_feedback_store_error_handler_returns_structured_error(monkeypatch, tmp_path):
@@ -147,46 +207,25 @@ def test_agent_change_set_publish_conflict_returns_structured_error(monkeypatch,
 
 def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path, extra_agent_ids=(ORDINARY_TEST_AGENT_ID,))
+    module.ensure_agent_repositories(module.settings)
     agent_store = module.agent_governance._store_for(ORDINARY_TEST_AGENT_ID)
-    improvement = module.improvement_store.create_improvement(agent_id=ORDINARY_TEST_AGENT_ID, title="执行取消")
-    module.improvement_content_store.upsert_normalized_feedback(
-        improvement.improvement_id,
-        problem="p",
-        advance_to_stage="triage",
-    )
-    module.improvement_content_store.upsert_attribution(
-        improvement.improvement_id,
-        summary="a",
-        advance_to_stage="attribution",
-    )
-    module.improvement_content_store.set_attribution_status(improvement.improvement_id, status="confirmed")
-    module.improvement_content_store.upsert_optimization_plan(
-        improvement.improvement_id,
-        summary="o",
-        changes=[{"target": "prompt", "change": "x"}],
-        advance_to_stage="optimization",
-    )
-    module.improvement_content_store.set_optimization_plan_status(improvement.improvement_id, status="confirmed")
-    plan = module.improvement_content_store.get_optimization_plan(improvement.improvement_id)
-    attribution = module.improvement_content_store.get_attribution(improvement.improvement_id)
-    assert plan is not None and attribution is not None
-    base = str(agent_store.current_commit_sha())
+    context = _prepare_confirmed_improvement(module, agent_store)
     claimed_at = datetime.now(UTC)
     claim = module.improvement_content_store.execution_claims.claim_execution(
-        improvement.improvement_id,
+        context.improvement_id,
         change_set_id="agc-11111111-2222-3333-4444-555555555555",
-        base_commit_sha=base,
-        source_optimization_plan_id=plan.optimization_plan_id,
-        source_optimization_plan_updated_at=plan.updated_at,
-        source_attribution_id=attribution.attribution_id,
-        source_attribution_updated_at=attribution.updated_at,
+        base_commit_sha=context.base_commit_sha,
+        source_optimization_plan_id=context.optimization_plan_id,
+        source_optimization_plan_updated_at=context.optimization_plan_updated_at,
+        source_attribution_id=context.attribution_id,
+        source_attribution_updated_at=context.attribution_updated_at,
         claim_token="claim-api-abandon",
         now=claimed_at.isoformat(),
         claim_expires_at=(claimed_at + timedelta(minutes=10)).isoformat(),
     )
     change_set = module.agent_governance.create_change_set(
         change_set_id=claim.change_set_id,
-        base_commit_sha=base,
+        base_commit_sha=context.base_commit_sha,
         execution_job_id=claim.execution_id,
         agent_id=ORDINARY_TEST_AGENT_ID,
     )
@@ -207,26 +246,26 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
     with TestClient(module.app) as client:
         cleanup_failed = client.post(f"/api/agent-change-sets/{claim.change_set_id}/abandon", json={})
 
-    interrupted = module.improvement_content_store.get_execution(improvement.improvement_id)
+    interrupted = module.improvement_content_store.get_execution(context.improvement_id)
     pending_change_set = module.agent_governance.get_change_set(claim.change_set_id)
     assert cleanup_failed.status_code == 409
     assert interrupted is not None and interrupted.status == "draft" and not interrupted.claim_token
     assert pending_change_set is not None and pending_change_set["worktree_cleanup_pending"] is True
 
     replacement = module.improvement_content_store.execution_claims.claim_execution(
-        improvement.improvement_id,
+        context.improvement_id,
         change_set_id="agc-66666666-2222-3333-4444-555555555555",
-        base_commit_sha=base,
-        source_optimization_plan_id=plan.optimization_plan_id,
-        source_optimization_plan_updated_at=plan.updated_at,
-        source_attribution_id=attribution.attribution_id,
-        source_attribution_updated_at=attribution.updated_at,
+        base_commit_sha=context.base_commit_sha,
+        source_optimization_plan_id=context.optimization_plan_id,
+        source_optimization_plan_updated_at=context.optimization_plan_updated_at,
+        source_attribution_id=context.attribution_id,
+        source_attribution_updated_at=context.attribution_updated_at,
         claim_token="claim-immediate-retry",
         now=(claimed_at + timedelta(minutes=1)).isoformat(),
         claim_expires_at=(claimed_at + timedelta(minutes=11)).isoformat(),
     )
     module.improvement_content_store.execution_claims.finish_without_application(
-        improvement.improvement_id,
+        context.improvement_id,
         claim_token=replacement.claim_token,
         claim_generation=replacement.claim_generation,
         summary="retry claim acquired before old lease expired",
@@ -244,9 +283,7 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
     assert publish.status_code == 409
     actions = [event["action"] for event in module.agent_governance.list_change_set_events(claim.change_set_id)]
     assert actions.count("abandoned") == 1
-    execution = module.improvement_content_store.get_execution(improvement.improvement_id)
-    assert execution is not None and execution.status == "draft" and not execution.claim_token
-    assert module.improvement_store.archive_improvement(improvement.improvement_id).improvement_status == "archived"
+    _assert_abandoned_improvement(module, context.improvement_id)
 
 
 def test_chat_during_agent_version_maintenance_returns_structured_503(monkeypatch, tmp_path):

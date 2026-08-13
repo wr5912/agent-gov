@@ -63,7 +63,7 @@ version、旧前端入口和旧生成类型做文本检索，并把结果分类�
 - job type、profile、prompt builder、结构化输出契约和 OutputModel 的来源是集中注册表。
 - `model_dump(mode="json")` 只出现在 DB、HTTP、文件、日志或观测边界；如在内部出现，必须说明原因。
 - prompt、结构化输出契约和 OutputModel 只要求 agent-owned 输出字段；backend-owned 字段只作为输入上下文或后端投影值。
-- touched job type 至少有 1 个 hostile backend-owned 字段污染测试，例如 Agent 输出错误 job_id、
+- touched job type 至少有 1 个冲突的 backend-owned 字段污染测试，例如 Agent 输出错误 job_id、
   workflow_id、case ids、时间戳、scope 或 provenance，最终 validated/projection 必须使用后端权威值。
 - 检索确认主链路没有新增 `OutputFormatterResult[BaseModel]`、`complete_*_job(... raw_output: BaseModel | JsonObject)`
   或 `run_profile_json` / `format_agent_text` 返回 `BaseModel` 的类型擦除。
@@ -91,5 +91,5 @@ Analyze 阶段观察，不能作为 Verify 通过标准。只有项目未配置�
 
 - 生命周期状态字段变更：至少 1 个非法状态转移或非法输入测试。
 - 并发资源变更：至少 1 个重复执行、竞争或部分失败测试。
-- 外部输入变更：至少 1 个异常、恶意或越权输入测试。
+- 外部输入变更：至少 1 个异常、无效或超范围输入测试。
 - 只有 happy path 时，必须说明剩余风险。

@@ -50,7 +50,7 @@ def _generate(service: SpeechSummaryService) -> SpeechSummaryOutput | None:
     return asyncio.run(
         service.generate(
             source_kind="thinking",
-            source_text="正在核对告警证据并关联攻击链路。",
+            source_text="正在核对告警证据并关联威胁链路。",
             run_id="run-1",
             message_id="msg-1",
             block_index=0,
@@ -61,11 +61,11 @@ def _generate(service: SpeechSummaryService) -> SpeechSummaryOutput | None:
 def test_typed_output_is_trimmed_and_contains_only_agent_owned_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    predictor = _Predictor({"text": "  正在核对告警证据与关键攻击链路  "})
+    predictor = _Predictor({"text": "  正在核对告警证据与关键威胁链路  "})
     output = _generate(_service(monkeypatch, predictor))
 
-    assert output == SpeechSummaryOutput(text="正在核对告警证据与关键攻击链路")
-    assert output.model_dump() == {"text": "正在核对告警证据与关键攻击链路"}
+    assert output == SpeechSummaryOutput(text="正在核对告警证据与关键威胁链路")
+    assert output.model_dump() == {"text": "正在核对告警证据与关键威胁链路"}
     schema = SpeechSummaryOutput.model_json_schema()
     assert set(schema["properties"]) == {"text"}
     assert schema["additionalProperties"] is False
@@ -113,16 +113,16 @@ def test_hostile_backend_owned_fields_cannot_enter_output(
 ) -> None:
     predictor = _Predictor(
         {
-            "text": "正在核对告警证据与关键攻击链路",
-            "run_id": "attacker-run",
+            "text": "正在核对告警证据与关键威胁链路",
+            "run_id": "untrusted-run",
             "scope": "subagent",
         },
-        {"text": "正在核对告警证据与关键攻击链路"},
+        {"text": "正在核对告警证据与关键威胁链路"},
     )
     output = _generate(_service(monkeypatch, predictor))
 
     assert output is not None
-    assert output.model_dump() == {"text": "正在核对告警证据与关键攻击链路"}
+    assert output.model_dump() == {"text": "正在核对告警证据与关键威胁链路"}
     assert len(predictor.calls) == 2
 
 
@@ -157,7 +157,7 @@ def test_timeout_is_silently_dropped(
         async def acall(self, **kwargs: str) -> object:
             self.calls.append(kwargs)
             await asyncio.sleep(1)
-            return SimpleNamespace(summary={"text": "正在核对告警证据与关键攻击链路"})
+            return SimpleNamespace(summary={"text": "正在核对告警证据与关键威胁链路"})
 
     predictor = _SlowPredictor()
 

@@ -14,6 +14,7 @@ GOVERNANCE_COMMANDS = (
         "agent configuration",
         [PYTHON, str(ROOT / ".codex/skills/codex-config-optimizer/scripts/audit_codex_config.py"), "--fail"],
     ),
+    ("defensive security boundary", [PYTHON, str(ROOT / "scripts/check_defensive_security_boundary.py")]),
     ("codex governance", [PYTHON, str(ROOT / "scripts/check_codex_governance.py"), "--mode", "fail"]),
     ("stage language", [PYTHON, str(ROOT / "scripts/check_stage_language.py")]),
     ("version consistency", [PYTHON, str(ROOT / "scripts/check_version_consistency.py")]),

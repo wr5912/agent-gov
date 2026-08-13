@@ -145,7 +145,7 @@ def _declared_agent_id(
             "WORKSPACE_MANIFEST_AGENT_ID_INVALID",
             (
                 "导入被拒绝：agent.yaml.agent.id 必须是非空字符串，只能包含英文字母、数字、点、"
-                f"下划线或连字符，且不能是 “.” 或 “..”。请将其设置为 {expected_agent_id} 后重新打包。"
+                f"下划线或连字符，长度最多 128 个字符，且不能是 “.” 或 “..”。请将其设置为 {expected_agent_id} 后重新打包。"
             ),
             error_details=details,
         ) from exc

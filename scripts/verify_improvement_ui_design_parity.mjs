@@ -158,21 +158,7 @@ async function removeReleaseWorkbenchHarness(page) {
 }
 
 async function openAuditImprovement(page) {
-  await page.getByTestId("nav-improvement").click();
-  await page.getByTestId("improvement-workbench").waitFor({ timeout: 8000 }).catch(() => {});
-  const target = page.locator(`[data-testid="improvement-list-item"][data-item-id="${auditTargetId}"]`).first();
-  await target.waitFor({ timeout: 8000 }).catch(() => {});
-  if ((await target.count()) > 0) {
-    await target.click();
-    await page.getByTestId("improvement-detail").waitFor({ timeout: 8000 }).catch(() => {});
-    return true;
-  }
-  const first = page.getByTestId("improvement-list-item").first();
-  await first.waitFor({ timeout: 8000 }).catch(() => {});
-  if ((await first.count()) === 0) return false;
-  await first.click();
-  await page.getByTestId("improvement-detail").waitFor({ timeout: 8000 }).catch(() => {});
-  return true;
+  return openImprovementById(page, auditTargetId);
 }
 
 async function openImprovementById(page, improvementId) {
@@ -182,8 +168,16 @@ async function openImprovementById(page, improvementId) {
   await target.waitFor({ timeout: 8000 }).catch(() => {});
   if ((await target.count()) === 0) return false;
   await target.click();
-  await page.getByTestId("improvement-detail").waitFor({ timeout: 8000 }).catch(() => {});
-  return true;
+  const detail = page.locator(`[data-testid="improvement-detail"][data-item-id="${improvementId}"]`).first();
+  try {
+    await detail.waitFor({ timeout: 8000 });
+    await detail.getByTestId("improvement-detail-loading").waitFor({ state: "detached", timeout: 8000 });
+    await detail.getByTestId("current-decision-card").waitFor({ timeout: 8000 });
+  } catch {
+    return false;
+  }
+  return (await detail.getAttribute("data-item-id")) === improvementId
+    && (await detail.getByTestId("improvement-detail-load-error").count()) === 0;
 }
 
 function stageTarget(key, mockId) {

@@ -14,6 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
+from app.runtime.agent_git_environment import (
+    GovernedGitEnvironmentError,
+    governed_git_command,
+    governed_git_environment,
+    require_governed_repository,
+)
 from app.runtime.business_agent_workspace import WorkspaceProvisionEntry
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.json_types import JsonObject
@@ -207,11 +213,16 @@ def _read_commit_blob_contents(
     unique_specs = _unique_blob_specs(specs)
     if not unique_specs:
         return ()
+    try:
+        require_governed_repository(repository)
+        command = governed_git_command(repository, ["cat-file", "--batch"])
+    except GovernedGitEnvironmentError as exc:
+        raise WorkspaceGitReadError("Workspace Git blob authority rejected the repository") from exc
     with tempfile.TemporaryFile() as stderr_output:
         process = subprocess.Popen(
-            ["git", "cat-file", "--batch"],
+            command,
             cwd=str(repository),
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            env=governed_git_environment(repository=repository, optional_locks=False),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=stderr_output,

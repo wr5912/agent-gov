@@ -11,8 +11,8 @@ from app.runtime.session_store import LocalSession
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app as _base_load_app
-from business_agent_test_utils import LEGACY_MAIN_AGENT_ID
-from test_agent_workspace_packages import _import_new_agent
+from business_agent_test_utils import LEGACY_MAIN_AGENT_ID, delete_test_business_agent
+from workspace_package_test_utils import import_new_agent as _import_new_agent
 
 
 def _load_app(monkeypatch, tmp_path, **kwargs):
@@ -286,7 +286,7 @@ def test_strict_fail_loud_503_when_operator_agent_deleted(monkeypatch, tmp_path:
     with TestClient(module.app) as client:
         _register_biz(client)
         client.put("/api/settings/openai-compat-agent", json={"agent_id": "soc-ops"})
-        assert client.delete("/api/agent-registry/soc-ops").status_code == 200
+        assert delete_test_business_agent(client, "soc-ops").status_code == 200
         assert client.post("/v1/responses", json={"input": "hi"}).status_code == 503
 
 

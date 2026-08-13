@@ -58,14 +58,8 @@ x-logging: &default-logging
 
 x-acceptance-labels: &acceptance-labels
   io.agentgov.acceptance-run-id: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
-
-x-runtime-bootstrap: &runtime-bootstrap
-  type: bind
-  source: ${RUNTIME_BOOTSTRAP_HOST_DIR:-./runtime-bootstrap}
-  target: /app/docker/runtime-bootstrap
-  read_only: true
-  bind:
-    create_host_path: false
+  io.agentgov.acceptance-candidate-tree: ${AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE:-unmanaged}
+  io.agentgov.acceptance-selected-env-sha256: ${AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256:-unmanaged}
 
 services:
   agent-gov-litellm-sidecar:
@@ -74,6 +68,8 @@ services:
       dockerfile: docker/litellm-sidecar.Dockerfile
       args:
         AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
+        AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE: ${AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE:-unmanaged}
+        AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256: ${AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256:-unmanaged}
     image: agent-gov-litellm-sidecar:${APP_VERSION:-dev}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-litellm-sidecar
     labels: *acceptance-labels
@@ -98,6 +94,8 @@ services:
       dockerfile: docker/Dockerfile
       args:
         AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
+        AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE: ${AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE:-unmanaged}
+        AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256: ${AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256:-unmanaged}
     image: agent-gov-api:${APP_VERSION:-dev}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-api
     labels: *acceptance-labels
@@ -149,7 +147,6 @@ services:
       UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
-      - *runtime-bootstrap
       - ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}:${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
@@ -164,12 +161,58 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  agent-test-worker:
+    image: agent-gov-api:${APP_VERSION:-dev}
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-test-worker
+    labels: *acceptance-labels
+    command: ["agent-test-worker"]
+    network_mode: "none"
+    environment:
+      AGENT_TEST_DATA_DIR: ${DATA_DIR:-/data}
+      AGENT_TEST_RUNS_DIR: /agent-test-runs
+      AGENT_TEST_SANDBOX_IMAGE: agent-gov-test-sandbox:${APP_VERSION:-dev}
+      AGENT_TEST_DOCKER_SOCKET: /var/run/docker.sock
+      AGENT_TEST_TIMEOUT_SECONDS: ${AGENT_TEST_RUN_TIMEOUT_SECONDS:-1800}
+      AGENT_TEST_POLL_SECONDS: ${AGENT_TEST_WORKER_POLL_SECONDS:-0.5}
+      AGENT_TEST_WORKER_ID: ${CONTAINER_NAME_PREFIX:-agent-gov}-test-worker
+    volumes:
+      - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
+      - type: volume
+        source: agent-test-runs
+        target: /agent-test-runs
+        volume:
+          nocopy: true
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      claude-agent-api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  agent-test-sandbox-image:
+    profiles: ["agent-test-build"]
+    build:
+      context: ..
+      dockerfile: docker/agent-test-sandbox.Dockerfile
+      args:
+        AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
+        AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE: ${AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE:-unmanaged}
+        AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256: ${AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256:-unmanaged}
+    image: agent-gov-test-sandbox:${APP_VERSION:-dev}
+    labels: *acceptance-labels
+    network_mode: "none"
+    command: ["/usr/local/bin/python", "-c", "raise SystemExit(0)"]
+    restart: "no"
+    logging: *default-logging
+
   claude-agent-ui:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
       args:
         AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
+        AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE: ${AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE:-unmanaged}
+        AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256: ${AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256:-unmanaged}
     image: agent-gov-ui:${APP_VERSION:-dev}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-ui
     labels: *acceptance-labels
@@ -197,6 +240,10 @@ services:
     image: ${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17}
     user: "0:0"
     network_mode: "none"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["DAC_OVERRIDE", "FOWNER"]
+    security_opt: ["no-new-privileges:true"]
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
@@ -207,8 +254,9 @@ services:
           /langfuse/redis \
           /langfuse/minio
         do
-          mkdir -p "$$path"
-          chmod -R a+rwX "$$path"
+          [ -d "$$path" ] && [ ! -L "$$path" ] || exit 1
+          find "$$path" -xdev -type d -exec chmod a+rwx {} +
+          find "$$path" -xdev -type f -exec chmod a+rw {} +
         done
     volumes:
       - ${LANGFUSE_POSTGRES_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/postgres}:/langfuse/postgres
@@ -359,3 +407,7 @@ services:
       interval: 3s
       timeout: 3s
       retries: 10
+
+volumes:
+  agent-test-runs:
+    driver: local

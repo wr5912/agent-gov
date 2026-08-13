@@ -3,10 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import stat
-import subprocess
-import tarfile
 import threading
-from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 
@@ -18,219 +15,30 @@ from app.services import agent_workspace_package_codec as workspace_codec
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app as _load_app
-from workspace_package_test_utils import package_with_agent_id as _package_with_agent_id
-
-
-def _workspace_package(
-    files: dict[str, bytes],
-    *,
-    executable: frozenset[str] = frozenset(),
-    agent_id: str | None = None,
-) -> bytes:
-    package_files = dict(files)
-    if agent_id is not None and "agent.yaml" not in package_files:
-        package_files["agent.yaml"] = f"agent:\n  id: {agent_id}\n".encode()
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        root = tarfile.TarInfo("workspace/")
-        root.type = tarfile.DIRTYPE
-        root.mode = 0o755
-        archive.addfile(root)
-        for path, content in sorted(package_files.items()):
-            member = tarfile.TarInfo(f"workspace/{path}")
-            member.size = len(content)
-            member.mode = 0o755 if path in executable else 0o644
-            archive.addfile(member, io.BytesIO(content))
-    return buffer.getvalue()
-
-
-def _import_new_agent(
-    client: TestClient,
-    *,
-    agent_id: str,
-    name: str,
-    package: bytes | None = None,
-    requires_web_hitl: bool = True,
-):
-    content = package or _workspace_package(
-        {
-            "CLAUDE.md": f"# {name}\n".encode(),
-            ".mcp.json": b'{"mcpServers": {}}\n',
-            ".claude/settings.json": (b'{"permissions":{"ask":["Bash(*)"]}}\n' if requires_web_hitl else b'{"permissions":{"ask":[]}}\n'),
-        },
-        agent_id=agent_id,
-    )
-    return client.post(
-        f"/api/agent-registry/{agent_id}/workspace/import",
-        data={"name": name},
-        files={"package": (f"{agent_id}.tar.gz", content, "application/gzip")},
-    )
-
-
-def _package_from_workspace(workspace: Path, *, overrides: dict[str, bytes]) -> bytes:
-    files: dict[str, bytes] = {}
-    executable: set[str] = set()
-    for path in workspace.rglob("*"):
-        relative = path.relative_to(workspace)
-        if ".git" in relative.parts or not path.is_file():
-            continue
-        key = relative.as_posix()
-        files[key] = path.read_bytes()
-        if stat.S_IMODE(path.stat().st_mode) & 0o111:
-            executable.add(key)
-    files.update(overrides)
-    return _workspace_package(files, executable=frozenset(executable))
-
-
-def _run_git(repository: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args],
-        cwd=repository,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-
-def _invalid_package(kind: str) -> bytes:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        if kind == "traversal":
-            member = tarfile.TarInfo("workspace/../escape")
-            member.size = 1
-            archive.addfile(member, io.BytesIO(b"x"))
-        elif kind == "symlink":
-            member = tarfile.TarInfo("workspace/link")
-            member.type = tarfile.SYMTYPE
-            member.linkname = "/etc/passwd"
-            archive.addfile(member)
-        elif kind == "directory-size":
-            member = tarfile.TarInfo("workspace/non-empty-directory/")
-            member.type = tarfile.DIRTYPE
-            member.size = 1
-            archive.addfile(member, io.BytesIO(b"x"))
-        elif kind == "file-prefix":
-            parent = tarfile.TarInfo("workspace/a")
-            parent.size = 1
-            archive.addfile(parent, io.BytesIO(b"x"))
-            child = tarfile.TarInfo("workspace/a/b")
-            child.size = 1
-            archive.addfile(child, io.BytesIO(b"y"))
-        elif kind == "file-prefix-reversed":
-            child = tarfile.TarInfo("workspace/a/b")
-            child.size = 1
-            archive.addfile(child, io.BytesIO(b"y"))
-            parent = tarfile.TarInfo("workspace/a")
-            parent.size = 1
-            archive.addfile(parent, io.BytesIO(b"x"))
-        elif kind == "surrogate":
-            member = tarfile.TarInfo("workspace/\udcff")
-            member.size = 1
-            archive.addfile(member, io.BytesIO(b"x"))
-        else:
-            for content in (b"a", b"b"):
-                member = tarfile.TarInfo("workspace/duplicate")
-                member.size = 1
-                archive.addfile(member, io.BytesIO(content))
-    return buffer.getvalue()
-
-
-def _package_with_long_tar_metadata(path_bytes: int) -> bytes:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz", format=tarfile.GNU_FORMAT) as archive:
-        member = tarfile.TarInfo(f"workspace/{'a' * path_bytes}")
-        member.size = 1
-        archive.addfile(member, io.BytesIO(b"x"))
-    return buffer.getvalue()
-
-
-def _package_with_metadata_chain(count: int, *, member_type: bytes = tarfile.XGLTYPE) -> bytes:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        for index in range(count):
-            payload = _pax_record(str(index), "x") if member_type == tarfile.XGLTYPE else f"workspace/long-{index}\0".encode()
-            member = tarfile.TarInfo(f"metadata-{index}")
-            member.type = member_type
-            member.size = len(payload)
-            archive.addfile(member, io.BytesIO(payload))
-        root = tarfile.TarInfo("workspace/")
-        root.type = tarfile.DIRTYPE
-        archive.addfile(root)
-    return buffer.getvalue()
-
-
-def _pax_record(key: str, value: str) -> bytes:
-    body = f"{key}={value}\n".encode()
-    length = len(body) + 3
-    while True:
-        record = str(length).encode() + b" " + body
-        if len(record) == length:
-            return record
-        length = len(record)
-
-
-def _package_with_empty_pax_path() -> bytes:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        payload = _pax_record("path", "")
-        metadata = tarfile.TarInfo("empty-path-metadata")
-        metadata.type = tarfile.XHDTYPE
-        metadata.size = len(payload)
-        archive.addfile(metadata, io.BytesIO(payload))
-        member = tarfile.TarInfo("workspace/fallback")
-        member.size = 1
-        archive.addfile(member, io.BytesIO(b"x"))
-    return buffer.getvalue()
-
-
-def _package_with_large_reversed_conflict(member_count: int) -> bytes:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        root = tarfile.TarInfo("workspace/")
-        root.type = tarfile.DIRTYPE
-        archive.addfile(root)
-        for index in range(member_count - 2):
-            member = tarfile.TarInfo(f"workspace/sibling-{index:05d}")
-            member.size = 0
-            archive.addfile(member, io.BytesIO())
-        child = tarfile.TarInfo("workspace/conflict/child")
-        child.size = 0
-        archive.addfile(child, io.BytesIO())
-        parent = tarfile.TarInfo("workspace/conflict")
-        parent.size = 0
-        archive.addfile(parent, io.BytesIO())
-    return buffer.getvalue()
-
-
-def _git_bytes(repository: Path, args: list[str], *, input_bytes: bytes | None = None) -> bytes:
-    return subprocess.run(
-        ["git", *args],
-        cwd=repository,
-        input=input_bytes,
-        check=True,
-        capture_output=True,
-    ).stdout
-
-
-def _make_shared_blob_commit(repository: Path, paths: Iterable[str], content: bytes) -> str:
-    repository.mkdir()
-    _git_bytes(repository, ["init", "-q"])
-    _git_bytes(repository, ["config", "user.name", "AgentGov Test"])
-    _git_bytes(repository, ["config", "user.email", "agentgov-test@example.local"])
-    object_id = _git_bytes(repository, ["hash-object", "-w", "--stdin"], input_bytes=content).strip()
-    tree_input = b"".join(f"100644 blob {object_id.decode()}\t{path}\n".encode() for path in paths)
-    tree_id = _git_bytes(repository, ["mktree"], input_bytes=tree_input).strip()
-    return _git_bytes(repository, ["commit-tree", tree_id.decode(), "-m", "scale tree"]).decode().strip()
-
-
-def _package_with_sparse_pax() -> bytes:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
-        member = tarfile.TarInfo("workspace/sparse.bin")
-        member.size = 1
-        member.pax_headers = {"GNU.sparse.major": "1", "GNU.sparse.minor": "0"}
-        archive.addfile(member, io.BytesIO(b"x"))
-    return buffer.getvalue()
+from workspace_package_test_utils import (
+    git_bytes as _git_bytes,
+)
+from workspace_package_test_utils import (
+    import_new_agent as _import_new_agent,
+)
+from workspace_package_test_utils import (
+    invalid_package as _invalid_package,
+)
+from workspace_package_test_utils import (
+    make_shared_blob_commit as _make_shared_blob_commit,
+)
+from workspace_package_test_utils import (
+    package_from_workspace as _package_from_workspace,
+)
+from workspace_package_test_utils import (
+    package_with_agent_id as _package_with_agent_id,
+)
+from workspace_package_test_utils import (
+    run_git as _run_git,
+)
+from workspace_package_test_utils import (
+    workspace_package as _workspace_package,
+)
 
 
 def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(monkeypatch, tmp_path: Path) -> None:
@@ -247,6 +55,8 @@ def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(mo
         (source / ".gitignore").write_bytes(b".env\n*.secret\n")
         (source / ".gitattributes").write_bytes(b"export-hidden.txt export-ignore\nsubstituted.txt export-subst\n*.txt text eol=lf\n")
         (source / ".env").write_bytes(b"REAL_ENDPOINT=http://real.internal:9080\nTOKEN=workspace-owned\n")
+        private_mcp = b'{"mcpServers":{"private":{"env":{"MCP_TOKEN":"workspace-owned-test-value"}}}}\n'
+        (source / ".mcp.json").write_bytes(private_mcp)
         (source / "ignored.secret").write_bytes(b"ignored-but-workspace-owned\n")
         (source / "export-hidden.txt").write_bytes(b"must-still-export\n")
         (source / "substituted.txt").write_bytes(b"$Format:%H$\n")
@@ -288,10 +98,11 @@ def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(mo
     assert body["activation_mode"] == "next_turn"
     assert body["test_suite_status"] == "warning"
     assert body["test_file_count"] == 0
-    assert {item["code"] for item in body["test_suite_warnings"]} == {"AGENT_TESTS_DIRECTORY_MISSING"}
+    assert {item["code"] for item in body["test_suite_diagnostics"]} == {"AGENT_TESTS_DIRECTORY_MISSING"}
     target = Path(body["agent"]["workspace_dir"])
     assert (target / "payload.bin").read_bytes() == binary
     assert (target / ".env").read_bytes() == b"REAL_ENDPOINT=http://real.internal:9080\nTOKEN=workspace-owned\n"
+    assert (target / ".mcp.json").read_bytes() == private_mcp
     assert (target / "ignored.secret").read_bytes() == b"ignored-but-workspace-owned\n"
     assert (target / "export-hidden.txt").read_bytes() == b"must-still-export\n"
     assert (target / "substituted.txt").read_bytes() == b"$Format:%H$\n"
@@ -340,7 +151,7 @@ def test_workspace_export_reads_many_large_blobs_with_one_batch_process(monkeypa
     def counted_popen(*args, **kwargs):
         nonlocal batch_calls
         command = args[0] if args else kwargs.get("args")
-        if command[:3] == ["git", "cat-file", "--batch"]:
+        if command[-2:] == ["cat-file", "--batch"]:
             batch_calls += 1
         return original_popen(*args, **kwargs)
 
@@ -350,6 +161,7 @@ def test_workspace_export_reads_many_large_blobs_with_one_batch_process(monkeypa
         workspace = Path(created.json()["agent"]["workspace_dir"])
         for index in range(20):
             workspace.joinpath(f"blob-{index:02d}.bin").write_bytes(bytes([index]) * (96 * 1024 + index))
+        batch_calls = 0
         exported = client.post("/api/agent-registry/batch-export/workspace/export")
 
     assert exported.status_code == 200
@@ -369,7 +181,7 @@ def test_workspace_commit_reader_scales_to_ten_thousand_paths_with_one_batch_pro
     def counted_popen(*args, **kwargs):
         nonlocal batch_calls
         command = args[0] if args else kwargs.get("args")
-        if command[:3] == ["git", "cat-file", "--batch"]:
+        if command[-2:] == ["cat-file", "--batch"]:
             batch_calls += 1
         return original_popen(*args, **kwargs)
 
@@ -384,6 +196,9 @@ def test_workspace_commit_reader_scales_to_ten_thousand_paths_with_one_batch_pro
 
 def test_workspace_batch_reader_spools_stderr_without_exposing_repository_path(monkeypatch, tmp_path: Path) -> None:
     object_id = b"a" * 40
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git_bytes(repository, ["init", "-q"])
 
     class FailedBatchProcess:
         def __init__(self, stderr) -> None:
@@ -402,7 +217,15 @@ def test_workspace_batch_reader_spools_stderr_without_exposing_repository_path(m
         def kill(self):
             self.returncode = -9
 
-    monkeypatch.setattr(workspace_codec.subprocess, "Popen", lambda *args, **kwargs: FailedBatchProcess(kwargs["stderr"]))
+    original_popen = workspace_codec.subprocess.Popen
+
+    def fail_batch_only(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args")
+        if command[-2:] == ["cat-file", "--batch"]:
+            return FailedBatchProcess(kwargs["stderr"])
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(workspace_codec.subprocess, "Popen", fail_batch_only)
     spec = workspace_codec._CommitBlobSpec(
         relative_path=PurePosixPath("file.txt"),
         mode=0o644,
@@ -411,7 +234,7 @@ def test_workspace_batch_reader_spools_stderr_without_exposing_repository_path(m
     )
 
     with pytest.raises(workspace_codec.WorkspaceGitReadError) as exc_info:
-        workspace_codec._read_commit_blob_contents(tmp_path, (spec,))
+        workspace_codec._read_commit_blob_contents(repository, (spec,))
 
     assert "exit code 7" in str(exc_info.value)
     assert str(tmp_path) not in str(exc_info.value)
@@ -538,14 +361,39 @@ def test_workspace_import_invalidates_sdk_resume_and_next_turn_reads_applied_com
     assert after_context.agent_version_id == imported.json()["current_commit_sha"]
 
 
+def _install_admission_race_barriers(
+    module,
+    monkeypatch: pytest.MonkeyPatch,
+    baseline: str,
+) -> tuple[threading.Event, threading.Event, threading.Event]:
+    version_resolver_entered = threading.Event()
+    allow_version_resolver = threading.Event()
+    import_lease_requested = threading.Event()
+    original_version_resolver = module.runtime._current_agent_version_id
+    original_lease = module.agent_governance.version_maintenance.lease
+
+    def blocking_version_resolver(agent_id: str | None = None) -> str | None:
+        version = original_version_resolver(agent_id)
+        assert version == baseline
+        version_resolver_entered.set()
+        assert allow_version_resolver.wait(timeout=5)
+        return version
+
+    def signaling_lease(**kwargs):
+        if kwargs.get("agent_id") == "admission-race":
+            import_lease_requested.set()
+        return original_lease(**kwargs)
+
+    monkeypatch.setattr(module.runtime, "_current_agent_version_id", blocking_version_resolver)
+    monkeypatch.setattr(module.agent_governance.version_maintenance, "lease", signaling_lease)
+    return version_resolver_entered, allow_version_resolver, import_lease_requested
+
+
 def test_runtime_admission_holds_version_snapshot_stable_against_workspace_import(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    version_resolver_entered = threading.Event()
-    allow_version_resolver = threading.Event()
-    import_lease_requested = threading.Event()
     with TestClient(module.app) as client:
         created = _import_new_agent(client, agent_id="admission-race", name="admission race")
         workspace = Path(created.json()["agent"]["workspace_dir"])
@@ -560,31 +408,10 @@ def test_runtime_admission_holds_version_snapshot_stable_against_workspace_impor
             agent_id="admission-race",
         )
         profile = module.runtime._resolve_runtime_profile(request, None)
-        original_version_resolver = module.runtime._current_agent_version_id
-        original_lease = module.agent_governance.version_maintenance.lease
-
-        def blocking_version_resolver(agent_id: str | None = None) -> str | None:
-            version = original_version_resolver(agent_id)
-            assert version == baseline
-            version_resolver_entered.set()
-            assert allow_version_resolver.wait(timeout=5)
-            return version
-
-        monkeypatch.setattr(
-            module.runtime,
-            "_current_agent_version_id",
-            blocking_version_resolver,
-        )
-
-        def signaling_lease(**kwargs):
-            if kwargs.get("agent_id") == "admission-race":
-                import_lease_requested.set()
-            return original_lease(**kwargs)
-
-        monkeypatch.setattr(
-            module.agent_governance.version_maintenance,
-            "lease",
-            signaling_lease,
+        version_resolver_entered, allow_version_resolver, import_lease_requested = _install_admission_race_barriers(
+            module,
+            monkeypatch,
+            baseline,
         )
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -640,6 +467,7 @@ def test_workspace_import_rejects_active_first_turn_without_changing_head(monkey
             session,
             run_id="active-workspace-turn",
             agent_id="active-turn",
+            expected_instance_etag=str(created.json()["agent"]["instance_etag"]),
             new_sdk_session_id="attempted-first-sdk-session",
             sdk_project_key="active-turn-project",
             resolve_agent_version_id=lambda: baseline,

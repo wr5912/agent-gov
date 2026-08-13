@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 Identifier = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9._-]*$")]
 NonEmpty = Annotated[str, Field(min_length=1)]
+MakeEntrypoint = Annotated[str, Field(pattern=r"^make [a-z0-9][a-z0-9._-]*$")]
+Resource = Literal["hermetic", "db", "git", "process", "port", "docker", "browser", "live-provider", "serial"]
 
 
 class StrictModel(BaseModel):
@@ -54,10 +56,21 @@ class Capability(StrictModel):
     risk: Literal["low", "medium", "high", "critical"]
 
 
+class LaneCollectionBoundary(StrictModel):
+    authority: Literal["repository-root", "agent-workspace-git", "platform-fixture", "evaluator-owned-git"]
+    included_in_root_collection: bool
+
+
 class Lane(StrictModel):
     id: Identifier
     description: NonEmpty
+    owner: Identifier
+    capabilities: Annotated[list[Identifier], Field(min_length=1)]
+    resources: Annotated[list[Resource], Field(min_length=1)]
     enforcement: Literal["blocking", "shadow", "manual"]
+    implementation_status: Literal["active", "planned"]
+    entrypoint: MakeEntrypoint
+    collection_boundary: LaneCollectionBoundary
 
 
 class Classification(StrictModel):
@@ -76,10 +89,7 @@ class Classification(StrictModel):
     capabilities: Annotated[list[Identifier], Field(min_length=1)]
     lanes: Annotated[list[Identifier], Field(min_length=1)]
     parallelism: Literal["worker-safe", "process-isolated", "exclusive"]
-    resources: Annotated[
-        list[Literal["hermetic", "db", "git", "process", "port", "docker", "browser", "live-provider", "serial"]],
-        Field(min_length=1),
-    ]
+    resources: Annotated[list[Resource], Field(min_length=1)]
 
 
 class PortfolioRule(StrictModel):

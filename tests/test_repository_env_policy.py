@@ -15,7 +15,6 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _LOCAL_DEBUG_PORT_FAMILY_RE = re.compile(r"(?<![#A-Za-z0-9_])4\d{4}(?![A-Za-z0-9_])|" + "4" + r"[xX]{4}")
 _PORT_POLICY_VENDOR_PREFIXES = ("app/static/docs/",)
-_PORT_POLICY_EXEMPT_FILES = {"scripts/deploy_agent_gov_to_host"}
 RUNTIME_ENV_KEYS = (
     "BACKEND_PROMPT_SUGGESTION_COUNT",
     "BACKEND_PROMPT_SUGGESTION_MAX_TOKENS",
@@ -87,7 +86,6 @@ CONTAINER_ONLY_ENV_KEYS = {
     "LANGFUSE_TELEMETRY_ENABLED",
     "LANGFUSE_WEB_IMAGE",
     "LANGFUSE_WORKER_IMAGE",
-    "RUNTIME_BOOTSTRAP_HOST_DIR",
 }
 
 
@@ -162,8 +160,7 @@ def test_tracked_text_files_do_not_commit_private_debug_port_family() -> None:
     offenders: list[str] = []
     for rel_path, text in _tracked_text_files():
         # 自托管 API 文档资源是逐字节 vendor 的压缩产物，其中五位数值是 Unicode 码点而非端口。
-        # 部署脚本按 4751f194 的已确认版本逐字恢复，其端口仅是读取远端 env 时的兼容兜底值。
-        if rel_path.startswith(_PORT_POLICY_VENDOR_PREFIXES) or rel_path in _PORT_POLICY_EXEMPT_FILES:
+        if rel_path.startswith(_PORT_POLICY_VENDOR_PREFIXES):
             continue
         for lineno, line in enumerate(text.splitlines(), start=1):
             if _LOCAL_DEBUG_PORT_FAMILY_RE.search(line):
@@ -215,6 +212,60 @@ def test_compose_does_not_grant_unconfined_or_namespace_capabilities() -> None:
         assert "apparmor=unconfined" not in service.get("security_opt", [])
 
 
+def test_agent_test_worker_is_the_only_docker_socket_owner_and_has_no_secret_env_file() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    worker = services["agent-test-worker"]
+
+    assert worker["network_mode"] == "none"
+    assert "env_file" not in worker
+    assert set(worker["environment"]) == {
+        "AGENT_TEST_DATA_DIR",
+        "AGENT_TEST_RUNS_DIR",
+        "AGENT_TEST_SANDBOX_IMAGE",
+        "AGENT_TEST_DOCKER_SOCKET",
+        "AGENT_TEST_TIMEOUT_SECONDS",
+        "AGENT_TEST_POLL_SECONDS",
+        "AGENT_TEST_WORKER_ID",
+    }
+    assert worker["depends_on"]["claude-agent-api"]["condition"] == "service_healthy"
+    socket_mount = "/var/run/docker.sock:/var/run/docker.sock"
+    assert socket_mount in worker["volumes"]
+    worker_volume = next(volume for volume in worker["volumes"] if isinstance(volume, dict))
+    assert worker_volume == {
+        "type": "volume",
+        "source": "agent-test-runs",
+        "target": "/agent-test-runs",
+        "volume": {"nocopy": True},
+    }
+    assert compose["volumes"] == {"agent-test-runs": {"driver": "local"}}
+    data_volume = "${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}"
+    assert data_volume in worker["volumes"]
+    assert data_volume in services["claude-agent-api"]["volumes"]
+    for service_name, service in services.items():
+        if service_name == "agent-test-worker":
+            continue
+        assert all("docker.sock" not in str(volume) for volume in service.get("volumes", []))
+        assert all("agent-test-runs" not in str(volume) for volume in service.get("volumes", []))
+
+    env_example = (REPO_ROOT / "docker/.env.example").read_text(encoding="utf-8")
+    assert "HOST_AGENT_TEST_RUNS_MOUNT" not in env_example
+
+
+def test_agent_test_sandbox_image_has_minimal_runtime_and_non_root_user() -> None:
+    dockerfile = (REPO_ROOT / "docker/agent-test-sandbox.Dockerfile").read_text(encoding="utf-8")
+    runtime_stage = dockerfile.split("FROM python:3.11-slim", 2)[-1]
+    final_stage = dockerfile.rsplit("FROM scratch", 1)[-1]
+
+    assert "USER 65532:65532" in runtime_stage
+    assert "ENTRYPOINT []" in runtime_stage
+    assert "COPY --from=runtime-root / /" in final_stage
+    assert "\nENV " not in final_stage
+    assert "apt-get" not in runtime_stage
+    for forbidden in ("git ", "docker", "nodejs", "npm ", "claude"):
+        assert forbidden not in runtime_stage.lower()
+
+
 def test_project_root_env_file_is_forbidden() -> None:
     root_env = REPO_ROOT / ".env"
 
@@ -257,7 +308,6 @@ def test_clean_checkout_compose_config_uses_the_one_selected_env_file(
     environment = {
         **os.environ,
         "AGENT_GOV_COMPOSE_ENV_FILE": str(selected_env),
-        "RUNTIME_BOOTSTRAP_HOST_DIR": str(REPO_ROOT / "docker/runtime-bootstrap"),
     }
     result = subprocess.run(
         [
@@ -282,32 +332,47 @@ def test_clean_checkout_compose_config_uses_the_one_selected_env_file(
 
 def test_make_container_helpers_use_the_selected_compose_env_file() -> None:
     selected = "/tmp/agent-gov-selected-compose.env"
+    environment = {
+        **os.environ,
+        "COMPOSE_ENV_FILE": selected,
+    }
     result = subprocess.run(
         [
             "make",
-            "-n",
-            "ui-smoke",
-            "langfuse-prepare",
-            "langfuse-smoke",
-            "chat",
-            "container-openapi-check",
-            "up",
-            "all-up",
-            "smoke",
-            "runtime-clean",
-            f"COMPOSE_ENV_FILE={selected}",
-            "COMPOSE=:",
-            "PYTHON_RUN=:",
+            "--no-print-directory",
+            "--print-data-base",
+            "--no-builtin-rules",
+            "--no-builtin-variables",
+            "--question",
+            "Makefile",
         ],
         cwd=REPO_ROOT,
-        check=False,
+        env=environment,
+        check=True,
         capture_output=True,
         text=True,
     )
 
-    assert result.returncode == 0, result.stderr
-    assert selected in result.stdout
-    assert "docker/.env" not in result.stdout
+    make_database = result.stdout
+    assert f"COMPOSE_ENV_FILE := {selected}" in make_database
+    assert f"AGENT_GOV_COMPOSE_ENV_FILE := {selected}" in make_database
+    assert "COMPOSE = docker compose --env-file $(COMPOSE_ENV_FILE) -f docker/docker-compose.yml" in make_database
+
+    helper_references = {
+        "up": "$(COMPOSE) up",
+        "all-up": "$(COMPOSE) --profile langfuse up",
+        "langfuse-prepare": "$(COMPOSE) --profile langfuse-maintenance",
+        "chat": '"$(COMPOSE_ENV_FILE)"',
+        "runtime-clean": '--env-file "$(COMPOSE_ENV_FILE)"',
+    }
+    for target, expected_reference in helper_references.items():
+        entry = re.search(
+            rf"(?ms)^{re.escape(target)}:[^\n]*\n(?P<body>.*?)(?=^[ \t]*$)",
+            make_database,
+        )
+        assert entry is not None, f"Make database is missing target {target}."
+        assert expected_reference in entry.group("body")
+
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "scripts/smoke.sh" not in makefile
     assert "scripts/chat.sh" not in makefile
@@ -414,6 +479,19 @@ def test_official_env_examples_do_not_ship_configured_model_provider_key() -> No
         assert "MODEL_PROVIDER_API_KEY=sk-" not in text
         assert "ANTHROPIC_API_KEY=sk-" not in text
         assert re.search(r"^\s*LITELLM_MASTER_KEY\s*=", text, flags=re.MULTILINE) is None
+
+
+def test_official_env_examples_keep_optional_langfuse_export_disabled() -> None:
+    for env_file in ("docker/.env.example", "docker/.env.local-debug.example"):
+        values = {}
+        for line in (REPO_ROOT / env_file).read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            values[key] = value
+
+        assert values.get("LANGFUSE_ENABLED") == "false"
 
 
 def test_official_env_and_settings_do_not_allow_manual_vllm_version_or_second_upstream_url() -> None:
@@ -579,15 +657,17 @@ def test_litellm_sidecar_keeps_provider_and_proxy_credentials_separate(tmp_path:
     assert warning_filter.filter(real_failure) is True
 
 
-def test_runtime_bootstrap_source_is_bound_read_only_for_api() -> None:
+def test_runtime_bootstrap_source_is_baked_into_api_image_without_host_bind() -> None:
     compose = (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
     api = compose.split("  claude-agent-api:", 1)[1].split("\n  claude-agent-ui:", 1)[0]
+    env_example = (REPO_ROOT / "docker/.env.example").read_text(encoding="utf-8")
 
-    assert "source: ${RUNTIME_BOOTSTRAP_HOST_DIR:-./runtime-bootstrap}" in compose
-    assert "target: /app/docker/runtime-bootstrap" in compose
-    assert "read_only: true" in compose
-    assert "create_host_path: false" in compose
-    assert "- *runtime-bootstrap" in api
+    assert "RUNTIME_BOOTSTRAP_HOST_DIR" not in compose
+    assert "target: /app/docker/runtime-bootstrap" not in compose
+    assert "*runtime-bootstrap" not in api
+    assert "COPY docker/runtime-bootstrap /app/docker/runtime-bootstrap" in (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+    assert "runtime-bootstrap 在构建时内置到 API 镜像" in env_example
+    assert "Compose 会把宿主机当前 checkout 的 runtime-bootstrap" not in env_example
 
 
 def test_compose_healthcheck_uses_local_liveness_without_provider_dependency() -> None:
@@ -652,17 +732,13 @@ def test_make_up_waits_removes_orphans_and_prints_sanitized_diagnostics() -> Non
 
 
 def test_langfuse_permission_init_reuses_all_stateful_mount_sources() -> None:
-    compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
+    compose_text = (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
+    compose = yaml.safe_load(compose_text)
     services = compose["services"]
     init_service = services["langfuse-volume-init"]
 
     def volume_map(service_name: str) -> dict[str, str]:
-        return {
-            target: source
-            for source, target in (
-                volume.rsplit(":", 1) for volume in services[service_name]["volumes"]
-            )
-        }
+        return {target: source for source, target in (volume.rsplit(":", 1) for volume in services[service_name]["volumes"])}
 
     expected_sources = {
         "/langfuse/postgres": volume_map("langfuse-postgres")["/var/lib/postgresql/data"],
@@ -673,12 +749,21 @@ def test_langfuse_permission_init_reuses_all_stateful_mount_sources() -> None:
     }
 
     assert init_service["profiles"] == ["langfuse-maintenance"]
+    assert "fix_host_backend_volume_permissions.sh" not in compose_text
     assert init_service["image"] == "${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17}"
     assert init_service["user"] == "0:0"
     assert init_service["network_mode"] == "none"
+    assert init_service["read_only"] is True
+    assert init_service["cap_drop"] == ["ALL"]
+    assert set(init_service["cap_add"]) == {"DAC_OVERRIDE", "FOWNER"}
+    assert init_service["security_opt"] == ["no-new-privileges:true"]
     assert init_service["entrypoint"] == ["/bin/sh", "-ec"]
     assert volume_map("langfuse-volume-init") == expected_sources
-    assert "chmod -R a+rwX" in "\n".join(init_service["command"])
+    command = "\n".join(init_service["command"])
+    assert "chmod -R" not in command
+    assert 'find "$$path" -xdev -type d -exec chmod a+rwx {} +' in command
+    assert 'find "$$path" -xdev -type f -exec chmod a+rw {} +' in command
+    assert '[ -d "$$path" ] && [ ! -L "$$path" ] || exit 1' in command
     assert "container_name" not in init_service
     assert "restart" not in init_service
 

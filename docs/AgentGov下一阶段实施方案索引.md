@@ -1,19 +1,21 @@
 # AgentGov 下一阶段实施方案索引
 
-> 文档状态：评审稿。
+> 文档状态：活跃实施索引；2026-08-13 已同步 Phase 7 功能收口证据，后续阶段仍按评审稿边界推进。
 >
-> 评审基准：2026-08-05，仓库版本 `3.0.3`。
+> 初始评审基准：2026-08-05；当前已发布版本仍为 `3.0.3`。
 >
 > 文档角色：连接长期产品目标、平台能力地图、单项产品能力目标方案与下一轮工程实施的唯一阶段索引。
-> 本文和下列阶段方案不表示对应能力已经进入当前 OpenAPI、数据库、UI 或运行态。
+> Phase 7 位于已验证但未发布的 v3.1 工作树；P0-MCP 与 evaluator-owned 发布测评尚未实现。本文和
+> 下列后续阶段方案不表示对应能力已经进入当前 OpenAPI、数据库、UI 或 `3.0.3` 运行态。
 
 ## 1. 阶段结论
 
-下一阶段采用 **Conditional Go**：
+下一阶段继续采用 **Conditional Go**：
 
 - 本轮文档整改先固定平台能力地图、三类资产、评测权威、控制面和临时决策退出条件；
-- P0 随后收口业务 Agent Workspace 全量测试和独立 P0-MCP 平台回执，但不把单个 Agent 测试
-  并入根静态 collection，也不把 `29` 固化为平台契约；
+- P0 的业务 Agent Workspace 全量测试与通用 per-Agent exact-commit lane 已由 Phase 6/7 收口，
+  且没有把单个 Agent 测试并入根静态 collection，也没有把 `29` 固化为平台契约；
+- 独立 P0-MCP 平台回执仍是 P0 的下一项阻断门；在它通过前，P0 整体不宣称退出；
 - P0 通过后，P1 网络安全协议化回归/发布准入与 P2A Runtime 边界提取可以并行；
 - P2B Governor 受控学习基础可先建设账本和候选，但必须等待一条 P1 真实证据及 P2A gateway
   后才能退出；
@@ -44,7 +46,7 @@
 
 ## 3. 当前准入证据
 
-截至评审基准日：
+### 3.1 2026-08-05 初始评审基线
 
 - `make codex-guard`、`make typecheck`、`make main-flow-test` 通过；
 - 根质量策略能收集 1351 个 pytest leaf；按测试资产权威契约，它不静态收集任何业务 Agent
@@ -62,7 +64,23 @@
 - 当前 Governor 有受控生成、Trace、变更和发布基础，但没有不可变学习证据、能力版本、
   独立评估和可信人工启用链。
 
-这些证据支持“开始阶段工程”，不支持“宣布三项长期能力已经就绪”。
+### 3.2 2026-08-13 Phase 7 功能收口证据
+
+- 最终文档冻结候选的 collect-only 基数为：质量策略 manifest `2225` 个 pytest leaf，
+  `main-full` 选择 `2220` 个 leaf，host no-Docker acceptance `402` 个 leaf，main-flow backend
+  `694` 个 leaf（`640` 个精确 selector）；
+- 历史功能轮七个公共入口曾在同一候选 tree 和同一份完整 Compose env 上全部成功：
+  `container-core-smoke`、`container-workspace-pytest-test`、`container-health-e2e`、
+  `container-speech-summary-test`、`ui-playground-cancel-smoke`、`container-live-test` 与
+  `langfuse-smoke`；
+- 上一项是已被后续 terminal authority 修复候选超越的历史功能收口证据。本文冻结后，提交前仍须
+  在不再改文件的 exact tree 上重跑串行全量和七个公共入口，最终回执不能由历史功能候选冒充；
+- P0-MCP 的过滤夹具、直接协议、AgentGov live 回执与清理证据尚未实现；P1 的
+  evaluator-owned benchmark/protocol/assessment/comparison 与发布安全门也尚未实现；
+- 根 `VERSION` 与已发布 tag 仍停留在 `3.0.3`，Phase 7 不构成新版本发布。
+
+初始证据支持启动阶段工程；2026-08-13 最终冻结基数与历史功能轮支持 Phase 7 进入提交级门，但在
+exact-tree 门完成前不写成最终发布回执，也不支持“P0 整体退出”或“三项长期能力已经就绪”。
 
 ## 4. 平台能力完整性地图
 
@@ -132,8 +150,8 @@ P1 与 P2A 可在 P0 退出后并行，避免把 Runtime 平台边界永久绑�
 
 ## 8. 已选实施裁决
 
-1. **P0 双门独立收口**：精确 commit 的 Workspace 全量测试和 P0-MCP 回执分别阻断；当前
-   `29` 只作基线快照，退出标准是声明范围零未分类失败。
+1. **P0 双门独立收口**：精确 commit 的 Workspace 全量测试门已由 Phase 6/7 收口，P0-MCP 回执
+   仍独立阻断 P0 整体退出；`29` 只作初始基线快照，长期标准是声明范围零未分类失败。
 2. **业务 Agent 测试独立执行**：质量策略登记通用 per-Agent lane、owner 和资源类别，不把任何
    业务 Agent Workspace 测试加入根静态 collection；真正的平台 runner/隔离契约留在根测试。
 3. **模拟 MCP 只验精确 slice**：固定原始上游提交，只覆盖
@@ -217,7 +235,7 @@ P0-MCP 完成并形成可复现回执后，其实施稿退出“下一阶段”�
 
 | 当前阶段性决定 | 为什么现在采用 | 长期 seam | 触发升级或退出 |
 | --- | --- | --- | --- |
-| 安全 Workspace 当前 29 个静态 leaf | 提供可复现基线 | per-Agent exact-commit lane，不依赖固定数量 | 用例增删或第二 Agent 接入时只更新该 Agent suite，不改平台契约 |
+| 安全 Workspace 初始评审的 29 个静态 leaf | 提供历史可复现基线 | per-Agent exact-commit lane，不依赖固定数量 | 用例增删或第二 Agent 接入时只更新该 Agent suite，不改平台契约 |
 | P1 通过 `AgentTestRun` 执行 sample | 复用成熟 pytest runner 和证据采集 | `EvaluationExecution/Assessment/ComparisonGroup` 作为独立聚合，只引用 sample run | 第二执行协议或非 pytest sample 出现时新增 adapter，不改领域对象 |
 | P1 建立 Agent 详情测评入口 | 单 Agent 发布评测已是正式产品任务 | 测试资产只深链 sample/run；组件可由测评中心复用 | 第二 benchmark/protocol、跨 Agent campaign、持续隐藏集运营或专家队列任一出现时启用测评中心 |
 | P2A 每部署只启用 Claude | 先证明调用方边界与行为等价 | BusinessAgentVersion backend-owned RuntimeBinding 和内部中立事实 | 第二 Runtime 真实需求与协议 spike 通过 |
@@ -241,8 +259,8 @@ P0-MCP 完成并形成可复现回执后，其实施稿退出“下一阶段”�
 评审本索引时应一次确认：
 
 - 是否接受“P0 → P1/P2A 受限并行 → P2B → P3 平台基础/独立扩展”的依赖关系；
-- 是否接受 P0 必须同时关闭 14 个 Workspace 失败和独立 P0-MCP GAP，但 Workspace 测试不进入
-  根静态 collection、`29` 不作为稳定平台契约；
+- 是否确认 14 个 Workspace 历史失败已由 Phase 6/7 收口、Workspace 测试仍不进入根静态
+  collection、`29` 不作为稳定平台契约，同时独立 P0-MCP GAP 继续阻断 P0 整体退出；
 - 是否接受固定原始 `openapi-mcp-server`/`mock_service` commit 只作为隔离合成夹具，且
   P0-MCP 不验证认证、生产安全或业务 Agent 能力；
 - 是否接受 P1 的 8 案例、无工具、确定性评分和独立安全否决范围，以及 Workspace 可见回归包与

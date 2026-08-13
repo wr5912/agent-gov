@@ -18,14 +18,16 @@
 
 ### P0：per-Agent 隔离测试 lane
 
-- [ ] **LANE-01**: 通用平台 runner 只接受后端解析的 Agent、精确 commit 和固定 pytest 命令，并完整执行该 commit 的 `workspace/tests/`。
-- [ ] **LANE-02**: Workspace suite 在非 root、无特权、allowlisted 最小 env、只读源码挂载、无可写 `/data`/live runtime root、无 Docker socket且网络按契约最小化的隔离环境中运行。
-- [ ] **LANE-03**: 负向验收证明测试进程不能读取继承 secret、越出目标 Workspace、写平台数据或借助宿主机能力逃逸隔离边界。
-- [ ] **LANE-04**: 每次运行生成无敏感信息的机器回执，绑定 Agent/commit、suite digest、source/image fingerprint、固定 invocation、结果、隔离摘要和 cleanup 状态。
-- [ ] **LANE-05**: 业务 Agent pytest leaf 不进入根静态 collection，也不复制到根 `tests/`、数据库测试正文或 Asset Registry。
-- [ ] **LANE-06**: `tests/quality_policy.json` 分别登记 P0 exact-commit、P0-MCP 与 P1 live lane 的 owner、capability、resource class 和 blocking 语义，不建立 security-only 第二 manifest。
-- [ ] **LANE-07**: 发布门只接受当前 Agent commit 与当前 suite digest 的通过回执；历史、错配或来源不明的 passed run 不能放行。
-- [ ] **LANE-08**: Docker、隔离镜像或其他必需前置缺失时 lane 严格失败而非 skip；成功、失败和中断均清理明确解析出的临时资产。
+完成状态：LANE-01 至 LANE-08 已由 3 个 plans / 12 个 tasks 交付。文档冻结前功能收口轮已覆盖串行宿主机门与 core、agent-test、health、speech、ui-cancel、live、langfuse 七个公共入口；各入口分别保留 fresh receipt，不以单张回执代表全部。收尾提交仍以文档冻结后的 exact-tree `make test` 与七入口 durable final gate 为原子前置，且 Phase 7 不替代 Phase 8 P0-MCP 或独立业务能力测评。
+
+- [x] **LANE-01**: 通用平台 runner 只接受后端解析的 Agent、精确 commit 和固定 pytest 命令，并完整执行该 commit 的 `workspace/tests/`。
+- [x] **LANE-02**: Workspace suite 在非 root、无特权、allowlisted 最小 env、只读源码挂载、无可写 `/data`/live runtime root、无 Docker socket且网络按契约最小化的隔离环境中运行。
+- [x] **LANE-03**: 负向验收证明测试进程不能读取继承 secret、越出目标 Workspace、写平台数据或借助宿主机能力逃逸隔离边界。
+- [x] **LANE-04**: 每次运行生成无敏感信息、`assurance_level=execution_provenance` 的机器回执，绑定 Agent/commit、suite digest、source/image fingerprint、固定 invocation、Docker 观察结果、隔离摘要和 cleanup；Agent-owned report 明确为 unverified diagnostics。
+- [x] **LANE-05**: 业务 Agent pytest leaf 不进入根静态 collection，也不复制到根 `tests/`、数据库测试正文或 Asset Registry。
+- [x] **LANE-06**: `tests/quality_policy.json` 分别登记 P0 exact-commit、P0-MCP 与 P1 live lane 的 owner、capability、resource class 和 blocking 语义，不建立 security-only 第二 manifest。
+- [x] **LANE-07**: Workspace 工程卫生门只接受当前 Agent commit 与当前 suite digest 的通过回执，并核对 worker/container；历史、错配或来源不明的 passed run 不能放行。该门是发布必要条件，不替代 Phase 10 evaluator-owned 独立测评与安全门。
+- [x] **LANE-08**: Docker、隔离镜像或其他必需前置缺失时 lane 严格失败而非 skip；成功、失败和中断均清理明确解析出的临时资产。
 
 ### P0-MCP：精确两工具平台回执
 
@@ -161,14 +163,14 @@
 | P0W-06 | Phase 6 | Complete |
 | P0W-07 | Phase 6 | Complete |
 | P0W-08 | Phase 6 | Complete |
-| LANE-01 | Phase 7 | Pending |
-| LANE-02 | Phase 7 | Pending |
-| LANE-03 | Phase 7 | Pending |
-| LANE-04 | Phase 7 | Pending |
-| LANE-05 | Phase 7 | Pending |
-| LANE-06 | Phase 7 | Pending |
-| LANE-07 | Phase 7 | Pending |
-| LANE-08 | Phase 7 | Pending |
+| LANE-01 | Phase 7 | Complete |
+| LANE-02 | Phase 7 | Complete |
+| LANE-03 | Phase 7 | Complete |
+| LANE-04 | Phase 7 | Complete |
+| LANE-05 | Phase 7 | Complete |
+| LANE-06 | Phase 7 | Complete |
+| LANE-07 | Phase 7 | Complete |
+| LANE-08 | Phase 7 | Complete |
 | MCP-01 | Phase 8 | Pending |
 | MCP-02 | Phase 8 | Pending |
 | MCP-03 | Phase 8 | Pending |
@@ -265,4 +267,4 @@
 
 ---
 *Requirements defined: 2026-08-05*  
-*Last updated: 2026-08-05 after v3.1 roadmap derivation*
+*Last updated: 2026-08-13 after Phase 7 completion and Phase 8 handoff*

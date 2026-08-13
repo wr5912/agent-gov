@@ -18,7 +18,11 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
 
-from business_agent_test_utils import SECONDARY_TEST_AGENT_ID, create_test_business_agent_workspace
+from business_agent_test_utils import (
+    SECONDARY_TEST_AGENT_ID,
+    create_test_business_agent_workspace,
+    register_test_business_agent_instance,
+)
 from claude_runtime_test_utils import default_profile_resolver
 
 CHANGE_CREATE_TOOL = "mcp__change-control__create"
@@ -44,7 +48,7 @@ def _settings(
         settings_data["permissions"]["ask"] = ask_rules
         settings_path.write_text(json.dumps(settings_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     claude_home.mkdir(parents=True, exist_ok=True)
-    return AppSettings(
+    settings = AppSettings(
         _env_file=None,
         WORKSPACE_DIR=workspace,
         MAIN_WORKSPACE_DIR=workspace,
@@ -55,6 +59,12 @@ def _settings(
         RUNTIME_VOLUME_MODE="local-debug",
         ENABLE_CLAUDE_WEB_HITL=enable_hitl,
     )
+    register_test_business_agent_instance(
+        make_session_factory(settings.runtime_db_path),
+        agent_id=agent_id,
+        workspace_dir=str(workspace),
+    )
+    return settings
 
 
 def _service(tmp_path) -> tuple[ClaudeUserInputService, ClaudeUserInputStore]:

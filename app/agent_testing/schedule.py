@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app.runtime.agent_paths import InvalidAgentId, validate_agent_id
+from app.runtime.business_agent_lifecycle import BusinessAgentLifecycleFenceError, require_public_business_agent
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db_base import begin_sqlite_write_transaction, utc_now
 from app.runtime.state_machines import AGENT_RUNNABLE_LIFECYCLE_STATES, validate_transition
@@ -87,6 +88,7 @@ class AgentTestScheduleStore:
         now = utc_now()
         with self.Session.begin() as db:
             begin_sqlite_write_transaction(db.connection())
+            require_public_business_agent(db, agent_id=agent_id)
             row = db.scalar(select(AgentTestScheduleModel).where(AgentTestScheduleModel.agent_id == agent_id))
             if row is None:
                 row = AgentTestScheduleModel(
@@ -255,13 +257,16 @@ class AgentTestScheduleService:
             expression, clean_timezone, next_run = validate_test_schedule(cron_expression, timezone_name, now=now)
         except ValueError as exc:
             raise AgentTestingError(422, "AGENT_TEST_SCHEDULE_INVALID", str(exc)) from exc
-        return self.store.upsert_schedule(
-            agent_id=safe_agent_id,
-            enabled=enabled,
-            cron_expression=expression,
-            timezone_name=clean_timezone,
-            next_run_at=next_run.isoformat() if enabled else None,
-        )
+        try:
+            return self.store.upsert_schedule(
+                agent_id=safe_agent_id,
+                enabled=enabled,
+                cron_expression=expression,
+                timezone_name=clean_timezone,
+                next_run_at=next_run.isoformat() if enabled else None,
+            )
+        except BusinessAgentLifecycleFenceError as exc:
+            raise AgentTestingError(409, "AGENT_TEST_SCHEDULE_AGENT_UNAVAILABLE", str(exc)) from exc
 
     def list_events(self, agent_id: str, *, limit: int) -> list[JsonObject]:
         safe_agent_id = self._require_agent(agent_id)

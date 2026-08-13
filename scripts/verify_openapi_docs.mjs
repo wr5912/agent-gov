@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { withManagedChromium } from "./playwright_browser_authority.mjs";
 import process from "node:process";
 import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
 
@@ -119,19 +120,21 @@ async function main() {
     "with_speech_summary description omits stream, 422, or best-effort semantics",
   );
 
-  const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
-  const page = await browser.newPage({ viewport: { width: 1600, height: 1200 } });
-  const unexpectedWrites = [];
-  const pageErrors = [];
-  page.on("pageerror", (error) => pageErrors.push(String(error)));
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    if (url.origin === apiOrigin && request.method() !== "GET") {
-      unexpectedWrites.push(`${request.method()} ${url.pathname}`);
-    }
-  });
+  await withManagedChromium(
+    chromium,
+    { headless: process.env.PLAYWRIGHT_HEADLESS !== "0" },
+    async (browser) => {
+      const page = await browser.newPage({ viewport: { width: 1600, height: 1200 } });
+      const unexpectedWrites = [];
+      const pageErrors = [];
+      page.on("pageerror", (error) => pageErrors.push(String(error)));
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.origin === apiOrigin && request.method() !== "GET") {
+          unexpectedWrites.push(`${request.method()} ${url.pathname}`);
+        }
+      });
 
-  try {
     await page.goto(responsesDocsUrl, { waitUntil: "networkidle", timeout: 60000 });
     await page.locator(".swagger-ui").waitFor({ timeout: 30000 });
     const responses = await openOperation(page, schema, "/v1/responses", "post");
@@ -190,13 +193,14 @@ async function main() {
       "multipart request properties are missing descriptions or examples",
     );
 
-  } finally {
-    await browser.close();
-  }
-
-  assert(unexpectedWrites.length === 0, `Swagger acceptance sent unexpected API writes: ${unexpectedWrites.join(", ")}`);
-  assert(pageErrors.length === 0, `Swagger page errors: ${pageErrors.join(" | ")}`);
-  console.log(`OPENAPI_DOCS_BROWSER_OK: ${responsesDocsUrl}; screenshot=${screenshotDir}`);
+      assert(unexpectedWrites.length === 0, `Swagger acceptance sent unexpected API writes: ${unexpectedWrites.join(", ")}`);
+      assert(pageErrors.length === 0, `Swagger page errors: ${pageErrors.join(" | ")}`);
+    },
+  );
+  console.log("OPENAPI_DOCS_BROWSER_OK");
 }
 
-await main();
+main().catch(() => {
+  console.error("OPENAPI_DOCS_BROWSER_FAIL");
+  process.exit(1);
+});

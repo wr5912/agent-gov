@@ -248,7 +248,7 @@ def test_endtoend_suggestion_is_drained_before_terminal(tmp_path, monkeypatch) -
     from app.runtime.settings import AppSettings
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
-    from business_agent_test_utils import create_test_business_agent_workspace
+    from business_agent_test_utils import create_test_business_agent_workspace, register_test_business_agent_instance
     from claude_runtime_test_utils import default_profile_resolver
 
     async def fake_query(*, prompt, options):
@@ -284,7 +284,13 @@ def test_endtoend_suggestion_is_drained_before_terminal(tmp_path, monkeypatch) -
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}) + "\n",
         encoding="utf-8",
     )
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=default_profile_resolver(settings))
+    session_store = LocalSessionStore(settings.session_dir)
+    register_test_business_agent_instance(
+        session_store.Session,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        workspace_dir=str(workspace),
+    )
+    runtime = ClaudeRuntime(settings, session_store, business_profile_resolver=default_profile_resolver(settings))
 
     async def run() -> tuple[list[str], list[str]]:
         raw_frames: list[str] = []

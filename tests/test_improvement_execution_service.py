@@ -5,16 +5,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from contextlib import nullcontext
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from app.runtime.agent_git_store import AgentGitError
-from app.runtime.errors import BusinessRuleViolation, ConflictError, DataIntegrityError, RuntimeUnavailableError
-from app.runtime.improvement_db import ExecutionRecordModel, ImprovementItemModel, OptimizationPlanModel
+from app.runtime.errors import ConflictError, DataIntegrityError, RuntimeUnavailableError
+from app.runtime.improvement_db import ExecutionRecordModel, OptimizationPlanModel
 from app.runtime.runtime_db import make_session_factory
-from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.generated_agent_tests import build_generated_agent_test
 from app.services.improvement_execution_service import (
@@ -24,228 +21,17 @@ from app.services.improvement_execution_service import (
 from app.services.workspace_execution_applier import WorkspaceExecutionApplier
 
 from feedback_store_test_utils import _seed_execution_record
-
-
-def _content(tmp_path: Path) -> ImprovementContentStore:
-    factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    with factory.begin() as db:
-        if db.get(ImprovementItemModel, "imp-1") is None:
-            db.add(
-                ImprovementItemModel(
-                    improvement_id="imp-1",
-                    agent_id="soc-ops",
-                    title="告警误报治理",
-                    improvement_stage="optimization",
-                    improvement_status="active",
-                )
-            )
-    return ImprovementContentStore(factory)
-
-
-class _FakeImprovements:
-    def __init__(self) -> None:
-        self.links: list[tuple[str, str, str]] = []
-        self.fail_link_once = False
-
-    def get_improvement(self, improvement_id: str) -> object:
-        return SimpleNamespace(improvement_id=improvement_id, agent_id="soc-ops", title="告警误报治理")
-
-    def add_link(self, improvement_id: str, *, kind: str, ref_id: str) -> object:
-        if self.fail_link_once:
-            self.fail_link_once = False
-            raise RuntimeError("link insert failed")
-        if (improvement_id, kind, ref_id) not in self.links:
-            self.links.append((improvement_id, kind, ref_id))
-        return SimpleNamespace(improvement_id=improvement_id, kind=kind, ref_id=ref_id)
-
-    def list_links(self, improvement_id: str) -> list[object]:
-        return [SimpleNamespace(improvement_id=i, kind=kind, ref_id=ref) for i, kind, ref in self.links if i == improvement_id]
-
-
-class _FakeStore:
-    def __init__(self) -> None:
-        self.head = "base-sha"
-        self.removed: list[str] = []
-        self.cleanup_modes: list[tuple[str, bool]] = []
-
-    def current_commit_sha(self):
-        return "base-sha"
-
-    def mutation_guard(self):
-        return nullcontext()
-
-    def version_summary(self, sha, *, reason, note=None):
-        return {"agent_version_id": f"ver-{sha}"}
-
-    def commit_worktree(self, worktree, *, message):
-        self.head = "cand-sha"
-        return "cand-sha"
-
-    def commit_squashed_worktree(self, worktree, *, base_ref, message):
-        self.head = "cand-tests-sha"
-        return "cand-tests-sha"
-
-    def diff_versions(self, a, b):
-        return {"changed_files": ["CLAUDE.md"] if a != b else [], "from": a, "to": b}
-
-    def worktree_commit_sha(self, worktree):
-        return self.head
-
-    def reset_worktree(self, worktree, *, base_ref):
-        self.head = base_ref
-
-    def remove_worktree(self, change_set_id, *, delete_branch=True):
-        self.removed.append(change_set_id)
-        self.cleanup_modes.append((change_set_id, delete_branch))
-
-
-class _FakeGovernance:
-    def __init__(self, worktree: Path) -> None:
-        self._worktree = worktree
-        self.abandoned: list[str] = []
-        self.committed: list[str] = []
-        self.created: list[str] = []
-        self.change_set_status = "draft"  # get_change_set 返回态；测试可改为 abandoned/rejected 模拟失效
-        self.change_sets: dict[str, dict] = {}
-        self.store = _FakeStore()
-
-    def create_change_set(self, *, agent_id, title, note, execution_job_id, base_commit_sha, change_set_id, source=None):
-        self.change_set_status = "draft"
-        if change_set_id not in self.created:
-            self.created.append(change_set_id)
-        self.change_sets.setdefault(
-            change_set_id,
-            {
-                "change_set_id": change_set_id,
-                "agent_id": agent_id,
-                "base_commit_sha": base_commit_sha,
-                "candidate_commit_sha": None,
-                "execution_job_id": execution_job_id,
-                "status": "draft",
-                "worktree_path": str(self._worktree),
-                "source_improvement_id": source.improvement_id if source else None,
-                "source_attribution_id": source.attribution_id if source else None,
-                "source_attribution_status": source.attribution_status if source else None,
-            },
-        )
-        return dict(self.change_sets[change_set_id])
-
-    def get_change_set(self, change_set_id):
-        existing = self.change_sets.get(change_set_id)
-        if existing is not None:
-            return dict(existing)
-        return {
-            "change_set_id": change_set_id,
-            "agent_id": "soc-ops",
-            "base_commit_sha": "base-sha",
-            "candidate_commit_sha": None,
-            "status": self.change_set_status,
-            "worktree_path": str(self._worktree),
-        }
-
-    def change_set_worktree_path(self, change_set):
-        return self._worktree
-
-    def _store_for(self, agent_id):
-        return self.store
-
-    def mark_candidate_committed(self, change_set_id, *, candidate_commit_sha, execution_job_id=None, note=None, operator="runtime"):
-        self.committed.append(change_set_id)
-        row = self.change_sets[change_set_id]
-        row.update(candidate_commit_sha=candidate_commit_sha, execution_job_id=execution_job_id, status="candidate_committed")
-        return dict(row)
-
-    def abandon_change_set(self, change_set_id, *, operator="runtime", note=None):
-        self.abandoned.append(change_set_id)
-        row = self.change_sets.setdefault(
-            change_set_id,
-            {"change_set_id": change_set_id, "base_commit_sha": "base-sha", "worktree_path": str(self._worktree)},
-        )
-        row["status"] = "abandoned"
-        return dict(row)
-
-
-class _FakeExecApp:
-    def __init__(self, *, raises: bool = False) -> None:
-        self.raises = raises
-        self.applied: list[list] = []
-        self.allowed_targets: list[set[str] | None] = []
-
-    def apply_execution_operations(
-        self,
-        operations,
-        *,
-        workspace_dir=None,
-        target_policy=None,
-        content_guard=None,
-        workspace_guard=None,
-        allowed_targets=None,
-    ):
-        if self.raises:
-            raise RuntimeError("apply blew up")
-        self.applied.append(operations)
-        self.allowed_targets.append(allowed_targets)
-
-
-def _service(tmp_path, *, gov, run_profile_json, exec_app=None):
-    content = _content(tmp_path)
-    svc = ImprovementExecutionService(
-        improvement_store=_FakeImprovements(),
-        content_store=content,
-        agent_governance=gov,
-        execution_app=exec_app or _FakeExecApp(),
-        run_profile_json=run_profile_json,
-    )
-    return svc, content
-
-
-def _confirm_plan(content, improvement_id="imp-1"):
-    content.upsert_optimization_plan(improvement_id, summary="收紧时间校验", changes=[{"target": "prompt", "change": "加时间校验"}])
-    content.set_optimization_plan_status(improvement_id, status="confirmed")
-
-
-def _claim_source(content: ImprovementContentStore, improvement_id: str = "imp-1") -> dict[str, str]:
-    plan = content.get_optimization_plan(improvement_id)
-    attribution = content.get_attribution(improvement_id)
-    assert plan is not None
-    return {
-        "source_optimization_plan_id": plan.optimization_plan_id,
-        "source_optimization_plan_updated_at": plan.updated_at,
-        "source_attribution_id": attribution.attribution_id if attribution else "",
-        "source_attribution_updated_at": attribution.updated_at if attribution else "",
-    }
-
-
-def _stage(tmp_path: Path) -> str:
-    factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    with factory() as db:
-        return str(db.get(ImprovementItemModel, "imp-1").improvement_stage)
-
-
-def test_heuristic_when_no_runner(tmp_path):
-    content = _content(tmp_path)
-    _confirm_plan(content)
-    svc = ImprovementExecutionService(
-        improvement_store=_FakeImprovements(),
-        content_store=content,
-        agent_governance=_FakeGovernance(tmp_path),
-        execution_app=_FakeExecApp(),
-        run_profile_json=None,
-    )
-    rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
-    assert rec.generated_by == "heuristic" and not rec.applied_agent_version_id and not rec.changes_applied  # C1：heuristic 不填 changes_applied
-
-
-def test_missing_plan_rejected_without_creating_execution(tmp_path):
-    gov = _FakeGovernance(tmp_path)
-
-    async def fake(**_k):
-        raise AssertionError("governor should not run without a plan")
-
-    svc, content = _service(tmp_path, gov=gov, run_profile_json=fake)
-    with pytest.raises(BusinessRuleViolation):
-        asyncio.run(svc.generate_and_apply_execution("imp-1"))
-    assert content.get_execution("imp-1") is None
+from improvement_execution_test_support import (
+    _claim_source,
+    _confirm_plan,
+    _content,
+    _FakeExecApp,
+    _FakeGovernance,
+    _FakeImprovements,
+    _materialization_service,
+    _service,
+    _stage,
+)
 
 
 def test_draft_plan_blocks_execution_until_separately_confirmed(tmp_path):
@@ -282,22 +68,6 @@ def test_draft_attribution_blocks_execution_before_change_set_creation(tmp_path)
         asyncio.run(svc.generate_and_apply_execution("imp-1"))
 
     assert gov.created == [] and content.get_execution("imp-1") is None
-
-
-def test_governor_decline_abandons_and_falls_back(tmp_path):
-    gov = _FakeGovernance(tmp_path)
-
-    async def declines(**_k):
-        return {"status": "needs_human_review", "summary": "", "operations": [], "no_action_reason": "目标文件不存在，需人工"}
-
-    svc, content = _service(tmp_path, gov=gov, run_profile_json=declines)
-    _confirm_plan(content)
-    rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
-    assert rec.generated_by == "heuristic"
-    assert "目标文件不存在" in rec.summary
-    assert gov.abandoned == gov.created
-    assert gov.store.removed == gov.created
-    assert _stage(tmp_path) == "optimization"
 
 
 def test_governor_success_applies_and_binds_version(tmp_path):
@@ -448,38 +218,6 @@ def test_applied_execution_is_not_reused_for_a_new_plan_revision(tmp_path):
         asyncio.run(svc.generate_and_apply_execution("imp-1"))
 
     assert first.applied_agent_version_id and calls["n"] == 1
-
-
-def test_unbound_heuristic_execution_does_not_block_reapply(tmp_path):
-    gov = _FakeGovernance(tmp_path)
-    calls = {"n": 0}
-
-    async def ready(**_k):
-        calls["n"] += 1
-        return {
-            "status": "ready",
-            "summary": "旧记录已被真实执行覆盖",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
-        }
-
-    svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
-    _confirm_plan(content)
-    _seed_execution_record(
-        content,
-        "imp-1",
-        summary="已按优化方案应用变更并生成新版本（初步记录，待执行引擎对接）。",
-        changes_applied=["prompt：旧占位"],
-        agent_version="",
-        generated_by="heuristic",
-    )
-
-    rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
-
-    assert calls["n"] == 1
-    assert rec.generated_by == "governor"
-    assert rec.change_set_id == gov.created[0]
-    assert rec.applied_agent_version_id == "ver-cand-sha"
-    assert rec.summary == "旧记录已被真实执行覆盖"
 
 
 def test_existing_unapplied_change_set_resumes_instead_of_false_idempotence(tmp_path):
@@ -959,73 +697,29 @@ def test_generated_feedback_tests_are_flat_immutable_and_idempotent(tmp_path):
     assert Path(worktree, candidate.target_path).read_text(encoding="utf-8") == "# developer-owned replacement\n"
 
 
-def test_materialized_feedback_test_rebinds_same_unpublished_change_set(tmp_path):
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
-    gov = _FakeGovernance(worktree)
-    gov.change_sets["agc-tests"] = {
-        "change_set_id": "agc-tests",
-        "agent_id": "soc-ops",
-        "base_commit_sha": "base-sha",
-        "candidate_commit_sha": "cand-sha",
-        "execution_job_id": "exec-tests",
-        "status": "candidate_committed",
-        "worktree_path": str(worktree),
-    }
-    content = _content(tmp_path)
-    execution = _seed_execution_record(
-        content,
-        "imp-1",
-        summary="已生成待发布版本",
-        changes_applied=["CLAUDE.md"],
-        agent_version="cand-sha",
-        change_set_id="agc-tests",
-        applied_agent_version_id="cand-sha",
-        applied_diff={"changed_files": ["CLAUDE.md"]},
-    )
-    with content._session_factory.begin() as db:
-        row = db.get(ExecutionRecordModel, execution.execution_id)
-        assert row is not None
-        row.status = "confirmed"
-        row.base_commit_sha = "base-sha"
-    candidate = build_generated_agent_test(
-        improvement_id="imp-1",
-        index=1,
-        test_code=(
-            "def test_evidence_boundary(agent):\n"
-            "    result = agent.run('分析告警')\n"
-            "    assert not result.errors\n"
-            "    normalized_text = ''.join(result.text.split())\n"
-            "    assert '证据' in normalized_text\n"
-            "    assert '核验' in normalized_text\n"
-        ),
-        test_intent="解释证据边界",
-        assertion_rationale="回答必须指出证据与核验动作",
-    )
-    content.upsert_regression_test_design(
-        "imp-1",
-        summary="覆盖误报反馈",
-        tests=[candidate.to_payload()],
-    )
+def test_materialized_feedback_test_rebinds_same_unpublished_change_set(tmp_path, monkeypatch):
+    worktree, gov, content, service = _materialization_service(tmp_path)
     squashed: dict[str, str] = {}
 
     def commit_squashed(_worktree, *, base_ref, message):
+        assert gov.store.guard_depth == 1
         squashed.update(base_ref=base_ref, message=message)
         return "cand-tests-sha"
 
+    def create_guarded_assets(*args, **kwargs):
+        assert gov.store.guard_depth == 1
+        return _create_generated_test_assets(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "app.services.improvement_execution_service._create_generated_test_assets",
+        create_guarded_assets,
+    )
     gov.store.commit_squashed_worktree = commit_squashed  # type: ignore[method-assign]
     gov.store.diff_versions = lambda start, end: {  # type: ignore[method-assign]
         "from": start,
         "to": end,
         "added": [{"path": "tests/test_feedback.py"}],
     }
-    service = ImprovementExecutionService(
-        improvement_store=_FakeImprovements(),
-        content_store=content,
-        agent_governance=gov,
-        execution_app=_FakeExecApp(),
-        run_profile_json=None,
-    )
 
     result = service.materialize_regression_tests("imp-1")
 
@@ -1040,3 +734,58 @@ def test_materialized_feedback_test_rebinds_same_unpublished_change_set(tmp_path
     assert rebound.applied_agent_version_id == "cand-tests-sha"
     assert gov.change_sets["agc-tests"]["candidate_commit_sha"] == "cand-tests-sha"
     assert squashed["base_ref"] == "base-sha"
+    assert gov.store.guard_entries == 1
+
+
+def test_materialized_feedback_test_guard_failure_has_zero_file_side_effects(tmp_path):
+    worktree, gov, content, service = _materialization_service(tmp_path)
+    gov.store.guard_entry_error = AgentGitError("Business Agent repository is no longer mutable")
+
+    with pytest.raises(ConflictError, match="worktree authority") as raised:
+        service.materialize_regression_tests("imp-1")
+
+    execution = content.get_execution("imp-1")
+    design = content.get_regression_test_design("imp-1")
+    assert raised.value.status_code == 409 and raised.value.error_code == "CONFLICT"
+    assert execution is not None and execution.applied_agent_version_id == "cand-sha"
+    assert design is not None and design.status == "draft"
+    assert gov.change_sets["agc-tests"]["candidate_commit_sha"] == "cand-sha"
+    assert not (worktree / "tests" / "README.md").exists()
+    assert not list((worktree / "tests").glob("test_*.py"))
+    assert gov.store.guard_depth == 0
+    assert not gov.committed
+
+
+def test_materialized_feedback_test_cleanup_winner_cannot_recreate_ghost_worktree(tmp_path):
+    worktree, gov, _content_store, service = _materialization_service(tmp_path)
+
+    def cleanup_wins() -> None:
+        gov.change_sets["agc-tests"]["status"] = "abandoned"
+        (worktree / ".git").unlink(missing_ok=True)
+        if worktree.exists():
+            worktree.rmdir()
+
+    gov.store.guard_entry_hook = cleanup_wins
+
+    with pytest.raises(ConflictError):
+        service.materialize_regression_tests("imp-1")
+
+    assert not worktree.exists()
+    assert gov.change_sets["agc-tests"]["status"] == "abandoned"
+    assert not gov.committed
+
+
+def test_materialized_feedback_test_rechecks_publishing_status_after_stable_lock(tmp_path):
+    worktree, gov, _content_store, service = _materialization_service(tmp_path)
+
+    def publication_reserves_before_lock() -> None:
+        gov.change_sets["agc-tests"]["status"] = "publishing"
+
+    gov.store.guard_entry_hook = publication_reserves_before_lock
+
+    with pytest.raises(ConflictError):
+        service.materialize_regression_tests("imp-1")
+
+    assert not (worktree / "tests").exists()
+    assert gov.change_sets["agc-tests"]["status"] == "publishing"
+    assert not gov.committed

@@ -10,7 +10,8 @@ SECURITY_OPERATIONS_EXPERT_AGENT_ID = "security-operations-expert"
 DEFAULT_BUSINESS_AGENT_ID = SECURITY_OPERATIONS_EXPERT_AGENT_ID
 BUILTIN_BUSINESS_AGENT_IDS = frozenset({SECURITY_OPERATIONS_EXPERT_AGENT_ID})
 
-# 安全运营专家携带剧本执行能力与审批治理契约，其内置 Workspace 必须经仓库评审变更。
+# 安全运营专家只提供防御性只读研判与响应方案，不持有任何 SOC 副作用权限；
+# 其内置 Workspace 仍属于受保护配置，必须经仓库评审变更。
 PROTECTED_BUSINESS_AGENT_IDS = frozenset({SECURITY_OPERATIONS_EXPERT_AGENT_ID})
 
 

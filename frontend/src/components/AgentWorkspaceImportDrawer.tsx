@@ -2,6 +2,7 @@ import { Loader2, RotateCcw, Upload } from "lucide-react";
 import type { RefObject } from "react";
 import type { AgentSummary, WorkspaceImportResponse } from "../types/runtime";
 import { DrawerShell } from "./DrawerShell";
+import { AGENT_ID_MAX_LENGTH } from "./agentSettingsValidation";
 
 export type WorkspaceImportMode = "create" | "overwrite";
 export type WorkspacePackageOperation = "export" | "import" | "restore";
@@ -78,6 +79,7 @@ function WorkspaceImportFields({ props, busy, overwrite }: {
           value={props.agentId}
           disabled={busy || overwrite}
           readOnly={overwrite}
+          maxLength={AGENT_ID_MAX_LENGTH}
           placeholder="例如 incident-response-agent"
           onChange={(event) => props.onAgentIdChange(event.target.value)}
         />
@@ -153,18 +155,55 @@ export function WorkspaceOperationNotice({ notice }: { notice: WorkspacePackageN
 }
 
 function WorkspaceImportReceipt({ receipt }: { receipt: WorkspaceImportResponse }) {
+  const statusLabel: Record<WorkspaceImportResponse["test_suite_status"], string> = {
+    ready: "测试套件已就绪",
+    warning: "测试套件有警告",
+    invalid: "测试套件不可用",
+  };
+  const actionLabel: Record<WorkspaceImportResponse["action"], string> = {
+    created: "已创建",
+    overwritten: "已覆盖",
+    unchanged: "无变更",
+  };
+  const invalid = receipt.test_suite_status === "invalid";
   return (
-    <div className="settings-workspace-receipt" data-testid="settings-workspace-import-receipt" role="status">
-      <strong>{receipt.action}</strong>
-      <span>previous <code title={receipt.previous_commit_sha || ""}>{receipt.previous_commit_sha?.slice(0, 12) || "-"}</code></span>
-      <span>current <code title={receipt.current_commit_sha}>{receipt.current_commit_sha.slice(0, 12)}</code></span>
-      <span>package <code title={receipt.package_sha256}>{receipt.package_sha256.slice(0, 12)}</code></span>
-      <span>tree <code title={receipt.tree_sha256}>{receipt.tree_sha256.slice(0, 12)}</code></span>
-      <span>tests <strong>{receipt.test_suite_status}</strong> · {receipt.test_file_count} files</span>
-      <span>audit <code>{receipt.import_record_id}</code></span>
-      {(receipt.test_suite_warnings ?? []).map((warning) => (
-        <span className="is-warning" key={`${warning.code}-${warning.path || ""}`}>{warning.code}</span>
-      ))}
+    <div
+      className={`settings-workspace-receipt is-${receipt.test_suite_status}`}
+      data-testid="settings-workspace-import-receipt"
+      data-test-suite-status={receipt.test_suite_status}
+      role={invalid ? "alert" : "status"}
+      aria-live={invalid ? "assertive" : "polite"}
+    >
+      <strong className="settings-workspace-receipt-action">{actionLabel[receipt.action]}</strong>
+      <span>上一版本 <code title={receipt.previous_commit_sha || ""}>{receipt.previous_commit_sha?.slice(0, 12) || "-"}</code></span>
+      <span>当前版本 <code title={receipt.current_commit_sha}>{receipt.current_commit_sha.slice(0, 12)}</code></span>
+      <span>导入包 <code title={receipt.package_sha256}>{receipt.package_sha256.slice(0, 12)}</code></span>
+      <span>目录树 <code title={receipt.tree_sha256}>{receipt.tree_sha256.slice(0, 12)}</code></span>
+      <span>
+        <strong className="settings-workspace-suite-status">{statusLabel[receipt.test_suite_status]}</strong>
+        {` · ${receipt.test_file_count} 个测试文件`}
+      </span>
+      <span>审计记录 <code>{receipt.import_record_id}</code></span>
+      {receipt.test_suite_diagnostics.length > 0 ? (
+        <div className="settings-workspace-diagnostics" data-testid="settings-workspace-import-diagnostics">
+          {receipt.test_suite_diagnostics.map((diagnostic, index) => (
+            <div
+              className={`settings-workspace-diagnostic is-${diagnostic.level}`}
+              data-diagnostic-level={diagnostic.level}
+              key={`${diagnostic.level}-${diagnostic.code}-${diagnostic.path || ""}-${index}`}
+            >
+              <span className="settings-workspace-diagnostic-heading">
+                <strong>{diagnostic.level === "error" ? "错误" : "警告"}</strong>
+                <code>{diagnostic.code}</code>
+              </span>
+              <span className="settings-workspace-diagnostic-message">{diagnostic.message}</span>
+              {diagnostic.path ? (
+                <span className="settings-workspace-diagnostic-path">位置：<code>{diagnostic.path}</code></span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

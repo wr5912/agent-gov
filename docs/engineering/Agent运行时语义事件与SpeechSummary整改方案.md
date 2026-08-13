@@ -2,6 +2,8 @@
 
 > 状态：Accepted / 实施依据；决策日期：2026-07-28；目标版本：3.0.3；公开契约真相源：OpenAPI
 > 上位架构依据：[OpenAI 兼容接口能否替代原生 Chat 端点评估](./OpenAI兼容接口能否替代原生Chat端点评估.md)
+> 落地状态：3.0.3 已实现并由 §13 所列专项测试持续回归；§2.1 与 §13 的原 `GAP/REFACTOR/PROMOTE`
+> 标签保留为整改前审计基线，不表示当前仍存在同名缺口。
 
 ## 1. 结论先行
 
@@ -12,8 +14,8 @@
 本轮新增的 Speech Summary 是一次受控、可选、非持久化的 LLM 派生能力：
 
 - `/api/agent-runtime/sdk-events` 通过 `with_speech_summary` 显式开启。
-- `/api/chat/stream` 通过 `with_speech_summary` 显式开启，`raw` 与 `semantic` 两种模式都输出
-  同一个 canonical `agentgov.speech_summary` 事件。
+- `/api/chat/stream` 通过 `with_speech_summary` 显式开启，`raw` 与 `semantic` 两种模式都支持
+  同一个 canonical `agentgov.speech_summary` 事件；仅在摘要生成、校验与安全过滤成功时输出。
 - `/v1/responses` 仅在 control mode、`stream=true` 且
   `agentgov.with_speech_summary=true` 时开启。
 - `/api/chat`、`/v1/chat/completions`、strict Responses 和 raw Runtime 接口不支持 Speech
@@ -26,9 +28,9 @@ Speech Summary 不替代原生 SDK 消息、标准 Responses reasoning、最终�
 
 ## 2. 实际问题与整改目标
 
-### 2.1 当前问题
+### 2.1 整改前问题基线（2026-07-28）
 
-当前实现存在四类跨接口问题：
+整改前实现存在四类跨接口问题；本方案落地后由 §13 专项测试验证对应行为：
 
 1. `RuntimeQueryState.answer_parts` 和 Responses 流投影没有统一过滤
    `parent_tool_use_id is not None` 的子 Agent 文本，子 Agent 证据可能污染主回答或标准 reasoning。
@@ -42,7 +44,8 @@ Speech Summary 不替代原生 SDK 消息、标准 Responses reasoning、最终�
 ### 2.2 本轮目标
 
 - 以 Claude Agent SDK 消息为唯一事实源，统一主 Agent 作用域、完成边界和终态时序。
-- 在三个流式语义接口输出同一 Speech Summary 业务事件。
+- 在三类流式语义接口提供同一 Speech Summary best-effort 能力；生成成功时才输出 canonical
+  业务事件，不承诺单个 surface 一定出现该事件。
 - 保留三个兼容接口的主要 wire 形状，同时修复静默忽略、错误伪成功、HITL 和子 Agent 污染。
 - 收紧 `/v1/responses` strict/control、请求 allowlist、retrieve 模式和标准终态。
 - 保持 raw body byte-exact，不解析、不重序列化、不混入任何 AgentGov body 事件。
@@ -149,7 +152,7 @@ ThinkingBlock 完成示例：
     "message_id": "msg_123",
     "block_index": 0,
     "scope": "main",
-    "text": "正在核对告警证据和攻击链路",
+    "text": "正在核对告警证据和威胁链路",
     "char_count": 13
   }
 }
@@ -258,11 +261,13 @@ DSPy Signature 只要求生成 `text`。Backend-owned 字段可以作为观测 m
 
 | 派生能力 | 单任务总超时 | Agent 终态排空 |
 | --- | --- | --- |
-| Speech Summary | 15 秒 | 5 秒 |
+| Speech Summary | 15 秒 | 20 秒 |
 | Prompt Suggestion | 15 秒 | 3 秒 |
 
 Speech Summary 在完成边界出现后立即异步启动，不阻塞后续原生 token。Prompt Suggestion 在最终
 Result 可用后启动。终态阶段并发排空两个能力，各自使用独立预算；超时任务取消并静默丢弃。
+启用 Speech Summary 边界时，终态排空预算必须严格大于单任务总超时，避免 repair 在自身预算
+内运行时被外层提前取消；关闭全部边界时可把排空预算设为 `0`。
 
 客户端断开时：
 
@@ -407,7 +412,7 @@ SPEECH_SUMMARY_BOUNDARIES=thinking_block_completed,assistant_response_completed
 
 ```dotenv
 SPEECH_SUMMARY_TIMEOUT_SECONDS=15
-SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS=5
+SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS=20
 PROMPT_SUGGESTION_TIMEOUT_SECONDS=15
 PROMPT_SUGGESTION_TERMINAL_DRAIN_SECONDS=3
 ```
@@ -417,6 +422,8 @@ PROMPT_SUGGESTION_TERMINAL_DRAIN_SECONDS=3
 - 未知值、重复值、非整体空字符串中的空 segment 在应用启动时失败。
 - 整体留空合法，表示所有 Speech Summary 边界关闭。
 - 配置 `thinking_block_completed` 时，`INCLUDE_PARTIAL_MESSAGES=false` 必须启动失败。
+- 启用任一边界时，单任务总超时必须小于 60 秒；终态排空预算必须严格大于该超时且不超过
+  60 秒。排队锁、服务并发槽和模型调用共同消费单任务总预算，不能由终态排空提前取消。
 - 容器 `docker/.env.example` 与本机 `docker/.env.local-debug.example` 的 Runtime key 同构；
   真实私有 env 只在对应运行模式中选择，不构成 layered override。
 - 启动日志输出边界和 timeout，不输出模型凭据。
@@ -487,28 +494,32 @@ SDK message
 
 ## 13. 测试同步矩阵
 
-| 行为 | 处置 | 权威测试重点 |
+下表“原处置”记录 2026-07-28 制定方案时的同步判断。当前这些项目均已落地并进入回归；列中的
+`GAP`、`REFACTOR`、`PROMOTE` 和 `KEEP/扩展` 不是当前完成度。当前行为仍以 OpenAPI、代码和列出的
+权威测试为准。
+
+| 行为 | 原处置 | 当前状态与权威测试重点 |
 | --- | --- | --- |
-| DSPy typed output、长度、一次修复 | GAP | 正常、过短、过长、parse failure、provider failure |
-| hostile backend-owned 字段污染 | GAP | extra 字段不能进入最终事件 |
-| URL/path/secret/CoT/JSON 安全过滤 | GAP | 静默丢弃，不发 `agentgov.error` |
-| thinking/assistant 完成边界 | GAP | 原生 message id/index、去重、空/tool-only/subagent 跳过 |
-| 默认关闭和 env 空边界 | GAP | 不调用 DSPy、不输出摘要 |
-| stale thinking 与断连取消 | GAP | 取消任务、无迟到事件、无孤儿成本 |
-| SDK SSE Speech Summary | REFACTOR | 专用请求 schema、canonical envelope、done 最后 |
-| Chat Stream raw/semantic Speech | GAP | 两模式同一 canonical 事件、旧事件兼容 |
-| Responses control Speech | GAP | control+stream only、标准 terminal 最后 |
-| strict Responses 无 AgentGov | PROMOTE | 非流式/流式/retrieve 一致 |
-| Responses allowlist/typed input | REFACTOR | 空、only-system、unknown field/block、hostile metadata |
-| Responses subagent scope | GAP | 标准 text/reasoning 不污染，control trace 保留 |
-| Responses terminal exactly once/last | PROMOTE | success、failure、source exception、derived timeout |
-| Chat/Chat Completions HITL fail-fast | GAP | 运行前 `422` |
-| Chat Completions `stream=true` | GAP | `422` 且 OpenAPI 不宣称 stream |
-| Chat Completions runtime failure | GAP | `502` OpenAI error，不伪成功 |
-| raw 不支持 Speech | KEEP/扩展 | 422、OpenAPI 无字段、body/header byte-exact |
-| raw HITL polling token | GAP | 仅 exact waiting run 暴露，终态/宽查询不泄漏 |
-| Prompt Suggestion 终态前排空 | REFACTOR | 超时、异常、顺序、断连取消 |
-| 三兼容接口 deprecated | GAP | OpenAPI + docs，无 sunset 日期 |
+| DSPy typed output、长度、一次修复 | GAP | 已验证：正常、过短、过长、parse failure、provider failure |
+| hostile backend-owned 字段污染 | GAP | 已验证：extra 字段不能进入最终事件 |
+| URL/path/secret/CoT/JSON 安全过滤 | GAP | 已验证：静默丢弃，不发 `agentgov.error` |
+| thinking/assistant 完成边界 | GAP | 已验证：原生 message id/index、去重、空/tool-only/subagent 跳过 |
+| 默认关闭和 env 空边界 | GAP | 已验证：不调用 DSPy、不输出摘要 |
+| stale thinking 与断连取消 | GAP | 已验证：取消任务、无迟到事件 |
+| SDK SSE Speech Summary | REFACTOR | 已验证：专用请求 schema、canonical envelope、done 最后 |
+| Chat Stream raw/semantic Speech | GAP | 已验证：两模式同一 canonical 事件、旧事件兼容 |
+| Responses control Speech | GAP | 已验证：control+stream only、标准 terminal 最后 |
+| strict Responses 无 AgentGov | PROMOTE | 已验证：流式、非流式与 retrieve 边界 |
+| Responses allowlist/typed input | REFACTOR | 已验证：空、unknown field/block、hostile metadata |
+| Responses subagent scope | GAP | 已验证：标准 text/reasoning 不污染，control trace 保留 |
+| Responses terminal exactly once/last | PROMOTE | 已验证：success、failure、source exception |
+| Chat/Chat Completions HITL fail-fast | GAP | 已验证：运行前 `422` |
+| Chat Completions `stream=true` | GAP | 已验证：`422` 且 OpenAPI 不宣称 stream |
+| Chat Completions runtime failure | GAP | 已验证：`502` OpenAI error，不伪成功 |
+| raw 不支持 Speech | KEEP/扩展 | 已验证：422、OpenAPI 无字段、body/header byte-exact |
+| raw HITL polling token | GAP | 已验证：仅 exact waiting run 暴露，终态/宽查询不泄漏 |
+| Prompt Suggestion 终态前排空 | REFACTOR | 已验证：异常、顺序和终态边界 |
+| 三兼容接口 deprecated | GAP | 已验证：OpenAPI + docs，无 sunset 日期 |
 
 测试应断言公开行为，不绑定 coordinator 私有任务集合或 DSPy 内部调用顺序。新增场景同步
 `tests/quality_policy.json` 的 owner、capability、lane 和主流程绑定。
@@ -563,11 +574,13 @@ make test
 1. 重建并启动 API/UI/LiteLLM sidecar，确认 `/health/ready`。
 2. 对真实注册业务 Agent、真实模型运行 SDK SSE：
    - `with_speech_summary=true`；
-   - 至少收到一个合法 10–50 字摘要；
+   - 终态与主回答正确；出现 Speech Summary 时必须满足 canonical 10–50 字契约；
    - SDK 原生源排空后不出现 `MirrorErrorMessage`；
    - 主回答正常，`agentgov.done` 最后。
 3. 运行 Chat Stream `raw`、`semantic` 和 Responses control stream：
-   - 三者都收到 canonical Speech 事件；
+   - 三者终态都正确，出现的 Speech 事件都满足 canonical 契约；
+   - SDK、两种 Chat Stream 与 Responses control 整轮合计至少收到一个合法摘要，不把 best-effort
+     能力误写为逐 surface 保证；
    - Responses 标准 terminal 恰好一次且最后。
 4. 运行 `/api/chat` 与 `/v1/chat/completions` 非流式 smoke，确认兼容接口仍可用且不输出 Speech。
 5. 运行 strict Responses，确认无 `agentgov.*`；运行 control non-stream +

@@ -147,7 +147,7 @@ def _register_test_run_routes(router: APIRouter, service: AgentTestingService) -
     @router.post("/agent-test-runs/{test_run_id}/cancel", response_model=AgentTestRunResponse)
     def cancel_agent_test_run(test_run_id: str) -> AgentTestRunResponse:
         try:
-            return AgentTestRunResponse.model_validate(service.runner.cancel(test_run_id))
+            return AgentTestRunResponse.model_validate(service.cancel_run(test_run_id))
         except AgentTestRunNotFound as exc:
             raise AgentTestingError(404, "AGENT_TEST_RUN_NOT_FOUND", f"Agent test run not found: {test_run_id}") from exc
 

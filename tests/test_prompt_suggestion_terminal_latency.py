@@ -26,7 +26,7 @@ from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 
-from business_agent_test_utils import create_test_business_agent_workspace
+from business_agent_test_utils import create_test_business_agent_workspace, register_test_business_agent_instance
 from claude_runtime_test_utils import default_profile_resolver
 
 TRAILING_WINDOW = claude_prompt_suggestions._TRAILING_TIMEOUT_SECONDS
@@ -156,7 +156,13 @@ def _runtime(tmp_path) -> ClaudeRuntime:
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"}}}, indent=2) + "\n",
         encoding="utf-8",
     )
-    return ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), business_profile_resolver=default_profile_resolver(settings))
+    session_store = LocalSessionStore(settings.session_dir)
+    register_test_business_agent_instance(
+        session_store.Session,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        workspace_dir=str(workspace),
+    )
+    return ClaudeRuntime(settings, session_store, business_profile_resolver=default_profile_resolver(settings))
 
 
 async def _stream_until_done(runtime: ClaudeRuntime) -> tuple[list[str], float, float]:

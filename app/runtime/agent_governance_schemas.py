@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from app.runtime.agent_paths import AgentId
 from app.runtime.protected_business_agents import (
     is_builtin_business_agent,
     is_default_business_agent,
@@ -22,11 +23,12 @@ if TYPE_CHECKING:
 
 
 class AgentSummaryResponse(BaseModel):
-    agent_id: str
+    agent_id: AgentId
     name: str
     category: str
     workspace_dir: str
     created_at: str
+    instance_etag: str = Field(description="当前业务 Agent 实例的精确删除与写入 CAS；不得替代持久事实的实例归属。")
     status: AgentLifecycleStatus = Field(
         default="active",
         description="生命周期状态：draft/active/evaluating/deprecated/archived。",
@@ -51,7 +53,7 @@ class AgentStarterPromptResponse(BaseModel):
 class AgentPresentationResponse(BaseModel):
     """业务 Agent Welcome Card 的结构化只读投影。"""
 
-    agent_id: str = Field(description="平台注册表中的业务 Agent 身份。")
+    agent_id: AgentId = Field(description="平台注册表中的业务 Agent 身份。")
     name: str = Field(description="平台注册表中的业务 Agent 展示名称。")
     version: Optional[str] = Field(default=None, description="agent.yaml 中声明的 Agent 版本。")
     language: Optional[str] = Field(default=None, description="agent.yaml 中声明的主要语言。")
@@ -71,7 +73,7 @@ class AgentPresentationResponse(BaseModel):
 
 class AssetProvenanceImprovement(BaseModel):
     improvement_id: str
-    agent_id: str
+    agent_id: AgentId
     title: str
     improvement_stage: str
     improvement_status: str
@@ -92,7 +94,7 @@ class AgentLifecycleTransitionRequest(BaseModel):
 
 
 class FeedbackSignalReassignRequest(BaseModel):
-    agent_id: str = Field(description="修正后的归属业务 Agent。")
+    agent_id: AgentId = Field(description="修正后的归属业务 Agent。")
     operator: str = Field(description="执行修正的操作人，用于审计。")
     reason: Optional[str] = Field(default=None, description="修正原因（可选），写入审计记录。")
 
@@ -104,6 +106,20 @@ class AgentDeletionImpact(BaseModel):
     test_runs: int = Field(default=0, description="该 Agent 归属的平台测试运行记录数（影响面提示，按 limit 截顶）。")
     change_sets: int = Field(default=0, description="该 Agent 归属的待发布变更数（影响面提示，按 limit 截顶）。")
     releases: int = Field(default=0, description="该 Agent 归属的版本 release 数（影响面提示，按 limit 截顶）。")
+
+
+class DeletedAgentSummaryResponse(BaseModel):
+    """删除回执的最小身份投影；不得回显运行卷路径或内部实例 token。"""
+
+    agent_id: AgentId
+    name: str
+    category: str
+    created_at: str
+    status: AgentLifecycleStatus
+    builtin: bool
+    default: bool
+    protected: bool
+    requires_web_hitl: bool
 
 
 def agent_summary_response(record: AgentRegistryRecord) -> AgentSummaryResponse:
@@ -119,6 +135,7 @@ def agent_summary_response(record: AgentRegistryRecord) -> AgentSummaryResponse:
         category=record.category,
         workspace_dir=record.workspace_dir,
         created_at=record.created_at,
+        instance_etag=record.instance_etag,
         status=record.status,
         builtin=is_builtin_business_agent(record.agent_id),
         default=is_default_business_agent(record.agent_id),
@@ -128,7 +145,21 @@ def agent_summary_response(record: AgentRegistryRecord) -> AgentSummaryResponse:
 
 
 class AgentDeleteResponse(BaseModel):
-    deleted: AgentSummaryResponse
+    operation_id: str
+    state: Literal["cleanup_pending", "completed"]
+    deleted: DeletedAgentSummaryResponse
     impact: AgentDeletionImpact = Field(description="删除前的治理影响面提示，避免无声删除治理对象。")
-    workspace_removed: bool = Field(default=True, description="该 Agent 的运行态目录（workspace/claude-root/version）是否已确认删除。")
-    cleanup_complete: bool = Field(default=True, description="磁盘清理是否完整。为 false 时注册表已删除但存在磁盘残留，同 id 重建会被安全供给流程拦住。")
+    workspace_removed: bool = Field(description="该 Agent 的运行态目录（workspace/claude-root/version）是否已确认删除。")
+    cleanup_complete: bool = Field(description="磁盘清理是否完整；无论结果如何，已公开并删除的 Agent id 都保持永久保留。")
+    last_error_code: Optional[str] = Field(
+        description="最近一次后台清理失败的脱敏稳定错误码；不包含路径、token 或 inode。",
+    )
+    attempt_count: int = Field(ge=0, description="后台已持久化的清理尝试次数。")
+    updated_at: str = Field(description="该 durable deletion operation 最近一次状态更新时间。")
+
+    @model_validator(mode="after")
+    def validate_cleanup_receipt(self) -> AgentDeleteResponse:
+        completed = self.state == "completed"
+        if self.workspace_removed != completed or self.cleanup_complete != completed:
+            raise ValueError("deletion cleanup receipt must exactly match the durable operation state")
+        return self

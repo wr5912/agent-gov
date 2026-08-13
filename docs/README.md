@@ -15,12 +15,22 @@
 文档状态说明：
 
 - **权威入口**：长期产品口径、术语和验收锚点，优先级最高。
-- **当前实现基线**：解释当前代码和运行态；历史 API、数据库和 UI 名称只在明确标注的迁移说明中出现。
+- **当前实现基线**：解释当前代码和运行态；必须分别标明发布基线、已验证但未发布的工作树能力与待验实现。
 - **产品能力目标方案**：定义尚未落地的单项产品能力、公开契约和工程边界；不表示当前 OpenAPI 已支持。
-- **四阶段改进治理方案**：面向目标态的产品方案，不自动说明当前代码已经实现；其中四阶段改进治理工作台方案是改进治理工作台 UI、流程和效果图验收的绝对依据。
+- **四阶段改进治理方案**：面向目标态的产品方案，不自动说明当前代码已经实现；其中四阶段改进治理工作台方案负责该工作台的 UI、用户流程和效果图验收，不覆盖其他工程契约。
 - **评审/复盘**：保留证据链和审查意见，不作为主实现方案；若与主方案冲突，以对应权威入口或主方案为准。
 - **工程治理**：约束协作、测试、发布和治理硬门，不承载产品愿景。
 - **归档**：已被替代但仍有审计价值的历史文档，从活跃阅读路径移入 `docs/archive/`。
+
+能力成熟度只有四档；它与“当前发布 / 当前工作树”这一交付边界是两个维度。通过阶段验收可以写
+“已验证”，但只有根 `VERSION`、对应 tag 和发布回执一致时才能写“已发布”。
+
+| 状态 | 可以据此声称什么 | 真相源 |
+| --- | --- | --- |
+| 已验证 | 已完成适用验收门；必须另行说明位于当前发布还是当前工作树 | 阶段验证、验收回执、当前实现基线 |
+| 已实现待终验 | 代码和目标测试存在，但仍有明确最终门未完成 | `.planning/STATE.md` |
+| 规划中 | 目标或方案已经定义，当前不能按可用能力宣传 | 路线图与对应方案 |
+| 已废弃 | 只为迁移保留，禁止新消费者依赖 | OpenAPI deprecated 标记与迁移说明 |
 
 ## 权威入口
 
@@ -57,7 +67,8 @@
 - [P0 准入收口实施方案](./engineering/AgentGov下一阶段P0准入收口实施方案.md)：
   `docs/engineering/AgentGov下一阶段P0准入收口实施方案.md`，先分别收口内置安全 Agent
   精确 commit 全量测试、模拟 MCP capability slice 回执、per-Agent 质量策略 lane 和 Runtime
-  生命周期裁决；当前 29 个 leaf 只是基线快照，不进入平台长期契约
+  生命周期裁决；2026-08-05 初始评审的 29 个 leaf 只是历史基线快照，不代表当前候选，
+  也不进入平台长期契约
 - [P0 模拟 MCP 平台验收实施方案](./engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md)：
   `docs/engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md`，固定原始
   `openapi-mcp-server` 与 `mock_service` 提交，以隔离、只读、合成夹具验证 AgentGov 的真实
@@ -89,12 +100,16 @@
   `agentgov_testkit`、精确提交运行、服务重启恢复和发布条件
 - [业务 Agent Workspace 包导入与热加载产品工程方案](./业务AgentWorkspace包导入与热加载产品工程方案.md)：
   `docs/业务AgentWorkspace包导入与热加载产品工程方案.md`，定义普通 Agent 仅由 Workspace 包创建、
-  原样导入/导出、同 ID 覆盖、下一 turn 生效、Git 审计、删除与运行卷初始化的当前工程契约；
+  原样导入/导出、同 ID 覆盖、下一 turn 生效、受管 Git authority、durable activation/删除、
+  0058 存量卷 activation/recovery trigger refresh、0059 durable deletion journal authority hardening、
+  fd-relative Workspace fingerprint、已公开 ID 保留与运行卷初始化的当前工程契约；
   字段级真相源仍是 OpenAPI
 
 ## 四阶段改进治理工作台权威方案
 
-这些文档面向跨代重建和设计评审，不自动替代当前实现基线。对于“改进治理工作台”的 UI、用户主链路、决策卡、面板入口、处理记录和效果图验收，四阶段整改方案是绝对依据；旧 ASCII 草图已归档，只能作为历史设计证据追溯。
+这些文档面向跨代重建和设计评审，不自动替代当前实现基线。对于“改进治理工作台”的 UI、用户主链路、
+决策卡、面板入口、处理记录和效果图验收，四阶段整改方案是该范围的权威；OpenAPI、测试执行与阶段状态
+仍由各自真相源负责。旧 ASCII 草图已归档，只能作为历史设计证据追溯。
 
 实现整改的阅读路径是：
 
@@ -109,11 +124,19 @@
 
 ## 工程治理
 
+- [部署与运行手册](./engineering/部署与运行手册.md)：`docs/engineering/部署与运行手册.md`，
+  Compose 启停、env 选择、健康诊断、Langfuse、真实容器验收、可信主机部署、停止回退、
+  session turn 恢复和本机调试的唯一操作入口
 - [测试资产组合治理](./engineering/测试资产组合治理.md)：`docs/engineering/测试资产组合治理.md`，
   测试分类、业务 Agent 自有回归与独立发布评测包分权、生命周期、执行通道、可信证据、TIA/xdist
   晋级和 mutation 的权威工程契约
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`
 - [GSD长程重构阶段清单](./engineering/GSD长程重构阶段清单.md)：`docs/engineering/GSD长程重构阶段清单.md`
+- [业务 Agent Workspace 激活故障恢复 Runbook](./engineering/业务AgentWorkspace激活故障恢复Runbook.md)：
+  `docs/engineering/业务AgentWorkspace激活故障恢复Runbook.md`，定义 0055 activation fence 的本机只读发现、
+  固定 git-dir/work-tree 的 canonical graph/index authority、raw commit/ref/HEAD topology、0057 append-only
+  恢复 attempt 与 strict terminal evidence、0058 authority trigger refresh、exact reconcile、reserved attempt
+  resume、strict-subset durable ref 修复与无 force 边界
 - [Agent 运行时语义事件与 Speech Summary 整改方案](./engineering/Agent运行时语义事件与SpeechSummary整改方案.md)：
   `docs/engineering/Agent运行时语义事件与SpeechSummary整改方案.md`，定义 3.0.3 的主 Agent
   作用域、Speech Summary typed output、派生事件终态、Responses/兼容接口/raw/HITL 契约和真实容器验收

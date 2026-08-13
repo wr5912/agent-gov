@@ -4,6 +4,7 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
+import { withManagedChromium } from "./playwright_browser_authority.mjs";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -295,6 +296,98 @@ async function startMockApi() {
   };
 }
 
+async function openPlayground(page, apiBase, apiKey, requestedPaths) {
+  page.on("request", (request) => {
+    if (!request.url().startsWith(apiBase)) return;
+    const url = new URL(request.url());
+    requestedPaths.push(`${request.method()} ${url.pathname}`);
+  });
+  await page.addInitScript(([base, key]) => {
+    window.localStorage.setItem(
+      "runtime-client-config",
+      JSON.stringify({ apiBase: base, apiKey: key }),
+    );
+    window.localStorage.removeItem("playground-active-session");
+    window.localStorage.removeItem("playground-selected-business-agent");
+    window.localStorage.removeItem("playground-session-messages");
+  }, [apiBase, apiKey]);
+  await page.goto(uiBase, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("playground").waitFor({ timeout: 30000 });
+  await page.getByTestId("topbar-agent-switcher").waitFor({ timeout: 30000 });
+  await page.waitForFunction(() => {
+    const selector = document.querySelector('[data-testid="topbar-agent-switcher"]');
+    return selector instanceof HTMLSelectElement && Boolean(selector.value);
+  }, undefined, { timeout: 30000 });
+}
+
+async function runCancellationScenario(page, requestedPaths, mockApi) {
+  const input = page.getByTestId("chat-composer-input");
+  await input.fill(
+    real
+      ? "请生成一份较长的分步排查清单，至少 80 条，每条给出解释。"
+      : "生成长任务用于取消竞态验收",
+  );
+  await page.getByTestId("chat-send").click();
+  const stop = page.getByTestId("chat-stop");
+  await stop.waitFor({ timeout: 30000 });
+  if (!real) await page.getByText("已生成的部分输出", { exact: true }).waitFor({ timeout: 10000 });
+  await stop.click();
+
+  let pendingLocked = true;
+  if (!real) {
+    await page.waitForFunction(() => {
+      const button = document.querySelector('[data-testid="chat-stop"]');
+      return button?.hasAttribute("disabled") && button.textContent?.includes("停止中");
+    }, undefined, { timeout: 5000 });
+    await input.fill("停止确认前不得发送");
+    await input.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
+    await page.waitForTimeout(100);
+    pendingLocked = mockApi.state.streamRequests === 1;
+  }
+
+  await page.getByTestId("chat-send").waitFor({ timeout: real ? 120000 : 15000 });
+  const firstText = await page.locator('[data-message-role="assistant"]').last().innerText();
+  const cancellationNotRenderedAsFailure = !firstText.includes("运行失败")
+    && !firstText.includes("SESSION_CONFLICT");
+  await input.fill(real ? "只回复 SECOND_OK" : "取消后立即重试");
+  await page.getByTestId("chat-send").click();
+  await page.getByTestId("chat-send").waitFor({ timeout: real ? 120000 : 15000 });
+  const bodyText = await page.locator("body").innerText();
+  const secondText = await page.locator('[data-message-role="assistant"]').last().innerText();
+  const exactCancelPath = requestedPaths.includes("POST /api/agent-runs/run-cancel-mock/cancel")
+    || (real && requestedPaths.some((path) => /^POST \/api\/agent-runs\/[^/]+\/cancel$/.test(path)));
+  return {
+    pendingLocked,
+    exactCancelPath,
+    secondRequestSent: requestedPaths.filter((path) => path === "POST /api/agent-runtime/sdk-events").length === 2,
+    cancellationNotRenderedAsFailure,
+    noSessionConflict: !bodyText.includes("SESSION_CONFLICT"),
+    followUpCompleted: real ? secondText.trim().length > 0 : secondText.includes("SECOND_OK"),
+    cancelBeforeFirstStreamClose: real
+      || (mockApi.state.cancelRequestedAt > 0 && mockApi.state.firstStreamClosedAt >= mockApi.state.cancelRequestedAt),
+    cancelRunIds: real ? undefined : mockApi.state.cancelRunIds,
+  };
+}
+
+async function runBrowserFlow(browser, apiBase, apiKey, mockApi) {
+  const requestedPaths = [];
+  const page = await browser.newPage({ viewport: { width: 1440, height: 920 } });
+  try {
+    await openPlayground(page, apiBase, apiKey, requestedPaths);
+    const result = await runCancellationScenario(page, requestedPaths, mockApi);
+    const passed = Object.entries(result)
+      .filter(([key]) => key !== "cancelRunIds")
+      .every(([, value]) => value === true);
+    await page.screenshot({
+      path: join(screenshotDir, "playground-cancel-and-retry.png"),
+      fullPage: true,
+    });
+    return { passed, result };
+  } finally {
+    await page.close();
+  }
+}
+
 async function main() {
   const mockApi = real ? null : await startMockApi();
   const apiBase = configuredApiBase || mockApi?.apiBase;
@@ -303,110 +396,35 @@ async function main() {
     || envValue("FRONTEND_RUNTIME_API_KEY")
     || envValue("API_KEY");
   const vite = real ? null : startVite();
-  const requestedPaths = [];
-  let browser;
   try {
     await waitForUrl(uiBase, real ? 60000 : 30000);
-    browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
-    const page = await browser.newPage({ viewport: { width: 1440, height: 920 } });
-    page.on("request", (request) => {
-      if (!request.url().startsWith(apiBase)) return;
-      const url = new URL(request.url());
-      requestedPaths.push(`${request.method()} ${url.pathname}`);
-    });
-    await page.addInitScript(([base, key]) => {
-      window.localStorage.setItem(
-        "runtime-client-config",
-        JSON.stringify({ apiBase: base, apiKey: key }),
+    const options = { headless: process.env.PLAYWRIGHT_HEADLESS !== "0" };
+    let outcome;
+    if (real) {
+      outcome = await withManagedChromium(
+        chromium,
+        options,
+        (browser) => runBrowserFlow(browser, apiBase, apiKey, mockApi),
       );
-      window.localStorage.removeItem("playground-active-session");
-      window.localStorage.removeItem("playground-selected-business-agent");
-      window.localStorage.removeItem("playground-session-messages");
-    }, [apiBase, apiKey]);
-    await page.goto(uiBase, { waitUntil: "domcontentloaded" });
-    await page.getByTestId("playground").waitFor({ timeout: 30000 });
-    await page.getByTestId("topbar-agent-switcher").waitFor({ timeout: 30000 });
-    await page.waitForFunction(() => {
-      const selector = document.querySelector('[data-testid="topbar-agent-switcher"]');
-      return selector instanceof HTMLSelectElement && Boolean(selector.value);
-    }, undefined, { timeout: 30000 });
-
-    const input = page.getByTestId("chat-composer-input");
-    await input.fill(
-      real
-        ? "请生成一份较长的分步排查清单，至少 80 条，每条给出解释。"
-        : "生成长任务用于取消竞态验收",
-    );
-    await page.getByTestId("chat-send").click();
-    const stop = page.getByTestId("chat-stop");
-    await stop.waitFor({ timeout: 30000 });
-    if (!real) {
-      await page.getByText("已生成的部分输出", { exact: true }).waitFor({ timeout: 10000 });
+    } else {
+      const browser = await chromium.launch(options);
+      try {
+        outcome = await runBrowserFlow(browser, apiBase, apiKey, mockApi);
+      } finally {
+        await browser.close();
+      }
     }
-    await stop.click();
-
-    let pendingLocked = true;
-    if (!real) {
-      await page.waitForFunction(() => {
-        const button = document.querySelector('[data-testid="chat-stop"]');
-        return button?.hasAttribute("disabled") && button.textContent?.includes("停止中");
-      }, undefined, { timeout: 5000 });
-      await input.fill("停止确认前不得发送");
-      await input.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
-      await page.waitForTimeout(100);
-      pendingLocked = mockApi.state.streamRequests === 1;
-    }
-
-    await page.getByTestId("chat-send").waitFor({ timeout: real ? 120000 : 15000 });
-    const firstAssistant = page.locator('[data-message-role="assistant"]').last();
-    const firstText = await firstAssistant.innerText();
-    const cancellationNotRenderedAsFailure = !firstText.includes("运行失败")
-      && !firstText.includes("SESSION_CONFLICT");
-
-    await input.fill(real ? "只回复 SECOND_OK" : "取消后立即重试");
-    await page.getByTestId("chat-send").click();
-    await page.getByTestId("chat-send").waitFor({ timeout: real ? 120000 : 15000 });
-    const bodyText = await page.locator("body").innerText();
-    const secondAssistantText = await page.locator('[data-message-role="assistant"]').last().innerText();
-    const exactCancelPath = requestedPaths.some((path) => (
-      path === "POST /api/agent-runs/run-cancel-mock/cancel"
-    )) || (real && requestedPaths.some((path) => /^POST \/api\/agent-runs\/[^/]+\/cancel$/.test(path)));
-    const result = {
-      pendingLocked,
-      exactCancelPath,
-      secondRequestSent: requestedPaths.filter(
-        (path) => path === "POST /api/agent-runtime/sdk-events",
-      ).length === 2,
-      cancellationNotRenderedAsFailure,
-      noSessionConflict: !bodyText.includes("SESSION_CONFLICT"),
-      followUpCompleted: real ? secondAssistantText.trim().length > 0 : secondAssistantText.includes("SECOND_OK"),
-      cancelBeforeFirstStreamClose: real
-        ? true
-        : mockApi.state.cancelRequestedAt > 0
-          && mockApi.state.firstStreamClosedAt >= mockApi.state.cancelRequestedAt,
-      cancelRunIds: real ? undefined : mockApi.state.cancelRunIds,
-    };
-    const passed = Object.entries(result)
-      .filter(([key]) => key !== "cancelRunIds")
-      .every(([, value]) => value === true);
-    await page.screenshot({
-      path: join(screenshotDir, "playground-cancel-and-retry.png"),
-      fullPage: true,
-    });
-    console.log(JSON.stringify({
-      status: passed ? "passed" : "failed",
-      mode: real ? "real-container" : "mock",
-      result,
-    }, null, 2));
-    if (!passed) process.exitCode = 1;
+    if (!outcome.passed) throw new Error("Playground cancellation acceptance failed.");
+    if (real) console.log("PLAYGROUND_CANCEL_BROWSER_OK");
+    else console.log(JSON.stringify({ status: "passed", mode: "mock", result: outcome.result }, null, 2));
   } finally {
-    await browser?.close();
     await stopChild(vite);
     await mockApi?.close();
   }
 }
 
 main().catch((error) => {
-  console.error(`verify_playground_cancel failed: ${error?.stack || error}`);
+  if (real) console.error("PLAYGROUND_CANCEL_BROWSER_FAIL");
+  else console.error(`verify_playground_cancel failed: ${error?.stack || error}`);
   process.exit(2);
 });

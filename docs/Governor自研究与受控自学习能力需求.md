@@ -234,7 +234,7 @@ scope、Runtime binding、model/provider 和 dev/holdout pack 只进入 candidat
 - 后端将两组脱敏输出盲化为 A/B，evaluator 不可见 build 身份和 blind mapping；
   确定性安全门先执行，模型评判不能推翻安全失败。
 - 同时评估归因质量、证据可信度、优化可执行性、回归保障质量和下游闭环结果。
-- 同时覆盖正常、失败、证据不足、恶意输入、跨 Agent 误用和敏感信息场景。
+- 同时覆盖正常、失败、证据不足、无效输入、跨 Agent 误用和敏感信息场景。
 - `EvaluationOutcome` 必须绑定两个 build digest、scope、pack/protocol/scorer/evaluator 版本、
   blind mapping 与运行 provenance，并以 `passed | failed | inconclusive` 表达事实结果。
 - Governor 不能修改评估事实、blind mapping、门禁结果、scope 或审计身份，也不能单独
@@ -360,7 +360,7 @@ payload 无期保留；原文过期/授权删除后应保留 digest、tombstone�
 
 一个方法候选已物化的精确 capability build 只有同时满足以下条件才能启用：
 
-- 所有关键安全、越权、恶意输入和离线场景通过。
+- 所有关键安全、越权、无效输入和离线场景通过。
 - current/candidate build 在同一 scope、holdout/protocol/scorer/evaluator 和运行条件上得到
   `passed` `EvaluationOutcome`，且至少一个目标闭环结果明确改善。
 - 其他主要闭环指标没有发生实质退化。

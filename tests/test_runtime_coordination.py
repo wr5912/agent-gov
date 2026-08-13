@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +9,7 @@ import pytest
 from app.runtime.advisory_lock import advisory_lock
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_paths import business_agent_layout
+from app.runtime.agent_profiles import build_business_agent_profile
 from app.runtime.managed_agent_policy import ManagedAgentPolicyError
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_coordination import (
@@ -17,7 +17,10 @@ from app.runtime.runtime_coordination import (
     prepare_runtime_contract,
     runtime_contract_status,
 )
+from app.runtime.runtime_db import AgentChangeSetModel, make_session_factory
+from app.runtime.runtime_initialization import _runtime_agent_ids, ensure_agent_repositories, plan_runtime_policy
 from app.runtime.settings import AppSettings
+from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
 _GENERIC_MUTATION_ASK = [
     "mcp__*__*write*",
@@ -82,6 +85,16 @@ def _bootstrap(tmp_path: Path) -> Path:
 
 
 def _prepare(settings: AppSettings, bootstrap: Path, env: dict[str, str] | None = None):
+    registry = AgentRegistryStore(
+        make_session_factory(settings.runtime_db_path),
+        data_dir=settings.data_dir,
+    )
+    if registry.get_agent(DEFAULT_BUSINESS_AGENT_ID) is None:
+        registry.create_business_agent(
+            name=DEFAULT_BUSINESS_AGENT_ID,
+            agent_id=DEFAULT_BUSINESS_AGENT_ID,
+            workspace_dir=str(settings.default_workspace_dir),
+        )
     paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
     with advisory_lock(paths.phase_lock, mode="exclusive") as lease:
         return prepare_runtime_contract(
@@ -90,6 +103,69 @@ def _prepare(settings: AppSettings, bootstrap: Path, env: dict[str, str] | None 
             env=env or {},
             lease=lease,
         )
+
+
+def test_runtime_initialization_requires_public_ready_token_before_git_bootstrap(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, initialize_workspace=False)
+    factory = make_session_factory(settings.runtime_db_path)
+    registry = AgentRegistryStore(factory, data_dir=settings.data_dir)
+    partial_id = "partial-agent"
+    partial_layout = business_agent_layout(settings.data_dir, partial_id)
+    registry.reserve_business_agent(
+        name="Partial",
+        agent_id=partial_id,
+        workspace_dir=str(partial_layout.workspace),
+    )
+    partial_layout.workspace.mkdir(parents=True)
+    partial_layout.workspace.joinpath("CLAUDE.md").write_text("# partial\n", encoding="utf-8")
+
+    unregistered_id = "disk-only-agent"
+    unregistered_layout = business_agent_layout(settings.data_dir, unregistered_id)
+    unregistered_layout.workspace.mkdir(parents=True)
+    unregistered_layout.workspace.joinpath("CLAUDE.md").write_text("# disk only\n", encoding="utf-8")
+
+    assert _runtime_agent_ids(settings) == []
+    ensure_agent_repositories(settings)
+    assert not partial_layout.workspace.joinpath(".git").exists()
+    assert not partial_layout.version_base.exists()
+    assert not unregistered_layout.workspace.joinpath(".git").exists()
+    assert not unregistered_layout.version_base.exists()
+    assert [plan.agent_id for plan in plan_runtime_policy(settings=settings, env={})] == [unregistered_id]
+
+    profile = build_business_agent_profile(
+        settings,
+        agent_id=unregistered_id,
+        workspace_dir=unregistered_layout.workspace,
+    )
+    registry.sync_business_agents({unregistered_id: profile})
+    assert _runtime_agent_ids(settings) == [unregistered_id]
+    ensure_agent_repositories(settings)
+    assert unregistered_layout.workspace.joinpath(".git").is_dir()
+
+
+def test_fresh_bootstrap_policy_violation_fails_before_receipt_without_granting_git_authority(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, initialize_workspace=False)
+    bootstrap = _bootstrap(tmp_path)
+    bootstrap_settings = bootstrap / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "workspace" / ".claude" / "settings.json"
+    bootstrap_settings.write_text("{", encoding="utf-8")
+    paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
+
+    with advisory_lock(paths.phase_lock, mode="exclusive") as lease:
+        with pytest.raises(ManagedAgentPolicyError, match="invalid_settings"):
+            prepare_runtime_contract(
+                settings=settings,
+                bootstrap_dir=bootstrap,
+                env={},
+                lease=lease,
+            )
+
+    layout = business_agent_layout(settings.data_dir, DEFAULT_BUSINESS_AGENT_ID)
+    assert layout.workspace.joinpath(".claude/settings.json").read_text(encoding="utf-8") == "{"
+    assert not layout.workspace.joinpath(".git").exists()
+    assert not layout.version_base.exists()
+    assert not paths.receipt.exists()
 
 
 def _default_store(settings: AppSettings) -> GitAgentVersionStore:
@@ -213,12 +289,17 @@ def test_open_change_set_does_not_trigger_workspace_migration(tmp_path):
     _prepare(settings, template)
     store = _remove_managed_ask(settings, commit=True)
     historical_head = store.current_commit_sha()
-    settings.runtime_db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(settings.runtime_db_path) as connection:
-        connection.execute("CREATE TABLE agent_change_sets (change_set_id TEXT, agent_id TEXT, status TEXT)")
-        connection.execute(
-            "INSERT INTO agent_change_sets VALUES (?, ?, ?)",
-            ("agc-open", DEFAULT_BUSINESS_AGENT_ID, "draft"),
+    with make_session_factory(settings.runtime_db_path).begin() as db:
+        db.add(
+            AgentChangeSetModel(
+                change_set_id="agc-open",
+                agent_id=DEFAULT_BUSINESS_AGENT_ID,
+                status="draft",
+                base_commit_sha=historical_head,
+                branch_name="agentgov/agc-open",
+                worktree_path=str(settings.data_dir / "worktrees" / "agc-open"),
+                payload_json={},
+            )
         )
 
     _prepare(settings, template)

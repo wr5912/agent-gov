@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.runtime.json_types import JsonObject
@@ -25,9 +25,15 @@ class AgentTestRunModel(Base):
     started_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     suite_digest: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source_digest: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source_tree_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    worker_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    claim_generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    container_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     command_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     suite_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
     report_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+    receipt_json: Mapped[Optional[JsonObject]] = mapped_column(JSON, nullable=True)
     stdout_text: Mapped[str] = mapped_column(Text, default="")
     stderr_text: Mapped[str] = mapped_column(Text, default="")
     error_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
@@ -106,5 +112,9 @@ class AgentWorkspaceImportRecordModel(Base):
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     suite_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+    suite_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    diagnostics_json: Mapped[list[JsonObject]] = mapped_column(JSON, default=list)
+    # Legacy compatibility column. New accepted imports use diagnostics_json as
+    # the complete warning+error contract and do not derive a warnings-only row.
     warnings_json: Mapped[list[JsonObject]] = mapped_column(JSON, default=list)
     error_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from functools import partial
 from pathlib import Path
 
 from app.runtime.managed_claude_events import AgentGovControlEvent
@@ -9,7 +10,7 @@ from app.runtime.openai_responses_stream import iter_responses_sse
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app
-from test_agent_workspace_packages import _import_new_agent
+from workspace_package_test_utils import import_new_agent as _import_new_agent
 
 
 def _speech_control() -> AgentGovControlEvent:
@@ -111,6 +112,32 @@ def test_strict_responses_drops_all_agentgov_speech_events() -> None:
     assert "agentgov" not in dict(events)["response.completed"]["response"]
 
 
+async def _recording_speech_stream(
+    seen_flags: list[bool],
+    _req,
+    *,
+    profile=None,
+    with_speech_summary: bool = False,
+):
+    del profile
+    seen_flags.append(with_speech_summary)
+    yield AgentGovControlEvent(
+        name="session",
+        data={"run_id": "run-1", "session_id": "session-1"},
+    )
+    if with_speech_summary:
+        yield _speech_control()
+    yield AgentGovControlEvent(
+        name="result",
+        data={
+            "run_id": "run-1",
+            "session_id": "session-1",
+            "errors": [],
+        },
+    )
+    yield AgentGovControlEvent(name="done", data={})
+
+
 def test_responses_route_accepts_speech_only_for_control_streaming(
     monkeypatch,
     tmp_path: Path,
@@ -121,31 +148,11 @@ def test_responses_route_accepts_speech_only_for_control_streaming(
         requires_web_hitl=False,
     )
     seen_flags: list[bool] = []
-
-    async def fake_stream(
-        _req,
-        *,
-        profile=None,
-        with_speech_summary: bool = False,
-    ):
-        seen_flags.append(with_speech_summary)
-        yield AgentGovControlEvent(
-            name="session",
-            data={"run_id": "run-1", "session_id": "session-1"},
-        )
-        if with_speech_summary:
-            yield _speech_control()
-        yield AgentGovControlEvent(
-            name="result",
-            data={
-                "run_id": "run-1",
-                "session_id": "session-1",
-                "errors": [],
-            },
-        )
-        yield AgentGovControlEvent(name="done", data={})
-
-    monkeypatch.setattr(module.runtime, "stream_events", fake_stream)
+    monkeypatch.setattr(
+        module.runtime,
+        "stream_events",
+        partial(_recording_speech_stream, seen_flags),
+    )
     with TestClient(module.app) as client:
         assert (
             _import_new_agent(

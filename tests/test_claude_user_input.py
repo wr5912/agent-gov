@@ -16,6 +16,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
+def _non_executable_high_risk_input(risk_category: str) -> dict[str, object]:
+    return {
+        "test_fixture": {
+            "kind": "non_executable_high_risk_input",
+            "risk_category": risk_category,
+            "executable": False,
+        }
+    }
+
+
 def _service(tmp_path, *, timeout_seconds: int = 5) -> ClaudeUserInputService:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     return ClaudeUserInputService(ClaudeUserInputStore(factory), timeout_seconds=timeout_seconds)
@@ -278,24 +288,20 @@ def test_read_only_bash_run_grant_auto_allows_next_safe_probe(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "command",
+    "risk_category",
     [
-        "ls >/tmp/out",
-        "find . -delete",
-        "sed -i s/a/b/ templates/reports/daily-secops-report.md",
-        "cat /data/runtime.sqlite3",
-        "cat /data/business-agents/test-business-agent/workspace/.env",
-        "cat .env*",
-        "cat $HOME/.ssh/id_rsa",
-        "grep -R token .",
-        "ls; rm -rf /",
+        "mutating_operation",
+        "sensitive_resource_access",
+        "compound_operation",
     ],
 )
-def test_mutating_or_private_bash_cannot_receive_run_allow(tmp_path, command):
+def test_mutating_or_private_bash_cannot_receive_run_allow(tmp_path, risk_category):
     async def scenario():
         service = _service(tmp_path)
-        _event_queue, task, request = await _start_wait(service, input_data={"command": command})
+        input_data = _non_executable_high_risk_input(risk_category)
+        _event_queue, task, request = await _start_wait(service, input_data=input_data)
 
+        assert request["input"] == input_data
         assert request["risk"]["level"] == "high"
         assert request["risk"]["run_allow_eligible"] is False
         assert "run_allow_category" not in request["risk"]
@@ -351,7 +357,7 @@ def test_allow_for_run_does_not_cross_run_boundary(tmp_path):
                 api_session_id="sess-1",
                 sdk_session_id="sdk-1",
                 tool_name="Bash",
-                input_data={"command": "rm -rf /tmp/agentgov-hitl-smoke"},
+                input_data=_non_executable_high_risk_input("run_grant_boundary"),
                 context={"tool_use_id": "toolu-3", "agent_id": "subagent-1"},
             )
         )
@@ -489,7 +495,11 @@ def test_decision_api_rejects_allow_modified_and_updated_input_for_ordinary_requ
     )
     updated_input = client.post(
         f"/v1/agentgov/confirmation-requests/{request['request_id']}/decision",
-        json={**base, "action": "allow_once", "updated_input": {"command": "rm -rf /"}},
+        json={
+            **base,
+            "action": "allow_once",
+            "updated_input": _non_executable_high_risk_input("input_replacement"),
+        },
     )
 
     assert allow_modified.status_code == 422

@@ -1,5 +1,15 @@
 frontend/node_modules
 frontend/dist
+.git
+.obsidian/
+.idea/
+.venv/
+.code-review-graph/
+artifacts/
+mutants/
+temp/
+CLAUDE.local.md
+.claude/settings.local.json
 frontend/.env
 frontend/.env.local
 docker/.env.local

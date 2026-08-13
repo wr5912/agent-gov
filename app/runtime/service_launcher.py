@@ -128,19 +128,52 @@ def _run_tool(settings: AppSettings, bootstrap_dir: Path, env: dict[str, str], c
         return subprocess.run(list(command), check=False).returncode
 
 
+def _run_workspace_activation_recovery(
+    settings: AppSettings,
+    bootstrap_dir: Path,
+    env: dict[str, str],
+    command: Sequence[str],
+) -> int:
+    if not command:
+        raise RuntimeCoordinationError(
+            "workspace-activation-recovery requires list, inspect, apply, or resume",
+        )
+    paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
+    with advisory_lock(paths.phase_lock, mode="shared"):
+        status = _check_status(settings, bootstrap_dir, env)
+        if not status.valid:
+            raise RuntimeCoordinationError(
+                f"workspace-activation-recovery runtime contract is invalid: {status.reason}",
+            )
+        from app.runtime.recovery_cli_support import (
+            run_workspace_activation_recovery_cli,
+        )
+
+        return run_workspace_activation_recovery_cli(command)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AgentGov runtime service launcher and maintenance gate.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("api")
+    subparsers.add_parser("agent-test-worker")
     subparsers.add_parser("prepare")
     subparsers.add_parser("validate")
     tool = subparsers.add_parser("run-tool")
     tool.add_argument("tool_command", nargs=argparse.REMAINDER)
+    recovery = subparsers.add_parser("workspace-activation-recovery")
+    recovery.add_argument("recovery_command", nargs=argparse.REMAINDER)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "agent-test-worker":
+        # 测试 worker 没有 API 的 env_file，也不得触发 AppSettings 的运行时配置选择。
+        # 它只读取自己的显式 allowlist，避免模型、MCP 或 API 凭据进入执行权限域。
+        from app.agent_testing.worker import run_agent_test_worker
+
+        return run_agent_test_worker()
     settings = get_settings()
     bootstrap_dir = default_runtime_bootstrap_dir()
     env = _selected_env(settings)
@@ -151,6 +184,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _prepare(settings, bootstrap_dir, env)
         if args.command == "validate":
             return _validate(settings, bootstrap_dir, env)
+        if args.command == "workspace-activation-recovery":
+            return _run_workspace_activation_recovery(
+                settings,
+                bootstrap_dir,
+                env,
+                args.recovery_command,
+            )
         return _run_tool(settings, bootstrap_dir, env, args.tool_command)
     except (AdvisoryLockError, ManagedAgentPolicyError, RuntimeCoordinationError, RuntimeInitializationError) as exc:
         print(str(exc), file=sys.stderr, flush=True)

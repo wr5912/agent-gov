@@ -10,13 +10,16 @@ from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.errors import SessionConflictError
 from app.runtime.openai_responses_stream import iter_responses_sse
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
-from app.runtime.runtime_db import SessionRecordModel
+from app.runtime.runtime_db import SessionRecordModel, make_session_factory
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSession, LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.feedback_store import FeedbackStore
 
-from business_agent_test_utils import create_test_business_agent_workspace
+from business_agent_test_utils import (
+    create_test_business_agent_workspace,
+    register_test_business_agent_instance,
+)
 from claude_runtime_test_utils import route_interactive_client_through_query
 
 
@@ -72,6 +75,11 @@ def _settings(tmp_path):
         + "\n",
         encoding="utf-8",
     )
+    register_test_business_agent_instance(
+        make_session_factory(settings.runtime_db_path),
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        workspace_dir=str(workspace),
+    )
     return settings
 
 
@@ -95,10 +103,15 @@ def _begin_persisted_turn(
     agent_id: str,
     lease_seconds: float | None = None,
 ) -> LocalSession:
+    expected_instance_etag = register_test_business_agent_instance(
+        store.Session,
+        agent_id=agent_id,
+    )
     return store.begin_persisted_turn(
         session,
         run_id=run_id,
         agent_id=agent_id,
+        expected_instance_etag=expected_instance_etag,
         new_sdk_session_id=str(uuid.uuid4()),
         sdk_project_key=f"test-{agent_id}",
         resolve_agent_version_id=lambda: "test-version",

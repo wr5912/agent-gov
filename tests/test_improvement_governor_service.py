@@ -185,7 +185,7 @@ def test_attribution_none_runner_is_heuristic(tmp_path: Path) -> None:
 
 
 def test_hostile_formatter_output_does_not_crash_or_pollute(tmp_path: Path) -> None:
-    """恶意/畸形 agent-owned 输出：缺字段、错类型、注入 backend-owned 字段，服务防御性映射且不污染。"""
+    """无效/畸形 agent-owned 输出：缺字段、错类型、冲突 backend-owned 字段，服务安全映射且不污染。"""
 
     async def hostile(**_kwargs):
         return {

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import claude_agent_sdk as sdk
 
+from .business_agent_lifecycle import BusinessAgentLifecycleFenceError
 from .errors import RuntimeUnavailableError
 from .sdk_session_store import SqliteSdkSessionStore
 from .session_store import LocalSession, LocalSessionStore
@@ -46,12 +47,18 @@ async def ensure_sdk_store_ready(
         if session.sdk_project_key != project_key:
             raise RuntimeUnavailableError("Persisted SDK session project key does not match its owning Agent")
         return session
-
-    claim = session_store.begin_sdk_store_import(
-        session_id=session.session_id,
-        sdk_session_id=sdk_session_id,
-        sdk_project_key=project_key,
-    )
+    if not session.agent_id:
+        raise RuntimeUnavailableError("Persisted SDK session has no unambiguous business Agent owner")
+    try:
+        expected_instance_etag = session_store.public_business_agent_instance_etag(session.agent_id)
+        claim = session_store.begin_sdk_store_import(
+            session_id=session.session_id,
+            expected_instance_etag=expected_instance_etag,
+            sdk_session_id=sdk_session_id,
+            sdk_project_key=project_key,
+        )
+    except BusinessAgentLifecycleFenceError as exc:
+        raise RuntimeUnavailableError("Business Agent is unavailable for SDK transcript migration") from exc
     if claim is None:
         ready = session_store.get(session.session_id)
         if ready is None:
@@ -63,6 +70,10 @@ async def ensure_sdk_store_ready(
         project_key=project_key,
         sdk_session_id=sdk_session_id,
         import_id=claim.token,
+        session_id=claim.session_id,
+        agent_id=claim.agent_id,
+        expected_instance_etag=claim.expected_instance_etag,
+        claim_marker=claim.marker,
     )
 
     def import_local_transcript() -> None:

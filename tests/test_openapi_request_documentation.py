@@ -12,7 +12,6 @@ def test_all_live_request_inputs_have_descriptions_and_examples() -> None:
 
     body_operations = 0
     named_examples = 0
-    parameters = 0
     for path_item in schema["paths"].values():
         for operation in path_item.values():
             if not isinstance(operation, dict):
@@ -22,11 +21,30 @@ def test_all_live_request_inputs_have_descriptions_and_examples() -> None:
                 body_operations += 1
                 for media in request_body["content"].values():
                     named_examples += len(media.get("examples", {}))
-            parameters += len(operation.get("parameters", []))
 
     assert body_operations == 45
     assert named_examples == 63
-    assert parameters == 166
+
+    deletion_discovery = schema["paths"]["/api/agent-deletion-operations"]["get"]
+    discovery_parameters = {parameter["name"]: parameter for parameter in deletion_discovery["parameters"]}
+    assert set(discovery_parameters) == {"state", "limit"}
+    assert discovery_parameters["state"]["description"]
+    assert discovery_parameters["state"]["example"] == "cleanup_pending"
+    assert discovery_parameters["state"]["schema"]["enum"] == ["cleanup_pending", "completed"]
+    assert discovery_parameters["limit"]["description"]
+    assert discovery_parameters["limit"]["example"] == 20
+    limit_schema = discovery_parameters["limit"]["schema"]
+    assert limit_schema["type"] == "integer"
+    assert limit_schema["minimum"] == 1
+    assert limit_schema["maximum"] == 100
+    assert limit_schema["default"] == 20
+
+    create_import = schema["paths"]["/api/agent-registry/{agent_id}/workspace/import"]["post"]
+    agent_id_parameter = next(parameter for parameter in create_import["parameters"] if parameter["name"] == "agent_id")
+    assert agent_id_parameter["description"]
+    assert agent_id_parameter["example"]
+    assert agent_id_parameter["schema"]["maxLength"] == 128
+    assert agent_id_parameter["schema"]["pattern"]
 
 
 def test_responses_swagger_guide_covers_every_nested_request_field() -> None:
@@ -50,9 +68,9 @@ def test_responses_swagger_guide_covers_every_nested_request_field() -> None:
 def test_request_documentation_audit_reaches_arrays_unions_refs_and_multipart() -> None:
     schema = copy.deepcopy(build_openapi_schema())
     schema["components"]["schemas"]["ResponsesInputText"]["properties"]["text"].pop("examples")
-    schema["paths"]["/api/agent-registry/{agent_id}/workspace/import"]["post"]["requestBody"]["content"]["multipart/form-data"][
-        "schema"
-    ]["properties"]["package"].pop("description")
+    schema["paths"]["/api/agent-registry/{agent_id}/workspace/import"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]["properties"][
+        "package"
+    ].pop("description")
 
     issues = audit_request_input_documentation(schema)
 

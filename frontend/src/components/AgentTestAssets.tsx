@@ -16,11 +16,22 @@ import type {
   AgentTestSuiteFile,
   RuntimeClientConfig,
 } from "../types/runtime";
-import { DrawerShell } from "./DrawerShell";
+import { AgentTestRunDetailDrawer } from "./AgentTestRunDetailDrawer";
 import { TestSourceViewer } from "./TestSourceViewer";
 import "../agent-test-assets.css";
 
 type DetailTab = "files" | "history" | "schedule";
+type SuiteState = "ready" | "warning" | "missing" | "invalid" | "unavailable";
+
+const INSPECTION_UNAVAILABLE_CODE = "AGENT_TEST_SUITE_INSPECTION_UNAVAILABLE";
+
+const SUITE_STATE_LABEL: Record<SuiteState, string> = {
+  ready: "可运行",
+  warning: "有警告",
+  missing: "缺少 tests/",
+  invalid: "套件无效",
+  unavailable: "检查不可用",
+};
 
 const CRON_PRESETS = [
   { value: "0 2 * * *", label: "每天 02:00" },
@@ -46,46 +57,112 @@ const EVENT_STATUS_LABEL: Record<string, string> = {
   failed: "触发失败",
 };
 
-export function AgentTestAssets({
-  clientConfig,
-  scopeAgentId,
-  refreshRevision,
-}: {
+type AgentTestAssetsProps = {
   clientConfig: RuntimeClientConfig;
   scopeAgentId: string;
   refreshRevision: number;
-}) {
-  const [assets, setAssets] = useState<AgentTestAssetSummary[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState("");
-  const [agentQuery, setAgentQuery] = useState("");
-  const [tab, setTab] = useState<DetailTab>("files");
-  const [sourceFile, setSourceFile] = useState<AgentTestSuiteFile>();
-  const [history, setHistory] = useState<AgentTestRunSummary[]>([]);
-  const [nextCursor, setNextCursor] = useState<string>();
-  const [historyStatus, setHistoryStatus] = useState("");
-  const [historySource, setHistorySource] = useState("");
-  const [scheduleEvents, setScheduleEvents] = useState<AgentTestScheduleEvent[]>([]);
-  const [scheduleEnabled, setScheduleEnabled] = useState(false);
-  const [cronExpression, setCronExpression] = useState(CRON_PRESETS[0].value);
-  const [scheduleTimezone, setScheduleTimezone] = useState(browserTimezone());
-  const [runDetail, setRunDetail] = useState<AgentTestRun>();
+};
+
+export function AgentTestAssets(props: AgentTestAssetsProps) {
+  const controller = useAgentTestAssetsController(props);
+
+  return (
+    <div className="test-assets" data-testid="agent-test-assets">
+      {controller.error ? (
+        <div className="iw-error" data-testid="test-assets-error">{controller.error}</div>
+      ) : null}
+      {controller.notice ? (
+        <div className="test-assets-notice" data-testid="test-assets-notice">{controller.notice}</div>
+      ) : null}
+      {controller.assets.length === 0 ? (
+        <div className="iw-empty" data-testid="test-assets-empty">
+          当前没有可展示的业务 Agent 测试资产。
+        </div>
+      ) : <AgentTestWorkspace controller={controller} />}
+      <AgentTestRunDetailDrawer
+        runDetail={controller.runDetail}
+        statusLabels={RUN_STATUS_LABEL}
+        onClose={() => controller.setRunDetail(undefined)}
+      />
+    </div>
+  );
+}
+
+function useAgentTestAssetsController({
+  clientConfig,
+  scopeAgentId,
+  refreshRevision,
+}: AgentTestAssetsProps) {
+  const feedback = useOperationFeedback();
+  const assetList = useAgentTestAssetList(clientConfig, feedback.setError);
+  const selection = useAgentTestSelection(assetList.assets, scopeAgentId);
+  const history = useAgentTestHistory(clientConfig, selection.selectedAgentId, feedback.setError);
+  const schedule = useAgentTestSchedule(
+    clientConfig,
+    selection.selectedAgentId,
+    selection.selected,
+    feedback.setError,
+  );
+  const source = useAgentTestSource(clientConfig, selection.selected, feedback.setError);
+
+  useRefreshRevision(refreshRevision, assetList.refreshAssets, history.loadHistory, schedule.loadScheduleEvents);
+
+  const actions = useAgentTestActions({
+    clientConfig,
+    selected: selection.selected,
+    sourceFile: source.sourceFile,
+    busy: feedback.busy,
+    perform: feedback.perform,
+    setError: feedback.setError,
+    setNotice: feedback.setNotice,
+    setRunDetail: history.setRunDetail,
+    setTab: selection.setTab,
+    refreshAssets: assetList.refreshAssets,
+    loadHistory: history.loadHistory,
+    loadScheduleEvents: schedule.loadScheduleEvents,
+    scheduleEnabled: schedule.scheduleEnabled,
+    cronExpression: schedule.cronExpression,
+    scheduleTimezone: schedule.scheduleTimezone,
+  });
+
+  return {
+    ...feedback,
+    ...assetList,
+    ...selection,
+    ...history,
+    ...schedule,
+    ...source,
+    ...actions,
+    selectedSuiteState: selection.selected ? suiteState(selection.selected) : undefined,
+  };
+}
+
+function useOperationFeedback() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
-  const handledRefreshRevision = useRef(refreshRevision);
 
-  const selected = useMemo(
-    () => assets.find((asset) => asset.agent_id === selectedAgentId),
-    [assets, selectedAgentId],
-  );
-  const filteredAssets = useMemo(() => {
-    const query = agentQuery.trim().toLocaleLowerCase();
-    if (!query) return assets;
-    return assets.filter((asset) => `${asset.agent_name} ${asset.agent_id}`.toLocaleLowerCase().includes(query));
-  }, [agentQuery, assets]);
-  const sourceAgentId = selected?.agent_id;
-  const sourceCommitSha = selected?.suite.commit_sha;
-  const firstSourcePath = selected?.suite.test_files?.[0];
+  const perform = useCallback(async (action: () => Promise<void>) => {
+    setBusy(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      await action();
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  return { busy, error, notice, setError, setNotice, perform };
+}
+
+function useAgentTestAssetList(
+  clientConfig: RuntimeClientConfig,
+  setError: (value: string | undefined) => void,
+) {
+  const [assets, setAssets] = useState<AgentTestAssetSummary[]>([]);
 
   const refreshAssets = useCallback(async () => {
     setError(undefined);
@@ -100,6 +177,25 @@ export function AgentTestAssets({
     void refreshAssets();
   }, [refreshAssets]);
 
+  return { assets, refreshAssets };
+}
+
+function useAgentTestSelection(assets: AgentTestAssetSummary[], scopeAgentId: string) {
+  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [agentQuery, setAgentQuery] = useState("");
+  const [tab, setTab] = useState<DetailTab>("files");
+  const selected = useMemo(
+    () => assets.find((asset) => asset.agent_id === selectedAgentId),
+    [assets, selectedAgentId],
+  );
+  const filteredAssets = useMemo(() => {
+    const query = agentQuery.trim().toLocaleLowerCase();
+    if (!query) return assets;
+    return assets.filter((asset) => (
+      `${asset.agent_name} ${asset.agent_id}`.toLocaleLowerCase().includes(query)
+    ));
+  }, [agentQuery, assets]);
+
   useEffect(() => {
     if (!assets.length) {
       setSelectedAgentId("");
@@ -111,6 +207,20 @@ export function AgentTestAssets({
       return assets[0].agent_id;
     });
   }, [assets, scopeAgentId]);
+
+  return { selectedAgentId, setSelectedAgentId, agentQuery, setAgentQuery, tab, setTab, selected, filteredAssets };
+}
+
+function useAgentTestHistory(
+  clientConfig: RuntimeClientConfig,
+  selectedAgentId: string,
+  setError: (value: string | undefined) => void,
+) {
+  const [history, setHistory] = useState<AgentTestRunSummary[]>([]);
+  const [nextCursor, setNextCursor] = useState<string>();
+  const [historyStatus, setHistoryStatus] = useState("");
+  const [historySource, setHistorySource] = useState("");
+  const [runDetail, setRunDetail] = useState<AgentTestRun>();
 
   const loadHistory = useCallback(async (cursor?: string, append = false) => {
     if (!selectedAgentId) return;
@@ -129,6 +239,37 @@ export function AgentTestAssets({
     }
   }, [clientConfig, historySource, historyStatus, selectedAgentId]);
 
+  useEffect(() => {
+    setHistory([]);
+    setNextCursor(undefined);
+    if (!selectedAgentId) return;
+    void loadHistory();
+  }, [loadHistory, selectedAgentId]);
+
+  return {
+    history,
+    nextCursor,
+    historyStatus,
+    setHistoryStatus,
+    historySource,
+    setHistorySource,
+    runDetail,
+    setRunDetail,
+    loadHistory,
+  };
+}
+
+function useAgentTestSchedule(
+  clientConfig: RuntimeClientConfig,
+  selectedAgentId: string,
+  selected: AgentTestAssetSummary | undefined,
+  setError: (value: string | undefined) => void,
+) {
+  const [scheduleEvents, setScheduleEvents] = useState<AgentTestScheduleEvent[]>([]);
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [cronExpression, setCronExpression] = useState(CRON_PRESETS[0].value);
+  const [scheduleTimezone, setScheduleTimezone] = useState(browserTimezone());
+
   const loadScheduleEvents = useCallback(async () => {
     if (!selectedAgentId) return;
     try {
@@ -137,33 +278,6 @@ export function AgentTestAssets({
       setError(errorMessage(reason));
     }
   }, [clientConfig, selectedAgentId]);
-
-  useEffect(() => {
-    if (handledRefreshRevision.current === refreshRevision) return;
-    handledRefreshRevision.current = refreshRevision;
-    void Promise.all([refreshAssets(), loadHistory(), loadScheduleEvents()]);
-  }, [loadHistory, loadScheduleEvents, refreshAssets, refreshRevision]);
-
-  const loadSource = useCallback(async (path: string) => {
-    if (!sourceAgentId || !sourceCommitSha) return;
-    setError(undefined);
-    try {
-      setSourceFile(await getAgentTestSuiteFile(clientConfig, sourceAgentId, path, sourceCommitSha));
-    } catch (reason) {
-      setError(errorMessage(reason));
-    }
-  }, [clientConfig, sourceAgentId, sourceCommitSha]);
-
-  useEffect(() => {
-    setSourceFile(undefined);
-  }, [selectedAgentId]);
-
-  useEffect(() => {
-    setHistory([]);
-    setNextCursor(undefined);
-    if (!selectedAgentId) return;
-    void loadHistory();
-  }, [loadHistory, selectedAgentId]);
 
   useEffect(() => {
     setScheduleEvents([]);
@@ -178,16 +292,97 @@ export function AgentTestAssets({
     setScheduleTimezone(selected.schedule.schedule_id ? selected.schedule.timezone : browserTimezone());
   }, [selected]);
 
+  return {
+    scheduleEvents,
+    scheduleEnabled,
+    setScheduleEnabled,
+    cronExpression,
+    setCronExpression,
+    scheduleTimezone,
+    setScheduleTimezone,
+    loadScheduleEvents,
+  };
+}
+
+function useAgentTestSource(
+  clientConfig: RuntimeClientConfig,
+  selected: AgentTestAssetSummary | undefined,
+  setError: (value: string | undefined) => void,
+) {
+  const [sourceFile, setSourceFile] = useState<AgentTestSuiteFile>();
+  const sourceAgentId = selected?.agent_id;
+  const sourceCommitSha = selected?.suite.commit_sha;
+  const firstSourcePath = selected?.suite.test_files?.[0];
+
+  const loadSource = useCallback(async (path: string) => {
+    if (!sourceAgentId || !sourceCommitSha) return;
+    setError(undefined);
+    try {
+      setSourceFile(await getAgentTestSuiteFile(clientConfig, sourceAgentId, path, sourceCommitSha));
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }, [clientConfig, sourceAgentId, sourceCommitSha]);
+
+  useEffect(() => {
+    setSourceFile(undefined);
+  }, [sourceAgentId, sourceCommitSha]);
+
   useEffect(() => {
     if (!firstSourcePath) return;
     void loadSource(firstSourcePath);
   }, [firstSourcePath, loadSource]);
 
+  return { sourceFile, loadSource };
+}
+
+function useRefreshRevision(
+  refreshRevision: number,
+  refreshAssets: () => Promise<void>,
+  loadHistory: (cursor?: string, append?: boolean) => Promise<void>,
+  loadScheduleEvents: () => Promise<void>,
+) {
+  const handledRefreshRevision = useRef(refreshRevision);
+
+  useEffect(() => {
+    if (handledRefreshRevision.current === refreshRevision) return;
+    handledRefreshRevision.current = refreshRevision;
+    void Promise.all([refreshAssets(), loadHistory(), loadScheduleEvents()]);
+  }, [loadHistory, loadScheduleEvents, refreshAssets, refreshRevision]);
+}
+
+type AgentTestActionInput = {
+  clientConfig: RuntimeClientConfig;
+  selected: AgentTestAssetSummary | undefined;
+  sourceFile: AgentTestSuiteFile | undefined;
+  busy: boolean;
+  perform: (action: () => Promise<void>) => Promise<void>;
+  setError: (value: string | undefined) => void;
+  setNotice: (value: string | undefined) => void;
+  setRunDetail: (value: AgentTestRun | undefined) => void;
+  setTab: (value: DetailTab) => void;
+  refreshAssets: () => Promise<void>;
+  loadHistory: (cursor?: string, append?: boolean) => Promise<void>;
+  loadScheduleEvents: () => Promise<void>;
+  scheduleEnabled: boolean;
+  cronExpression: string;
+  scheduleTimezone: string;
+};
+
+function useAgentTestActions(input: AgentTestActionInput) {
+  const {
+    clientConfig, selected, sourceFile, busy, perform, setError, setNotice, setRunDetail, setTab,
+    refreshAssets, loadHistory, loadScheduleEvents, scheduleEnabled, cronExpression, scheduleTimezone,
+  } = input;
+
   const runNow = () => {
     if (!selected || busy || !selected.suite.tests_directory_present) return;
     void perform(async () => {
-      const run = await createAgentTestRun(clientConfig, { agent_id: selected.agent_id });
-      setNotice(`测试运行 ${run.test_run_id} 已创建，并固定当前 commit。`);
+      const run = await createAgentTestRun(clientConfig, {
+        agent_id: selected.agent_id,
+        commit_sha: selected.suite.commit_sha,
+      });
+      setNotice(`测试运行 ${run.test_run_id} 已创建，并绑定所见 commit。`);
       setTab("history");
       await Promise.all([refreshAssets(), loadHistory()]);
     });
@@ -226,227 +421,322 @@ export function AgentTestAssets({
       .catch((reason) => setError(errorMessage(reason)));
   };
 
-  const perform = async (action: () => Promise<void>) => {
-    setBusy(true);
-    setError(undefined);
-    setNotice(undefined);
-    try {
-      await action();
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
+  return { runNow, saveSchedule, openRun, copySource };
+}
+
+type AgentTestAssetsController = ReturnType<typeof useAgentTestAssetsController>;
+
+function AgentTestWorkspace({ controller }: { controller: AgentTestAssetsController }) {
+  return (
+    <div className="test-asset-workspace" data-testid="test-asset-workspace">
+      <AgentTestNavigator controller={controller} />
+      {controller.selected ? (
+        <AgentTestDetail controller={controller} selected={controller.selected} />
+      ) : <div className="iw-empty">正在选择业务 Agent…</div>}
+    </div>
+  );
+}
+
+function AgentTestNavigator({ controller }: { controller: AgentTestAssetsController }) {
+  const { assets, filteredAssets, agentQuery, setAgentQuery, selectedAgentId, setSelectedAgentId } = controller;
 
   return (
-    <div className="test-assets" data-testid="agent-test-assets">
-      {error ? <div className="iw-error" data-testid="test-assets-error">{error}</div> : null}
-      {notice ? <div className="test-assets-notice" data-testid="test-assets-notice">{notice}</div> : null}
-
-      {assets.length === 0 ? (
-        <div className="iw-empty" data-testid="test-assets-empty">当前没有可展示的业务 Agent 测试资产。</div>
-      ) : (
-        <div className="test-asset-workspace" data-testid="test-asset-workspace">
-          <aside className="test-agent-navigator" data-testid="test-agent-navigator">
-            <div className="test-agent-navigator-head">
-              <strong>业务 Agent</strong>
-              <span>{filteredAssets.length}/{assets.length}</span>
-            </div>
-            <label className="test-agent-search">
-              <span>筛选</span>
-              <input
-                className="iw-input"
-                data-testid="test-agent-search"
-                placeholder="名称或 Agent ID"
-                type="search"
-                value={agentQuery}
-                onChange={(event) => setAgentQuery(event.target.value)}
-              />
-            </label>
-            <nav className="test-agent-list" data-testid="test-agent-list" aria-label="业务 Agent 测试资产">
-              {filteredAssets.length ? filteredAssets.map((asset) => (
-                <button
-                  aria-current={asset.agent_id === selectedAgentId ? "true" : undefined}
-                  className={`test-agent-nav-item ${asset.agent_id === selectedAgentId ? "is-selected" : ""}`}
-                  data-testid="test-asset-agent-item"
-                  key={asset.agent_id}
-                  type="button"
-                  onClick={() => setSelectedAgentId(asset.agent_id)}
-                >
-                  <span className="test-agent-nav-title">{asset.agent_name}</span>
-                  <span className="test-agent-nav-id">{asset.agent_id}</span>
-                  <span className="test-agent-nav-meta">
-                    {asset.suite.test_file_count} 个文件 · {shortSha(asset.suite.commit_sha)}
-                  </span>
-                  <span className={`test-asset-status is-${asset.latest_run?.status ?? "none"}`}>
-                    {asset.latest_run ? RUN_STATUS_LABEL[asset.latest_run.status] : "暂无运行"}
-                  </span>
-                </button>
-              )) : <div className="iw-empty" data-testid="test-agent-search-empty">没有匹配的业务 Agent。</div>}
-            </nav>
-          </aside>
-
-          {selected ? (
-            <section className={`test-asset-detail is-${tab}`} data-testid="test-asset-detail">
-          <header className="test-asset-detail-head">
-            <div className="test-asset-detail-title">
-              <h3 title={selected.agent_name}>{selected.agent_name}</h3>
-              <span className="test-asset-detail-commit" title={`生效 commit：${selected.suite.commit_sha}`}>
-                生效 commit：<code>{selected.suite.commit_sha}</code>
-              </span>
-            </div>
+    <aside className="test-agent-navigator" data-testid="test-agent-navigator">
+      <div className="test-agent-navigator-head">
+        <strong>业务 Agent</strong>
+        <span>{filteredAssets.length}/{assets.length}</span>
+      </div>
+      <label className="test-agent-search">
+        <span>筛选</span>
+        <input
+          className="iw-input"
+          data-testid="test-agent-search"
+          placeholder="名称或 Agent ID"
+          type="search"
+          value={agentQuery}
+          onChange={(event) => setAgentQuery(event.target.value)}
+        />
+      </label>
+      <nav className="test-agent-list" data-testid="test-agent-list" aria-label="业务 Agent 测试资产">
+        {filteredAssets.length ? filteredAssets.map((asset) => {
+          const state = suiteState(asset);
+          return (
             <button
-              className="iw-primary-button"
-              data-testid="test-assets-run-now"
+              aria-current={asset.agent_id === selectedAgentId ? "true" : undefined}
+              className={`test-agent-nav-item ${asset.agent_id === selectedAgentId ? "is-selected" : ""}`}
+              data-testid="test-asset-agent-item"
+              key={asset.agent_id}
               type="button"
-              disabled={busy || !isRunnable(selected)}
-              onClick={runNow}
+              onClick={() => setSelectedAgentId(asset.agent_id)}
             >
-              立即运行当前测试集
+              <span className="test-agent-nav-title">{asset.agent_name}</span>
+              <span className="test-agent-nav-id">{asset.agent_id}</span>
+              <span className="test-agent-nav-meta">
+                {asset.suite.test_file_count} 个文件 · {shortSha(asset.suite.commit_sha)} ·
+                {asset.latest_run ? ` 最近${RUN_STATUS_LABEL[asset.latest_run.status]}` : " 暂无运行"}
+              </span>
+              <span className={`test-asset-status is-suite-${state}`} data-testid="test-asset-suite-state">
+                {SUITE_STATE_LABEL[state]}
+              </span>
             </button>
-          </header>
+          );
+        }) : <div className="iw-empty" data-testid="test-agent-search-empty">没有匹配的业务 Agent。</div>}
+      </nav>
+    </aside>
+  );
+}
 
-          {(selected.suite.diagnostics?.length ?? 0) > 0 ? (
-            <div className="test-asset-diagnostics" data-testid="test-asset-diagnostics">
-              {(selected.suite.diagnostics ?? []).map((item) => (
-                <div className={`is-${item.level}`} key={`${item.code}-${item.path ?? ""}`}>{item.message}</div>
-              ))}
-            </div>
-          ) : null}
+function AgentTestDetail({
+  controller,
+  selected,
+}: {
+  controller: AgentTestAssetsController;
+  selected: AgentTestAssetSummary;
+}) {
+  return (
+    <section className={`test-asset-detail is-${controller.tab}`} data-testid="test-asset-detail">
+      <AgentTestDetailHeader controller={controller} selected={selected} />
+      <SuiteSummary selectedSuiteState={controller.selectedSuiteState} />
+      <SuiteDiagnostics selected={selected} />
+      <AgentTestTabs tab={controller.tab} setTab={controller.setTab} />
+      {controller.tab === "files" ? <TestFilesPanel controller={controller} selected={selected} /> : null}
+      {controller.tab === "history" ? <TestHistoryPanel controller={controller} /> : null}
+      {controller.tab === "schedule" ? <TestSchedulePanel controller={controller} selected={selected} /> : null}
+    </section>
+  );
+}
 
-          <div className="test-asset-tabs" role="tablist" aria-label="测试资产详情">
-            <TabButton active={tab === "files"} testId="test-assets-tab-files" onClick={() => setTab("files")}>测试文件</TabButton>
-            <TabButton active={tab === "history"} testId="test-assets-tab-history" onClick={() => setTab("history")}>运行历史</TabButton>
-            <TabButton active={tab === "schedule"} testId="test-assets-tab-schedule" onClick={() => setTab("schedule")}>定时策略</TabButton>
-          </div>
-
-          {tab === "files" ? (
-            <div className="test-file-browser" data-testid="test-file-browser">
-              {sourceFile ? (
-                <TestSourceViewer
-                  sourceFile={sourceFile}
-                  testFiles={selected.suite.test_files ?? []}
-                  onCopySource={copySource}
-                  onSelectFile={(path) => void loadSource(path)}
-                />
-              ) : (
-                <div className="iw-empty">
-                  {(selected.suite.test_files?.length ?? 0) > 0 ? "正在加载只读源码…" : "当前 commit 没有 `tests/test_*.py`。"}
-                </div>
-              )}
-            </div>
-          ) : null}
-
-          {tab === "history" ? (
-            <div className="test-run-history" data-testid="test-run-history">
-              <div className="test-history-filters">
-                <select className="iw-select select-inline" value={historyStatus} onChange={(event) => setHistoryStatus(event.target.value)}>
-                  <option value="">全部状态</option>
-                  {Object.entries(RUN_STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-                <select className="iw-select select-inline" value={historySource} onChange={(event) => setHistorySource(event.target.value)}>
-                  <option value="">全部来源</option>
-                  <option value="manual">手动运行</option>
-                  <option value="scheduled">定时运行</option>
-                  <option value="release_check">待发布检查</option>
-                </select>
-              </div>
-              {history.length ? history.map((run) => (
-                <button className="test-run-row" data-testid="test-run-history-item" type="button" key={run.test_run_id} onClick={() => void openRun(run)}>
-                  <span className={`test-asset-status is-${run.status}`}>{RUN_STATUS_LABEL[run.status]}</span>
-                  <span>{run.source === "scheduled" ? "定时" : run.source === "release_check" ? "待发布检查" : "手动"}</span>
-                  <span><code>{shortSha(run.commit_sha)}</code></span>
-                  <span>{formatDateTime(run.created_at)}</span>
-                  <span>{run.duration_seconds == null ? "—" : `${run.duration_seconds.toFixed(2)}s`}</span>
-                </button>
-              )) : <div className="iw-empty">当前筛选范围没有测试运行记录。</div>}
-              {nextCursor ? <button className="iw-secondary-button" type="button" onClick={() => void loadHistory(nextCursor, true)}>加载更多</button> : null}
-            </div>
-          ) : null}
-
-          {tab === "schedule" ? (
-            <div className="test-schedule" data-testid="test-schedule-panel">
-              <label className="test-schedule-toggle">
-                <input type="checkbox" checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} />
-                启用定时运行
-              </label>
-              <div className="test-schedule-grid">
-                <label>
-                  常用频率
-                  <select
-                    className="iw-select"
-                    value={CRON_PRESETS.some((preset) => preset.value === cronExpression) ? cronExpression : "custom"}
-                    onChange={(event) => event.target.value !== "custom" && setCronExpression(event.target.value)}
-                  >
-                    {CRON_PRESETS.map((preset) => <option key={preset.value} value={preset.value}>{preset.label}</option>)}
-                    <option value="custom">自定义 Cron</option>
-                  </select>
-                </label>
-                <label>
-                  Cron（分 时 日 月 周）
-                  <input className="iw-input" value={cronExpression} onChange={(event) => setCronExpression(event.target.value)} />
-                </label>
-                <label>
-                  IANA 时区
-                  <input className="iw-input" value={scheduleTimezone} onChange={(event) => setScheduleTimezone(event.target.value)} />
-                </label>
-              </div>
-              <div className="test-schedule-summary">
-                <span>最短间隔：15 分钟</span>
-                <span>下次运行：{selected.schedule.next_run_at ? formatDateTime(selected.schedule.next_run_at) : "保存并启用后计算"}</span>
-                <span>目标：触发时当前有效 commit</span>
-              </div>
-              <button className="iw-primary-button" data-testid="test-schedule-save" type="button" disabled={busy || !cronExpression.trim() || !scheduleTimezone.trim()} onClick={saveSchedule}>保存定时策略</button>
-
-              <h4>调度历史</h4>
-              {scheduleEvents.length ? scheduleEvents.map((event) => (
-                <div className="test-schedule-event" data-testid="test-schedule-event" key={event.schedule_event_id}>
-                  <span className={`test-asset-status is-${event.status}`}>{EVENT_STATUS_LABEL[event.status]}</span>
-                  <span>{formatDateTime(event.scheduled_for)}</span>
-                  <span>{event.resolved_commit_sha ? shortSha(event.resolved_commit_sha) : "未解析 commit"}</span>
-                  <span>{event.test_run_id ?? "—"}</span>
-                </div>
-              )) : <div className="iw-empty">尚无定时触发记录。</div>}
-            </div>
-          ) : null}
-            </section>
-          ) : <div className="iw-empty">正在选择业务 Agent…</div>}
-        </div>
-      )}
-
-      {runDetail ? (
-        <DrawerShell
-          title={`测试运行 · ${RUN_STATUS_LABEL[runDetail.status]}`}
-          description={`${runDetail.agent_id} · ${runDetail.commit_sha}`}
-          size="wide"
-          testId="test-run-detail-drawer"
-          bodyClassName="feedback-drawer-body"
-          onClose={() => setRunDetail(undefined)}
+function AgentTestDetailHeader({
+  controller,
+  selected,
+}: {
+  controller: AgentTestAssetsController;
+  selected: AgentTestAssetSummary;
+}) {
+  return (
+    <header className="test-asset-detail-head">
+      <div className="test-asset-detail-title">
+        <h3 title={selected.agent_name}>{selected.agent_name}</h3>
+        <span
+          className="test-asset-detail-commit"
+          title={`生效 commit：${selected.suite.commit_sha || "未解析"}`}
         >
-          <div className="test-run-detail-meta">
-            <span>来源：{runDetail.source}</span>
-            <span>创建：{formatDateTime(runDetail.created_at)}</span>
-            <span>退出码：{runDetail.exit_code ?? "—"}</span>
-          </div>
-          {(runDetail.items?.length ?? 0) > 0 ? (
-            <div className="test-run-items">
-              {(runDetail.items ?? []).map((item) => <div key={`${item.nodeid}-${item.phase}`}><strong>{item.outcome}</strong><code>{item.nodeid}</code><span>{item.detail}</span></div>)}
-            </div>
-          ) : null}
-          {(runDetail.invocations?.length ?? 0) > 0 ? (
-            <>
-              <h4>Agent 调用</h4>
-              <pre className="test-run-output">{JSON.stringify(runDetail.invocations, null, 2)}</pre>
-            </>
-          ) : null}
-          {Object.keys(runDetail.error ?? {}).length ? <pre className="test-run-output is-error">{JSON.stringify(runDetail.error, null, 2)}</pre> : null}
-          <h4>stdout</h4>
-          <pre className="test-run-output">{runDetail.stdout || "（空）"}</pre>
-          <h4>stderr</h4>
-          <pre className="test-run-output">{runDetail.stderr || "（空）"}</pre>
-        </DrawerShell>
+          生效 commit：<code>{selected.suite.commit_sha || "未解析"}</code>
+        </span>
+      </div>
+      <button
+        className="iw-primary-button"
+        data-testid="test-assets-run-now"
+        type="button"
+        disabled={controller.busy || !isRunnable(selected)}
+        onClick={controller.runNow}
+      >
+        立即运行当前测试集
+      </button>
+    </header>
+  );
+}
+
+function SuiteSummary({ selectedSuiteState }: { selectedSuiteState: SuiteState | undefined }) {
+  if (!selectedSuiteState) return null;
+  return (
+    <div
+      className={`test-asset-suite-summary is-${selectedSuiteState}`}
+      data-testid="test-asset-suite-summary"
+      data-suite-state={selectedSuiteState}
+      role={selectedSuiteState === "invalid" || selectedSuiteState === "unavailable" ? "alert" : "status"}
+    >
+      <strong>{SUITE_STATE_LABEL[selectedSuiteState]}</strong>
+      <span>{suiteStateDescription(selectedSuiteState)}</span>
+    </div>
+  );
+}
+
+function SuiteDiagnostics({ selected }: { selected: AgentTestAssetSummary }) {
+  if (!(selected.suite.diagnostics?.length ?? 0)) return null;
+  return (
+    <div className="test-asset-diagnostics" data-testid="test-asset-diagnostics">
+      {(selected.suite.diagnostics ?? []).map((item, index) => (
+        <div
+          className={`test-asset-diagnostic is-${item.level}`}
+          data-diagnostic-level={item.level}
+          key={`${item.level}-${item.code}-${item.path ?? ""}-${index}`}
+        >
+          <span className="test-asset-diagnostic-heading">
+            <strong>{item.level === "error" ? "错误" : "警告"}</strong>
+            <code>{item.code}</code>
+          </span>
+          <span className="test-asset-diagnostic-message">{item.message}</span>
+          <span className="test-asset-diagnostic-path">位置：<code>{item.path || "—"}</code></span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AgentTestTabs({ tab, setTab }: { tab: DetailTab; setTab: (value: DetailTab) => void }) {
+  return (
+    <div className="test-asset-tabs" role="tablist" aria-label="测试资产详情">
+      <TabButton active={tab === "files"} testId="test-assets-tab-files" onClick={() => setTab("files")}>
+        测试文件
+      </TabButton>
+      <TabButton active={tab === "history"} testId="test-assets-tab-history" onClick={() => setTab("history")}>
+        运行历史
+      </TabButton>
+      <TabButton active={tab === "schedule"} testId="test-assets-tab-schedule" onClick={() => setTab("schedule")}>
+        定时策略
+      </TabButton>
+    </div>
+  );
+}
+
+function TestFilesPanel({
+  controller,
+  selected,
+}: {
+  controller: AgentTestAssetsController;
+  selected: AgentTestAssetSummary;
+}) {
+  return (
+    <div className="test-file-browser" data-testid="test-file-browser">
+      {controller.sourceFile ? (
+        <TestSourceViewer
+          sourceFile={controller.sourceFile}
+          testFiles={selected.suite.test_files ?? []}
+          onCopySource={controller.copySource}
+          onSelectFile={(path) => void controller.loadSource(path)}
+        />
+      ) : <div className="iw-empty">{sourcePlaceholder(selected)}</div>}
+    </div>
+  );
+}
+
+function TestHistoryPanel({ controller }: { controller: AgentTestAssetsController }) {
+  return (
+    <div className="test-run-history" data-testid="test-run-history">
+      <div className="test-history-filters">
+        <select
+          className="iw-select select-inline"
+          value={controller.historyStatus}
+          onChange={(event) => controller.setHistoryStatus(event.target.value)}
+        >
+          <option value="">全部状态</option>
+          {Object.entries(RUN_STATUS_LABEL).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+        <select
+          className="iw-select select-inline"
+          value={controller.historySource}
+          onChange={(event) => controller.setHistorySource(event.target.value)}
+        >
+          <option value="">全部来源</option>
+          <option value="manual">手动运行</option>
+          <option value="scheduled">定时运行</option>
+          <option value="release_check">待发布检查</option>
+        </select>
+      </div>
+      {controller.history.length ? controller.history.map((run) => (
+        <button
+          className="test-run-row"
+          data-testid="test-run-history-item"
+          type="button"
+          key={run.test_run_id}
+          onClick={() => void controller.openRun(run)}
+        >
+          <span className={`test-asset-status is-${run.status}`}>{RUN_STATUS_LABEL[run.status]}</span>
+          <span>{run.source === "scheduled" ? "定时" : run.source === "release_check" ? "待发布检查" : "手动"}</span>
+          <span><code>{shortSha(run.commit_sha)}</code></span>
+          <span>{formatDateTime(run.created_at)}</span>
+          <span>{run.duration_seconds == null ? "—" : `${run.duration_seconds.toFixed(2)}s`}</span>
+        </button>
+      )) : <div className="iw-empty">当前筛选范围没有测试运行记录。</div>}
+      {controller.nextCursor ? (
+        <button
+          className="iw-secondary-button"
+          type="button"
+          onClick={() => void controller.loadHistory(controller.nextCursor, true)}
+        >
+          加载更多
+        </button>
       ) : null}
+    </div>
+  );
+}
+
+function TestSchedulePanel({
+  controller,
+  selected,
+}: {
+  controller: AgentTestAssetsController;
+  selected: AgentTestAssetSummary;
+}) {
+  const presetValue = CRON_PRESETS.some((preset) => preset.value === controller.cronExpression)
+    ? controller.cronExpression
+    : "custom";
+
+  return (
+    <div className="test-schedule" data-testid="test-schedule-panel">
+      <label className="test-schedule-toggle">
+        <input
+          type="checkbox"
+          checked={controller.scheduleEnabled}
+          onChange={(event) => controller.setScheduleEnabled(event.target.checked)}
+        />
+        启用定时运行
+      </label>
+      <div className="test-schedule-grid">
+        <label>
+          常用频率
+          <select
+            className="iw-select"
+            value={presetValue}
+            onChange={(event) => event.target.value !== "custom" && controller.setCronExpression(event.target.value)}
+          >
+            {CRON_PRESETS.map((preset) => <option key={preset.value} value={preset.value}>{preset.label}</option>)}
+            <option value="custom">自定义 Cron</option>
+          </select>
+        </label>
+        <label>
+          Cron（分 时 日 月 周）
+          <input
+            className="iw-input"
+            value={controller.cronExpression}
+            onChange={(event) => controller.setCronExpression(event.target.value)}
+          />
+        </label>
+        <label>
+          IANA 时区
+          <input
+            className="iw-input"
+            value={controller.scheduleTimezone}
+            onChange={(event) => controller.setScheduleTimezone(event.target.value)}
+          />
+        </label>
+      </div>
+      <div className="test-schedule-summary">
+        <span>最短间隔：15 分钟</span>
+        <span>下次运行：{selected.schedule.next_run_at ? formatDateTime(selected.schedule.next_run_at) : "保存并启用后计算"}</span>
+        <span>目标：触发时当前有效 commit</span>
+      </div>
+      <button
+        className="iw-primary-button"
+        data-testid="test-schedule-save"
+        type="button"
+        disabled={controller.busy || !controller.cronExpression.trim() || !controller.scheduleTimezone.trim()}
+        onClick={controller.saveSchedule}
+      >
+        保存定时策略
+      </button>
+      <h4>调度历史</h4>
+      {controller.scheduleEvents.length ? controller.scheduleEvents.map((event) => (
+        <div className="test-schedule-event" data-testid="test-schedule-event" key={event.schedule_event_id}>
+          <span className={`test-asset-status is-${event.status}`}>{EVENT_STATUS_LABEL[event.status]}</span>
+          <span>{formatDateTime(event.scheduled_for)}</span>
+          <span>{event.resolved_commit_sha ? shortSha(event.resolved_commit_sha) : "未解析 commit"}</span>
+          <span>{event.test_run_id ?? "—"}</span>
+        </div>
+      )) : <div className="iw-empty">尚无定时触发记录。</div>}
     </div>
   );
 }
@@ -456,9 +746,36 @@ function TabButton({ active, testId, onClick, children }: { active: boolean; tes
 }
 
 function isRunnable(asset: AgentTestAssetSummary): boolean {
-  return asset.suite.tests_directory_present
+  return Boolean(asset.suite.commit_sha)
+    && asset.suite.tests_directory_present
     && asset.suite.test_file_count > 0
     && !(asset.suite.diagnostics ?? []).some((item) => item.level === "error");
+}
+
+function suiteState(asset: AgentTestAssetSummary): SuiteState {
+  const diagnostics = asset.suite.diagnostics ?? [];
+  if (diagnostics.some((item) => item.code === INSPECTION_UNAVAILABLE_CODE)) return "unavailable";
+  if (diagnostics.some((item) => item.level === "error")) return "invalid";
+  if (!asset.suite.tests_directory_present || asset.suite.test_file_count === 0) return "missing";
+  if (diagnostics.some((item) => item.level === "warning")) return "warning";
+  return "ready";
+}
+
+function suiteStateDescription(state: SuiteState): string {
+  if (state === "unavailable") return "平台未能完成当前 Workspace 测试套件检查；测试不可运行。";
+  if (state === "invalid") return "测试套件包含错误诊断；修复前测试不可运行。";
+  if (state === "missing") return "当前 commit 未提供可执行测试；测试不可运行。";
+  if (state === "warning") return "套件可运行，但存在需关注的警告。";
+  return "套件已通过检查，可以运行当前 commit 的测试。";
+}
+
+function sourcePlaceholder(asset: AgentTestAssetSummary): string {
+  const state = suiteState(asset);
+  if (state === "unavailable") return "测试套件检查不可用，当前没有可读取的测试源码。";
+  if (!asset.suite.commit_sha) return "当前测试资产没有可读取的 commit。";
+  if ((asset.suite.test_files?.length ?? 0) > 0) return "正在加载只读源码…";
+  if (state === "invalid") return "测试套件无效；请根据错误诊断修复测试文件。";
+  return "当前 commit 没有 `tests/test_*.py`。";
 }
 
 function browserTimezone(): string {

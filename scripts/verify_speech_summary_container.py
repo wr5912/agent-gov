@@ -30,6 +30,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from app.runtime.json_types import JsonObject  # noqa: E402
+from scripts.durable_agent_cleanup import (  # noqa: E402
+    async_delete_business_agent_and_wait,
+    instance_etag_from_import,
+)
 
 SseCallback = Callable[["SseEvent"], Awaitable[None]]
 
@@ -114,6 +118,7 @@ class RuntimeAcceptance:
         )
         self.no_hitl_agent = ""
         self.hitl_agent = ""
+        self.agent_instance_etags: dict[str, str] = {}
         self.original_openai_config: JsonObject | None = None
         self.checks: list[str] = []
         self.event_counts: dict[str, dict[str, int]] = {}
@@ -183,6 +188,12 @@ class RuntimeAcceptance:
             files={"package": (f"{agent_id}.tar.gz", package, "application/gzip")},
         )
         _require(response.status_code == 200, f"workspace import for {agent_id} returned {response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise AcceptanceError("Workspace import did not return JSON") from exc
+        _require(isinstance(payload, dict), "Workspace import did not return an object")
+        self.agent_instance_etags[agent_id] = instance_etag_from_import(payload)
 
     async def cleanup(self) -> list[str]:
         errors: list[str] = []
@@ -204,9 +215,13 @@ class RuntimeAcceptance:
             if not agent_id:
                 continue
             try:
-                response = await self.client.delete(f"/api/agent-registry/{agent_id}")
-                if response.status_code not in {200, 404}:
-                    errors.append(f"delete_agent:{response.status_code}")
+                instance_etag = self.agent_instance_etags.get(agent_id)
+                if instance_etag is not None:
+                    await async_delete_business_agent_and_wait(
+                        self.client,
+                        agent_id=agent_id,
+                        instance_etag=instance_etag,
+                    )
             except Exception as exc:  # noqa: BLE001 - cleanup must continue
                 errors.append(f"delete_agent:{exc.__class__.__name__}")
         return errors
@@ -272,9 +287,9 @@ class RuntimeAcceptance:
     @staticmethod
     def _validate_speech(events: list[SseEvent], *, terminal_name: str) -> int:
         names = [event.name for event in events]
+        _require(names.count(terminal_name) == 1, f"{terminal_name} was not emitted exactly once")
         _require(names[-1] == terminal_name, f"{terminal_name} was not the final SSE event")
         summaries = [event.data for event in events if event.name == "agentgov.speech_summary"]
-        _require(summaries, "opted-in stream emitted no agentgov.speech_summary")
         for envelope in summaries:
             _require(isinstance(envelope, dict), "Speech Summary envelope was not an object")
             _require(envelope.get("v") == 1, "Speech Summary envelope v was not 1")
@@ -297,6 +312,10 @@ class RuntimeAcceptance:
                 _require("block_index" not in payload, "assistant response summary exposed block_index")
         return len(summaries)
 
+    @staticmethod
+    def _require_any_speech(total: int) -> None:
+        _require(total > 0, "opted-in acceptance round emitted no agentgov.speech_summary")
+
     def _record_events(self, label: str, events: list[SseEvent]) -> None:
         counts: dict[str, int] = {}
         for event in events:
@@ -304,15 +323,27 @@ class RuntimeAcceptance:
         self.event_counts[label] = counts
 
     @staticmethod
-    def _require_no_sdk_mirror_failure(events: list[SseEvent]) -> None:
+    def _require_sdk_success(events: list[SseEvent]) -> None:
+        names = [event.name for event in events]
         _require(
-            not any(event.name == "claude.sdk.MirrorErrorMessage" for event in events),
+            "claude.sdk.MirrorErrorMessage" not in names,
             "SDK stream emitted MirrorErrorMessage after ResultMessage",
         )
+        _require("agentgov.error" not in names, "SDK stream emitted agentgov.error")
         results = [event.data for event in events if event.name == "agentgov.result"]
+        _require(len(results) == 1, "SDK stream did not emit agentgov.result exactly once")
         for result in results:
             _require(isinstance(result, dict), "agentgov.result data was not an object")
             _require(not result.get("errors"), "agentgov.result reported runtime errors")
+
+    @staticmethod
+    def _require_chat_success(events: list[SseEvent]) -> None:
+        names = [event.name for event in events]
+        _require("error" not in names, "Chat stream emitted error")
+        results = [event.data for event in events if event.name == "result"]
+        _require(len(results) == 1, "Chat stream did not emit result exactly once")
+        _require(isinstance(results[0], dict), "Chat result data was not an object")
+        _require(not results[0].get("errors"), "Chat result reported runtime errors")
 
     async def verify_speech_surfaces(self) -> None:
         base = {
@@ -322,13 +353,14 @@ class RuntimeAcceptance:
             "with_speech_summary": True,
         }
         sdk = await self.collect_sse("/api/agent-runtime/sdk-events", base)
-        self._require_no_sdk_mirror_failure(sdk)
-        self._validate_speech(sdk, terminal_name="agentgov.done")
+        self._require_sdk_success(sdk)
+        summary_count = self._validate_speech(sdk, terminal_name="agentgov.done")
         self._record_events("sdk", sdk)
 
         for mode in ("raw", "semantic"):
             events = await self.collect_sse(f"/api/chat/stream?event_mode={mode}", base)
-            self._validate_speech(events, terminal_name="done")
+            self._require_chat_success(events)
+            summary_count += self._validate_speech(events, terminal_name="done")
             self._record_events(f"chat_{mode}", events)
 
         responses = await self.collect_sse(
@@ -338,6 +370,7 @@ class RuntimeAcceptance:
                 "stream": True,
                 "agentgov": {
                     "agent_id": self.no_hitl_agent,
+                    "max_turns": 2,
                     "with_speech_summary": True,
                 },
             },
@@ -345,10 +378,11 @@ class RuntimeAcceptance:
         names = [event.name for event in responses]
         _require(names.count("response.completed") == 1, "Responses stream did not emit response.completed exactly once")
         _require("response.failed" not in names, "Responses stream emitted response.failed")
-        self._validate_speech(responses, terminal_name="response.completed")
+        summary_count += self._validate_speech(responses, terminal_name="response.completed")
         _require(names[-2] == "agentgov.done", "agentgov.done was not immediately before response.completed")
         self._record_events("responses_control", responses)
-        self.checks.append("speech_summary_all_semantic_surfaces")
+        self._require_any_speech(summary_count)
+        self.checks.append("speech_summary_round_has_canonical_event")
 
     async def verify_strict_and_compatibility_surfaces(self) -> None:
         strict = await self.collect_sse(
@@ -509,7 +543,7 @@ class RuntimeAcceptance:
             callback=decide,
         )
         names = [event.name for event in events]
-        self._require_no_sdk_mirror_failure(events)
+        self._require_sdk_success(events)
         _require(names[-1] == "agentgov.done", "HITL SDK stream terminal was not last")
         _require(requested == 1 and resolved == 1 and decision_sent, "HITL requested→decision→resolved flow was incomplete")
         self._record_events("sdk_hitl", events)

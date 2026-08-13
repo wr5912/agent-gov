@@ -146,6 +146,28 @@ def test_agentgov_boundary_first_entries_are_kept():
             assert marker in text
 
 
+def test_project_defensive_security_boundary_is_complete():
+    module = _load_audit_module()
+
+    issues = module._audit_defensive_security_boundary(REPO_ROOT)
+
+    assert list(issues) == []
+
+
+def test_codex_config_audit_requires_defensive_boundary_and_worker_report(tmp_path):
+    module = _load_audit_module()
+    _write(tmp_path / "AGENTS.md", "# Project\n")
+    _write(tmp_path / ".claude/rules/agentgov-project.md", "# Project\n")
+    _write(tmp_path / ".codex/agents/worker.toml", 'name = "worker"\n')
+    _write(tmp_path / ".claude/agents/project-worker.md", "# Worker\n")
+
+    issues = list(module._audit_defensive_security_boundary(tmp_path))
+
+    messages = [issue.message for issue in issues]
+    assert sum("缺少授权防御用途边界" in message for message in messages) == 4
+    assert sum("安全评审回执未限制" in message for message in messages) == 4
+
+
 def test_codex_config_audit_reports_same_directory_agents_shadowing(tmp_path, capsys):
     module = _load_audit_module()
     _write(tmp_path / "AGENTS.md", "# Base\n")

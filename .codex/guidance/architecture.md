@@ -118,7 +118,7 @@ internal action 计划必须说明：
 - 权限与作用域校验，例如 ID 必须属于当前 workflow/case/job/scope。
 - 状态变更、审计事件、revision 或 governance event 的写入位置。
 - all-or-nothing 事务边界和失败投影到 task/job/API/UI 的方式。
-- 对应的 hostile 输入、越权输入或部分失败负向测试。
+- 对应的不可信输入、超范围输入或部分失败负向测试。
 
 Agent 只允许建议 internal action 的业务理由、目标对象和验证语义；operator、role、status、时间戳、
 执行结果、审计身份和可由后端确定的 scope/provenance 必须由后端生成或覆盖。

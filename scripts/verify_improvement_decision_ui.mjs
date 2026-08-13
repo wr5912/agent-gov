@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 // 改进事项开发者决策型 UI 验收：当前待决策、来源反馈唯一入口、添加反馈三步确认。
-// 默认起 Vite + mock API；设置 RUNTIME_UI_BASE/RUNTIME_API_BASE 时使用真实容器 UI/API。
+// 启动 Vite + mock API，验证开发者决策型 UI。
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import process from "node:process";
-import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
 
 import {
   assertNoForbiddenUiRequests,
@@ -20,27 +19,11 @@ const { chromium } = require("playwright");
 
 const repoRoot = new URL("..", import.meta.url).pathname;
 const ts = "2026-06-21T00:00:00Z";
-const REAL = Boolean(process.env.RUNTIME_UI_BASE);
-requireContainerAcceptance(REAL);
 const port = Number(process.env.IMPROVEMENT_DECISION_PORT || 55208);
-const uiBase = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${port}`).replace(/\/$/, "");
-const apiBase = (process.env.RUNTIME_API_BASE || "http://runtime.test").replace(/\/$/, "");
+const uiBase = `http://127.0.0.1:${port}`;
+const apiBase = "http://runtime.test";
+const apiKey = "";
 const screenshotDir = process.env.VERIFY_SCREENSHOT_DIR || mkdtempSync(join(tmpdir(), "agent-gov-ui-verify-"));
-
-function dockerEnvValue(name) {
-  try {
-    const content = readFileSync(new URL("../docker/.env", import.meta.url), "utf8");
-    for (const rawLine of content.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith("#")) continue;
-      const index = line.indexOf("=");
-      if (index > 0 && line.slice(0, index).trim() === name) return line.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
-    }
-  } catch { /* docker/.env may be absent outside this repo */ }
-  return "";
-}
-
-const apiKey = process.env.RUNTIME_API_KEY || dockerEnvValue("FRONTEND_RUNTIME_API_KEY") || dockerEnvValue("API_KEY") || "";
 
 function json(route, payload, status = 200) {
   return route.fulfill({ status, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(payload) });
@@ -88,64 +71,6 @@ async function waitForVite() {
     } catch { await new Promise((resolve) => setTimeout(resolve, 250)); }
   }
   throw new Error(`Vite did not become ready at ${uiBase}`);
-}
-
-function authHeaders(extra = {}) {
-  return { Accept: "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}), ...extra };
-}
-
-async function apiJson(path, init = {}) {
-  const response = await fetch(`${apiBase}${path}`, { ...init, headers: authHeaders(init.headers || {}) });
-  if (!response.ok) throw new Error(`${init.method || "GET"} ${path} failed: ${response.status} ${await response.text().catch(() => "")}`);
-  return response.json();
-}
-
-async function postJson(path, body) {
-  return apiJson(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-}
-
-async function putJson(path, body) {
-  return apiJson(path, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-}
-
-async function seedRealData() {
-  const agents = await apiJson("/api/agent-registry").catch(() => []);
-  const agentId = agents.find((agent) => agent.status === "active")?.agent_id || agents[0]?.agent_id || "security-operations-expert";
-  const stamp = `decision-improvement-${Date.now().toString(36)}`;
-  const item = await postJson("/api/improvements", {
-    agent_id: agentId,
-    title: `${stamp} sec-ops-data 时间窗口误判治理`,
-    summary: "sec-ops-data 时间窗口不一致导致同类告警误判。",
-    source_feedback_refs: [`${stamp}-fb-1`],
-    auto_merge: false,
-  });
-  await postJson(`/api/improvements/${item.improvement_id}/feedbacks`, {
-    summary: "这个告警其实是误报",
-    source: "playground_run",
-    raw_text: "事件时间和告警时间窗口不一致。",
-    run_id: `${stamp}-run-1`,
-    session_id: `${stamp}-session-1`,
-    agent_version_id: `${stamp}-agent-version`,
-    scenario: "alert-triage",
-    task_id: `${stamp}-task-1`,
-    alert_id: `${stamp}-alert`,
-    case_id: `${stamp}-case`,
-  });
-  await putJson(`/api/improvements/${item.improvement_id}/normalized-feedback`, {
-    problem: "告警误判",
-    possible_reason: "事件时间与告警时间窗口不一致",
-    possible_object: "sec-ops-data MCP 数据",
-    impact: "中",
-    suggestion: "进入归因分析",
-    user_quote: "这个告警其实是误报。",
-  });
-  await putJson(`/api/improvements/${item.improvement_id}/attribution`, {
-    summary: "sec-ops-data MCP 返回的数据时间与告警时间窗口不一致。",
-    responsibility_boundary: ["主要是外部数据时间窗口问题"],
-    evidence: ["来源反馈指向同一时间窗口误判问题"],
-  });
-  await postJson(`/api/improvements/${item.improvement_id}/lifecycle`, { stage: "triage" }).catch(() => null);
-  return { id: item.improvement_id, title: item.title };
 }
 
 function mockState() {
@@ -371,19 +296,29 @@ function assertPresenceDrivenInitialRequests(requests, improvementId) {
   }
 }
 
-async function main() {
-  const state = REAL ? null : mockState();
-  const target = REAL ? await seedRealData() : state.target;
-  const server = REAL ? null : startVite();
+async function withBrowser(callback) {
+  const options = { headless: process.env.PLAYWRIGHT_HEADLESS !== "0" };
+  const browser = await chromium.launch(options);
   try {
-    if (!REAL) await waitForVite();
-    const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    const diagnostics = attachDiagnostics(page, apiBase, uiBase);
+    return await callback(browser);
+  } finally {
+    await browser.close();
+  }
+}
+
+async function main() {
+  const state = mockState();
+  const target = state.target;
+  const server = startVite();
+  try {
+    await waitForVite();
+    await withBrowser(async (browser) => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      const diagnostics = attachDiagnostics(page, apiBase, uiBase);
     await page.addInitScript(({ apiBaseValue, apiKeyValue }) => {
       window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: apiBaseValue, apiKey: apiKeyValue }));
     }, { apiBaseValue: apiBase, apiKeyValue: apiKey });
-    if (state) await installMockRoutes(page, state);
+    await installMockRoutes(page, state);
 
     await page.goto(uiBase, { waitUntil: "domcontentloaded" });
     await page.getByTestId("nav-improvement").click();
@@ -405,7 +340,7 @@ async function main() {
     const renderedImprovementId = await page.getByTestId("improvement-id-value").innerText();
     if (renderedImprovementId !== targetId) throw new Error(`rendered improvement id mismatch: ${renderedImprovementId} !== ${targetId}`);
     await assertVisible(page, "copy-improvement-id");
-    if (!REAL) assertPresenceDrivenInitialRequests(diagnostics.requests, targetId);
+    assertPresenceDrivenInitialRequests(diagnostics.requests, targetId);
 
     await assertVisible(page, "improvement-list-decision");
     await assertVisible(page, "current-decision-card");
@@ -417,7 +352,7 @@ async function main() {
     if (primaryCount !== 1) throw new Error(`current-decision-card primary action count=${primaryCount}`);
 
     mkdirSync(screenshotDir, { recursive: true });
-    await page.screenshot({ path: join(screenshotDir, `${REAL ? "real" : "mock"}-improvement-decision.png`), fullPage: true });
+    await page.screenshot({ path: join(screenshotDir, "mock-improvement-decision.png"), fullPage: true });
 
     const hiddenTable = await page.getByTestId("source-feedback-table").isVisible().catch(() => false);
     if (hiddenTable) throw new Error("source feedback table should be hidden before opening source drawer");
@@ -443,7 +378,7 @@ async function main() {
     await page.getByTestId("add-feedback-next-confirm").click();
     await assertVisible(page, "add-feedback-confirm-step");
     await assertVisible(page, "add-feedback-consequence");
-    await page.screenshot({ path: join(screenshotDir, `${REAL ? "real" : "mock"}-add-feedback-confirm.png`), fullPage: true });
+    await page.screenshot({ path: join(screenshotDir, "mock-add-feedback-confirm.png"), fullPage: true });
     await page.getByTestId("add-feedback-confirm-submit").click();
     await page.getByTestId("add-feedback-flow").waitFor({ state: "detached", timeout: 10_000 });
     await assertVisible(page, "source-management-drawer");
@@ -451,7 +386,6 @@ async function main() {
     const rowsAfter = await page.getByTestId("source-feedback-row").count();
     if (rowsAfter <= rowsBefore) throw new Error(`source feedback rows did not increase: ${rowsBefore} -> ${rowsAfter}`);
 
-    if (!REAL) {
       await page.getByLabel("关闭").click();
       await page.getByTestId("source-management-drawer").waitFor({ state: "detached", timeout: 8000 });
       await page.getByTestId("primary-action").click();
@@ -580,7 +514,6 @@ async function main() {
         throw new Error(`unexpected regression test design state: ${designText} / ${workspaceFilesText}`);
       }
       await assertVisible(page, "regression-test-code-coverage");
-    }
 
     assertNoForbiddenUiRequests(diagnostics.requests);
     const unexpected = unexpectedDiagnostics(diagnostics);
@@ -590,8 +523,8 @@ async function main() {
         allHttpErrors: diagnostics.httpErrors,
       })}`);
     }
-    await browser.close();
-    console.log(JSON.stringify({ mode: REAL ? "real-container" : "mock", ui_base: uiBase, api_base: apiBase, improvement_id: target.id || target.improvement_id, rows_before: rowsBefore, rows_after: rowsAfter, screenshots: screenshotDir }, null, 2));
+      console.log(JSON.stringify({ mode: "mock", ui_base: uiBase, api_base: apiBase, improvement_id: target.id || target.improvement_id, rows_before: rowsBefore, rows_after: rowsAfter, screenshots: screenshotDir }, null, 2));
+    });
   } finally {
     await stopChild(server);
   }

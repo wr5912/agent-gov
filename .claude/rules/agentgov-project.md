@@ -6,6 +6,8 @@
 
 - 项目名称：智能体治理平台 AgentGov（Agent Runtime · Feedback Loop · Version Governance）。
 - 主要目标：通用智能体治理平台，支持创建、运行、反馈优化和版本治理不同业务 Agent，并把运行、反馈、归因、优化、评估、发布过程沉淀为数据资产、方法论资产和执行资产。
+- 内置网络安全业务 Agent、示例和测试仅服务于用户拥有并授权环境的防御性监测、研判、加固和响应处置。
+- 防御性安全评审回执只报告根因、影响、文件位置、修复和验证结果；不展开可复制的完整复现材料。
 - 关键模块：`app/`（FastAPI Runtime 控制面）、`app/runtime/`（Claude SDK 适配、profile、版本、schema、stores）、`app/services/`（跨 store/runtime/profile 应用服务）、`frontend/`（React/Vite 调试与治理观察界面）、`docker/`、`docs/`、`tests/`。
 - 必读文档：`docs/项目目标愿景使命.md`、`docs/engineering/长程重构质量闭环.md`、`docs/engineering/GSD长程重构阶段清单.md`、`.planning/METHODOLOGY.md`。
 
@@ -23,7 +25,7 @@
 
 以下是对上述原则的**受控例外**，只在其明确前提下成立，不得据此把「后端自造 agent 能力」正常化；新增例外必须在此登记：
 
-- **后端直接生成 Prompt Suggestion**（`app/runtime/prompt_suggestion_generator.py`，开关 `ENABLE_BACKEND_PROMPT_SUGGESTION`，**默认关**）。前提：Claude Code 原生 `--prompt-suggestions`（SUGGESTION MODE）指令刻意对「无明显下一步」和「安全话题」沉默，在本部署（全 SOC/安全 Agent + deepseek-v4-flash）实测几乎永远为空，「用 SDK 的」等于「没有」。故后端对本轮对话做一次 LLM 派生（与 `DSPyOutputFormatter` 同类，复用 `model_provider_router`），每轮产出**至多 N 条**候选（`BACKEND_PROMPT_SUGGESTION_COUNT`，默认 3，使用点 clamp 到 1..5；绝不凑数），整批一帧下发。边界：不碰 agent loop / 工具 / MCP / hooks；不落库、不当 agent 事实、只作临时 UX 帧；失败一律吞掉不影响主 Run。关掉开关即回退 CLI 原生路径。
+- **后端直接生成 Prompt Suggestion**（`app/runtime/prompt_suggestion_generator.py`，开关 `ENABLE_BACKEND_PROMPT_SUGGESTION`，**默认关**）。前提：本部署实测 Claude Code 原生 `--prompt-suggestions`（SUGGESTION MODE）长期为空，「用 SDK 的」等于「没有」。故后端对本轮对话做一次 LLM 派生（与 `DSPyOutputFormatter` 同类，复用 `model_provider_router`），每轮产出**至多 N 条**候选（`BACKEND_PROMPT_SUGGESTION_COUNT`，默认 3，使用点 clamp 到 1..5；绝不凑数），整批一帧下发。边界：不碰 agent loop / 工具 / MCP / hooks；不落库、不当 agent 事实、只作临时 UX 帧；失败一律吞掉不影响主 Run。关掉开关即回退 CLI 原生路径。
 
 ## 项目专属质量策略
 
@@ -88,7 +90,7 @@
 
 ## Claude Code 专项
 
-- 必须按需使用的项目 skill：`.claude/skills/runtime-env-governance/SKILL.md`（runtime/env 治理）、`.claude/skills/agentgov-governance-preflight/SKILL.md`（AgentGov 产品/治理方案预检；产品定位、愿景使命、反馈闭环治理、多 Agent 创建治理、prompt/skill/SOP/eval 沉淀类任务先做治理对象建模）、`.claude/skills/docs-governance/SKILL.md`（`docs/` 文档容器治理）、`.claude/skills/test-sync-governance/SKILL.md`（迭代功能时测试增删改判断；删功能同步删测，配合 `scripts/check_orphan_tests.py` 孤儿检测）、`.claude/skills/business-agent-workspace-optimizer/SKILL.md`（开发者离线开发/优化业务 Agent 自身 workspace 配置资产：CLAUDE.md/MCP/settings/skills/agents/rules/hooks/evals/templates）、`.claude/skills/improvement-workbench-contract-preflight/SKILL.md`（四阶段改进治理工作台、反馈闭环 UI、Diff、执行优化、测试用例或 Trace/Langfuse 反复整改前，固定业务产物归属、字段所有权、动作副作用和负向验收）。这些 skill 与 `.codex/skills/` 同名 skill 同源镜像，修改需两侧同步。
+- 必须按需使用的项目 skill：`.claude/skills/runtime-env-governance/SKILL.md`（runtime/env 治理）、`.claude/skills/agentgov-governance-preflight/SKILL.md`（AgentGov 产品/治理方案预检；产品定位、愿景使命、反馈闭环治理、多 Agent 创建治理、prompt/skill/SOP/eval 沉淀类任务先做治理对象建模）、`.claude/skills/docs-governance/SKILL.md`（`docs/` 文档容器治理）、`.claude/skills/test-sync-governance/SKILL.md`（迭代功能时测试增删改判断；删功能同步删测，配合 `scripts/check_orphan_tests.py` 孤儿检测）、`.claude/skills/business-agent-workspace-optimizer/SKILL.md`（开发者离线开发/优化业务 Agent 自身 workspace 配置资产：CLAUDE.md/MCP/settings/skills/agents/rules/hooks/evals/templates）、`.claude/skills/defensive-security-boundary/SKILL.md`（网络安全运营 Agent、安全缺陷整改、不可信输入测试和安全评审的授权防御边界）、`.claude/skills/improvement-workbench-contract-preflight/SKILL.md`（四阶段改进治理工作台、反馈闭环 UI、Diff、执行优化、测试用例或 Trace/Langfuse 反复整改前，固定业务产物归属、字段所有权、动作副作用和负向验收）。这些 skill 与 `.codex/skills/` 同名 skill 同源镜像，修改需两侧同步。
 - 推荐子代理：`.claude/agents/project-worker.md`。
 - 项目 MCP：未配置（无 `.mcp.json`）。
 - 项目 Stop hook：`.claude/settings.json` 复用 `.codex/hooks/codex_governance_stop.py`，失败时最多自动续跑一次，避免重入循环。

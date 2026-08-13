@@ -121,6 +121,50 @@ AGENT_RELEASE_OPERATION_TRANSITIONS: Mapping[str, set[str]] = {
     "failed": {"reserved"},
 }
 
+WORKSPACE_ACTIVATION_STATES = {
+    "preparing",
+    "prepared",
+    "completing",
+    "rejecting",
+    "completed",
+    "rejected",
+    "recovery_required",
+}
+WORKSPACE_ACTIVATION_FENCE_STATES = {
+    "preparing",
+    "prepared",
+    "completing",
+    "rejecting",
+    "recovery_required",
+}
+WORKSPACE_ACTIVATION_ACTIONS = {"import_overwrite", "import_unchanged", "restore"}
+WORKSPACE_ACTIVATION_RECOVERY_PHASES = {
+    "none",
+    "candidate_reset",
+    "base_reset",
+    "head_reset",
+    "index_restore",
+    "completion_outcome",
+    "rejection_outcome",
+}
+
+WORKSPACE_ACTIVATION_TRANSITIONS: Mapping[str, set[str]] = {
+    "preparing": {"prepared", "rejecting", "recovery_required"},
+    "prepared": {"completing", "rejecting", "recovery_required"},
+    "completing": {"completed", "recovery_required"},
+    "rejecting": {"rejected", "recovery_required"},
+    "completed": set(),
+    "rejected": set(),
+    "recovery_required": {"completing", "rejecting"},
+}
+
+AGENT_DELETION_STATES = {"cleanup_pending", "completed"}
+
+AGENT_DELETION_TRANSITIONS: Mapping[str, set[str]] = {
+    "cleanup_pending": {"completed"},
+    "completed": set(),
+}
+
 # 业务 Agent 生命周期（AGV-020）。archived 为终态：仍可审计但不参与新运行、不可再转移。
 AGENT_LIFECYCLE_STATES: set[str] = set(get_args(AgentLifecycleStatus))
 
@@ -234,6 +278,8 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "rollback_failed": {"rolled_back"},
     },
     "agent_release_operation": AGENT_RELEASE_OPERATION_TRANSITIONS,
+    "workspace_activation": WORKSPACE_ACTIVATION_TRANSITIONS,
+    "agent_deletion": AGENT_DELETION_TRANSITIONS,
     "agent_lifecycle": AGENT_LIFECYCLE_TRANSITIONS,
     "agent_provision": AGENT_PROVISION_TRANSITIONS,
     "session_turn_intent": SESSION_TURN_INTENT_TRANSITIONS,
@@ -249,6 +295,8 @@ _KNOWN_STATES = {
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,
     "agent_release_operation": AGENT_RELEASE_OPERATION_STATES,
+    "workspace_activation": WORKSPACE_ACTIVATION_STATES,
+    "agent_deletion": AGENT_DELETION_STATES,
     "agent_lifecycle": AGENT_LIFECYCLE_STATES,
     "agent_provision": AGENT_PROVISION_STATES,
     "session_turn_intent": SESSION_TURN_INTENT_STATES,

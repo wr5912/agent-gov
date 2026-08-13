@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,6 +18,7 @@ from app.runtime.execution_content_guards import guard_execution_write
 from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
 from app.runtime.json_types import JsonObject
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+from app.runtime.state_machines import AGENT_CHANGE_SET_STATES
 from app.runtime.stores.improvement_content_store import ExecutionRecord, ImprovementContentStore
 from app.runtime.stores.improvement_execution_claim_store import ExecutionClaim
 from app.runtime.stores.improvement_store import ImprovementStore
@@ -31,6 +33,7 @@ RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
 _BASE_CONFIG_TARGETS = ["CLAUDE.md", ".claude/settings.json", ".mcp.json"]
 _MAX_SKILL_TARGETS = 12
 _INVALID_CHANGE_SET_STATES = {"rejected", "abandoned", "failed"}
+_MATERIALIZATION_BLOCKED_CHANGE_SET_STATES = _INVALID_CHANGE_SET_STATES | {"publishing", "published"}
 _EXECUTION_CLAIM_TTL_SECONDS = 600
 
 
@@ -90,6 +93,47 @@ def _editable_config_targets(worktree: Path) -> list[str]:
         for skill_md in sorted(skills_dir.glob("*/SKILL.md"))[:_MAX_SKILL_TARGETS]:
             targets.append(skill_md.relative_to(worktree).as_posix())
     return targets
+
+
+def _require_current_materialization_authority(
+    *,
+    governance: AgentGovernanceService,
+    store: Any,
+    change_set_id: str,
+    previous_commit: str,
+    captured_worktree: Path,
+) -> None:
+    fresh = governance.get_change_set(change_set_id)
+    if fresh is None or str(fresh.get("change_set_id") or "") != change_set_id:
+        raise ConflictError("Regression test change set is no longer available")
+    status = str(fresh.get("status") or "")
+    if status not in AGENT_CHANGE_SET_STATES or status in _MATERIALIZATION_BLOCKED_CHANGE_SET_STATES:
+        raise ConflictError(f"Regression test change set is no longer materializable from status {status or 'missing'}")
+    if str(fresh.get("candidate_commit_sha") or "") != previous_commit:
+        raise ConflictError("Regression test change set candidate changed before materialization")
+    fresh_worktree = governance.change_set_worktree_path(fresh)
+    expected_worktree = Path(store.worktrees_dir) / change_set_id
+    if fresh_worktree != captured_worktree or fresh_worktree != expected_worktree:
+        raise ConflictError("Regression test change set worktree authority changed before materialization")
+    try:
+        store._require_existing_worktree_authority(
+            change_set_id,
+            fresh_worktree,
+            expected_head=previous_commit,
+        )
+    except AgentGitError:
+        raise
+    except Exception as exc:
+        raise AgentGitError("Candidate worktree authority rejected") from exc
+
+
+@contextmanager
+def _route_safe_materialization_guard(store: Any) -> Iterator[None]:
+    try:
+        with store.mutation_guard():
+            yield
+    except AgentGitError as exc:
+        raise ConflictError("Regression test materialization lost its Agent worktree authority") from exc
 
 
 class ImprovementExecutionService:
@@ -419,52 +463,66 @@ class ImprovementExecutionService:
             if candidate.target_path != str(test.get("target_path") or ""):
                 raise DataIntegrityError("Stored regression test path no longer matches backend projection")
             generated_files.append((candidate.target_path, candidate.test_code))
-        created = _create_generated_test_assets(worktree, files=generated_files)
-        try:
-            with store.mutation_guard():
+        with _route_safe_materialization_guard(store):
+            _require_current_materialization_authority(
+                governance=self._gov,
+                store=store,
+                change_set_id=execution.change_set_id,
+                previous_commit=previous_commit,
+                captured_worktree=worktree,
+            )
+            try:
+                created = _create_generated_test_assets(worktree, files=generated_files)
                 candidate = store.commit_squashed_worktree(
                     worktree,
                     base_ref=execution.base_commit_sha,
                     message=f"Improvement {improvement_id} add feedback regression pytest",
                 )
-            self._gov.mark_candidate_committed(
-                execution.change_set_id,
-                candidate_commit_sha=candidate,
-                execution_job_id=execution.execution_id,
-                note="确认配置与 pytest 测试文件为同一待发布版本。",
-                operator="feedback-test-generator",
-            )
-            applied_diff = store.diff_versions(execution.base_commit_sha, candidate)
-            if not applied_diff:
-                raise DataIntegrityError("Generated tests have no verifiable candidate diff")
-            self._content.rebind_execution_candidate(
-                improvement_id,
-                change_set_id=execution.change_set_id,
-                previous_commit_sha=previous_commit,
-                candidate_commit_sha=candidate,
-                applied_diff=applied_diff,
-                generated_test_files=created,
-            )
-        except Exception:
-            try:
-                with store.mutation_guard():
-                    store.reset_worktree(worktree, base_ref=previous_commit)
                 self._gov.mark_candidate_committed(
                     execution.change_set_id,
-                    candidate_commit_sha=previous_commit,
+                    candidate_commit_sha=candidate,
                     execution_job_id=execution.execution_id,
-                    note="pytest 测试资产生成失败，已恢复原待发布版本。",
+                    note="确认配置与 pytest 测试文件为同一待发布版本。",
                     operator="feedback-test-generator",
                 )
-            except Exception:  # noqa: BLE001 - preserve the original failure and log failed compensation.
-                logger.exception("failed to restore change set after pytest asset generation error")
-            raise
+                applied_diff = store.diff_versions(execution.base_commit_sha, candidate)
+                if not applied_diff:
+                    raise DataIntegrityError("Generated tests have no verifiable candidate diff")
+                self._content.rebind_execution_candidate(
+                    improvement_id,
+                    change_set_id=execution.change_set_id,
+                    previous_commit_sha=previous_commit,
+                    candidate_commit_sha=candidate,
+                    applied_diff=applied_diff,
+                    generated_test_files=created,
+                )
+            except Exception:
+                self._restore_materialized_candidate(
+                    store=store,
+                    worktree=worktree,
+                    previous_commit=previous_commit,
+                    execution=execution,
+                )
+                raise
         return {
             "agent_id": agent_id,
             "change_set_id": execution.change_set_id,
             "candidate_commit_sha": candidate,
             "generated_test_files": created,
         }
+
+    def _restore_materialized_candidate(self, *, store: Any, worktree: Path, previous_commit: str, execution: ExecutionRecord) -> None:
+        try:
+            store.reset_worktree(worktree, base_ref=previous_commit)
+            self._gov.mark_candidate_committed(
+                execution.change_set_id,
+                candidate_commit_sha=previous_commit,
+                execution_job_id=execution.execution_id,
+                note="pytest 测试资产生成失败，已恢复原待发布版本。",
+                operator="feedback-test-generator",
+            )
+        except Exception:  # noqa: BLE001 - preserve the original failure and log failed compensation.
+            logger.exception("failed to restore change set after pytest asset generation error")
 
     def _abandon_no_action(self, claim: ExecutionClaim, *, store: Any, reason: str) -> ExecutionRecord:
         retain_change_set = self._compensate_unapplied_change_set(

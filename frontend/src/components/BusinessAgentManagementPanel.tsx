@@ -1,5 +1,5 @@
 import { Upload } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   exportBusinessAgentWorkspace,
   getCurrentAgentRef,
@@ -22,6 +22,12 @@ import {
 } from "./AgentWorkspaceImportDrawer";
 import { BusinessAgentTable, type AgentTestStatus } from "./BusinessAgentTable";
 import { validateAgentId } from "./agentSettingsValidation";
+import {
+  beginSettingsRequestAuthority,
+  settleSettingsRequest,
+  type SettingsRequestAuthority,
+  type SettingsRequestGeneration,
+} from "./settingsRequestContext";
 import "./BusinessAgentManagementPanel.css";
 
 interface BusinessAgentManagementPanelProps {
@@ -30,7 +36,8 @@ interface BusinessAgentManagementPanelProps {
   loading: boolean;
   externalBusy: boolean;
   pending: string | null;
-  reloadAgents: () => Promise<void>;
+  requestGeneration: { current: SettingsRequestGeneration };
+  reloadAgents: (authority?: SettingsRequestAuthority) => Promise<void>;
   onAgentsChanged: () => void;
   onBusyChange: (busy: boolean) => void;
   onLifecycle: (agentId: string, status: string) => void;
@@ -43,8 +50,24 @@ interface PackageRunner {
   notice: WorkspacePackageNotice | null;
   clearFeedback: () => void;
   fail: (operation: WorkspacePackageOperation, message: string) => void;
-  run: (key: string, action: () => Promise<string | undefined>) => void;
+  run: <T>(key: string, action: WorkspacePackageAction<T>) => void;
 }
+
+interface WorkspacePackageAction<T> {
+  request: (authority: SettingsRequestAuthority) => Promise<T>;
+  onSuccess: (
+    value: T,
+    authority: SettingsRequestAuthority,
+  ) => string | undefined | Promise<string | undefined>;
+}
+
+interface WorkspacePackageActionEffects {
+  onStart: (key: string) => void;
+  onNotice: (notice: WorkspacePackageNotice) => void;
+  onFinally: () => void;
+}
+
+const WORKSPACE_PACKAGE_LANE = "workspace-package";
 
 type ImportDrawerState =
   | { mode: "create" }
@@ -61,9 +84,49 @@ interface PreparedWorkspaceImport {
   packageFile: File;
 }
 
-function usePackageRunner(onBusyChange: (busy: boolean) => void): PackageRunner {
+export async function runWorkspacePackageAction<T>(
+  generation: SettingsRequestGeneration,
+  key: string,
+  action: WorkspacePackageAction<T>,
+  effects: WorkspacePackageActionEffects,
+): Promise<void> {
+  const operation = key.split(":", 1)[0] as WorkspacePackageOperation;
+  const authority = beginSettingsRequestAuthority(generation, [WORKSPACE_PACKAGE_LANE]);
+  effects.onStart(key);
+  const request = Promise.resolve().then(() => {
+    if (!authority.isCurrent()) throw new Error("Settings request context is no longer current.");
+    return action.request(authority);
+  });
+  await settleSettingsRequest(generation, authority.token, request, {
+    onSuccess: async (value) => {
+      const message = await action.onSuccess(value, authority);
+      if (message && authority.isCurrent()) {
+        effects.onNotice({ operation, kind: "success", message });
+      }
+    },
+    onError: (cause) => {
+      effects.onNotice({
+        operation,
+        kind: "error",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    },
+    onFinally: effects.onFinally,
+  });
+}
+
+function usePackageRunner(
+  generation: { current: SettingsRequestGeneration },
+  config: RuntimeClientConfig,
+  onBusyChange: (busy: boolean) => void,
+): PackageRunner {
   const [pending, setPending] = useState<string | null>(null);
   const [notice, setNotice] = useState<WorkspacePackageNotice | null>(null);
+
+  useLayoutEffect(() => {
+    setPending(null);
+    setNotice(null);
+  }, [config.apiBase, config.apiKey]);
 
   useEffect(() => {
     onBusyChange(pending !== null);
@@ -74,23 +137,16 @@ function usePackageRunner(onBusyChange: (busy: boolean) => void): PackageRunner 
   const fail = useCallback((operation: WorkspacePackageOperation, message: string) => {
     setNotice({ operation, kind: "error", message });
   }, []);
-  const run = useCallback((key: string, action: () => Promise<string | undefined>) => {
-    const operation = key.split(":", 1)[0] as WorkspacePackageOperation;
-    setPending(key);
-    setNotice(null);
-    void action()
-      .then((message) => {
-        if (message) setNotice({ operation, kind: "success", message });
-      })
-      .catch((error) => {
-        setNotice({
-          operation,
-          kind: "error",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      })
-      .finally(() => setPending(null));
-  }, []);
+  const run = useCallback(<T,>(key: string, action: WorkspacePackageAction<T>) => {
+    void runWorkspacePackageAction(generation.current, key, action, {
+      onStart: (nextKey) => {
+        setPending(nextKey);
+        setNotice(null);
+      },
+      onNotice: setNotice,
+      onFinally: () => setPending(null),
+    });
+  }, [generation]);
 
   return { pending, notice, clearFeedback, fail, run };
 }
@@ -144,6 +200,28 @@ function prepareWorkspaceImport(
   return null;
 }
 
+async function requestWorkspaceImport(
+  config: RuntimeClientConfig,
+  prepared: PreparedWorkspaceImport,
+  name: string,
+  authority: SettingsRequestAuthority,
+): Promise<WorkspaceImportResponse> {
+  const current = prepared.overwrite
+    ? await getCurrentAgentRef(config, prepared.targetId)
+    : null;
+  if (!authority.isCurrent()) {
+    throw new Error("Settings request context is no longer current.");
+  }
+  return importBusinessAgentWorkspace(config, prepared.targetId, {
+    package: prepared.packageFile,
+    name: prepared.overwrite ? undefined : name.trim(),
+    expectedCurrentCommitSha: current?.commit_sha || current?.agent_version_id || undefined,
+    reason: prepared.overwrite
+      ? "Settings 覆盖导入 Workspace 包"
+      : "Settings 导入 Workspace 包创建业务 Agent",
+  });
+}
+
 function useWorkspaceImport(
   props: BusinessAgentManagementPanelProps,
   runner: PackageRunner,
@@ -167,6 +245,10 @@ function useWorkspaceImport(
     runner.clearFeedback();
   }, [clearSelectedPackage, runner.clearFeedback]);
 
+  useLayoutEffect(() => {
+    reset();
+  }, [props.config.apiBase, props.config.apiKey, reset]);
+
   const changeAgentId = (value: string) => {
     if (value !== agentId) {
       clearSelectedPackage();
@@ -185,19 +267,16 @@ function useWorkspaceImport(
   const submit = (drawer: ImportDrawerState) => {
     const prepared = prepareWorkspaceImport(drawer, props.agents, agentId, name, file, runner.fail);
     if (!prepared) return;
-    runner.run(`import:${prepared.targetId}`, async () => {
-      const current = prepared.overwrite ? await getCurrentAgentRef(props.config, prepared.targetId) : null;
-      const result = await importBusinessAgentWorkspace(props.config, prepared.targetId, {
-        package: prepared.packageFile,
-        name: prepared.overwrite ? undefined : name.trim(),
-        expectedCurrentCommitSha: current?.commit_sha || current?.agent_version_id || undefined,
-        reason: prepared.overwrite ? "Settings 覆盖导入 Workspace 包" : "Settings 导入 Workspace 包创建业务 Agent",
-      });
-      setLastImport(result);
-      clearSelectedPackage();
-      await props.reloadAgents();
-      props.onAgentsChanged();
-      return importSuccessMessage(result);
+    runner.run(`import:${prepared.targetId}`, {
+      request: (authority) => requestWorkspaceImport(props.config, prepared, name, authority),
+      onSuccess: async (result, authority) => {
+        setLastImport(result);
+        clearSelectedPackage();
+        await props.reloadAgents(authority);
+        if (!authority.isCurrent()) return undefined;
+        props.onAgentsChanged();
+        return importSuccessMessage(result);
+      },
     });
   };
 
@@ -217,9 +296,18 @@ function useWorkspaceImport(
 }
 
 function importSuccessMessage(result: WorkspaceImportResponse): string {
-  if (result.action === "created") return `已从 Workspace 包创建 ${result.agent.name}（下一 turn 生效）`;
-  if (result.action === "unchanged") return `${result.agent.name} Workspace 与导入包一致，无需变更`;
-  return `已覆盖 ${result.agent.name} Workspace（下一 turn 生效）`;
+  const actionMessage = result.action === "created"
+    ? `已从 Workspace 包创建 ${result.agent.name}（下一 turn 生效）`
+    : result.action === "unchanged"
+      ? `${result.agent.name} Workspace 与导入包一致，无需变更`
+      : `已覆盖 ${result.agent.name} Workspace（下一 turn 生效）`;
+  if (result.test_suite_status === "invalid") {
+    return `${actionMessage}。Workspace 已生效，但测试套件不可用；请查看导入回执中的错误诊断`;
+  }
+  if (result.test_suite_status === "warning") {
+    return `${actionMessage}。Workspace 已生效，测试套件有警告；请查看导入回执中的诊断`;
+  }
+  return `${actionMessage}。Workspace 已生效，测试套件已就绪`;
 }
 
 function exportWorkspace(
@@ -227,18 +315,20 @@ function exportWorkspace(
   runner: PackageRunner,
   agentId: string,
 ) {
-  runner.run(`export:${agentId}`, async () => {
-    const exported = await exportBusinessAgentWorkspace(props.config, agentId);
-    const url = URL.createObjectURL(exported.blob);
-    try {
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = exported.filename;
-      anchor.click();
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-    return `已导出 ${agentId} Workspace（commit ${exported.commitSha.slice(0, 12)}）`;
+  runner.run(`export:${agentId}`, {
+    request: () => exportBusinessAgentWorkspace(props.config, agentId),
+    onSuccess: (exported) => {
+      const url = URL.createObjectURL(exported.blob);
+      try {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = exported.filename;
+        anchor.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      return `已导出 ${agentId} Workspace（commit ${exported.commitSha.slice(0, 12)}）`;
+    },
   });
 }
 
@@ -272,23 +362,26 @@ function useManagementSurface(
     if (!form.lastImport?.rollback_target_commit_sha) return;
     const receipt = form.lastImport;
     const agentId = receipt.agent.agent_id;
-    runner.run(`restore:${agentId}`, async () => {
-      const restored = await restoreBusinessAgentWorkspace(props.config, agentId, {
+    runner.run(`restore:${agentId}`, {
+      request: () => restoreBusinessAgentWorkspace(props.config, agentId, {
         target_commit_sha: receipt.rollback_target_commit_sha!,
         expected_current_commit_sha: receipt.current_commit_sha,
         reason: "Settings 恢复导入前 Workspace",
-      });
-      form.setLastImport(null);
-      await props.reloadAgents();
-      props.onAgentsChanged();
-      return `已恢复 ${agentId} 导入前 Workspace（新 commit ${restored.current_commit_sha.slice(0, 12)}，下一 turn 生效）`;
+      }),
+      onSuccess: async (restored, authority) => {
+        form.setLastImport(null);
+        await props.reloadAgents(authority);
+        if (!authority.isCurrent()) return undefined;
+        props.onAgentsChanged();
+        return `已恢复 ${agentId} 导入前 Workspace（新 commit ${restored.current_commit_sha.slice(0, 12)}，下一 turn 生效）`;
+      },
     });
   };
   return { drawer, menuAnchor, disabled, setMenuAnchor, openCreateDrawer, openOverwriteDrawer, closeDrawer, restore };
 }
 
 export function BusinessAgentManagementPanel(props: BusinessAgentManagementPanelProps) {
-  const runner = usePackageRunner(props.onBusyChange);
+  const runner = usePackageRunner(props.requestGeneration, props.config, props.onBusyChange);
   const form = useWorkspaceImport(props, runner);
   const statuses = useAgentTestStatuses(props.config, props.agents);
   const surface = useManagementSurface(props, runner, form);

@@ -7,27 +7,47 @@ import tarfile
 from pathlib import Path
 
 import pytest
-from app.runtime.agent_admission import AgentMaintenanceClaimLost
+from app.agent_testing.models import AgentWorkspaceImportRecordModel
+from app.runtime.agent_admission import AgentMaintenanceClaimLost, is_maintenance_active
 from app.runtime.agent_git_raw_storage import RawGitStorageError
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
-from app.runtime.agent_paths import business_agent_layout
+from app.runtime.agent_maintenance_db import AgentWorkspaceActivationOperationModel
 from app.runtime.session_store import LocalSession
 from app.services import agent_version_maintenance
 from app.services import agent_workspace_git_operations as workspace_git_operations
 from app.services import agent_workspace_package_codec as workspace_codec
 from app.services.agent_governance import AgentGovernanceError
 from fastapi.testclient import TestClient
+from httpx import Response
+from sqlalchemy import select
 
 from app_test_utils import load_test_app as _load_app
-from test_agent_workspace_packages import (
-    _import_new_agent,
-    _package_with_empty_pax_path,
-    _package_with_large_reversed_conflict,
-    _package_with_long_tar_metadata,
-    _package_with_metadata_chain,
-    _package_with_sparse_pax,
-    _run_git,
-    _workspace_package,
+from workspace_package_test_utils import (
+    import_new_agent as _import_new_agent,
+)
+from workspace_package_test_utils import (
+    package_from_workspace as _package_from_workspace,
+)
+from workspace_package_test_utils import (
+    package_with_empty_pax_path as _package_with_empty_pax_path,
+)
+from workspace_package_test_utils import (
+    package_with_large_reversed_conflict as _package_with_large_reversed_conflict,
+)
+from workspace_package_test_utils import (
+    package_with_long_tar_metadata as _package_with_long_tar_metadata,
+)
+from workspace_package_test_utils import (
+    package_with_metadata_chain as _package_with_metadata_chain,
+)
+from workspace_package_test_utils import (
+    package_with_sparse_pax as _package_with_sparse_pax,
+)
+from workspace_package_test_utils import (
+    run_git as _run_git,
+)
+from workspace_package_test_utils import (
+    workspace_package as _workspace_package,
 )
 
 
@@ -128,15 +148,15 @@ def test_workspace_package_checks_all_open_change_sets_without_list_window(monke
     assert response.json()["error_code"] == "WORKSPACE_CHANGE_SET_ACTIVE"
 
 
-def test_workspace_git_bootstrap_failure_is_structured(monkeypatch, tmp_path: Path) -> None:
+def test_workspace_git_export_failure_is_structured(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
         assert _import_new_agent(client, agent_id="git-failure", name="git-failure").status_code == 200
 
-        def fail_bootstrap(_store: GitAgentVersionStore):
+        def fail_snapshot(_store: GitAgentVersionStore):
             raise AgentGitError(f"fatal: cannot read {tmp_path}/private-workspace")
 
-        monkeypatch.setattr(GitAgentVersionStore, "ensure_bootstrap", fail_bootstrap)
+        monkeypatch.setattr("app.services.agent_workspace_packages._snapshot_live_workspace", fail_snapshot)
         response = client.post("/api/agent-registry/git-failure/workspace/export")
 
     assert response.status_code == 409
@@ -145,122 +165,109 @@ def test_workspace_git_bootstrap_failure_is_structured(monkeypatch, tmp_path: Pa
     assert str(tmp_path) not in response.text
 
 
-def test_new_agent_import_compensates_git_and_registry_when_finalize_fails(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        module.agent_registry_store,
-        "finalize_business_agent",
-        lambda _reservation: (_ for _ in ()).throw(RuntimeError("injected finalize failure")),
+def _post_package_size_limit_cases(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Response, Response, Response, Response]:
+    invalid_json = client.post(
+        "/api/agent-registry/invalid-json/workspace/import",
+        data={"name": "invalid"},
+        files={"package": ("invalid.tar.gz", _workspace_package({".mcp.json": b"[]"}), "application/gzip")},
     )
-    package = _workspace_package(
-        {"CLAUDE.md": b"# imported\n", ".mcp.json": b'{"mcpServers": {}}\n'},
-        agent_id="finalize-failure",
-    )
-    with TestClient(module.app, raise_server_exceptions=False) as client:
-        response = client.post(
-            "/api/agent-registry/finalize-failure/workspace/import",
-            data={"name": "failure"},
-            files={"package": ("failure.tar.gz", package, "application/gzip")},
+    with monkeypatch.context() as scoped:
+        scoped.setattr(workspace_codec, "MAX_SINGLE_MEMBER_BYTES", 4)
+        oversized_member = client.post(
+            "/api/agent-registry/oversized-member/workspace/import",
+            data={"name": "oversized"},
+            files={"package": ("oversized.tar.gz", _workspace_package({"five.bin": b"12345"}), "application/gzip")},
         )
+    with monkeypatch.context() as scoped:
+        scoped.setattr(workspace_codec, "MAX_EXTRACTED_PACKAGE_BYTES", 4)
+        oversized_total = client.post(
+            "/api/agent-registry/oversized-total/workspace/import",
+            data={"name": "oversized"},
+            files={"package": ("oversized.tar.gz", _workspace_package({"a": b"123", "b": b"456"}), "application/gzip")},
+        )
+    rejected_before_parse = client.post(
+        "/api/agent-registry/request-too-large/workspace/import",
+        content=b"not-a-multipart-body",
+        headers={
+            "Content-Type": "multipart/form-data; boundary=unused",
+            "Content-Length": str(workspace_codec.MAX_MULTIPART_REQUEST_BYTES + 1),
+        },
+    )
+    return invalid_json, oversized_member, oversized_total, rejected_before_parse
 
-    layout = business_agent_layout(module.settings.data_dir, "finalize-failure")
-    assert response.status_code == 500
-    assert module.agent_registry_store.get_agent("finalize-failure") is None
-    assert not layout.workspace.exists()
-    assert not layout.version_base.exists()
+
+def _post_package_member_limit_cases(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Response, Response]:
+    with monkeypatch.context() as scoped:
+        scoped.setattr(workspace_codec, "MAX_PACKAGE_MEMBERS", 2)
+        at_member_limit = client.post(
+            "/api/agent-registry/at-member-limit/workspace/import",
+            data={"name": "at limit"},
+            files={
+                "package": (
+                    "at-limit.tar.gz",
+                    _workspace_package({"a": b"1"}, agent_id="at-member-limit"),
+                    "application/gzip",
+                )
+            },
+        )
+        over_member_limit = client.post(
+            "/api/agent-registry/over-member-limit/workspace/import",
+            data={"name": "over limit"},
+            files={
+                "package": (
+                    "over-limit.tar.gz",
+                    _workspace_package({"a": b"1", "b": b"2"}, agent_id="over-member-limit"),
+                    "application/gzip",
+                )
+            },
+        )
+    return at_member_limit, over_member_limit
+
+
+def _post_package_metadata_limit_cases(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Response, Response, Response]:
+    with monkeypatch.context() as scoped:
+        scoped.setattr(workspace_codec, "MAX_TAR_METADATA_BYTES", 1024)
+        oversized_metadata = client.post(
+            "/api/agent-registry/oversized-metadata/workspace/import",
+            data={"name": "oversized metadata"},
+            files={"package": ("oversized-metadata.tar.gz", _package_with_long_tar_metadata(2048), "application/gzip")},
+        )
+    with monkeypatch.context() as scoped:
+        scoped.setattr(workspace_codec, "MAX_CONSECUTIVE_TAR_METADATA", 4)
+        metadata_chain = client.post(
+            "/api/agent-registry/metadata-chain/workspace/import",
+            data={"name": "metadata chain"},
+            files={"package": ("metadata-chain.tar.gz", _package_with_metadata_chain(5), "application/gzip")},
+        )
+        gnu_metadata_chain = client.post(
+            "/api/agent-registry/gnu-metadata-chain/workspace/import",
+            data={"name": "gnu metadata chain"},
+            files={
+                "package": (
+                    "gnu-metadata-chain.tar.gz",
+                    _package_with_metadata_chain(5, member_type=tarfile.GNUTYPE_LONGNAME),
+                    "application/gzip",
+                )
+            },
+        )
+    return oversized_metadata, metadata_chain, gnu_metadata_chain
 
 
 def test_workspace_import_rejects_invalid_configs_and_size_limits_before_mutation(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        invalid_json = client.post(
-            "/api/agent-registry/invalid-json/workspace/import",
-            data={"name": "invalid"},
-            files={"package": ("invalid.tar.gz", _workspace_package({".mcp.json": b"[]"}), "application/gzip")},
-        )
-        with monkeypatch.context() as scoped:
-            scoped.setattr(workspace_codec, "MAX_SINGLE_MEMBER_BYTES", 4)
-            oversized_member = client.post(
-                "/api/agent-registry/oversized-member/workspace/import",
-                data={"name": "oversized"},
-                files={"package": ("oversized.tar.gz", _workspace_package({"five.bin": b"12345"}), "application/gzip")},
-            )
-        with monkeypatch.context() as scoped:
-            scoped.setattr(workspace_codec, "MAX_EXTRACTED_PACKAGE_BYTES", 4)
-            oversized_total = client.post(
-                "/api/agent-registry/oversized-total/workspace/import",
-                data={"name": "oversized"},
-                files={"package": ("oversized.tar.gz", _workspace_package({"a": b"123", "b": b"456"}), "application/gzip")},
-            )
-        rejected_before_parse = client.post(
-            "/api/agent-registry/request-too-large/workspace/import",
-            content=b"not-a-multipart-body",
-            headers={
-                "Content-Type": "multipart/form-data; boundary=unused",
-                "Content-Length": str(workspace_codec.MAX_MULTIPART_REQUEST_BYTES + 1),
-            },
-        )
-        with monkeypatch.context() as scoped:
-            scoped.setattr(workspace_codec, "MAX_PACKAGE_MEMBERS", 2)
-            at_member_limit = client.post(
-                "/api/agent-registry/at-member-limit/workspace/import",
-                data={"name": "at limit"},
-                files={
-                    "package": (
-                        "at-limit.tar.gz",
-                        _workspace_package({"a": b"1"}, agent_id="at-member-limit"),
-                        "application/gzip",
-                    )
-                },
-            )
-            over_member_limit = client.post(
-                "/api/agent-registry/over-member-limit/workspace/import",
-                data={"name": "over limit"},
-                files={
-                    "package": (
-                        "over-limit.tar.gz",
-                        _workspace_package({"a": b"1", "b": b"2"}, agent_id="over-member-limit"),
-                        "application/gzip",
-                    )
-                },
-            )
-        with monkeypatch.context() as scoped:
-            scoped.setattr(workspace_codec, "MAX_TAR_METADATA_BYTES", 1024)
-            oversized_metadata = client.post(
-                "/api/agent-registry/oversized-metadata/workspace/import",
-                data={"name": "oversized metadata"},
-                files={
-                    "package": (
-                        "oversized-metadata.tar.gz",
-                        _package_with_long_tar_metadata(2048),
-                        "application/gzip",
-                    )
-                },
-            )
-        with monkeypatch.context() as scoped:
-            scoped.setattr(workspace_codec, "MAX_CONSECUTIVE_TAR_METADATA", 4)
-            metadata_chain = client.post(
-                "/api/agent-registry/metadata-chain/workspace/import",
-                data={"name": "metadata chain"},
-                files={
-                    "package": (
-                        "metadata-chain.tar.gz",
-                        _package_with_metadata_chain(5),
-                        "application/gzip",
-                    )
-                },
-            )
-            gnu_metadata_chain = client.post(
-                "/api/agent-registry/gnu-metadata-chain/workspace/import",
-                data={"name": "gnu metadata chain"},
-                files={
-                    "package": (
-                        "gnu-metadata-chain.tar.gz",
-                        _package_with_metadata_chain(5, member_type=tarfile.GNUTYPE_LONGNAME),
-                        "application/gzip",
-                    )
-                },
-            )
+        invalid_json, oversized_member, oversized_total, rejected_before_parse = _post_package_size_limit_cases(client, monkeypatch)
+        at_member_limit, over_member_limit = _post_package_member_limit_cases(client, monkeypatch)
+        oversized_metadata, metadata_chain, gnu_metadata_chain = _post_package_metadata_limit_cases(client, monkeypatch)
         sparse_pax = client.post(
             "/api/agent-registry/sparse-pax/workspace/import",
             data={"name": "sparse pax"},
@@ -470,6 +477,42 @@ def test_workspace_import_reports_success_after_merge_even_if_lease_release_is_l
     assert (workspace / "CLAUDE.md").read_bytes() == b"# applied despite late release loss\n"
 
 
+def test_dirty_package_identical_import_reports_original_to_snapshot_version(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        created = _import_new_agent(client, agent_id="dirty-unchanged", name="dirty unchanged")
+        workspace = Path(created.json()["agent"]["workspace_dir"])
+        original = client.get("/api/agent-repository/current?agent_id=dirty-unchanged").json()["commit_sha"]
+        workspace.joinpath("operator-note.txt").write_bytes(b"included dirty bytes\n")
+        package = _package_from_workspace(workspace, overrides={})
+        response = client.post(
+            "/api/agent-registry/dirty-unchanged/workspace/import",
+            data={"expected_current_commit_sha": original},
+            files={"package": ("dirty-unchanged.tar.gz", package, "application/gzip")},
+        )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["action"] == "unchanged"
+    assert body["previous_commit_sha"] == original
+    assert body["current_commit_sha"] != original
+    assert body["rollback_target_commit_sha"] == original
+    assert _run_git(workspace, "status", "--porcelain=v1", "--untracked-files=all", "--ignored") == ""
+    with module.agent_testing_store.Session() as db:
+        audit = db.get(AgentWorkspaceImportRecordModel, body["import_record_id"])
+        operation = db.scalar(
+            select(AgentWorkspaceActivationOperationModel).where(AgentWorkspaceActivationOperationModel.import_id == body["import_record_id"])
+        )
+    assert audit is not None and (audit.action, audit.status, audit.commit_sha) == (
+        "unchanged",
+        "accepted",
+        body["current_commit_sha"],
+    )
+    assert operation is not None and operation.state == "completed"
+    assert operation.original_head_sha == original
+    assert operation.base_commit_sha == operation.candidate_commit_sha == body["current_commit_sha"]
+
+
 def test_workspace_import_does_not_activate_when_sdk_session_invalidation_fails(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     package = _workspace_package({"CLAUDE.md": b"# must not activate\n"}, agent_id="invalidate-failure")
@@ -507,7 +550,6 @@ def test_workspace_import_rejects_file_created_during_session_invalidation(monke
         created = _import_new_agent(client, agent_id="dirty-race", name="dirty race")
         workspace = Path(created.json()["agent"]["workspace_dir"])
         (workspace / ".gitignore").write_bytes(b"*.secret\n")
-        baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
         baseline = client.post("/api/agent-registry/dirty-race/workspace/export").headers["x-agent-commit-sha"]
         concurrent_file = workspace / "concurrent.secret"
 
@@ -528,32 +570,44 @@ def test_workspace_import_rejects_file_created_during_session_invalidation(monke
         )
         current = client.get("/api/agent-repository/current?agent_id=dirty-race").json()["commit_sha"]
 
-    assert response.status_code == 409
-    assert response.json()["error_code"] == "WORKSPACE_DIRTY_CONFLICT"
-    assert current == baseline
-    assert (workspace / "CLAUDE.md").read_bytes() == baseline_bytes
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "WORKSPACE_ACTIVATION_RECOVERY_REQUIRED"
+    assert current != baseline
+    assert (workspace / "CLAUDE.md").read_bytes() == b"# must not activate across a dirty race\n"
     assert concurrent_file.read_bytes() == b"preserve concurrent writer\n"
-
-
-def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
-    package = _workspace_package(
-        {
-            ".gitignore": b"*.secret\n",
-            "CLAUDE.md": b"# candidate must not overwrite the concurrent file\n",
-            "collision.secret": b"candidate bytes\n",
-        },
-        agent_id="merge-race",
+    assert is_maintenance_active(
+        module.workspace_activation_service._Session,
+        agent_id="dirty-race",
     )
+
+
+@pytest.mark.parametrize(
+    ("concurrent_name", "gitignore"),
+    [
+        ("collision.secret", b"*.secret\n"),
+        ("late-untracked.txt", None),
+    ],
+)
+def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(
+    monkeypatch,
+    tmp_path: Path,
+    concurrent_name: str,
+    gitignore: bytes | None,
+) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    entries = {"CLAUDE.md": b"# candidate must not overwrite the concurrent file\n"}
+    if gitignore is not None:
+        entries[".gitignore"] = gitignore
+    package = _workspace_package(entries, agent_id="merge-race")
     original_git = workspace_git_operations.run_git
     injected = False
     with TestClient(module.app) as client:
         created = _import_new_agent(client, agent_id="merge-race", name="merge race")
         workspace = Path(created.json()["agent"]["workspace_dir"])
-        (workspace / ".gitignore").write_bytes(b"*.secret\n")
+        if gitignore is not None:
+            (workspace / ".gitignore").write_bytes(gitignore)
         baseline = client.post("/api/agent-registry/merge-race/workspace/export").headers["x-agent-commit-sha"]
-        baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
-        concurrent_file = workspace / "collision.secret"
+        concurrent_file = workspace / concurrent_name
         session = LocalSession(
             session_id="merge-race-session",
             sdk_session_id="merge-race-sdk",
@@ -562,14 +616,16 @@ def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(monke
         )
         module.session_store.save(session)
 
-        def inject_ignored_file_before_merge(repository: Path, args: list[str], *, check: bool = True) -> bytes:
+        def inject_ignored_file_after_merge(repository: Path, args: list[str], *, check: bool = True) -> bytes:
             nonlocal injected
             if args[:3] == ["merge", "--ff-only", "--no-overwrite-ignore"]:
+                result = original_git(repository, args, check=check)
                 injected = True
                 concurrent_file.write_bytes(b"concurrent writer wins\n")
+                return result
             return original_git(repository, args, check=check)
 
-        monkeypatch.setattr(workspace_git_operations, "run_git", inject_ignored_file_before_merge)
+        monkeypatch.setattr(workspace_git_operations, "run_git", inject_ignored_file_after_merge)
         response = client.post(
             "/api/agent-registry/merge-race/workspace/import",
             data={"expected_current_commit_sha": baseline},
@@ -579,12 +635,16 @@ def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(monke
 
     saved = module.session_store.get(session.session_id)
     assert injected
-    assert response.status_code == 409
-    assert response.json()["error_code"] == "WORKSPACE_GIT_OPERATION_FAILED"
-    assert current == baseline
-    assert (workspace / "CLAUDE.md").read_bytes() == baseline_bytes
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "WORKSPACE_ACTIVATION_RECOVERY_REQUIRED"
+    assert current != baseline
+    assert (workspace / "CLAUDE.md").read_bytes() == b"# candidate must not overwrite the concurrent file\n"
     assert concurrent_file.read_bytes() == b"concurrent writer wins\n"
     assert saved is not None and saved.sdk_session_id == "merge-race-sdk"
+    assert is_maintenance_active(
+        module.workspace_activation_service._Session,
+        agent_id="merge-race",
+    )
 
 
 def test_workspace_import_compensates_git_and_session_mapping_when_activation_commit_fails(
@@ -606,7 +666,6 @@ def test_workspace_import_compensates_git_and_session_mapping_when_activation_co
         (workspace / ".gitignore").write_bytes(b"*.secret\n")
         baseline = client.post("/api/agent-registry/commit-race/workspace/export").headers["x-agent-commit-sha"]
         baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
-        concurrent_file = workspace / "preserve.secret"
         session = LocalSession(
             session_id="commit-race-session",
             sdk_session_id="commit-race-sdk",
@@ -622,7 +681,6 @@ def test_workspace_import_compensates_git_and_session_mapping_when_activation_co
             current = _run_git(workspace, "rev-parse", "HEAD")
             if not commit_failed and current != baseline:
                 commit_failed = True
-                concurrent_file.write_bytes(b"preserve across compensation\n")
                 raise RuntimeError("injected activation commit failure")
             original_commit(db_session)
 
@@ -636,11 +694,20 @@ def test_workspace_import_compensates_git_and_session_mapping_when_activation_co
 
     saved = module.session_store.get(session.session_id)
     assert commit_failed
-    assert response.status_code == 500
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "WORKSPACE_ACTIVATION_METADATA_FAILED"
     assert current == baseline
     assert (workspace / "CLAUDE.md").read_bytes() == baseline_bytes
-    assert concurrent_file.read_bytes() == b"preserve across compensation\n"
     assert saved is not None and saved.sdk_session_id == "commit-race-sdk"
+    with module.agent_testing_store.Session() as db:
+        records = list(db.scalars(select(AgentWorkspaceImportRecordModel).where(AgentWorkspaceImportRecordModel.agent_id == "commit-race")).all())
+        operation = db.scalar(select(AgentWorkspaceActivationOperationModel).where(AgentWorkspaceActivationOperationModel.agent_id == "commit-race"))
+    assert [(record.action, record.status) for record in records] == [
+        ("created", "accepted"),
+        ("overwrite", "failed"),
+    ]
+    assert operation is not None and operation.state == "rejected"
+    assert operation.import_id == records[-1].import_id
 
 
 def test_workspace_export_cleans_artifact_and_restores_dirty_state_when_release_is_lost(monkeypatch, tmp_path: Path) -> None:

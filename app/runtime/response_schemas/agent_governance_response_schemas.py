@@ -171,6 +171,10 @@ class AgentReleaseResponse(ExtensibleResponse):
     force_published: bool = False
     force_publication_blocker: Optional[str] = None
     force_publish_reason: Optional[str] = None
+    test_run_id: Optional[str] = None
+    test_receipt_digest: Optional[str] = None
+    test_suite_digest: Optional[str] = None
+    test_source_digest: Optional[str] = None
 
 
 class AgentChangeSetCreateRequest(BaseModel):

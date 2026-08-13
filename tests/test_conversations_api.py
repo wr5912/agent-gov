@@ -13,7 +13,7 @@ from app.runtime.session_store import LocalSession
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app as _load_app
-from test_agent_workspace_packages import _import_new_agent
+from workspace_package_test_utils import import_new_agent as _import_new_agent
 
 
 def _register_biz(client: TestClient, agent_id: str = "soc-ops") -> None:
@@ -173,32 +173,20 @@ def test_items_project_transcript_via_owning_agent(monkeypatch, tmp_path: Path) 
     assert body["first_id"] == "msg_0" and body["last_id"] == "msg_1"
 
 
-def test_items_project_run_and_trace_context_by_transcript_uuid(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
-    _skip_migration(monkeypatch)
-
-    async def history(*, sdk_store, sdk_session_id, workspace_dir, scrub, limit, offset):
-        del sdk_store, workspace_dir, scrub, limit, offset
-        messages = []
-        for turn in ("traced", "untraced", "legacy", "cross-session"):
-            messages.extend(
-                [
-                    {"uuid": f"{turn}-user", "role": "user", "blocks": [{"type": "text", "text": turn}]},
-                    {"uuid": f"{turn}-assistant", "role": "assistant", "blocks": [{"type": "text", "text": f"{turn}-answer"}]},
-                ]
-            )
-        return {"sdk_session_id": sdk_session_id, "title": "T", "messages": messages, "subagents": []}
-
-    monkeypatch.setattr(conv_module, "read_session_history", history)
-    module.session_store.save(
-        LocalSession(
-            session_id="sess-context",
-            agent_id="soc-ops",
-            sdk_session_id="sdk-context",
-            sdk_project_key="project-context",
-            sdk_store_ready_at="2026-07-25T00:00:00+00:00",
+async def _context_history(*, sdk_store, sdk_session_id, workspace_dir, scrub, limit, offset):
+    del sdk_store, workspace_dir, scrub, limit, offset
+    messages = []
+    for turn in ("traced", "untraced", "legacy", "cross-session"):
+        messages.extend(
+            [
+                {"uuid": f"{turn}-user", "role": "user", "blocks": [{"type": "text", "text": turn}]},
+                {"uuid": f"{turn}-assistant", "role": "assistant", "blocks": [{"type": "text", "text": f"{turn}-answer"}]},
+            ]
         )
-    )
+    return {"sdk_session_id": sdk_session_id, "title": "T", "messages": messages, "subagents": []}
+
+
+def _seed_context_runs(module) -> None:
     with module.session_store.Session.begin() as db:
         db.add_all(
             [
@@ -250,6 +238,22 @@ def test_items_project_run_and_trace_context_by_transcript_uuid(monkeypatch, tmp
                         committed_at="2026-07-25T00:02:00+00:00",
                     )
                 )
+
+
+def test_items_project_run_and_trace_context_by_transcript_uuid(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    _skip_migration(monkeypatch)
+    monkeypatch.setattr(conv_module, "read_session_history", _context_history)
+    module.session_store.save(
+        LocalSession(
+            session_id="sess-context",
+            agent_id="soc-ops",
+            sdk_session_id="sdk-context",
+            sdk_project_key="project-context",
+            sdk_store_ready_at="2026-07-25T00:00:00+00:00",
+        )
+    )
+    _seed_context_runs(module)
 
     with TestClient(module.app) as client:
         _register_biz(client)

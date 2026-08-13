@@ -4,11 +4,15 @@ services:
       context: ..
       dockerfile: docker/e2e/slow-vllm.Dockerfile
       args:
-        AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
+        AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:?managed run id required}
+        AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE: ${AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE:?candidate tree required}
+        AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256: ${AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256:?selected env digest required}
     image: agent-gov-slow-vllm:e2e
     container_name: ${CONTAINER_NAME_PREFIX}-slow-vllm
     labels:
-      io.agentgov.acceptance-run-id: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
+      io.agentgov.acceptance-run-id: ${AGENT_GOV_ACCEPTANCE_RUN_ID:?managed run id required}
+      io.agentgov.acceptance-candidate-tree: ${AGENT_GOV_ACCEPTANCE_CANDIDATE_TREE:?candidate tree required}
+      io.agentgov.acceptance-selected-env-sha256: ${AGENT_GOV_ACCEPTANCE_SELECTED_ENV_SHA256:?selected env digest required}
     environment:
       SLOW_VLLM_DELAY_SECONDS: "8"
     healthcheck:
@@ -21,7 +25,7 @@ services:
   agent-gov-litellm-sidecar:
     environment:
       MODEL_PROVIDER_BACKEND: vllm
-      MODEL_PROVIDER_API_KEY: health-e2e-key
+      MODEL_PROVIDER_API_KEY: ${API_KEY:?managed health acceptance API key is required}
       MODEL_PROVIDER_API_URL: http://slow-vllm:8000
       AGENT_MODEL: agent-gov-model
     depends_on:
@@ -30,9 +34,9 @@ services:
 
   claude-agent-api:
     environment:
-      API_KEY: health-e2e-key
+      API_KEY: ${API_KEY:?managed health acceptance API key is required}
       MODEL_PROVIDER_BACKEND: vllm
-      MODEL_PROVIDER_API_KEY: health-e2e-key
+      MODEL_PROVIDER_API_KEY: ${API_KEY:?managed health acceptance API key is required}
       MODEL_PROVIDER_API_URL: http://slow-vllm:8000
       MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS: "5"
       MODEL_PROVIDER_WARNING_TTL_SECONDS: "0"
@@ -42,3 +46,6 @@ services:
         condition: service_healthy
       agent-gov-litellm-sidecar:
         condition: service_started
+
+  agent-test-worker:
+    profiles: ["agent-test"]

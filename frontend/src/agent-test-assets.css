@@ -225,20 +225,25 @@
 }
 
 .test-asset-status.is-passed,
-.test-asset-status.is-enqueued {
+.test-asset-status.is-enqueued,
+.test-asset-status.is-suite-ready {
   background: color-mix(in srgb, #1f9d69 14%, transparent);
   color: #1f9d69;
 }
 
 .test-asset-status.is-failed,
-.test-asset-status.is-error {
+.test-asset-status.is-error,
+.test-asset-status.is-suite-invalid,
+.test-asset-status.is-suite-unavailable {
   background: color-mix(in srgb, #d84a4a 13%, transparent);
   color: #d84a4a;
 }
 
 .test-asset-status.is-running,
 .test-asset-status.is-queued,
-.test-asset-status.is-pending {
+.test-asset-status.is-pending,
+.test-asset-status.is-suite-warning,
+.test-asset-status.is-suite-missing {
   background: color-mix(in srgb, #d69a22 14%, transparent);
   color: #b77b07;
 }
@@ -266,21 +271,85 @@
   font-size: 11px;
 }
 
-.test-asset-diagnostics {
-  display: grid;
-  gap: 5px;
+.test-asset-suite-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border-left: 3px solid #1f9d69;
+  border-radius: 4px;
+  background: color-mix(in srgb, #1f9d69 8%, transparent);
+  padding: 8px 10px;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
-.test-asset-diagnostics > div {
+.test-asset-suite-summary strong {
+  flex: 0 0 auto;
+  color: #1f9d69;
+}
+
+.test-asset-suite-summary.is-warning,
+.test-asset-suite-summary.is-missing {
+  border-left-color: #d69a22;
+  background: color-mix(in srgb, #d69a22 8%, transparent);
+}
+
+.test-asset-suite-summary.is-warning strong,
+.test-asset-suite-summary.is-missing strong {
+  color: #b77b07;
+}
+
+.test-asset-suite-summary.is-invalid,
+.test-asset-suite-summary.is-unavailable {
+  border-left-color: #d84a4a;
+  background: color-mix(in srgb, #d84a4a 8%, transparent);
+}
+
+.test-asset-suite-summary.is-invalid strong,
+.test-asset-suite-summary.is-unavailable strong {
+  color: #d84a4a;
+}
+
+.test-asset-diagnostics {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.test-asset-diagnostic {
+  display: grid;
+  gap: 4px;
   border-left: 3px solid #d69a22;
   background: color-mix(in srgb, #d69a22 8%, transparent);
   padding: 7px 9px;
 }
 
-.test-asset-diagnostics > div.is-error {
+.test-asset-diagnostic.is-error {
   border-left-color: #d84a4a;
   background: color-mix(in srgb, #d84a4a 8%, transparent);
+}
+
+.test-asset-diagnostic-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.test-asset-diagnostic-heading code,
+.test-asset-diagnostic-path code {
+  font-family: var(--font-mono, monospace);
+  overflow-wrap: anywhere;
+}
+
+.test-asset-diagnostic-message,
+.test-asset-diagnostic-path {
+  overflow-wrap: anywhere;
+}
+
+.test-asset-diagnostic-path {
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 
 .test-file-browser {

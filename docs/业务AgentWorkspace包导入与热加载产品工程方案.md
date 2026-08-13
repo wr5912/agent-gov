@@ -14,7 +14,7 @@
 | 内置、默认、受保护分开表达 | 三者分别回答“是否随版本提供”“兼容入口默认选谁”“是否可在线删除” | `origin=seed/user` 及由来源推导全部行为 | API 分别返回 `builtin`、`default`、`protected` |
 | 初始化源不参与持续同步 | 运行态 Workspace 及其 per-Agent Git 才是当前行为事实 | 运行态 `data/seed-catalog`、删除标记、逐文件回灌 | 已存在 Workspace 整体跳过；重启不复活已删普通 Agent |
 | Workspace 文件由包所有者明确维护，平台不改写 | 平台改写会让上传包、tree digest 和 Git commit 不一致；静默忽略来源 ID 又会把错误身份激活到目标 Agent | 身份文本渲染、endpoint renderer、权限覆盖、ID 忽略告警 | 包内 `agent.yaml.agent.id` 与目标 ID 完全一致时，普通文件字节与 executable bit 保持不变 |
-| 导入同步完成，下一 turn 生效 | 单个 Workspace 有明确资源上限；无需持久化第二套 operation 状态机 | 异步导入 job、导入历史表、多阶段激活状态 | 一次请求完整成功或完整失败；成功回执绑定 Git commit |
+| 导入请求同步返回，激活跨崩溃可恢复 | 单个包虽有资源上限，但 Git、session、audit 和 admission fence 是跨资源事实，不能把 HTTP 请求栈当成恢复边界 | 异步用户 job、仅依赖请求内补偿的旧流程 | 成功回执绑定 Git commit；未知状态保留 runtime fence，由启动/周期对账或精确运维恢复收口 |
 
 当前唯一内置、默认且受保护的业务 Agent 是 `security-operations-expert`。这些是三个独立属性，
 不是未来必须绑定在一起的单一类型。`main-agent` 是普通历史示例，不再享有默认、内置、保护或
@@ -142,7 +142,7 @@ Content-Type: multipart/form-data
 - 包内来源 ID 与 URL 目标 ID 不一致返回 `409`，并同时返回 `actual_agent_id` 和
   `expected_agent_id`；
 - 已有目标未携带 `expected_current_commit_sha` 返回 `422`；携带的版本已经过期返回 `409`；
-- 错误详情不得回显无效 ID 中可能携带的路径或其他恶意原文。
+- 错误详情不得回显无效 ID 中可能携带的路径或其他不可信原文。
 
 来源 ID 不一致的错误示例：
 
@@ -180,15 +180,52 @@ Content-Type: multipart/form-data
   "import_record_id": "awi-...",
   "test_suite_status": "ready",
   "test_file_count": 2,
-  "test_suite_warnings": []
+  "test_suite_diagnostics": []
 }
 ```
 
 相同 tree 重试返回 `unchanged`，不制造空 commit。每次成功导入返回操作唯一的
-`import_record_id`、测试套件状态、测试文件数和结构化 warning；完整测试清单通过
+`import_record_id`、测试套件状态、测试文件数和完整结构化 diagnostics（warning 与 error）；完整测试清单通过
 `GET /api/agent-registry/{agent_id}/test-suite?commit_sha=<sha>` 按精确提交查询。平台持久化同步
-导入审计记录和 warning，但不建立异步 operation 状态机，也不复制测试内容。失败导入同样写入审计，
-并保留原始结构化错误响应。
+导入审计记录、`suite_status` 和完整 diagnostics，也不复制测试内容。新建使用不可见的 provisioning
+reservation 与完成 token；覆盖导入和恢复则使用 migration 0055 建立的 durable activation journal。
+
+activation 不是另一个用户可操作的异步 job。它在任何 live Git 变更前记录原始 HEAD、raw index
+bytes、Workspace 指纹、候选 commit/tree、durable refs 和精确 maintenance claim。完成路径先持久化
+`accepted` audit、inactive SDK session 失效和 `completion_outcome`；拒绝路径先持久化同一
+`import_id` 的 `failed` audit 与 `rejection_outcome`。只有终态验证再次确认精确 audit、admission tuple
+`(maintenance_token, maintenance_generation, generation, kind)`、无活动 session/turn/HITL、最终
+HEAD/index/Workspace 字节和 durable refs 全部一致，才能进入 `completed` 或 `rejected`、清理 refs 并
+释放 fence。restore 不产生 import audit，但其他终态证据和栅栏规则不变。任一证据缺失、冲突或
+回执不明都进入 `recovery_required`，不得返回“失败”却留下已放行版本。
+
+journal 记录的 graph identity 在进入 `prepared` 后不可修改；只允许集中状态机声明的
+转移，`completed` / `rejected` 整行终态证据不可再改，activation journal 不得删除。
+对象 ID 必须是规范小写 40/64 位值；original/base/candidate 必须是 commit，
+candidate/original-index 必须指向 tree，snapshot 与 base/original 关系一致，overwrite/restore
+candidate 只能有唯一 base parent，restore target 必须是与 candidate 同 tree 的 commit。commit
+的 tree 与 parents 直接从 raw commit object header 解析，不使用会被 grafts 或 replace ref
+重写的图展开结果。
+
+index 证据同时包含普通 stage、`assume-unchanged`、`skip-worktree` 和 fsmonitor flag。
+受管 Git 命令使用绝对 executable，并显式固定 `--git-dir` 与 `--work-tree`；平台
+自有环境清除继承的 `GIT_*`，不执行 repository/global/system config 提供的
+filter/diff/merge/signing/credential 外部命令，也不接受 `core.worktree`、object alternates、
+非规范 `commondir`、grafts、partial clone/promisor、replace objects、lazy fetch、hook 或仓库
+fsmonitor command 改写证据。平台生成的 linked worktree 只接受双向 backlink 与 canonical
+common-dir topology。activation operation refs 必须是限定 namespace 下的 direct refs；HEAD 只能
+detached 或指向 `refs/heads/*`，不得指向 operation namespace，ref 清理前后必须保持同一
+HEAD topology。这样，同一 journal 不会因调用方环境或仓库配置改变而得到两种
+“精确”解释。
+
+migration 0058 不引入新状态表，而是幂等重装 0055 activation 与 0057 operator-recovery
+authority triggers。因此，已记录“0055/0057 已应用”的旧持久卷也会获得完整合法转移、
+prepared 后 graph 冻结、terminal 不可变/禁止删除和 recovery terminal-evidence 约束；不依赖
+重放旧 migration 名称修复存量卷。
+
+`migration 0059 trigger authority` 对 durable deletion journal 幂等重装完整合法转移、固定
+身份快照、终态不可变/禁止删除与受限 witness cleanup 更新约束，包括已应用
+旧迁移的持久卷；手工改状态、删行或重创 trigger 不是恢复入口。
 
 ### 4.3 导出与恢复
 
@@ -202,9 +239,46 @@ POST /api/agent-registry/{agent_id}/workspace/restore
 
 ### 4.4 生命周期与删除
 
-普通 Agent 可通过生命周期 API 管理，也可在线删除。删除清理该 Agent 的完整运行态根目录并写注册表
-tombstone，响应只返回 `workspace_removed` 与 `cleanup_complete` 等实际结果；不再清理 catalog 或返回
-`seed_removed`。受保护业务 Agent 删除返回业务规则错误。
+普通 Agent 可通过生命周期 API 管理，也可在线删除；受保护业务 Agent 删除返回业务规则错误。
+
+```text
+DELETE /api/agent-registry/{agent_id}
+If-Match: "<instance_etag>"
+Idempotency-Key: agent-delete:<instance_etag>
+
+GET /api/agent-deletion-operations/{operation_id}
+GET /api/agent-deletion-operations?state=cleanup_pending&limit=20
+```
+
+`If-Match` 只接受一个带引号的强 entity tag，不接受裸值、`W/`、`*` 或多值。同一
+`Idempotency-Key` 只能绑定同一 Agent 实例；默认键只由 `instance_etag` 派生为固定长度，
+不拼入可变 Agent ID；跨 Agent 或跨实例复用返回 `409`。Agent ID 限 1–128 个 ASCII 字符，
+只允许字母、数字、`.`、`_`、`-`，并拒绝 `.`、`..`、空白和路径穿越。删除在同一
+SQLite 写事务中校验活动 turn/session、HITL、平台测试、待发布变更、release、cleanup、activation
+和 maintenance blocker，然后写入 tombstone、`cleanup_pending` operation、删除前身份投影与治理影响面。
+客户端不得提交 `deleted` 或 `impact`。
+
+文件系统清理在同一个 Agent 稳定锁内，使用 device/inode/mount CAS 先将整棵
+`data/business-agents/<agent_id>` 原子移入同卷隔离区，再以 no-follow fd walk 清理。完整清理并
+持久化确认后返回 `200 completed`；Agent 已从可用列表移除、但磁盘清理尚未确认时返回
+`202 cleanup_pending` 和脱敏 `Location`，客户端通过单项 GET 查询。页面重载或回执丢失时，
+客户端通过有 API key 保护的有界列表恢复最近 operation：默认查询最新 20 条
+`cleanup_pending`，也可查 `completed`，`limit` 范围为 1–100。单项与列表只投影稳定的
+`last_error_code`、`attempt_count`、`updated_at` 及删除前公开摘要，不输出 Workspace/quarantine
+路径、供给 token、device/inode 或 mount 证据。`workspace_removed` 与
+`cleanup_complete` 只在 durable state 为 `completed` 时为真；不再清理 catalog 或返回 `seed_removed`。
+
+该边界只排序平台内全部 Workspace/Git/测试/发布/删除 writer：它们共用 layout 外的 stable
+per-Agent lock，并在 DB、runtime、HITL、测试和版本治理 fence 下复核；device/inode/mount CAS 与
+no-follow 检查用于发现两个检查点之间的目录替换。它不声称抵御已取得 runtime volume 同 UID 或 root
+权限的宿主机进程；该权限本就能够复制或改写 live Workspace、私有配置和运行数据，必须由主机与
+Compose 运维权限另行控制。
+
+曾经公开完成供给的 Agent ID 在删除后永久保留，不允许同 ID 重建。这是在 generation/CAS
+尚未贯穿所有运行、反馈、测试和发布事实前防止新旧身份混同的安全边界。只有从未公开过的
+provisioning 崩溃隔离例外：注册行必须无完成 token、携带精确
+`workspace_must_be_absent` 恢复标记，且稳定锁下整棵 Agent layout 已不存在，才能清除隔离行并重试。
+未来如要支持已公开 ID 的新一代实例，必须先让 generation 进入所有事实键和 CAS，再重审本限制。
 
 ## 5. 运行卷初始化
 
@@ -217,8 +291,10 @@ API 启动协调器读取 `docker/runtime-bootstrap/`：
 5. 发现运行态所有合法 Workspace，并幂等同步到注册表；
 6. 初始化各 Agent 的 Git 版本源，写入运行协调 receipt。
 
-初始化源缺失、为空、含 symlink、内置集合多出或缺少任一 ID 时启动失败。`RUNTIME_BOOTSTRAP_HOST_DIR`
-是 Compose 宿主机挂载入口，容器内路径为 `/app/docker/runtime-bootstrap`，必须只读。
+初始化源缺失、为空、含 symlink、内置集合多出或缺少任一 ID 时启动失败。
+`docker/Dockerfile` 使用 `COPY docker/runtime-bootstrap /app/docker/runtime-bootstrap` 将该源内置 API 镜像；
+Compose 不为该容器路径配置 host bind。初始化源变更只有在重建 API 镜像并
+recreate 后才生效，不得用旧镜像启动结果声称候选已同步。
 
 普通 Agent 不放进初始化源。需要一个新的普通 Agent 时，导出已有 Agent 或在仓库外制作完整 Workspace
 包，再走 import API。只有产品明确决定新增内置 Agent 时，才同时修改声明集合、初始化源、准入扫描、
@@ -226,18 +302,49 @@ API 启动协调器读取 `docker/runtime-bootstrap/`：
 
 ## 6. Git、并发与热加载
 
-新建复用 registry reservation、no-follow 文件发布、Git 初始化、finalize 和失败补偿 saga。覆盖与恢复：
+所有会修改或删除 per-Agent 运行态的平台 writer，包括新建、覆盖、恢复、版本治理、配置、bootstrap、
+测试入队与删除，共用位于 Agent layout 之外的稳定 per-Agent 锁。普通 writer 在锁内、首个副作用前通过
+统一 `BusinessAgentMutationPrecondition` 精确校验实例 generation、deletion fence 与 activation fence；
+只有 activation/recovery 专用 authority 可在仍校验实例与删除边界的前提下跨越自身 activation fence。
+普通 writer 在 `preparing`、`prepared`、`completing`、`rejecting` 或 `recovery_required` 期间均被平台拒绝，
+只能在 operation 精确终态且围栏释放后重试。锁路径不会因整棵 layout 被原子隔离而消失，等待锁的旧
+store 和新构造的 store 都必须在锁内重新校验 Agent 公开状态与目录身份，不得复活已删除根目录。
+
+新建复用 registry reservation、no-follow 文件发布、Git 初始化、finalize 和失败补偿 saga，并在公开前对
+canonical layout、HEAD、清洁状态和包 tree 做最终校验。整棵 Agent layout、`.git` 或 `version`
+预先存在（包括 symlink）时拒绝，不接管、不删除外部写入者的残留。覆盖与恢复：
 
 1. 获取该 Agent 的维护栅栏；
-2. 拒绝活跃 turn、未终结 change set 和 SDK session 失效冲突；
-3. dirty Workspace 先形成包含普通文件的快照；
-4. 在临时 worktree 形成候选 commit；
-5. 确认 `expected_current_commit_sha` 仍等于目标当前提交版本后激活；
-6. 同一数据库事务清除 inactive SDK resume 映射；
-7. 失败时补偿 Git、session mapping、注册表与自有文件。
+2. 在任何 live Git 变更前持久化 `preparing` intent 与原始 HEAD/status/index bytes/Workspace 指纹；
+3. 拒绝活跃 turn、未终结 change set 和 SDK session 失效冲突；
+4. dirty Workspace 使用临时 index 形成快照，在候选完整后记录 `prepared` 及 original/base/candidate/target refs；
+   此后 graph identity 由 0055 数据库约束冻结；
+5. 确认 `expected_current_commit_sha`、maintenance token/generation/kind 与候选 tree 仍精确后激活；
+6. 在终态 outcome 事务中写入或校验 import audit（restore 无 import audit）、清除 inactive SDK resume 映射，并转入
+   `completing` 或 `rejecting`；
+7. 重新校验 audit、admission、活动工作、Git 字节和 durable refs，再提交 `completed` 或 `rejected`；
+8. 任一补偿、清理或持久化证据不明时转入 `recovery_required`，保留 runtime fence。
 
 当前 turn 的 HEAD、SDK mapping、active run 和 intent 在同一 admission 写屏障内绑定。导入成功后不重启
 API；已有 API session ID 保留，新 turn 建立新的 SDK session 并读取回执中的 commit。
+
+Workspace 字节证据使用 `fd-relative bounded Workspace fingerprint`：no-follow dir-fd 遍历不跟随
+symlink，对条目数、单文件和总字节设置上限，并以双扫描 dev/inode 身份复核拒绝祖先或
+文件替换。Git 对象证据使用 `fd-relative Git metadata/temp authority`：common-dir metadata 在已固定
+fd 下有界读取，临时 ref/index/worktree 只能在平台所有且身份稳定的临时根中创建、
+发布和清理精确对象；父目录或叶子被替换时 fail-closed，不删除替换者。
+
+启动与周期 reconciler 只按 journal 中的精确证据幂等完成或拒绝。如果自动对账因证据不完整而长期保留
+fence，运维人员只能通过 migration 0057 支撑的本机只读 `list`/`inspect`、精确 `apply`，以及仅按
+既有 reserved recovery ID 续跑的 `resume` 入口处理；只允许 exact reconcile 或 journal 已记录对象的
+strict-subset 缺失 ref 修复，不提供
+force complete/reject、clear fence、任意 SHA、HTTP 或 UI 写入。具体操作见
+[业务 Agent Workspace 激活故障恢复 Runbook](./engineering/业务AgentWorkspace激活故障恢复Runbook.md)。
+0057 的 completed attempt 只接受精确四字段 result，failed attempt 只接受一个稳定错误码；空证据、
+冲突结果、额外字段、错误布尔类型、未知或重复 ref 名都会在 store、SQLite trigger 以及投影/resume
+三层 fail-closed，不以“状态已是 terminal”替代证据校验。
+0058 在当前 Runtime 升级中重装上述 0055/0057 trigger；旧卷不需要也不得通过手工删行、
+改状态或重创 trigger 补齐。
 
 ## 7. 输入保护与仓库边界
 
@@ -267,7 +374,14 @@ API；已有 API session ID 保留，新 turn 建立新的 SDK session 并读取
   并选择包，覆盖模式锁定目标 Agent 的 ID 和名称，只选择包；
 - 成功后抽屉保持打开，回执显示 action、previous/current commit、package/tree digest、测试状态、
   测试文件数和 warning；覆盖后在同一抽屉提供“恢复导入前版本”；
+- 删除前用当前行的 `instance_etag` 做精确实例确认；`cleanup_pending` 时立即从可用列表移除，
+  显示“后台清理待完成”并使用 operation 状态入口刷新，不得声称磁盘已彻底删除；
 - 列表分别显示内置、默认、受保护状态；不显示来源选择器、通用模板、seed 提示或直接创建表单。
+
+Settings 异步请求使用 `Settings request-context`：打开弹窗时绑定当前 apiBase/apiKey 与
+上下文世代，registry、OpenAI compatibility 和 feedback 各 lane 独立递增请求世代。切换配置、
+关闭/重开弹窗或新请求发布后，旧请求的 `late success/error/finally` 与链式 reload 全部丢弃；
+删除 operation 的 pending discovery/action 也绑定同一类上下文，不得回写新配置或新一轮用户操作。
 
 菜单必须支持 `Escape` 关闭、外部点击关闭和键盘方向键导航，并使用脱离滚动容器的浮层定位，避免
 在表格底部或移动端被裁切。导入失败只在抽屉内显示结构化错误代码和可执行动作；关闭抽屉或切换
@@ -285,9 +399,16 @@ API；已有 API session ID 保留，新 turn 建立新的 SDK session 并读取
   缺少测试目录仍只告警。
 - 所有业务 Agent Workspace 可携带 `tests/`，平台可按精确 commit 检查 suite 并运行固定 pytest 命令。
 - 新建、覆盖、unchanged、恢复都绑定实际 Git commit；下一 turn 使用应用后的 commit。
+- 覆盖、unchanged 与恢复在崩溃和 DB commit 回执丢失后仍只能凭精确 audit、admission、
+  HEAD/index/Workspace 字节和 durable refs 进入终态；不明状态持续 fence runtime。
+- hostile repository config/path 不能改写 Git 命令作用域、执行外部驱动、引入其他 Agent
+  对象图、重写 raw commit parent/tree 或让 HEAD 借 activation ref 清理变更分支。
 - 设置页只渲染一份业务 Agent 行，Workspace 测试状态和生命周期属于同一行；创建与覆盖导入模式
   不得混用目标身份或遗留上一次选择的文件、回执和错误。
-- active turn、开放 change set、HEAD 竞争、恶意 tar、超限输入和部分失败明确失败且不暴露半成品。
-- 删除普通 Agent 后重启不复活；重建同 ID 不继承旧 Workspace；受保护 Agent 不可删除。
+- active turn、开放 change set、HEAD 竞争、畸形 tar、超限输入和部分失败明确失败且不暴露半成品。
+- 删除普通 Agent 后重启不复活；已公开 ID 永久保留且不可重建，从未公开的 provisioning
+  quarantine 只有在精确标记和整棵 layout 缺失同时成立时可重试；受保护 Agent 不可删除。
+- 删除使用强 `If-Match` 和 `Idempotency-Key`；`202` 只表示 Agent 已下线且 durable cleanup 待完成，
+  `Location`/GET 状态直到 `completed` 前都不得声称磁盘清理完成。
 - `make runtime-bootstrap-scan`、专项 pytest、前端浏览器验收、`make main-flow-test`、
   `make codex-guard` 和真实 Compose 空卷/已有卷验收通过。

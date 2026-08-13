@@ -86,19 +86,23 @@ def publish_change_set(
             kind="publish",
             owner_id=f"{operator}:{change_set_id}",
         ) as lease:
-            result = _publish_change_set_locked(
-                service,
-                change_set_id,
-                operator=operator,
-                tag_name=tag_name,
-                note=note,
-                force=force,
-                assert_maintenance_active=lease.assert_active,
-            )
-            lease.check()
-            return result
+            store = service._store_for(agent_id)
+            with store.mutation_guard():
+                result = _publish_change_set_locked(
+                    service,
+                    change_set_id,
+                    operator=operator,
+                    tag_name=tag_name,
+                    note=note,
+                    force=force,
+                    assert_maintenance_active=lease.assert_active,
+                )
+                lease.check()
+                return result
     except AgentAdmissionError as exc:
         raise _error(409, str(exc)) from exc
+    except AgentGitError as exc:
+        raise _error(409, f"Agent publish failed: {exc}") from exc
 
 
 def _publish_change_set_locked(
@@ -584,8 +588,7 @@ def _apply_or_reconcile_git(service: _GovernanceService, store: Any, claim: _Ope
     if claim.status == "git_applied":
         if current_head != claim.target_commit_sha:
             raise AgentGitError(
-                "Agent workspace HEAD changed after the rollback Git effect was persisted "
-                f"(expected target {claim.target_commit_sha}, found {current_head})"
+                f"Agent workspace HEAD changed after the rollback Git effect was persisted (expected target {claim.target_commit_sha}, found {current_head})"
             )
         return claim.git_result or _reconciled_git_result(claim)
     if current_head == claim.target_commit_sha:

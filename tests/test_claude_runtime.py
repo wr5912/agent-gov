@@ -15,11 +15,15 @@ from app.runtime.errors import BusinessRuleViolation
 from app.runtime.integrations.runtime_langfuse import RuntimeLangfuseClient
 from app.runtime.model_provider import LITELLM_SIDECAR_BASE_URL, LOCAL_PROVIDER_DUMMY_API_KEY
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+from app.runtime.runtime_db import make_session_factory
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 
-from business_agent_test_utils import create_test_business_agent_workspace
+from business_agent_test_utils import (
+    create_test_business_agent_workspace,
+    register_test_business_agent_instance,
+)
 from claude_runtime_test_utils import route_interactive_client_through_query
 
 
@@ -128,6 +132,11 @@ def _settings(tmp_path):
         )
         + "\n",
         encoding="utf-8",
+    )
+    register_test_business_agent_instance(
+        make_session_factory(settings.runtime_db_path),
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        workspace_dir=str(workspace),
     )
     return settings
 
@@ -305,6 +314,11 @@ def test_runtime_resolves_non_main_agent_for_internal_callers(tmp_path, monkeypa
     settings = _settings(tmp_path)
     workspace = settings.data_dir / "business-agents" / "soc-ops" / "workspace"
     create_test_business_agent_workspace(workspace, agent_id="soc-ops", name="SOC Ops")
+    register_test_business_agent_instance(
+        make_session_factory(settings.runtime_db_path),
+        agent_id="soc-ops",
+        workspace_dir=str(workspace),
+    )
     profile = build_business_agent_profile(settings, agent_id="soc-ops", workspace_dir=workspace)
     resolved = []
     runtime = ClaudeRuntime(
@@ -403,6 +417,11 @@ def test_candidate_runtime_uses_business_agent_owner_for_session_and_maintenance
     worktree = tmp_path / "candidate-worktree"
     worktree.mkdir()
     profile = candidate_profile(settings, agent_id="soc-ops", workspace_dir=worktree, candidate_id="agc-test")
+    register_test_business_agent_instance(
+        make_session_factory(settings.runtime_db_path),
+        agent_id="soc-ops",
+        workspace_dir=str(settings.data_dir / "business-agents" / "soc-ops" / "workspace"),
+    )
 
     result = asyncio.run(
         runtime.run(

@@ -4,12 +4,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from app.agent_testing.execution_contracts import FIXED_PYTEST_COMMAND
 from app.agent_testing.router import create_agent_testing_router
-from app.agent_testing.runner import FIXED_PYTEST_COMMAND
 from app.agent_testing.schedule import AgentTestScheduleService, AgentTestScheduleStore, validate_test_schedule
 from app.agent_testing.service import AgentTestingError, AgentTestingService
 from app.agent_testing.store import AgentTestingStore
 from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.agent_registry_db import AgentRegistryModel
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.schemas import ChatResponse
 from app.runtime.state_machines import StateTransitionError, validate_transition
@@ -46,6 +47,17 @@ def _service(tmp_path: Path) -> tuple[AgentTestingService, AgentTestScheduleServ
     )
     git_store.ensure_bootstrap()
     session_factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    with session_factory.begin() as db:
+        db.add(
+            AgentRegistryModel(
+                agent_id="agent-a",
+                name="Agent A",
+                category="business",
+                workspace_dir=str(workspace),
+                provision_state="ready",
+                provision_completed_token="test-agent-a-instance",
+            )
+        )
     testing_store = AgentTestingStore(session_factory)
     schedule_store = AgentTestScheduleStore(session_factory)
 
@@ -59,13 +71,9 @@ def _service(tmp_path: Path) -> tuple[AgentTestingService, AgentTestScheduleServ
         get_change_set=lambda _change_set_id: None,
         run_candidate=unused_run_candidate,
         artifacts_dir=tmp_path / "artifacts",
-        api_base_url="http://127.0.0.1:8000",
-        api_key=None,
-        run_timeout_seconds=30,
         schedule_reader=schedule_store.get_schedule,
     )
     enqueued: list[str] = []
-    service.runner.enqueue = enqueued.append  # type: ignore[method-assign]
     schedules = AgentTestScheduleService(
         store=schedule_store,
         testing=service,
@@ -142,7 +150,8 @@ def test_due_schedule_pins_current_commit_and_coalesces_missed_windows(tmp_path:
         assert runs[0]["source"] == "scheduled"
         assert runs[0]["schedule_id"] == schedule["schedule_id"]
         assert runs[0]["scheduled_for"] == schedule["next_run_at"]
-        assert enqueued == [runs[0]["test_run_id"]]
+        assert enqueued == []
+        assert runs[0]["status"] == "queued"
         assert schedules.tick(now=configured_at + timedelta(days=1)) == 0
 
         events = schedules.list_events("agent-a", limit=10)
@@ -210,7 +219,7 @@ def test_scheduler_tick_drains_a_durable_pending_event_without_a_new_occurrence(
         event = schedules.list_events("agent-a", limit=1)[0]
         assert event["status"] == "enqueued"
         assert event["test_run_id"] == testing_store.list_runs(agent_id="agent-a")[0]["test_run_id"]
-        assert enqueued == [event["test_run_id"]]
+        assert enqueued == []
     finally:
         service.close()
 
@@ -300,8 +309,19 @@ def test_test_asset_file_and_paginated_history_are_read_only_projections(tmp_pat
                 suite={},
                 suite_digest=None,
             )
-            assert testing_store.claim_run(str(run["test_run_id"])) is not None
-            testing_store.finish_run(str(run["test_run_id"]), status="passed", report={"exit_code": 0}, items=[], stdout="", stderr="")
+            claimed = testing_store.claim_run(str(run["test_run_id"]), worker_id="worker-history")
+            assert claimed is not None
+            testing_store.finish_run(
+                str(run["test_run_id"]),
+                worker_id="worker-history",
+                claim_generation=int(claimed["_claim_generation"]),
+                status="passed",
+                report={"exit_code": 0},
+                receipt=None,
+                items=[],
+                stdout="",
+                stderr="",
+            )
 
         first = service.list_run_history(
             agent_id="agent-a",

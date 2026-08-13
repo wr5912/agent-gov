@@ -33,7 +33,7 @@ class _RecordingService:
 
     async def generate(self, **kwargs: object) -> SpeechSummaryOutput:
         self.calls.append(kwargs)
-        return SpeechSummaryOutput(text="正在核对告警证据与关键攻击链路")
+        return SpeechSummaryOutput(text="正在核对告警证据与关键威胁链路")
 
 
 def _stream_event(
@@ -65,6 +65,7 @@ def test_coordinator_uses_native_thinking_stop_and_complete_assistant_boundaries
                 "assistant_response_completed",
             ),
             enabled=True,
+            task_timeout_seconds=1,
             emit=emit,
         )
         coordinator.observe(
@@ -161,6 +162,7 @@ def test_coordinator_skips_disabled_empty_tool_only_and_subagent_content() -> No
             run_id="run-1",
             boundaries=(),
             enabled=True,
+            task_timeout_seconds=1,
             emit=emit,
         )
         coordinator.observe(
@@ -178,6 +180,7 @@ def test_coordinator_skips_disabled_empty_tool_only_and_subagent_content() -> No
                 "assistant_response_completed",
             ),
             enabled=False,
+            task_timeout_seconds=1,
             emit=emit,
         )
         request_disabled.observe(
@@ -196,6 +199,7 @@ def test_coordinator_skips_disabled_empty_tool_only_and_subagent_content() -> No
                 "assistant_response_completed",
             ),
             enabled=True,
+            task_timeout_seconds=1,
             emit=emit,
         )
         enabled.observe(
@@ -271,6 +275,7 @@ def test_final_assistant_cancels_stale_thinking_summary() -> None:
                 "assistant_response_completed",
             ),
             enabled=True,
+            task_timeout_seconds=1,
             emit=emit,
         )
         coordinator.observe(
@@ -347,6 +352,7 @@ def test_tool_only_assistant_does_not_cancel_pending_thinking_summary() -> None:
                 "assistant_response_completed",
             ),
             enabled=True,
+            task_timeout_seconds=1,
             emit=emit,
         )
         coordinator.observe(
@@ -394,6 +400,68 @@ def test_tool_only_assistant_does_not_cancel_pending_thinking_summary() -> None:
 
     assert [call["source_kind"] for call in service.calls] == ["thinking"]
     assert [event.data["payload"]["source_kind"] for event in emitted] == ["thinking"]
+
+
+def test_coordinator_deadline_includes_queue_and_generation_without_late_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _NeverCompletes(_RecordingService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.generation_slot = asyncio.Semaphore(1)
+            self.cancelled = asyncio.Event()
+
+        async def generate(self, **kwargs: object) -> SpeechSummaryOutput:
+            self.calls.append(kwargs)
+            try:
+                async with self.generation_slot:
+                    await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    async def scenario() -> tuple[list[AgentGovControlEvent], _NeverCompletes]:
+        emitted: list[AgentGovControlEvent] = []
+        service = _NeverCompletes()
+
+        async def emit(event: AgentGovControlEvent) -> None:
+            emitted.append(event)
+
+        await service.generation_slot.acquire()
+        coordinator = SpeechSummaryCoordinator(
+            service=service,  # type: ignore[arg-type]
+            run_id="run-deadline",
+            boundaries=("assistant_response_completed",),
+            enabled=True,
+            task_timeout_seconds=0.02,
+            emit=emit,
+        )
+        coordinator.observe(
+            AssistantMessage(
+                content=[TextBlock(text="最终回答")],
+                model="test",
+                message_id="msg-deadline",
+            )
+        )
+        coordinator.observe(
+            AssistantMessage(
+                content=[TextBlock(text="排队中的第二个最终回答")],
+                model="test",
+                message_id="msg-queued-deadline",
+            )
+        )
+        await coordinator.drain(0.1)
+        service.generation_slot.release()
+        await asyncio.sleep(0.03)
+        coordinator.close()
+        return emitted, service
+
+    emitted, service = asyncio.run(scenario())
+
+    assert emitted == []
+    assert service.cancelled.is_set()
+    assert len(service.calls) == 1
+    assert "reason=task_deadline" in caplog.text
 
 
 def _speech_control() -> AgentGovControlEvent:

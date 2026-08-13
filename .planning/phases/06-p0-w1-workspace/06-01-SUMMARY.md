@@ -8,7 +8,7 @@ requires:
   - phase: roadmap-v3.1
     provides: P0-W1 准入需求 P0W-01 至 P0W-08 与阶段边界
 provides:
-  - 危险及畸形 PreToolUse 输入的结构化 deny
+  - 高风险执行意图及畸形 PreToolUse 输入的结构化 deny
   - 受批准 runtime data 根约束的最小化 PostToolUse 审计
   - 与当前权限、路径、职责和身份权威一致的 Workspace 回归测试
   - 完整 Workspace suite 与 runtime bootstrap 扫描证据
@@ -45,7 +45,11 @@ completed: 2026-08-09
 
 # Phase 6：P0-W1 安全 Workspace 基线修复总结
 
-**内置安全 Workspace 的危险操作 hook、审计路径与原生配置回归已收口，完整 58-leaf suite 和仓库初始化源扫描均通过。**
+> 2026-08-11 边界更新：下述数字是 Phase 6 当时的历史回执，不代表当前候选。
+> 当前内置 Agent 不启用文件读取、shell、Web 或 MCP；业务 Workspace tests 仅通过
+> `make container-workspace-pytest-test` 的 exact-commit 隔离 lane 执行，不进入宿主 root collection。
+
+**内置安全 Workspace 的高风险执行分类 hook、审计路径与原生配置回归已收口，完整 58-leaf suite 和仓库初始化源扫描均通过。**
 
 ## 执行数据
 
@@ -58,8 +62,8 @@ completed: 2026-08-09
 
 ## 交付结果
 
-- `PreToolUse` 对非 JSON、错误 JSON 顶层、非法 `tool_input`、Bash 缺失/空白/非字符串 `command` 以及已分类危险命令统一返回 Claude 可识别的结构化 `deny`，不再依赖异常或历史退出码作为安全契约。
-- 危险删除、关机、Kubernetes scale-to-zero/rollout restart、Docker prune、SSH 等负向矩阵得到覆盖；安全 Bash、相似但安全的命令、非 Bash 与 MCP 工具继续进入 Claude 原生权限流程。
+- `PreToolUse` 对非 JSON、错误 JSON 顶层、非法 `tool_input`、Bash 缺失/空白/非字符串 `command` 以及已分类高风险执行意图统一返回 Claude 可识别的结构化 `deny`，不再依赖异常或历史退出码作为安全契约。
+- 破坏性文件系统操作、可用性中断、编排状态破坏、容器环境全局清理和外部远程访问等风险类别得到覆盖；低风险 Bash、仅含风险关键词但无副作用的文本、非 Bash 与 MCP 工具继续进入 Claude 原生权限流程。持久文档不保存可执行高风险样本。
 - `PostToolUse` 只允许写入批准 data 根下的 `transcripts/claude-hook-audit.jsonl`；任意日志文件名、越界路径或无法证明的目录布局均 fail-closed。
 - 审计记录只保留时间、事件、工具名、输入字段名等最小元数据，不持久化 `tool_input` 或 `tool_response` 值。
 - 原生配置测试已与当前 `.claude/settings.json`、`CLAUDE.md` 和 `agent.yaml.agent.id` 权威同步，没有通过改写权限配置迁就测试。
@@ -75,15 +79,15 @@ completed: 2026-08-09
 
 ## 文件变更
 
-- `hooks/pre_tool_guard.py`：统一畸形输入与危险 Bash 的结构化拒绝边界。
+- `hooks/pre_tool_guard.py`：统一畸形输入与高风险执行意图的结构化拒绝边界。
 - `hooks/post_tool_audit.py`：验证批准 data 根、固定审计文件及最小化记录。
-- `tests/test_hooks.py`：补齐危险/安全反例、畸形输入、路径越界和敏感值不落盘回归。
+- `tests/test_hooks.py`：补齐高风险/低风险类别、畸形输入、路径越界和敏感值不落盘回归。
 - `tests/test_native_config.py`：改为验证当前只读权限、绝对输出路径、职责所有权与唯一 manifest identity。
 
 ## 关键决策
 
 - 没有删除 Runtime 当前注入的 `CLAUDE_HOOK_AUDIT_LOG`。运行时实现与既有测试证明它仍是活跃契约，因此将其收紧为“只能等于批准 data 根下固定日志文件”，既保留运行兼容性，也关闭任意路径旁路。
-- Hook 只负责拒绝已识别危险行为，不返回显式 `allow`；未命中输入仍由 Claude 原生权限、deny 和 HITL 边界裁决。
+- Hook 只负责拒绝已识别高风险执行意图，不返回显式 `allow`；未命中输入仍由 Claude 原生权限、deny 和 HITL 边界裁决。
 - Workspace 测试 leaf 数量是阶段证据，不是永久产品契约；对抗性用例补强后的本次实际结果为 `58 passed`。
 
 ## 与计划的偏差
@@ -98,12 +102,12 @@ completed: 2026-08-09
 - **验证：** 合法 Runtime 路径、越界路径、错误文件名与敏感值不落盘测试均通过。
 - **提交：** `eff4762`
 
-**2. 对抗性代码审查补齐等价危险命令绕过**
+**2. 对抗性代码审查补齐等价高风险执行意图绕过**
 
 - **发现位置：** 阶段代码审查
-- **问题：** 首轮实现会放过前导空格、`/bin/rm`、`sudo -n`、`rm -fr`、wrapper command 和部分 Docker prune 等价写法；原测试只覆盖了规范命令文本。
-- **处理：** 在同一四文件边界内收紧命令段前缀、wrapper、root 删除选项与 Docker prune 分类，并对缺失/非法工具名和畸形 PostToolUse payload 结构化拒绝。
-- **验证：** 新增危险绕过与安全 `--help` 反例后，完整 Workspace `58 passed`；同一候选重新通过所有仓库门。
+- **问题：** 首轮实现会放过路径前缀、权限包装、参数重排、链式结构等规范化变体；原测试只覆盖了单一文本形态。
+- **处理：** 在同一四文件边界内收紧语义边界、包装形式与参数规范化分类，并对缺失/非法工具名和畸形 PostToolUse payload 结构化拒绝。
+- **验证：** 新增高风险规范化变体与低风险帮助类反例后，完整 Workspace `58 passed`；同一候选重新通过所有仓库门。
 - **提交：** `be02782`
 
 **偏差总计：** 2 项安全/兼容性修正。

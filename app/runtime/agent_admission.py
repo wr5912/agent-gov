@@ -10,8 +10,11 @@ from sqlalchemy import exists, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.runtime.agent_deletion_db import AgentDeletionOperationModel
+from app.runtime.business_agent_lifecycle import require_exact_public_business_agent
 from app.runtime.runtime_db import (
     AgentAdmissionStateModel,
+    AgentWorkspaceActivationOperationModel,
     SessionRecordModel,
     SessionTurnIntentModel,
     utc_now,
@@ -19,6 +22,7 @@ from app.runtime.runtime_db import (
 from app.runtime.sdk_session_store import (
     clear_inactive_sdk_sessions_for_agent_in_transaction,
 )
+from app.runtime.state_machines import WORKSPACE_ACTIVATION_FENCE_STATES
 
 _T = TypeVar("_T")
 _WORKSPACE_MAPPING_INVALIDATION_KINDS = {
@@ -62,10 +66,23 @@ def lease_expires_at(lease_seconds: float, *, now: str | None = None) -> str:
     return (current + timedelta(seconds=lease_seconds)).isoformat()
 
 
-def claim_runtime_admission(db: Session, *, agent_id: str, now: str | None = None) -> int:
+def claim_runtime_admission(
+    db: Session,
+    *,
+    agent_id: str,
+    expected_instance_etag: str,
+    now: str | None = None,
+) -> int:
     """Fence one runtime turn against maintenance in the caller's session transaction."""
     current = now or utc_now()
     state = _lock_state(db, agent_id=agent_id, now=current)
+    require_exact_public_business_agent(
+        db,
+        agent_id=agent_id,
+        expected_instance_etag=expected_instance_etag,
+    )
+    _require_no_agent_deletion_fence(db, agent_id=agent_id)
+    _require_no_workspace_activation_fence(db, agent_id=agent_id)
     _clear_expired_maintenance(
         db,
         state,
@@ -93,6 +110,8 @@ def acquire_maintenance(
     expires_at = lease_expires_at(lease_seconds, now=current)
     with session_factory.begin() as db:
         state = _lock_state(db, agent_id=agent_id, now=current)
+        _require_no_agent_deletion_fence(db, agent_id=agent_id)
+        _require_no_workspace_activation_fence(db, agent_id=agent_id)
         _clear_expired_maintenance(
             db,
             state,
@@ -161,6 +180,8 @@ def renew_maintenance(
 def release_maintenance(session_factory: sessionmaker, claim: AgentMaintenanceClaim) -> bool:
     with session_factory.begin() as db:
         _lock_state(db, agent_id=claim.agent_id, now=utc_now())
+        if _has_workspace_activation_fence(db, agent_id=claim.agent_id):
+            return False
         changed = db.execute(
             update(AgentAdmissionStateModel)
             .where(
@@ -233,6 +254,10 @@ def run_maintenance_activation_guard(
 def is_maintenance_active(session_factory: sessionmaker, *, agent_id: str, now: str | None = None) -> bool:
     current = now or utc_now()
     with session_factory() as db:
+        if _has_agent_deletion_fence(db, agent_id=agent_id):
+            return True
+        if _has_workspace_activation_fence(db, agent_id=agent_id):
+            return True
         return (
             db.scalar(
                 select(AgentAdmissionStateModel.agent_id)
@@ -288,6 +313,8 @@ def _clear_expired_maintenance(
 ) -> None:
     if not state.maintenance_token or not state.maintenance_expires_at or state.maintenance_expires_at > now:
         return
+    if _has_workspace_activation_fence(db, agent_id=agent_id):
+        return
     if state.maintenance_kind in _WORKSPACE_MAPPING_INVALIDATION_KINDS:
         # Expiry cannot reveal whether a crashed worker crossed the Git activation
         # boundary. A fresh SDK session is the conservative recovery for both
@@ -302,6 +329,44 @@ def _clear_expired_maintenance(
     state.maintenance_owner_id = None
     state.maintenance_expires_at = None
     state.updated_at = now
+
+
+def _has_workspace_activation_fence(db: Session, *, agent_id: str) -> bool:
+    return (
+        db.scalar(
+            select(AgentWorkspaceActivationOperationModel.operation_id)
+            .where(
+                AgentWorkspaceActivationOperationModel.agent_id == agent_id,
+                AgentWorkspaceActivationOperationModel.state.in_(WORKSPACE_ACTIVATION_FENCE_STATES),
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def _has_agent_deletion_fence(db: Session, *, agent_id: str) -> bool:
+    return (
+        db.scalar(
+            select(AgentDeletionOperationModel.operation_id)
+            .where(
+                AgentDeletionOperationModel.agent_id == agent_id,
+                AgentDeletionOperationModel.state == "cleanup_pending",
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def _require_no_agent_deletion_fence(db: Session, *, agent_id: str) -> None:
+    if _has_agent_deletion_fence(db, agent_id=agent_id):
+        raise AgentMaintenanceActiveError(f"Agent {agent_id} deletion cleanup is pending durable recovery")
+
+
+def _require_no_workspace_activation_fence(db: Session, *, agent_id: str) -> None:
+    if _has_workspace_activation_fence(db, agent_id=agent_id):
+        raise AgentMaintenanceActiveError(f"Agent {agent_id} workspace activation is pending durable recovery")
 
 
 def _require_active_maintenance_claim(

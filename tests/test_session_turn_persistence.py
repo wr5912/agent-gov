@@ -19,11 +19,18 @@ from app.runtime.session_turn_persistence import (
     reconcile_expired_turns,
 )
 
-from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+from business_agent_test_utils import (
+    ORDINARY_TEST_AGENT_ID,
+    register_test_business_agent_instance,
+)
 
 
 def _seed_turn(tmp_path, *, expires_at="2999-01-01T00:00:00+00:00", append_entry=True):
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    register_test_business_agent_instance(
+        factory,
+        agent_id=ORDINARY_TEST_AGENT_ID,
+    )
     with factory.begin() as db:
         db.add(
             SessionRecordModel(
@@ -278,6 +285,7 @@ def test_exact_completion_retry_allows_session_to_advance_to_next_turn(tmp_path)
         current,
         run_id="run-2",
         agent_id=ORDINARY_TEST_AGENT_ID,
+        expected_instance_etag=store.public_business_agent_instance_etag(ORDINARY_TEST_AGENT_ID),
         new_sdk_session_id="sdk-session",
         sdk_project_key="project-key",
         resolve_agent_version_id=lambda: "version-2",
@@ -397,6 +405,7 @@ def test_exact_abort_retry_allows_session_to_advance_to_next_turn(tmp_path):
         current,
         run_id="run-2",
         agent_id=ORDINARY_TEST_AGENT_ID,
+        expected_instance_etag=store.public_business_agent_instance_etag(ORDINARY_TEST_AGENT_ID),
         new_sdk_session_id="sdk-next",
         sdk_project_key="project-key",
         resolve_agent_version_id=lambda: "version-2",

@@ -11,7 +11,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from . import session_turn_lease
-from .agent_admission import claim_runtime_admission, lease_expires_at
+from .agent_admission import lease_expires_at
+from .business_agent_lifecycle import public_business_agent_instance_etag, require_exact_public_business_agent
 from .errors import SessionConflictError
 from .json_types import JsonObject
 from .records.source_records import AgentRunRecord
@@ -21,15 +22,15 @@ from .sdk_session_store import (
     discard_staged_entries,
     parse_sdk_store_import_marker,
     promote_staged_entries,
+    reconcile_orphaned_staged_entries,
 )
-from .session_turn_persistence import (
-    TurnIntentSpec,
-    add_running_turn_intent,
-    assert_aborted_persisted_turn,
-    assert_completed_persisted_turn,
-)
+from .session_turn_admission import SessionTurnAdmissionSpec, admit_session_turn
 from .session_turn_persistence import (
     abort_persisted_turn as abort_persisted_turn_transaction,
+)
+from .session_turn_persistence import (
+    assert_aborted_persisted_turn,
+    assert_completed_persisted_turn,
 )
 from .session_turn_persistence import (
     complete_persisted_turn as complete_persisted_turn_transaction,
@@ -69,8 +70,18 @@ class PersistedTurnAdmission:
 
 
 @dataclass(frozen=True)
+class OwnedSessionCandidate:
+    """Read-only session snapshot prepared for transactional turn admission."""
+
+    session: LocalSession
+    create_if_missing: bool
+
+
+@dataclass(frozen=True)
 class SdkStoreImportClaim:
     session_id: str
+    agent_id: str
+    expected_instance_etag: str
     sdk_session_id: str
     sdk_project_key: str
     token: str
@@ -137,6 +148,30 @@ class LocalSessionStore:
                 raise SessionConflictError(f"Session {session_id} belongs to a different business agent")
             return self._to_session(record)
 
+    def prepare_owned_session(
+        self,
+        session_id: Optional[str],
+        *,
+        agent_id: str,
+        metadata: Optional[JsonObject] = None,
+    ) -> OwnedSessionCandidate:
+        """Prepare an owned snapshot without creating or claiming persistent state."""
+
+        normalized_agent_id = agent_id.strip()
+        if not normalized_agent_id:
+            raise ValueError("agent_id is required to prepare a session")
+        if session_id:
+            existing = self.get(session_id)
+            if existing is not None:
+                self._require_claimable_session_snapshot(existing, agent_id=normalized_agent_id)
+                return OwnedSessionCandidate(session=existing, create_if_missing=False)
+        session = LocalSession(
+            session_id=session_id or str(uuid.uuid4()),
+            agent_id=normalized_agent_id,
+            metadata=dict(metadata or {}),
+        )
+        return OwnedSessionCandidate(session=session, create_if_missing=True)
+
     def get(self, session_id: str) -> Optional[LocalSession]:
         with self.Session() as db:
             record = db.get(SessionRecordModel, session_id)
@@ -201,12 +236,14 @@ class LocalSessionStore:
         *,
         run_id: str,
         agent_id: str,
+        expected_instance_etag: str,
         new_sdk_session_id: str,
         sdk_project_key: str,
         resolve_agent_version_id: Callable[[], Optional[str]],
         request: JsonObject,
         created_at: str,
         lease_seconds: float | None = None,
+        create_session_if_missing: bool = False,
     ) -> PersistedTurnAdmission:
         """原子获取 Agent/session admission，并创建唯一 running intent。"""
         clean_run_id = run_id.strip()
@@ -223,55 +260,38 @@ class LocalSessionStore:
         expires_at = session_turn_lease.turn_lease_expires_at(effective_lease_seconds)
         now = utc_now()
         with self.Session.begin() as db:
-            generation = claim_runtime_admission(db, agent_id=agent_id, now=now)
-            record = db.get(SessionRecordModel, session.session_id)
-            if record is None:
-                self._raise_conflict(record, session, agent_id=agent_id)
-            assert record is not None
-            if record.agent_id != agent_id:
-                self._raise_conflict(record, session, agent_id=agent_id)
-            mapping_was_invalidated = session.sdk_session_id is not None and record.sdk_session_id is None
-            if record.turns != session.turns or (record.sdk_session_id != session.sdk_session_id and not mapping_was_invalidated):
-                self._raise_conflict(record, session, agent_id=agent_id)
-            if record.active_run_id is not None:
-                prior_intent = db.get(SessionTurnIntentModel, record.active_run_id)
-                legacy_expired = (
-                    record.active_run_expires_at is not None
-                    and record.active_run_expires_at <= now
-                    and (prior_intent is None or prior_intent.status != "running")
-                )
-                if not legacy_expired:
-                    raise SessionConflictError(f"Session {session.session_id} already has an active turn")
-                record.active_run_id = None
-                record.active_run_expires_at = None
-                record.active_run_generation = 0
-
-            agent_version_id = resolve_agent_version_id()
-            attempted_sdk_session_id = record.sdk_session_id or clean_new_sdk_session_id
-            record.active_run_id = clean_run_id
-            record.active_run_expires_at = expires_at
-            record.active_run_generation = generation
-            record.updated_at = now
-            add_running_turn_intent(
+            claim = admit_session_turn(
                 db,
-                TurnIntentSpec(
+                spec=SessionTurnAdmissionSpec(
+                    session_id=session.session_id,
+                    session_created_at=session.created_at,
+                    session_turns=session.turns,
+                    session_sdk_session_id=session.sdk_session_id,
+                    session_metadata=session.metadata,
+                    create_session_if_missing=create_session_if_missing,
                     run_id=clean_run_id,
-                    session_id=record.session_id,
                     agent_id=agent_id,
-                    source_sdk_session_id=record.sdk_session_id,
-                    attempted_sdk_session_id=attempted_sdk_session_id,
+                    expected_instance_etag=expected_instance_etag,
+                    new_sdk_session_id=clean_new_sdk_session_id,
                     sdk_project_key=clean_project_key,
-                    base_turns=record.turns,
-                    agent_version_id=agent_version_id,
-                    request=dict(request),
+                    request=request,
                     created_at=created_at,
+                    expires_at=expires_at,
+                    now=now,
                 ),
+                resolve_agent_version_id=resolve_agent_version_id,
             )
             return PersistedTurnAdmission(
-                session=self._to_session(record),
-                agent_version_id=agent_version_id,
-                attempted_sdk_session_id=attempted_sdk_session_id,
+                session=self._to_session(claim.record),
+                agent_version_id=claim.agent_version_id,
+                attempted_sdk_session_id=claim.attempted_sdk_session_id,
             )
+
+    def public_business_agent_instance_etag(self, agent_id: str) -> str:
+        """Read the current public instance before entering durable admission."""
+
+        with self.Session() as db:
+            return public_business_agent_instance_etag(db, agent_id=agent_id)
 
     def renew_turn(
         self,
@@ -423,10 +443,14 @@ class LocalSessionStore:
     def reconcile_running_turns_after_restart(self, *, limit: int = 100) -> list[str]:
         return reconcile_running_turns_after_restart_transactions(self.Session, limit=limit)
 
+    def reconcile_orphaned_sdk_entries(self, *, now: str | None = None) -> int:
+        return reconcile_orphaned_staged_entries(self.Session, now=now)
+
     def begin_sdk_store_import(
         self,
         *,
         session_id: str,
+        expected_instance_etag: str,
         sdk_session_id: str,
         sdk_project_key: str,
         lease_seconds: float = 3600.0,
@@ -440,6 +464,13 @@ class LocalSessionStore:
             record = db.get(SessionRecordModel, session_id)
             if record is None:
                 raise SessionConflictError(f"Session {session_id} was deleted concurrently")
+            if not record.agent_id:
+                raise SessionConflictError(f"Session {session_id} has no unambiguous business agent owner")
+            require_exact_public_business_agent(
+                db,
+                agent_id=record.agent_id,
+                expected_instance_etag=expected_instance_etag,
+            )
             if record.sdk_session_id != sdk_session_id:
                 raise SessionConflictError(f"Session {session_id} SDK mapping changed during migration")
             if record.sdk_store_ready_at is not None:
@@ -460,6 +491,8 @@ class LocalSessionStore:
 
             claim = SdkStoreImportClaim(
                 session_id=session_id,
+                agent_id=record.agent_id,
+                expected_instance_etag=expected_instance_etag,
                 sdk_session_id=sdk_session_id,
                 sdk_project_key=sdk_project_key,
                 token=str(uuid.uuid4()),
@@ -478,9 +511,11 @@ class LocalSessionStore:
     ) -> LocalSession:
         completed_at = now or utc_now()
         with self.Session.begin() as db:
+            db.execute(update(SessionRecordModel).where(SessionRecordModel.session_id == claim.session_id).values(updated_at=SessionRecordModel.updated_at))
             record = db.get(SessionRecordModel, claim.session_id)
             if (
                 record is None
+                or record.agent_id != claim.agent_id
                 or record.sdk_session_id != claim.sdk_session_id
                 or record.sdk_project_key != claim.sdk_project_key
                 or record.sdk_store_migration_error != claim.marker
@@ -488,6 +523,11 @@ class LocalSessionStore:
                 or claim.expires_at <= completed_at
             ):
                 raise SessionConflictError(f"Session {claim.session_id} SDK migration fence was lost")
+            require_exact_public_business_agent(
+                db,
+                agent_id=claim.agent_id,
+                expected_instance_etag=claim.expected_instance_etag,
+            )
             promoted = promote_staged_entries(db, run_id=claim.token, committed_at=completed_at)
             if promoted <= 0:
                 raise SessionConflictError(f"Session {claim.session_id} SDK migration produced no transcript entries")
@@ -658,6 +698,13 @@ class LocalSessionStore:
             if record is None:  # pragma: no cover - insert/select are one transaction
                 raise SessionConflictError(f"Session {session_id} could not be created")
             return self._to_session(record)
+
+    @staticmethod
+    def _require_claimable_session_snapshot(session: LocalSession, *, agent_id: str) -> None:
+        if session.agent_id is None and (session.turns > 0 or session.sdk_session_id is not None):
+            raise SessionConflictError(f"Session {session.session_id} has no unambiguous business agent owner")
+        if session.agent_id is not None and session.agent_id != agent_id:
+            raise SessionConflictError(f"Session {session.session_id} belongs to a different business agent")
 
     @staticmethod
     def _raise_conflict(

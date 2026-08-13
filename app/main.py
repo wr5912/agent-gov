@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import logging
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Optional
@@ -48,8 +49,10 @@ from app.routers.responses import create_responses_router
 from app.routers.runtime_raw_events import create_runtime_raw_events_router
 from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
+from app.runtime.advisory_lock import advisory_lock
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_job_types import AgentJobType
+from app.runtime.agent_paths import business_agent_repository_lock_path
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.agent_profiles import agents_requiring_web_hitl, build_profiles, discover_business_agents
 from app.runtime.claude_runtime import ClaudeRuntime
@@ -60,6 +63,7 @@ from app.runtime.prepared_managed_stream import MANAGED_RUN_RESPONSE_HEADER_NAME
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.run_control import RunCancellationService
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
+from app.runtime.runtime_initialization import ensure_agent_repositories
 from app.runtime.runtime_raw_events import RAW_EVENT_RESPONSE_HEADER_NAMES
 from app.runtime.runtime_recovery import RUNTIME_RECOVERY_INTERVAL_SECONDS
 from app.runtime.session_store import LocalSessionStore
@@ -69,6 +73,7 @@ from app.runtime.settings import (
     validate_hitl_single_api_process,
     validate_raw_events_security,
 )
+from app.runtime.stores.agent_deletion_store import AgentDeletionStore
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.asset_store import AssetStore
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
@@ -78,6 +83,8 @@ from app.runtime.stores.improvement_store import ImprovementStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from app.services.agent_governance import AgentGovernanceService
 from app.services.agent_version_maintenance import is_agent_version_maintenance_active
+from app.services.agent_workspace_activation import WorkspaceActivationService
+from app.services.business_agent_deletion import BusinessAgentDeletionService
 from app.services.improvement_execution_service import ImprovementExecutionService
 from app.services.improvement_governor_service import ImprovementGovernorService
 from app.services.workspace_execution_applier import WorkspaceExecutionApplier
@@ -98,6 +105,7 @@ agent_version_store = GitAgentVersionStore(
     repository_name=settings.agent_git_repository_name,
     git_user_name=settings.agent_git_user_name,
     git_user_email=settings.agent_git_user_email,
+    process_lock_path=business_agent_repository_lock_path(settings.data_dir, DEFAULT_BUSINESS_AGENT_ID),
 )
 feedback_store = FeedbackStore(
     data_dir=settings.data_dir,
@@ -132,11 +140,22 @@ agent_governance = AgentGovernanceService(
     runtime_mode=settings.runtime_volume_mode,
     runtime_env=runtime_env,
 )
-agent_registry_store = AgentRegistryStore(runtime_db_session_factory)
+agent_registry_store = AgentRegistryStore(runtime_db_session_factory, data_dir=settings.data_dir)
 runtime.business_profile_resolver = lambda agent_id: resolve_business_profile(settings, agent_registry_store, agent_id)
 # 版本治理懒建版本库前校验业务 Agent 已注册，杜绝幽灵 Agent。
 agent_governance.agent_exists = lambda aid: agent_registry_store.get_agent(aid) is not None
+agent_governance.agent_instance_etag = lambda aid: record.instance_etag if (record := agent_registry_store.get_agent(aid)) is not None else None
 feedback_store.agent_exists = agent_governance.agent_exists
+agent_deletion_store = AgentDeletionStore(runtime_db_session_factory, data_dir=settings.data_dir)
+business_agent_deletion_service = BusinessAgentDeletionService(
+    agent_deletion_store,
+    data_dir=settings.data_dir,
+    mutation_guard_for=lambda agent_id: advisory_lock(
+        business_agent_repository_lock_path(settings.data_dir, agent_id),
+        mode="exclusive",
+    ),
+    evict_agent=agent_governance.evict_agent_store,
+)
 runtime.agent_version_maintenance_provider = lambda agent_id: is_agent_version_maintenance_active(
     session_factory=runtime_db_session_factory,
     store_for=agent_governance._store_for,
@@ -167,6 +186,18 @@ improvement_governor_service = ImprovementGovernorService(
 asset_store = AssetStore(runtime_db_session_factory)
 runtime_settings_store = RuntimeSettingsStore(runtime_db_session_factory)
 agent_testing_store = AgentTestingStore(runtime_db_session_factory)
+workspace_activation_service = WorkspaceActivationService(
+    session_factory=agent_governance.version_maintenance.session_factory,
+    store_for=agent_governance._store_for_existing,
+    invalidate_sessions=lambda db, agent_id: session_store.clear_inactive_sdk_sessions_for_agent_in_transaction(
+        db,
+        agent_id=agent_id,
+    ),
+    persist_accepted_import=lambda *args, **kwargs: agent_testing_store.record_import_in_transaction(
+        *args,
+        **kwargs,
+    ),
+)
 agent_test_schedule_store = AgentTestScheduleStore(runtime_db_session_factory)
 execution_application = WorkspaceExecutionApplier()
 improvement_execution_service = ImprovementExecutionService(
@@ -178,14 +209,11 @@ improvement_execution_service = ImprovementExecutionService(
 )
 agent_testing_service = AgentTestingService(
     store=agent_testing_store,
-    store_for=agent_governance._store_for,
+    store_for=agent_governance._store_for_existing,
     agent_exists=lambda agent_id: agent_registry_store.get_agent(agent_id) is not None,
     get_change_set=agent_governance.get_change_set,
     run_candidate=runtime.run_candidate,
     artifacts_dir=settings.data_dir / ".agent-testing",
-    api_base_url=f"http://127.0.0.1:{settings.api_port}",
-    api_key=settings.api_key,
-    run_timeout_seconds=settings.agent_test_run_timeout_seconds,
     list_agents=agent_registry_store.list_agents,
     schedule_reader=agent_test_schedule_store.get_schedule,
     schedule_list_reader=agent_test_schedule_store.schedules_for_agents,
@@ -204,18 +232,27 @@ bearer_auth = HTTPBearer(auto_error=False)
 api_key_credentials = Security(bearer_auth)
 
 
-def _reconcile_runtime_orphans() -> None:
+def _reconcile_runtime_orphans(*, startup: bool = False) -> None:
     reconciled_turn_count = 0
     while batch := session_store.reconcile_expired_turns(limit=100):
         reconciled_turn_count += len(batch)
     if reconciled_turn_count:
         logger.warning("reconciled expired SDK session turns: %s", reconciled_turn_count)
+    discarded_sdk_entries = session_store.reconcile_orphaned_sdk_entries()
+    if discarded_sdk_entries:
+        logger.warning("discarded orphaned SDK staging entries: %s", discarded_sdk_entries)
     recovered_provisions = agent_registry_store.recover_incomplete_provisions()
     if recovered_provisions:
         logger.warning("recovered expired business Agent provisions: %s", recovered_provisions)
     release_reconciliation = agent_governance.reconcile_release_operations()
     if any(release_reconciliation.values()):
         logger.warning("reconciled interrupted Agent release rollback/restore operations: %s", release_reconciliation)
+    activation_reconciliation = workspace_activation_service.reconcile(force=startup)
+    if any(activation_reconciliation.values()):
+        logger.warning("reconciled interrupted Workspace activation operations: %s", activation_reconciliation)
+    deletion_reconciliation = business_agent_deletion_service.reconcile()
+    if any(deletion_reconciliation.values()):
+        logger.warning("reconciled business Agent deletion operations: %s", deletion_reconciliation)
     execution_reconciliation = improvement_execution_service.reconcile_expired_executions()
     if any(execution_reconciliation.values()):
         logger.warning("reconciled expired improvement executions: %s", execution_reconciliation)
@@ -256,16 +293,13 @@ async def _refresh_runtime_dependency_snapshot() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info(runtime_settings_log_message(settings))
     validate_hitl_single_api_process(settings)
     validate_raw_events_security(settings)
     cancelled = claude_user_input_service.cancel_orphan_waiting_requests(reason="service_restarted")
     if cancelled:
         logger.info("cancelled orphan Claude user-input requests: %s", len(cancelled))
-    # 不在这里无条件初始化默认业务 Agent 的版本库；各业务 Agent 的版本库由
-    # prepare_runtime 的 _ensure_agent_repositories 按注册表与运行态 Workspace 实际存在的 Agent 建立。
-    #
     # 静态 profile 只有 governor；所有业务 Agent 全部由磁盘发现提供：workspace 在则在，
     # 删了就没有。这样注册表 sync 不会复活已删除的 Agent。
     profiles = build_profiles(settings)
@@ -273,6 +307,9 @@ async def lifespan(_: FastAPI):
         profiles.setdefault(profile.name, profile)
     # sync 跳过 tombstone 不复活。
     agent_registry_store.sync_business_agents(profiles)
+    # 直接 ASGI 启动与 service launcher 共用同一显式初始化 authority；只处理公开实例，
+    # stable lock 内再次校验 exact ETag，绝不依赖 Git store 构造器创建目录。
+    ensure_agent_repositories(settings)
     logger.info(
         "business agent registry synced: %s",
         sorted(agent_id for agent_id, profile in profiles.items() if profile.category == "business"),
@@ -285,7 +322,7 @@ async def lifespan(_: FastAPI):
             "event=runtime.startup_turn_recovery interrupted_turns=%s",
             restarted_turn_count,
         )
-    _reconcile_runtime_orphans()
+    _reconcile_runtime_orphans(startup=True)
     test_recovery = agent_testing_service.recover()
     if any(test_recovery.values()):
         logger.warning("recovered Agent test runs: %s", test_recovery)
@@ -551,12 +588,9 @@ app.include_router(
 )
 app.include_router(
     create_agents_router(
-        settings=settings,
         agent_registry_store=agent_registry_store,
-        feedback_store=feedback_store,
-        improvement_store=improvement_store,
-        agent_governance=agent_governance,
         agent_testing_store=agent_testing_store,
+        deletion_service=business_agent_deletion_service,
         agent_test_schedule_service=agent_test_schedule_service,
         require_api_key=require_api_key,
     )
@@ -568,6 +602,7 @@ app.include_router(
         agent_governance=agent_governance,
         session_store=session_store,
         agent_testing=agent_testing_service,
+        activation_service=workspace_activation_service,
         require_api_key=require_api_key,
     )
 )

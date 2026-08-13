@@ -41,6 +41,159 @@ export function createFoundationRules(context) {
   return RULES;
 }
 
+function releaseTargetBindingFixtures() {
+  const base = {
+    agent_id: "soc-ops", created_at: ts, updated_at: ts, base_commit_sha: "base-demo",
+    branch_name: "agent-change/test", worktree_path: "/tmp/test", diff_summary: {},
+    source_improvement_id: "imp-demo04", source_attribution_status: "confirmed", execution_job_id: "exec-1",
+  };
+  return [
+    { ...base, change_set_id: "agc-target-a", title: "候选 A", status: "candidate_committed", candidate_commit_sha: "candidate-a" },
+    {
+      ...base,
+      change_set_id: "agc-target-b",
+      title: "候选 B",
+      status: "candidate_committed",
+      candidate_commit_sha: "candidate-b",
+      latest_test_run_id: "atr-agc-target-b",
+      publication_error: { detail: "release metadata pending reconciliation", updated_at: ts },
+    },
+  ];
+}
+
+async function renderSelectedReleaseTarget(page, changeSets, changeSetId = "agc-target-b") {
+  await renderReleaseWorkbenchHarness(page, changeSets);
+  await page.getByTestId("release-test-suite").waitFor({ timeout: 5000 });
+  if (changeSets.length > 1) {
+    await page.getByTestId("release-changeset-select").selectOption(changeSetId);
+  }
+  await page.waitForFunction((title) => (
+    document.querySelector('[data-testid="release-changeset-details"]')?.textContent?.includes(title)
+  ), changeSets.find((item) => item.change_set_id === changeSetId)?.title || changeSets[0]?.title || "");
+}
+
+async function inspectSelectedReleaseTarget(page, ready) {
+  await renderSelectedReleaseTarget(page, ready);
+  await page.waitForFunction(() => (
+    document.querySelector('[data-testid="release-gate-tests"]')?.getAttribute("data-state") === "pass"
+  ));
+  return {
+    attributionGate: await page.getByTestId("release-gate-attribution").getAttribute("data-state"),
+    testGate: await page.getByTestId("release-gate-tests").getAttribute("data-state"),
+    suiteText: await page.getByTestId("release-test-suite").innerText(),
+    errorVisible: await page.getByText("release metadata pending reconciliation", { exact: false }).first().isVisible().catch(() => false),
+    publishEnabled: !(await page.getByTestId("release-action-publish").isDisabled()),
+  };
+}
+
+async function observeReleasePost(page, actionTestId, path) {
+  observedApiRequests.length = 0;
+  await page.getByTestId(actionTestId).click();
+  const bound = await waitForObservedRequest((request) => request.path === path);
+  const request = observedApiRequests.find((item) => item.path === path);
+  return { bound, request, body: JSON.parse(request?.postData || "{}") };
+}
+
+async function bindReleaseTargetActions(page, ready) {
+  const publish = await observeReleasePost(
+    page,
+    "release-action-publish",
+    "/api/agent-change-sets/agc-target-b/publish",
+  );
+  await renderSelectedReleaseTarget(page, ready);
+  await page.waitForFunction(() => (
+    document.querySelector('[data-testid="release-action-run-tests"]')?.disabled === false
+  ));
+  const testRun = await observeReleasePost(
+    page,
+    "release-action-run-tests",
+    "/api/agent-change-sets/agc-target-b/test-runs",
+  );
+  return {
+    publishBound: publish.bound,
+    publishForce: publish.body.force,
+    testRunBound: testRun.bound,
+    testRunPayloadExact: testRun.request?.method === "POST" && Object.keys(testRun.body).length === 0,
+  };
+}
+
+async function inspectReleaseTargetGuards(page, ready) {
+  const blocked = ready.map((item) => ({
+    ...item,
+    publication_blocker: "当前待发布 commit 的平台测试未通过",
+  }));
+  await renderSelectedReleaseTarget(page, blocked);
+  const blockedPublishDisabled = await page.getByTestId("release-action-publish").isDisabled();
+  const forceActionAbsent = await page.getByTestId("release-action-force").count() === 0;
+  await renderSelectedReleaseTarget(page, [{
+    ...ready[1],
+    publication_provenance_blocker: "改进执行来源不完整",
+    publication_blocker: "改进执行来源不完整",
+  }]);
+  return {
+    blockedPublishDisabled,
+    forceActionAbsent,
+    provenancePublishDisabled: await page.getByTestId("release-action-publish").isDisabled(),
+    provenanceForceAbsent: await page.getByTestId("release-action-force").count() === 0,
+  };
+}
+
+async function bindReleaseCleanupAction(page, ready) {
+  await renderSelectedReleaseTarget(page, [{
+    ...ready[0],
+    status: "failed",
+    worktree_cleanup_pending: true,
+  }], "agc-target-a");
+  const cleanupVisible = await has(page, "release-cleanup-pending");
+  const cleanup = await observeReleasePost(
+    page,
+    "release-action-retry-cleanup",
+    "/api/agent-change-sets/agc-target-a/worktree-cleanup/retry",
+  );
+  return { cleanupVisible, cleanupBound: cleanup.bound };
+}
+
+function assertReleaseTargetBinding(evidence) {
+  const ok = evidence.attributionGate === "pass"
+    && evidence.testGate === "pass"
+    && evidence.suiteText.includes("tests/test_feedback_imp_demo04_01_time.py")
+    && evidence.errorVisible
+    && evidence.publishEnabled
+    && evidence.publishBound
+    && evidence.publishForce === false
+    && evidence.testRunBound
+    && evidence.testRunPayloadExact
+    && evidence.blockedPublishDisabled
+    && evidence.forceActionAbsent
+    && evidence.provenancePublishDisabled
+    && evidence.provenanceForceAbsent
+    && evidence.cleanupVisible
+    && evidence.cleanupBound;
+  return {
+    ok,
+    detail: [
+      "gates=" + evidence.attributionGate + "/" + evidence.testGate,
+      "suite=" + evidence.suiteText.includes("tests/test_feedback_imp_demo04_01_time.py"),
+      "publish=" + evidence.publishEnabled + "/" + evidence.publishBound + "/" + evidence.publishForce,
+      "testRun=" + evidence.testRunBound + "/" + evidence.testRunPayloadExact,
+      "blocked=" + evidence.blockedPublishDisabled + "/forceAbsent=" + evidence.forceActionAbsent,
+      "provenance=" + evidence.provenancePublishDisabled + "/forceAbsent=" + evidence.provenanceForceAbsent,
+      "cleanup=" + evidence.cleanupVisible + "/" + evidence.cleanupBound,
+    ].join(" "),
+  };
+}
+
+async function verifyReleaseTargetBinding(page) {
+  const ready = releaseTargetBindingFixtures();
+  const evidence = {
+    ...await inspectSelectedReleaseTarget(page, ready),
+    ...await bindReleaseTargetActions(page, ready),
+    ...await inspectReleaseTargetGuards(page, ready),
+    ...await bindReleaseCleanupAction(page, ready),
+  };
+  return assertReleaseTargetBinding(evidence);
+}
+
 const RULES = [
   { id: "nav-converged", phase: "P0", desc: "一级导航三支柱 Playground/改进事项/资产复利；测试发布归入改进治理第四阶段，旧发布不作为顶级主导航", async fn(page) {
     const nav = await page.locator(".topbar-nav .topbar-nav-button").count();
@@ -413,91 +566,8 @@ const RULES = [
     return { ok: drawerSize === "medium" && found.length === 4 && download && rich, detail: `size=${drawerSize} 类型 ${found.length}/4，下载=${download}，证据链JSON=${rich}` };
   } },
   { id: "release-workbench-target-binding", phase: "P2", desc: "发布工作台按选中待发布变更绑定 Workspace pytest、精确 commit 发布、反馈发布不可绕过测试和清理动作", async fn(page) {
-    const base = {
-      agent_id: "soc-ops", created_at: ts, updated_at: ts, base_commit_sha: "base-demo",
-      branch_name: "agent-change/test", worktree_path: "/tmp/test", diff_summary: {},
-      source_improvement_id: "imp-demo04", source_attribution_status: "confirmed", execution_job_id: "exec-1",
-    };
-    const ready = [
-      { ...base, change_set_id: "agc-target-a", title: "候选 A", status: "candidate_committed", candidate_commit_sha: "candidate-a" },
-      { ...base, change_set_id: "agc-target-b", title: "候选 B", status: "candidate_committed", candidate_commit_sha: "candidate-b", publication_error: { detail: "release metadata pending reconciliation", updated_at: ts } },
-    ];
     try {
-      await renderReleaseWorkbenchHarness(page, ready);
-      await page.getByTestId("release-test-suite").waitFor({ timeout: 5000 });
-      await page.getByTestId("release-changeset-select").selectOption("agc-target-b");
-      await page.waitForFunction(() => document.querySelector('[data-testid="release-changeset-details"]')?.textContent?.includes("候选 B"));
-      await page.waitForFunction(() => document.querySelector('[data-testid="release-gate-tests"]')?.getAttribute("data-state") === "pass");
-      const attributionGate = await page.getByTestId("release-gate-attribution").getAttribute("data-state");
-      const testGate = await page.getByTestId("release-gate-tests").getAttribute("data-state");
-      const suiteText = await page.getByTestId("release-test-suite").innerText();
-      const errorVisible = await page.getByText("release metadata pending reconciliation", { exact: false }).first().isVisible().catch(() => false);
-      const publishEnabled = !(await page.getByTestId("release-action-publish").isDisabled());
-
-      observedApiRequests.length = 0;
-      await page.getByTestId("release-action-publish").click();
-      const publishBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-target-b/publish");
-      const publishRequest = observedApiRequests.find((request) => request.path === "/api/agent-change-sets/agc-target-b/publish");
-      const publishBody = JSON.parse(publishRequest?.postData || "{}");
-
-      await renderReleaseWorkbenchHarness(page, ready);
-      await page.getByTestId("release-changeset-select").selectOption("agc-target-b");
-      await page.waitForFunction(() => document.querySelector('[data-testid="release-action-run-tests"]')?.disabled === false);
-      observedApiRequests.length = 0;
-      await page.getByTestId("release-action-run-tests").click();
-      const testRunBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-target-b/test-runs");
-      const testRunRequest = observedApiRequests.find((request) => request.path === "/api/agent-change-sets/agc-target-b/test-runs");
-      const testRunBody = JSON.parse(testRunRequest?.postData || "{}");
-      const testRunPayloadExact = testRunRequest?.method === "POST"
-        && Object.keys(testRunBody).length === 0;
-
-      const blocked = ready.map((item) => ({ ...item, publication_blocker: "当前待发布 commit 的平台测试未通过" }));
-      await renderReleaseWorkbenchHarness(page, blocked);
-      await page.getByTestId("release-changeset-select").selectOption("agc-target-b");
-      const blockedPublishDisabled = await page.getByTestId("release-action-publish").isDisabled();
-      const forceActionAbsent = await page.getByTestId("release-action-force").count() === 0;
-
-      await renderReleaseWorkbenchHarness(page, [{
-        ...ready[1],
-        publication_provenance_blocker: "改进执行来源不完整",
-        publication_blocker: "改进执行来源不完整",
-      }]);
-      const provenancePublishDisabled = await page.getByTestId("release-action-publish").isDisabled();
-      const provenanceForceAbsent = await page.getByTestId("release-action-force").count() === 0;
-
-      await renderReleaseWorkbenchHarness(page, [{ ...ready[0], status: "failed", worktree_cleanup_pending: true }]);
-      observedApiRequests.length = 0;
-      const cleanupVisible = await has(page, "release-cleanup-pending");
-      await page.getByTestId("release-action-retry-cleanup").click();
-      const cleanupBound = await waitForObservedRequest((request) => request.path === "/api/agent-change-sets/agc-target-a/worktree-cleanup/retry");
-
-      const ok = attributionGate === "pass"
-        && testGate === "pass"
-        && suiteText.includes("tests/test_feedback_imp_demo04_01_time.py")
-        && errorVisible
-        && publishEnabled
-        && publishBound
-        && publishBody.force === false
-        && testRunBound
-        && testRunPayloadExact
-        && blockedPublishDisabled
-        && forceActionAbsent
-        && provenancePublishDisabled
-        && provenanceForceAbsent
-        && cleanupVisible
-        && cleanupBound;
-      return {
-        ok,
-        detail: [
-          "gates=" + attributionGate + "/" + testGate,
-          "suite=" + suiteText.includes("tests/test_feedback_imp_demo04_01_time.py"),
-          "publish=" + publishEnabled + "/" + publishBound + "/" + publishBody.force,
-          "testRun=" + testRunBound + "/" + testRunPayloadExact,
-          "blocked=" + blockedPublishDisabled + "/forceAbsent=" + forceActionAbsent,
-          "provenance=" + provenancePublishDisabled + "/forceAbsent=" + provenanceForceAbsent,
-          "cleanup=" + cleanupVisible + "/" + cleanupBound,
-        ].join(" "),
-      };
+      return await verifyReleaseTargetBinding(page);
     } finally {
       await removeReleaseWorkbenchHarness(page);
     }

@@ -2,6 +2,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { withManagedChromium } from "./playwright_browser_authority.mjs";
 import process from "node:process";
 import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
 
@@ -123,9 +124,7 @@ async function main() {
   const protectedEndpoint = await api("/api/agent-registry");
   assert(protectedEndpoint.status === 200, `E2E API key did not authorize protected endpoints: ${JSON.stringify(protectedEndpoint)}`);
 
-  const browser = await chromium.launch({ headless: true });
-  const results = [];
-  try {
+  await withManagedChromium(chromium, { headless: true }, async (browser) => {
     for (const viewport of viewports) {
       const page = await browser.newPage({ viewport });
       const audit = attachAudit(page);
@@ -206,18 +205,15 @@ async function main() {
           Object.values(browserErrors).every((items) => items.length === 0),
           `${viewport.name} browser audit failed: ${JSON.stringify({ ...browserErrors, apiResponses: audit.apiResponses })}`,
         );
-        results.push({ viewport: viewport.name, audit });
       } finally {
         await page.close();
       }
     }
-  } finally {
-    await browser.close();
-  }
-  console.log(JSON.stringify({ ok: true, provider, screenshots: screenshotDir, results }, null, 2));
+  });
+  console.log("PROVIDER_HEALTH_BROWSER_OK");
 }
 
-main().catch((error) => {
-  console.error(`verify_provider_health_container failed: ${error?.stack || error}`);
+main().catch(() => {
+  console.error("PROVIDER_HEALTH_BROWSER_FAIL");
   process.exit(1);
 });

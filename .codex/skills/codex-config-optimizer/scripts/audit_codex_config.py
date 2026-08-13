@@ -142,6 +142,26 @@ MATRIX_EXPECTATIONS = (
         "move-to-skill",
         "发版前后同步 README、docs、skill 镜像、版本面和远端状态。",
     ),
+    (
+        ".codex/skills/defensive-security-boundary/SKILL.md",
+        "防御性安全任务边界",
+        ("用户拥有并授权", "不可信输入", "根因、影响、修复和验证", "不访问外部目标"),
+        "move-to-skill",
+        "安全运营与安全整改任务先固定授权范围，并把回执限制为不可复用的防御证据。",
+    ),
+)
+
+DEFENSIVE_BOUNDARY_MARKERS = (
+    "内置网络安全业务 Agent、示例和测试仅服务于用户拥有并授权环境",
+    "防御性监测、研判、加固和响应处置",
+)
+DEFENSIVE_BOUNDARY_PATHS = ("AGENTS.md", ".claude/rules/agentgov-project.md")
+DEFENSIVE_REPORT_MARKER = "回执只报告根因、影响、文件位置、修复和验证结果"
+DEFENSIVE_REPORT_PATHS = (
+    "AGENTS.md",
+    ".claude/rules/agentgov-project.md",
+    ".codex/agents/worker.toml",
+    ".claude/agents/project-worker.md",
 )
 
 
@@ -461,6 +481,32 @@ def _audit_instruction_discovery(root: Path) -> Iterable[Issue]:
         )
 
 
+def _audit_defensive_security_boundary(root: Path) -> Iterable[Issue]:
+    for rel_path in DEFENSIVE_BOUNDARY_PATHS:
+        path = root / rel_path
+        text = _read(path) if path.is_file() else ""
+        for marker in DEFENSIVE_BOUNDARY_MARKERS:
+            if marker not in text:
+                yield Issue(
+                    "P1",
+                    rel_path,
+                    1 if path.is_file() else None,
+                    f"缺少授权防御用途边界：{marker}",
+                    "merge",
+                )
+    for rel_path in DEFENSIVE_REPORT_PATHS:
+        path = root / rel_path
+        text = _read(path) if path.is_file() else ""
+        if DEFENSIVE_REPORT_MARKER not in text:
+            yield Issue(
+                "P1",
+                rel_path,
+                1 if path.is_file() else None,
+                "安全评审回执未限制为根因、修复和验证结果",
+                "merge",
+            )
+
+
 def _audit_rules(root: Path, path: Path, text: str) -> Iterable[Issue]:
     if path.suffix != ".rules":
         return
@@ -557,6 +603,7 @@ def _matrix_coverage(root: Path) -> list[MatrixCoverage]:
 def _collect_issues(root: Path, files: list[Path]) -> list[Issue]:
     issues = list(_audit_instruction_discovery(root))
     issues.extend(_audit_container_acceptance_hook_wiring(root))
+    issues.extend(_audit_defensive_security_boundary(root))
     for path in files:
         text = _read(path)
         issues.extend(_audit_size(root, path, text))

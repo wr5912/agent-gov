@@ -35,11 +35,17 @@ def test_agv_001_governance_platform_positioning() -> None:
 def test_agv_003_048_frontend_is_debug_observation_boundary() -> None:
     """AGV-003 / AGV-048 前端边界：调试与治理观察界面，不接管 CLI、不操作生产。"""
     readme = _read("README.md")
+    vision = _read("docs/项目目标愿景使命.md")
+    cases = _read("docs/AgentGov核心功能测试用例.md")
     chat = _read("frontend/src/components/ChatPanel.tsx")
 
-    assert "不接管 Claude Code CLI 进程" in readme
-    assert "不提供 Terminal" in readme
-    assert "通过后端 Runtime API 完成" in readme
+    # README 只提供产品边界入口；完整边界由愿景和验收用例各自负责。
+    assert "docs/项目目标愿景使命.md" in readme
+    assert "开发调试与治理观察界面" in vision
+    assert "面向最终用户的业务门户由外部业务系统承载" in vision
+    assert "前端不接管 Claude Code CLI 进程" in cases
+    assert "前端不编辑宿主机敏感文件" in cases
+    assert "通过后端治理 API 完成" in cases
     assert "不接管 Claude Code 进程" in chat
 
 
@@ -109,16 +115,13 @@ def test_agv_037_047_governance_scope_not_business_ownership(monkeypatch, tmp_pa
 def test_agv_049_collaboration_platform_selection_is_deferred() -> None:
     """AGV-049 当前不接入协作平台，智能体协作留到核心能力稳定后。"""
     vision = _read("docs/项目目标愿景使命.md")
-    readme = _read("README.md")
 
     # 当前产品不预埋通用协作领域模型。
     assert "不提供通用协作看板" in vision
     assert "通用协作看板、issue/task 生命周期、协作成员管理、squad 管理" in vision  # 明列为不属于能力边界
-    assert "本期不建设产品内的通用协作模型" in readme
 
     # 当前不接入外部研发协作平台。
     assert "当前不接入 Multica 或其他外部研发协作平台" in vision
-    assert "也不接入外部研发协作平台" in readme
     assert "不定义智能体之间如何协作" in vision
 
     # 后期多智能体协作重新选型，不预设候选产品或任务分配模型。

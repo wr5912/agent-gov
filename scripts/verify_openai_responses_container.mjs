@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Real-container Responses + Playground SDK-native acceptance:
 // browser UI loads from Compose, Playground sends /api/agent-runtime/sdk-events,
-// while hostile/boundary/retrieve checks exercise /v1/responses without mocks.
+// while invalid-input/boundary/retrieve checks exercise /v1/responses without mocks.
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { withManagedChromium } from "./playwright_browser_authority.mjs";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
@@ -115,10 +116,15 @@ async function waitForCondition(check, message, timeoutMs = 30000) {
   throw new Error(message);
 }
 
-async function runHostileAndBoundaryChecks() {
+async function runInvalidInputBoundaryChecks() {
+  const nonExecutableUpdatedInputSentinel = Object.freeze({
+    type: "agentgov.test.invalid_updated_input",
+    risk_category: "forbidden_field",
+    executable: false,
+  });
   await expectStatus("/v1/responses", 422, { input: "hi", agentgov: {} });
   await expectStatus("/v1/responses", 422, { input: "hi", instructions: "replace the governed system prompt" });
-  await expectStatus("/v1/responses", 422, { input: "hi", agentgov: { agent_id: "security-operations-expert", updated_input: { command: "rm -rf /" } } });
+  await expectStatus("/v1/responses", 422, { input: "hi", agentgov: { agent_id: "security-operations-expert", updated_input: nonExecutableUpdatedInputSentinel } });
   await expectStatus("/v1/responses", 422, { input: "hi", agentgov: { agent_id: "security-operations-expert", max_turns: 0 } });
   await expectStatus("/api/chat", 422, { message: "legacy native chat must still require agent_id" });
   await expectStatus("/api/chat/stream", 422, { message: "legacy stream must still require agent_id" });
@@ -136,20 +142,22 @@ async function runHostileAndBoundaryChecks() {
 async function main() {
   await waitForHttpOk(uiBase, "UI container");
   await waitForHttpOk(`${apiBase}/health`, "API container");
-  await runHostileAndBoundaryChecks();
+  await runInvalidInputBoundaryChecks();
 
-  const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 920 } });
-  const apiRequests = [];
-  const pageErrors = [];
-  page.on("pageerror", (error) => pageErrors.push(String(error)));
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    if (!apiOrigins.has(url.origin)) return;
-    apiRequests.push({ method: request.method(), path: url.pathname, postData: request.postData() || "" });
-  });
+  await withManagedChromium(
+    chromium,
+    { headless: process.env.PLAYWRIGHT_HEADLESS !== "0" },
+    async (browser) => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 920 } });
+      const apiRequests = [];
+      const pageErrors = [];
+      page.on("pageerror", (error) => pageErrors.push(String(error)));
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (!apiOrigins.has(url.origin)) return;
+        apiRequests.push({ method: request.method(), path: url.pathname, postData: request.postData() || "" });
+      });
 
-  try {
     await page.addInitScript(({ base, key }) => {
       window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: base, apiKey: key }));
       window.localStorage.removeItem("playground-session-messages");
@@ -274,28 +282,13 @@ async function main() {
     assert(!paths.includes("GET /api/sessions"), "UI still called legacy GET /api/sessions for the session sidebar");
     assert(pageErrors.length === 0, `browser page errors: ${pageErrors.join("\n")}`);
 
-    await page.screenshot({ path: join(screenshotDir, "openai-responses-container.png"), fullPage: true });
-    console.log(JSON.stringify({
-      ok: true,
-      uiBase,
-      apiBase,
-      browserApiBase,
-      selectedAgent,
-      sawNativeSdkStream: paths.includes("POST /api/agent-runtime/sdk-events"),
-      playgroundResponsesCalls: paths.filter((path) => path === "POST /v1/responses").length,
-      promptSuggestionCount,
-      promptSuggestionAttempt,
-      promptSuggestionFilledComposer: true,
-      sawConversations: paths.includes("GET /v1/conversations"),
-      legacyChatStreamCalls: paths.filter((path) => path === "POST /api/chat/stream").length,
-      hostileBoundaryChecks: 8,
-    }, null, 2));
-  } finally {
-    await browser.close();
-  }
+      await page.screenshot({ path: join(screenshotDir, "openai-responses-container.png"), fullPage: true });
+    },
+  );
+  console.log("OPENAI_RESPONSES_BROWSER_OK");
 }
 
-main().catch((error) => {
-  console.error(`verify_openai_responses_container failed: ${error?.stack || error}`);
+main().catch(() => {
+  console.error("OPENAI_RESPONSES_BROWSER_FAIL");
   process.exit(1);
 });

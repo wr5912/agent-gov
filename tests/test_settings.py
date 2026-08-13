@@ -190,7 +190,7 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "prompt_suggestion_terminal_drain_seconds": 3.0,
         "speech_summary_boundaries": "thinking_block_completed,assistant_response_completed",
         "speech_summary_timeout_seconds": 15.0,
-        "speech_summary_terminal_drain_seconds": 5.0,
+        "speech_summary_terminal_drain_seconds": 20.0,
         "claude_web_hitl_enabled": False,
         "hitl_timeout_seconds": 300,
         "agent_runtime_raw_events_enabled": False,
@@ -314,10 +314,34 @@ def test_speech_summary_boundaries_and_timeouts_have_explicit_defaults() -> None
         "assistant_response_completed",
     )
     assert settings.speech_summary_timeout_seconds == 15
-    assert settings.speech_summary_terminal_drain_seconds == 5
+    assert settings.speech_summary_terminal_drain_seconds == 20
     assert settings.prompt_suggestion_timeout_seconds == 15
     assert settings.prompt_suggestion_terminal_drain_seconds == 3
     assert disabled.speech_summary_boundaries == ()
+
+
+def test_speech_summary_terminal_drain_must_outlive_generation_timeout() -> None:
+    with pytest.raises(ValueError, match="TERMINAL_DRAIN_SECONDS must exceed"):
+        AppSettings(
+            _env_file=None,
+            SPEECH_SUMMARY_TIMEOUT_SECONDS=15,
+            SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS=15,
+        )
+
+    disabled = AppSettings(
+        _env_file=None,
+        SPEECH_SUMMARY_BOUNDARIES="",
+        SPEECH_SUMMARY_TIMEOUT_SECONDS=15,
+        SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS=0,
+    )
+    assert disabled.speech_summary_boundaries == ()
+
+    with pytest.raises(ValueError, match="less than 60"):
+        AppSettings(
+            _env_file=None,
+            SPEECH_SUMMARY_TIMEOUT_SECONDS=60,
+            SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS=60,
+        )
 
 
 @pytest.mark.parametrize(
@@ -387,4 +411,4 @@ SPEECH_SUMMARY_BOUNDARIES=thinking_block_completed,assistant_response_completed"
     for content in (container, local_debug):
         assert required_block in content
         assert "SPEECH_SUMMARY_TIMEOUT_SECONDS=15" in content
-        assert "SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS=5" in content
+        assert "SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS=20" in content

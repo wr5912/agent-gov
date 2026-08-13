@@ -32,7 +32,7 @@ const REGRESSION_TESTS = [
   },
   {
     target_path: "tests/test_feedback_imp_demo04_02_source.py",
-    test_code: "def test_source_risk(agent):\n    result = agent.run('模拟数据能否直接作为攻击证据')\n    assert '数据源' in result.text and '证据' in result.text\n",
+    test_code: "def test_source_risk(agent):\n    result = agent.run('模拟数据能否直接作为风险事件证据')\n    assert '数据源' in result.text and '证据' in result.text\n",
     test_intent: "验证模拟数据不会直接升级",
     assertion_rationale: "回答必须说明数据源风险和证据边界",
   },

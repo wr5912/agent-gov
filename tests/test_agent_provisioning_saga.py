@@ -7,24 +7,30 @@ from pathlib import Path, PurePosixPath
 from threading import Event
 
 import pytest
+from app.runtime.advisory_lock import advisory_lock
+from app.runtime.agent_paths import business_agent_repository_lock_path
 from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.agent_registry_db import AgentRegistryModel
 from app.runtime.business_agent_workspace import (
     WorkspaceProvisionEntry,
     WorkspaceProvisionPlan,
 )
-from app.runtime.errors import ConflictError, NotFoundError
-from app.runtime.runtime_db import make_session_factory
+from app.runtime.errors import ConflictError, DataIntegrityError, NotFoundError
+from app.runtime.runtime_db import make_session_factory, utc_now
 from app.runtime.settings import AppSettings
 from app.runtime.state_machines import StateTransitionError, validate_transition
-from app.runtime.stores.agent_registry_store import AgentProvisionReservation, AgentRegistryStore
+from app.runtime.stores.agent_registry_store import (
+    AgentProvisionOutcome,
+    AgentProvisionReservation,
+    AgentRegistryStore,
+)
 from app.services import business_agent_provisioning
 from app.services.business_agent_provisioning import provision_business_agent
 
 
 def _store(tmp_path: Path) -> tuple[AgentRegistryStore, object]:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    return AgentRegistryStore(factory), factory
+    return AgentRegistryStore(factory, data_dir=tmp_path / "data"), factory
 
 
 def _plan(*entries: tuple[str, bytes]) -> WorkspaceProvisionPlan:
@@ -54,6 +60,15 @@ def _provision(store: AgentRegistryStore, workspace: Path, *, agent_id: str = "s
         workspace_dir=workspace,
         plan=_plan(),
     )
+
+
+def _mark_published_deleted(factory, agent_id: str) -> None:  # type: ignore[no-untyped-def]
+    """Build a legacy published tombstone fixture without reviving the removed delete facade."""
+
+    with factory.begin() as db:
+        row = db.get(AgentRegistryModel, agent_id)
+        assert row is not None and row.provision_completed_token
+        row.deleted_at = utc_now()
 
 
 def test_reservation_is_hidden_from_list_get_and_chat_resolution(tmp_path: Path) -> None:
@@ -112,6 +127,66 @@ def test_provision_recovery_only_reclaims_expired_heartbeat(tmp_path: Path) -> N
     assert store.get_agent("soc-ops") is None
 
 
+def test_creator_wins_stable_lock_and_recovery_exact_reread_skips_completed_claim(
+    tmp_path: Path,
+) -> None:
+    store, _ = _store(tmp_path)
+    workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
+    reservation = store.reserve_business_agent(
+        name="SOC",
+        agent_id="soc-ops",
+        workspace_dir=str(workspace),
+    )
+    store.renew_business_agent_provision(reservation, now="2000-01-01T00:00:00+00:00")
+    lock_path = business_agent_repository_lock_path(tmp_path / "data", "soc-ops")
+    recovery_started = Event()
+
+    def recover_after_discovery() -> int:
+        recovery_started.set()
+        return store.recover_incomplete_provisions(now="2999-01-01T00:00:00+00:00")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with advisory_lock(lock_path, mode="exclusive"):
+            pending = executor.submit(recover_after_discovery)
+            assert recovery_started.wait(timeout=5)
+            assert not pending.done()
+            completed = store.finalize_business_agent(reservation)
+        assert pending.result(timeout=10) == 0
+
+    assert completed.agent_id == "soc-ops"
+    assert store.get_agent("soc-ops") is not None
+
+
+def test_recovery_wins_stable_lock_before_retry_create_without_deadlock(
+    tmp_path: Path,
+) -> None:
+    store, _ = _store(tmp_path)
+    workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
+    reservation = store.reserve_business_agent(
+        name="Interrupted",
+        agent_id="soc-ops",
+        workspace_dir=str(workspace),
+    )
+    store.renew_business_agent_provision(reservation, now="2000-01-01T00:00:00+00:00")
+    lock_path = business_agent_repository_lock_path(tmp_path / "data", "soc-ops")
+    create_started = Event()
+
+    def retry_create():
+        create_started.set()
+        return _provision(store, workspace, name="Recovered")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with advisory_lock(lock_path, mode="exclusive"):
+            pending = executor.submit(retry_create)
+            assert create_started.wait(timeout=5)
+            assert not pending.done()
+            assert store.recover_incomplete_provisions(now="2999-01-01T00:00:00+00:00") == 1
+        recovered = pending.result(timeout=10)
+
+    assert recovered.name == "Recovered"
+    assert workspace.joinpath("CLAUDE.md").read_bytes() == b"# SOC\n"
+
+
 def test_success_finalizes_after_workspace_and_derives_hitl_from_settings(tmp_path: Path) -> None:
     store, _ = _store(tmp_path)
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
@@ -126,6 +201,70 @@ def test_success_finalizes_after_workspace_and_derives_hitl_from_settings(tmp_pa
     assert store.get_agent("soc-ops").requires_web_hitl is False
 
 
+def test_generic_provision_returns_success_when_finalize_commit_ack_is_lost(monkeypatch, tmp_path: Path) -> None:
+    store, factory = _store(tmp_path)
+    workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
+    session_class = factory.class_
+    original_commit = session_class.commit
+    committed_token: str | None = None
+
+    def commit_then_lose_ack(db_session) -> None:
+        nonlocal committed_token
+        row = next(
+            (
+                item
+                for item in db_session.identity_map.values()
+                if isinstance(item, AgentRegistryModel) and item.agent_id == "soc-ops" and item.provision_state == "ready" and item.provision_completed_token
+            ),
+            None,
+        )
+        original_commit(db_session)
+        if row is not None and committed_token is None:
+            committed_token = str(row.provision_completed_token)
+            raise RuntimeError("injected generic finalize commit acknowledgement loss")
+
+    monkeypatch.setattr(session_class, "commit", commit_then_lose_ack)
+    created = _provision(store, workspace)
+
+    assert created.agent_id == "soc-ops" and committed_token is not None
+    assert workspace.joinpath("CLAUDE.md").read_bytes() == b"# SOC\n"
+    assert store.get_agent("soc-ops") is not None
+    with factory() as db:
+        row = db.get(AgentRegistryModel, "soc-ops")
+        assert row is not None
+        assert row.provision_state == "ready" and row.provision_token is None
+        assert row.provision_completed_token == committed_token
+
+
+@pytest.mark.parametrize("resolver_failure", ["read_error", "indeterminate"])
+def test_indeterminate_finalize_outcome_preserves_workspace_and_reservation(
+    monkeypatch,
+    tmp_path: Path,
+    resolver_failure: str,
+) -> None:
+    store, factory = _store(tmp_path)
+    workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
+
+    def fail_finalize(_reservation):
+        raise RuntimeError("injected finalize failure")
+
+    def unresolved(_reservation):
+        if resolver_failure == "read_error":
+            raise RuntimeError("injected outcome read failure")
+        return AgentProvisionOutcome("indeterminate")
+
+    monkeypatch.setattr(store, "finalize_business_agent", fail_finalize)
+    monkeypatch.setattr(store, "resolve_business_agent_provision", unresolved)
+    with pytest.raises(DataIntegrityError, match="workspace preserved"):
+        _provision(store, workspace)
+
+    assert workspace.joinpath("CLAUDE.md").read_bytes() == b"# SOC\n"
+    with factory() as db:
+        row = db.get(AgentRegistryModel, "soc-ops")
+        assert row is not None
+        assert row.provision_state == "provisioning" and row.provision_token
+
+
 def test_finalize_failure_rolls_back_new_workspace_and_deletes_new_row(monkeypatch, tmp_path: Path) -> None:
     store, factory = _store(tmp_path)
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
@@ -134,7 +273,7 @@ def test_finalize_failure_rolls_back_new_workspace_and_deletes_new_row(monkeypat
         raise RuntimeError("forced finalize failure")
 
     monkeypatch.setattr(store, "finalize_business_agent", fail_finalize)
-    with pytest.raises(RuntimeError, match="forced finalize failure"):
+    with pytest.raises(business_agent_provisioning.BusinessAgentProvisioningFailure, match="provisioning failed"):
         _provision(store, workspace)
 
     assert not workspace.exists()
@@ -154,7 +293,7 @@ def test_rollback_preserves_file_replaced_by_external_writer_and_keeps_tombstone
         raise RuntimeError("forced finalize failure")
 
     monkeypatch.setattr(store, "finalize_business_agent", replace_owned_file_then_fail)
-    with pytest.raises(RuntimeError, match="forced finalize failure"):
+    with pytest.raises(business_agent_provisioning.BusinessAgentProvisioningFailure, match="provisioning failed"):
         _provision(store, workspace)
 
     assert (workspace / "CLAUDE.md").read_text(encoding="utf-8") == "external-owner"
@@ -164,7 +303,7 @@ def test_rollback_preserves_file_replaced_by_external_writer_and_keeps_tombstone
         assert row is not None and row.deleted_at and row.provision_state == "ready"
 
 
-def test_apply_failure_preserves_preexisting_workspace_and_tombstones_new_row(monkeypatch, tmp_path: Path) -> None:
+def test_preexisting_workspace_is_rejected_before_apply_without_registry_state(monkeypatch, tmp_path: Path) -> None:
     store, factory = _store(tmp_path)
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
     workspace.mkdir(parents=True)
@@ -196,7 +335,7 @@ def test_apply_failure_preserves_preexisting_workspace_and_tombstones_new_row(mo
     assert store.get_agent("soc-ops") is None
     with factory.begin() as db:
         row = db.get(AgentRegistryModel, "soc-ops")
-        assert row is not None and row.deleted_at and row.provision_state == "ready"
+        assert row is None
 
 
 def test_workspace_symlink_fails_closed_without_touching_target(monkeypatch, tmp_path: Path) -> None:
@@ -216,7 +355,7 @@ def test_workspace_symlink_fails_closed_without_touching_target(monkeypatch, tmp
     assert list(target.iterdir()) == [sentinel]
     with factory.begin() as db:
         row = db.get(AgentRegistryModel, "soc-ops")
-        assert row is not None and row.deleted_at
+        assert row is None
 
 
 def test_workspace_intermediate_symlink_cannot_escape_package_publish(tmp_path: Path) -> None:
@@ -244,30 +383,39 @@ def test_workspace_intermediate_symlink_cannot_escape_package_publish(tmp_path: 
     assert store.get_agent("soc-ops") is None
     with factory.begin() as db:
         row = db.get(AgentRegistryModel, "soc-ops")
-        assert row is not None and row.deleted_at
+        assert row is None
 
 
-def test_failed_tombstone_reuse_restores_previous_row_and_workspace(monkeypatch, tmp_path: Path) -> None:
+def test_new_agent_rejects_foreign_layout_residue_without_claiming_it(tmp_path: Path) -> None:
+    store, factory = _store(tmp_path)
+    workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
+    private = workspace.parent / "claude-root" / "preexisting-private-state"
+    private.parent.mkdir(parents=True)
+    private.write_text("foreign-owner", encoding="utf-8")
+
+    with pytest.raises(ConflictError, match="unowned state"):
+        _provision(store, workspace)
+
+    assert private.read_text(encoding="utf-8") == "foreign-owner"
+    assert not workspace.exists()
+    with factory.begin() as db:
+        assert db.get(AgentRegistryModel, "soc-ops") is None
+
+
+def test_published_tombstone_permanently_reserves_id_and_preserves_unowned_workspace(tmp_path: Path) -> None:
     store, factory = _store(tmp_path)
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
     workspace.mkdir(parents=True)
     sentinel = workspace / "KEEP.txt"
     sentinel.write_text("old", encoding="utf-8")
     store.create_business_agent(name="Old", agent_id="soc-ops", workspace_dir=str(workspace))
-    store.delete_business_agent("soc-ops")
+    _mark_published_deleted(factory, "soc-ops")
     with factory.begin() as db:
         old = db.get(AgentRegistryModel, "soc-ops")
         old_deleted_at = old.deleted_at
         old_created_at = old.created_at
 
-    def fail_apply(*_args, **_kwargs):
-        raise business_agent_provisioning.WorkspaceProvisioningError(
-            "forced apply failure",
-            cleanup_complete=True,
-        )
-
-    monkeypatch.setattr(business_agent_provisioning, "apply_business_agent_workspace_plan", fail_apply)
-    with pytest.raises(ConflictError):
+    with pytest.raises(ConflictError, match="already reserved"):
         _provision(store, workspace, name="New")
 
     assert sentinel.read_text(encoding="utf-8") == "old"
@@ -307,30 +455,34 @@ def test_concurrent_same_agent_id_has_exactly_one_winner(monkeypatch, tmp_path: 
     assert [record.agent_id for record in store.list_agents()] == ["soc-ops"]
 
 
-def test_startup_recovery_restores_tombstone_and_hides_new_orphan(tmp_path: Path) -> None:
+def test_startup_recovery_keeps_published_tombstone_and_quarantines_new_orphan(tmp_path: Path) -> None:
     store, factory = _store(tmp_path)
     old_workspace = tmp_path / "old"
     replacement_workspace = tmp_path / "new"
     store.create_business_agent(name="Old", agent_id="old", workspace_dir=str(old_workspace))
-    store.delete_business_agent("old")
-    store.reserve_business_agent(name="Replacement", agent_id="old", workspace_dir=str(replacement_workspace))
-    store.reserve_business_agent(name="Orphan", agent_id="orphan", workspace_dir=str(tmp_path / "orphan"))
-    replacement_workspace.mkdir()
-    partial = replacement_workspace / "CLAUDE.md"
+    _mark_published_deleted(factory, "old")
+    with pytest.raises(ConflictError, match="already reserved"):
+        store.reserve_business_agent(name="Replacement", agent_id="old", workspace_dir=str(replacement_workspace))
+    orphan_workspace = tmp_path / "data" / "business-agents" / "orphan" / "workspace"
+    store.reserve_business_agent(name="Orphan", agent_id="orphan", workspace_dir=str(orphan_workspace))
+    orphan_workspace.mkdir(parents=True)
+    partial = orphan_workspace / "CLAUDE.md"
     partial.write_text("partial replacement", encoding="utf-8")
 
-    assert store.recover_incomplete_provisions(now="2999-01-01T00:00:00+00:00") == 2
+    assert store.recover_incomplete_provisions(now="2999-01-01T00:00:00+00:00") == 1
     assert store.list_agents() == []
-    with pytest.raises(ConflictError, match="safely"):
+    with pytest.raises(ConflictError, match="already reserved"):
         _provision(store, replacement_workspace, agent_id="old", name="Retry")
     assert partial.read_text(encoding="utf-8") == "partial replacement"
     with factory.begin() as db:
         restored = db.get(AgentRegistryModel, "old")
         orphan = db.get(AgentRegistryModel, "orphan")
         assert restored.name == "Old" and restored.deleted_at
-        assert restored.provision_previous_json == {
+        assert restored.provision_completed_token
+        assert restored.provision_previous_json is None
+        assert orphan.provision_previous_json == {
             "kind": "workspace_must_be_absent",
-            "workspace_dir": str(replacement_workspace),
+            "workspace_dir": str(orphan_workspace),
         }
         assert orphan.deleted_at and orphan.provision_state == "ready"
 
@@ -357,7 +509,7 @@ def test_crash_recovery_blocks_partial_workspace_reuse_until_verified_cleanup(
     with pytest.raises(ConflictError, match="safely"):
         _provision(store, workspace, name="Retry")
     assert partial_path.read_text(encoding="utf-8") == "external-owner"
-    with pytest.raises(ConflictError, match="safe provisioning"):
+    with pytest.raises(ConflictError, match="already reserved"):
         store.create_business_agent(name="Unsafe", agent_id="soc-ops", workspace_dir=str(workspace))
     with factory.begin() as db:
         blocked = db.get(AgentRegistryModel, "soc-ops")
@@ -365,7 +517,7 @@ def test_crash_recovery_blocks_partial_workspace_reuse_until_verified_cleanup(
         assert blocked.provision_state == "ready"
         assert blocked.provision_previous_json is not None
 
-    shutil.rmtree(workspace)
+    shutil.rmtree(workspace.parent)
     recovered = _provision(store, workspace, name="Recovered")
 
     assert recovered.name == "Recovered"

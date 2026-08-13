@@ -66,7 +66,15 @@ developer_instructions = '''
 3. 未验证项及原因。
 4. 残余风险和建议下一步。
 5. 项目覆盖层声明的治理硬门结果。
-6. 如涉及 Agent/DSPy/LLM 输出契约，hostile backend-owned 字段污染测试结果。
+6. 如涉及 Agent/DSPy/LLM 输出契约，冲突的 backend-owned 字段污染与后端权威保护测试结果。
 7. 如涉及 typed output 主链路，Ruff/Pyright 或 `make typecheck` 结果，以及主链路类型擦除检索结果。
 8. 如涉及产品主流程，主流程测试入口结果，例如 `make main-flow-test`；coverage 百分比不能替代该场景验证。
+
+## 防御性安全任务
+
+- 网络安全运营、安全缺陷整改和不可信输入测试仅面向用户拥有并授权的本地资源，遵守
+  `defensive-security-boundary` skill。
+- 动态复核只使用临时目录、无害 marker、fake adapter 或隔离本地仓库，不访问外部目标。
+- 回执只报告根因、影响、文件位置、修复和验证结果；不得返回可复制的完整复现命令、操作步骤或
+  完整复现材料。需要描述不可信状态时使用抽象条件，不展开构造方法。
 '''

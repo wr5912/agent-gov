@@ -6,40 +6,37 @@ agent:
   language: zh-CN
   runtime: claude-code
   profile: security-operations-expert
-  # 部署契约（被运行时读取+强制）：本 Agent 只连接 SOC 只读 MCP scope，
-  # 只负责筛选、生成或修订完整剧本。唯一整本确认、SOC 保存/manual 执行（内含预检）和实例监控
-  # 均由 response-orchestration lifecycle worker 负责，不使用 Agent 原生 Web HITL。
+  # 本 Agent 仅提供已授权环境中的只读防御研判与响应方案，不持有 SOC 副作用权限。
   requires_web_hitl: false
 
 capabilities:
   - alert_triage
   - incident_investigation
-  - threat_hunting
+  - defensive_monitoring
   - asset_account_context_enrichment
   - risk_prioritization
   - investigation_timeline_summary
   - containment_recommendation
   - response_case_intake
-  - disposition_planning
-  - playbook_resolution
-  - playbook_dry_run
+  - response_plan_drafting
+  - response_plan_validation
 
 presentation:
-  summary: 聚焦安全运营事实分析、事件调查、威胁狩猎和响应剧本建议。
+  summary: 基于授权证据开展只读安全运营研判，并形成可供平台评审的响应方案。
   welcome_message: |
-    我可以基于告警、事件、资产、账号和现有响应剧本开展只读分析，并给出调查结论或处置建议。
+    我可以基于你提供的告警、事件、资产、账号和现有响应方案开展只读分析。
 
-    请提供需要分析的对象、时间范围和期望产出；涉及保存或执行的动作仍由平台确认流程负责。
-  composer_placeholder: 输入告警、事件、资产或响应剧本相关任务
+    请提供分析对象、时间范围和期望产出；任何系统变更都由平台在独立权限与审批边界内完成。
+  composer_placeholder: 输入需要研判的授权安全运营材料
   starter_prompts:
     - label: 分析当前告警
-      prompt: 请分析我接下来提供的告警，区分已知事实、合理推断和建议动作，并说明还需要哪些证据。
+      prompt: 请分析我接下来提供的告警，区分事实、推断和建议，并说明还需要哪些证据。
     - label: 调查安全事件
-      prompt: 请基于我接下来提供的事件信息建立调查时间线，识别受影响对象、关键证据和优先处置建议。
-    - label: 审查响应剧本
-      prompt: 请审查我接下来提供的响应剧本，说明适用条件、缺失步骤、风险和建议修改。
+      prompt: 请基于我接下来提供的事件信息建立时间线，识别受影响对象、关键证据和防御建议。
+    - label: 审查响应方案
+      prompt: 请审查我接下来提供的响应方案，说明适用条件、证据缺口、风险和建议修改。
     - label: 说明能力边界
-      prompt: 请说明你的主要能力、需要的输入、输出形式，以及不会直接执行的操作。
+      prompt: 请说明你的只读能力、所需输入、输出形式和不会执行的操作。
 
 paths:
   workspace: /data/business-agents/security-operations-expert/workspace
@@ -47,29 +44,18 @@ paths:
   data_root: /data
   sessions: /data/sessions
   transcripts: /data/transcripts
-  uploads: /data/uploads
   outputs: /data/outputs
   agent_memory: /data/agent-memory
 
 mcp:
-  default_transport: http
-  # .mcp.json 的 sec-ops server 只挂载 security-operations-expert 只读分组。
-  servers:
-    sec-ops:
-      purpose: SOC 已有剧本、原子动作、资产和拓扑只读事实
-      risk: read-only
-      tool_families:
-        - name: mcp__sec-ops__soc_api__*
-          purpose: 只读剧本与原子动作目录；写操作不注册且由权限层拒绝
-          risk: read-only
-        - name: mcp__sec-ops__threat_analysis__*
-          purpose: 研判数据只读
-          risk: read-only
+  status: disabled_pending_exact_capability_contract
+  activation_condition: versioned_exact_tool_manifest_and_p0_mcp_receipt
+  servers: {}
 
 skills:
   security_operations_analysis: security-operations-analysis
   response_disposition: threat-response-disposition
-  response_dry_run: playbook-dry-run
+  response_plan_review: playbook-dry-run
 
 subagents:
   disposition_planning: response-playbook-planning
@@ -78,6 +64,7 @@ subagents:
 operational_model:
   evidence_first: true
   distinguish_fact_inference_action: true
+  authorized_environment_only: true
   default_output_dir: /data/outputs/security-operations-expert
   investigation_scopes:
     - alert
@@ -91,34 +78,16 @@ operational_model:
     - vulnerability
 
 approval_policy:
+  role: read-only-defensive-advisor
   owner: response-orchestration
-  phase_field: phase
-  proposal_phase: proposal
-  whole_playbook_only: true
-  user_confirmation_count: 1
-  execution_owner: response-orchestration-lifecycle
   agent_soc_side_effects: deny
-  native_web_hitl_role: disabled
-  native_web_hitl_tools: []
   proposal_side_effects: deny
-  forbidden_tools:
-    - mcp__sec-ops__soc_api__create*
-    - mcp__sec-ops__soc_api__manual
-    - mcp__sec-ops__soc_api__execute
-    - mcp__sec-ops__soc_api__post_*
-    - mcp__sec-ops__soc_api__put_*
-    - mcp__sec-ops__soc_api__delete_*
-    - mcp__sec-ops__soc_api__patch_*
-    - mcp__sec-ops__soc_api__create_1
-    - mcp__sec-ops__soc_api__update*
-    - mcp__sec-ops__soc_api__delete*
-    - mcp__sec-ops__soc_api__upload*
-    - mcp__sec-ops__soc_api__cancel*
-    - mcp__sec-ops__soc_api__rollback
-  lifecycle_worker_owns_save_and_execute: true
-  poll_execution_result: false
-  evaluate_effect: false
-  close_response_case: false
+  agent_output_side_effects: scoped-files-only
+  execution_owner: response-orchestration-lifecycle
+  whole_plan_confirmation_owner: response-orchestration
+  lifecycle_worker_owns_system_changes: true
+  agent_monitors_execution: false
+  agent_closes_response_case: false
 
 observability:
   hook_audit_log: /data/transcripts/claude-hook-audit.jsonl
@@ -131,15 +100,3 @@ extension_points:
   add_subagent: .claude/agents/<agent-name>.md
   add_command: .claude/commands/<command-name>.md
   add_rule: .claude/rules/<rule-name>.md
-
-conversation_revision_policy:
-  owner: response-orchestration
-  mode: same-agent-conversation
-  context_tool: mcp__sec-ops__response_orchestration_agent_tools__get_case_revision_context_api_v1_agent_tools_cases_case_id_context_get
-  revision_tool: mcp__sec-ops__response_orchestration_agent_tools__request_case_revision_api_v1_agent_tools_cases_case_id_revisions_post
-  require_explicit_user_acceptance: true
-  stable_message_provenance_required: true
-  trusted_actor_source: ai-console-proof
-  creates_new_whole_playbook_approval: true
-  soc_preflight_mode: embedded-in-execution-api
-  soc_execution_side_effects: deny

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
@@ -64,10 +65,18 @@ from .runtime_db_migrations_0049 import migrate_0049_rename_regression_test_desi
 from .runtime_db_migrations_0050 import migrate_0050_deduplicate_active_agent_test_runs
 from .runtime_db_migrations_0051 import migrate_0051_replace_regression_design_with_pytest_code
 from .runtime_db_migrations_0052 import migrate_0052_agent_test_asset_schedules
+from .runtime_db_migrations_0053 import migrate_0053_agent_test_worker_receipts
+from .runtime_db_migrations_0054 import migrate_0054_workspace_import_diagnostics
+from .runtime_db_migrations_0055 import migrate_0055_workspace_activation_operations
+from .runtime_db_migrations_0056 import migrate_0056_agent_deletion_operations
+from .runtime_db_migrations_0057 import migrate_0057_workspace_activation_operator_recovery
+from .runtime_db_migrations_0058 import migrate_0058_workspace_activation_authority_hardening
+from .runtime_db_migrations_0059 import migrate_0059_agent_deletion_authority_hardening
 from .schema_self_heal import sync_missing_columns
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
 _ENGINE_CACHE_LOCK = RLock()
+MigrationStep = tuple[str, Callable[[Connection], None]]
 
 from app.agent_testing.models import (  # noqa: E402,F401
     AgentTestRunItemModel,
@@ -77,12 +86,15 @@ from app.agent_testing.models import (  # noqa: E402,F401
     AgentWorkspaceImportRecordModel,
 )
 
+from .agent_deletion_db import AgentDeletionOperationModel  # noqa: E402,F401
 from .agent_maintenance_db import (  # noqa: E402,F401
     AgentAdmissionStateModel,
     AgentReleaseOperationModel,
+    AgentWorkspaceActivationOperationModel,
     AgentWorktreeCleanupTaskModel,
 )
 from .claude_user_input_db import ClaudeUserInputRequestModel  # noqa: E402,F401
+from .workspace_activation_recovery import WorkspaceActivationRecoveryAttemptModel  # noqa: E402,F401
 
 
 class SchemaMigration(Base):
@@ -448,7 +460,7 @@ def ensure_schema(engine: Engine) -> None:
             session.add(SchemaMigration(version="0001_sqlalchemy_runtime_store", applied_at=utc_now()))
 
 
-def _runtime_migrations():
+def _runtime_migrations() -> tuple[MigrationStep, ...]:
     return (
         ("0002_regression_assets", _migrate_0002_regression_assets),
         ("0003_agent_jobs", _migrate_0003_agent_jobs),
@@ -515,12 +527,33 @@ def _runtime_migrations():
         ("0044_agent_release_source_claims", migrate_0044_agent_release_source_claims),
         ("0045_drop_response_disposition_claims", migrate_0045_drop_response_disposition_claims),
         ("0046_remove_agent_registry_origin", migrate_0046_remove_agent_registry_origin),
+    ) + _late_runtime_migrations()
+
+
+def _late_runtime_migrations() -> tuple[MigrationStep, ...]:
+    return (
         ("0047_rename_business_agent_evidence_fields", migrate_0047_rename_business_agent_evidence_fields),
         ("0048_workspace_pytest_source_of_truth", migrate_0048_workspace_pytest_source_of_truth),
         ("0049_rename_regression_test_design", migrate_0049_rename_regression_test_design),
         ("0050_deduplicate_active_agent_test_runs", migrate_0050_deduplicate_active_agent_test_runs),
         ("0051_replace_regression_design_with_pytest_code", migrate_0051_replace_regression_design_with_pytest_code),
         ("0052_agent_test_asset_schedules", migrate_0052_agent_test_asset_schedules),
+        ("0053_agent_test_worker_receipts", migrate_0053_agent_test_worker_receipts),
+        ("0054_workspace_import_diagnostics", migrate_0054_workspace_import_diagnostics),
+        ("0055_workspace_activation_operations", migrate_0055_workspace_activation_operations),
+        ("0056_agent_deletion_operations", migrate_0056_agent_deletion_operations),
+        (
+            "0057_workspace_activation_operator_recovery",
+            migrate_0057_workspace_activation_operator_recovery,
+        ),
+        (
+            "0058_workspace_activation_authority_hardening",
+            migrate_0058_workspace_activation_authority_hardening,
+        ),
+        (
+            "0059_agent_deletion_authority_hardening",
+            migrate_0059_agent_deletion_authority_hardening,
+        ),
     )
 
 

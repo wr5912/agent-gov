@@ -3,6 +3,15 @@ docker/.env
 docker/.env.local
 docker/.env.local-debug
 .git
+.obsidian/
+.idea/
+.venv/
+.code-review-graph/
+artifacts/
+mutants/
+temp/
+CLAUDE.local.md
+.claude/settings.local.json
 __pycache__/
 *.pyc
 .pytest_cache/

@@ -145,7 +145,7 @@ prompt 和 Signature 只能要求 agent-owned 输出字段。backend-owned 字�
 - Store completion 接收具体 formatter 输出模型；只有历史 fixture、外部脏输入或确定性投影路径允许额外接收 `JsonObject` 或具体 projected 输出模型。
 - 后端补齐上下文字段后的模型属于 `ProjectedOutputModel`；DB、HTTP、文件、日志和观测边界才 dump 成 JSON payload。
 - 变量命名必须体现阶段：Agent 原文用 `raw_agent_text` / `raw_text`，结构化 formatter 结果用 `formatter_output`，投影结果用 `projected_output`，持久化字段才使用 `raw_output_json`。
-- 新增 job 类型时，必须同步集中注册表、`FormatterOutputModel`、`ProjectedOutputModel`、结构化输出契约、OutputModel、projection 测试和 hostile backend-owned 字段污染测试。
+- 新增 job 类型时，必须同步集中注册表、`FormatterOutputModel`、`ProjectedOutputModel`、结构化输出契约、OutputModel、projection 测试和冲突的 backend-owned 字段污染测试。
 
 ## 生命周期状态硬约束
 
@@ -161,8 +161,8 @@ prompt 和 Signature 只能要求 agent-owned 输出字段。backend-owned 字�
 - 用户可见页面状态变更：必须验证空态、成功态和失败态错误详情。
 - 生命周期状态字段变更：至少补充 1 个非法状态转移或非法状态输入测试。
 - 并发资源变更：至少补充 1 个重复执行、竞争或部分失败场景测试。
-- 外部输入变更：至少补充 1 个异常、恶意或越权输入测试。
-- Agent、结构化输出框架或 LLM 输出契约变更：至少补充 1 个 hostile backend-owned 字段污染测试，证明错误 job_id、workflow_id、case ids、时间戳、scope 或 provenance 不会覆盖后端权威值。
+- 外部输入变更：至少补充 1 个异常、无效或超范围输入测试。
+- Agent、结构化输出框架或 LLM 输出契约变更：至少补充 1 个冲突的 backend-owned 字段污染测试，证明错误 job_id、workflow_id、case ids、时间戳、scope 或 provenance 不会覆盖后端权威值。
 - happy path 只作为基线，不单独代表测试充分。
 
 测试成本分层：

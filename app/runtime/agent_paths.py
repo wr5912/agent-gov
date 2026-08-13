@@ -16,12 +16,18 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
+
+from pydantic import AfterValidator, StringConstraints
 
 BUSINESS_AGENTS_DIRNAME = "business-agents"
+BUSINESS_AGENT_REPOSITORY_LOCKS_DIRNAME = ".agent-repository-locks"
 
 # agent_id 直接作为 data_dir 下的路径段，必须防目录穿越/分隔符注入。单一真相：
-# 创建（agents.py）、版本治理（_store_for）、路径解析（business_agent_layout）全链路复用。
-_SAFE_AGENT_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+# 创建、OpenAPI path schema、版本治理与路径解析全链路复用同一字符集和长度上限。
+AGENT_ID_MAX_LENGTH = 128
+AGENT_ID_PATTERN = rf"^(?:[A-Za-z0-9_-]|(?:[A-Za-z0-9_-][A-Za-z0-9._-]|\.[A-Za-z0-9_-])|[A-Za-z0-9._-]{{3,{AGENT_ID_MAX_LENGTH}}})$"
+_SAFE_AGENT_ID = re.compile(AGENT_ID_PATTERN)
 
 
 class InvalidAgentId(ValueError):
@@ -31,9 +37,20 @@ class InvalidAgentId(ValueError):
 def validate_agent_id(agent_id: str | None) -> str:
     """校验并返回安全 agent_id；非法抛 InvalidAgentId（路由层投影为 422/400）。"""
     normalized = (agent_id or "").strip()
-    if not normalized or normalized in {".", ".."} or not _SAFE_AGENT_ID.match(normalized):
+    if not normalized or _SAFE_AGENT_ID.fullmatch(normalized) is None:
         raise InvalidAgentId(f"Invalid agent_id: {agent_id!r}")
     return normalized
+
+
+AgentId = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=AGENT_ID_MAX_LENGTH,
+        pattern=AGENT_ID_PATTERN,
+    ),
+    AfterValidator(validate_agent_id),
+]
 
 
 @dataclass(frozen=True)
@@ -49,6 +66,13 @@ class BusinessAgentLayout:
 def business_agents_root(data_dir: Path) -> Path:
     """所有业务 Agent 的容器目录（不是单个 Agent 的修改目标）。"""
     return data_dir / BUSINESS_AGENTS_DIRNAME
+
+
+def business_agent_repository_lock_path(data_dir: Path, agent_id: str) -> Path:
+    """返回不会随 Agent layout 删除而消失的仓库写锁 authority。"""
+
+    safe_id = validate_agent_id(agent_id)
+    return data_dir / BUSINESS_AGENT_REPOSITORY_LOCKS_DIRNAME / f"{safe_id}.lock"
 
 
 def business_agent_layout(data_dir: Path, agent_id: str) -> BusinessAgentLayout:

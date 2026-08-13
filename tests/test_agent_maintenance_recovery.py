@@ -42,6 +42,9 @@ def _governance(tmp_path):
         "agent_id": agent_id,
         "commit_sha": commit_sha,
         "status": "passed",
+        "suite_digest": "2" * 64,
+        "source_digest": "3" * 64,
+        "receipt": {"receipt_digest": "1" * 64},
     }
     return governance, git_store
 

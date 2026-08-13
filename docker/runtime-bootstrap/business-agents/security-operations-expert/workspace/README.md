@@ -5,8 +5,9 @@
 
 ## 核心边界
 
-- Agent 读取安全运营事实，完成分析、剧本筛选、生成和修订。
-- Agent 不直接执行 SOC 副作用工具；确认、保存、执行和监控边界以当前 Workspace 配置为准。
+- Agent 仅处理已授权环境中的防御性安全运营材料，读取事实并完成研判与响应方案规划。
+- Agent 不使用通用文件读取、shell、Web 或 MCP 工具；文件写入仅限专属输出目录。
+- Agent 不产生 SOC 副作用；所有系统变更由平台在独立权限、审批和审计边界内完成。
 - 平台只按注册表和路由确定运行归属，不根据 Agent ID 注入专用工具或授权逻辑。
 
 ## 资产入口
@@ -15,7 +16,7 @@
 | --- | --- |
 | `CLAUDE.md` | 角色、工作方式、输出和业务边界 |
 | `agent.yaml` | Agent 能力、运行说明、Welcome Card 展示和审批责任声明 |
-| `.mcp.json` | MCP 服务接入 |
+| `.mcp.json` | 空的 MCP 发现面；精确 capability manifest 与 P0-MCP 回执落地前保持禁用 |
 | `.claude/settings.json` | Claude 原生权限、hooks 和 sandbox |
 | `.claude/agents/` | 专属 subagents |
 | `.claude/skills/` | 可复用业务流程 |
@@ -23,18 +24,13 @@
 | `hooks/` | 工具调用前置防护、审计和会话初始化 |
 | `tests/` | 该 Agent 的自测资产 |
 
-修改前先读取上述实际文件，不从项目级通用文档推断本 Agent 的工具名、权限或处置步骤。
+开发者修改前先核对上述实际文件；运行中的 Agent 不读取原始配置，也不从项目级通用文档推断工具名、权限或处置步骤。
 
 ## 测试与发布
 
-Agent 开发者负责维护 `tests/`。从 Workspace 根目录执行：
-
-```bash
-python -m pytest -q -p agentgov_testkit.pytest_plugin tests
-```
-
-AgentGov 系统源码的 `make test` 不收集本目录。平台在测试待发布 Agent 版本时，会检出精确
-`commit_sha` 并执行完整 `tests/`；原有或新增用例任一失败，都不能发布该 Agent 版本。
+Agent 开发者负责维护 `tests/`。AgentGov 系统源码的 root pytest 与 `make test` 不收集本目录；
+源码仓只能通过公共 `make container-workspace-pytest-test` 入口，在隔离容器内检出精确
+`commit_sha` 并执行完整 `tests/`。原有或新增用例任一失败，都不能发布该 Agent 版本。
 
 ## 运行态更新
 

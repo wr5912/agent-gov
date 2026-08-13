@@ -1,8 +1,10 @@
 # AgentGov 四阶段改进治理工作台 UI 整改方案
 
-> 文档层级：四阶段改进治理工作台 UI 与流程绝对权威。
+> 文档层级：四阶段改进治理工作台 UI 与用户流程权威；不覆盖 OpenAPI、测试执行协议或里程碑状态。
 > 权威范围：本文与四张效果图 `docs/imgs/反馈整理.png`、`docs/imgs/归因分析.png`、`docs/imgs/优化执行.png`、`docs/imgs/测试发布.png` 共同定义改进治理工作台的用户主链路、页面骨架、决策卡、面板入口、处理记录和验收锚点。
-> 覆盖规则：凡已归档的旧 ASCII UI 草图、当前实现基线、旧设计评审、前端旧设计、后端旧设计或测试验收口径与本文冲突，以本文和四张效果图为准。
+> 覆盖规则：已归档的旧 ASCII UI 草图、旧设计评审和旧用户流程若与本文冲突，以本文和四张效果图
+> 为目标 UI 依据。本文不能覆盖当前实现基线、运行时 OpenAPI、测试执行协议或里程碑状态；这些
+> 事实仍由各自权威来源维护。
 > 实施边界：目标态实施时，前后端、OpenAPI、测试和文档必须共同实现本文契约；当前完成度以
 > [反馈闭环当前实现基线](./反馈闭环当前实现基线.md)、运行时 OpenAPI 和真实运行态为准。后续改动
 > 不得恢复已删除旧路径。
@@ -597,203 +599,49 @@ AI 友好层与人类友好层必须同源：
 
 ---
 
-## 13. Workspace pytest 测试资产化与沉淀设计
+## 13. 测试发布阶段的 UI 契约
 
-测试发布阶段不维护脱离业务 Agent 的测试内容数据库。测试必须和被测 Agent 的 prompt、skill、hook、MCP 配置及代码一起开发、评审、导入、导出和发布。
+本章只定义用户在“测试发布”阶段看到什么、决定什么，不定义 pytest 命令、sandbox 挂载、
+worker authority、运行回执字段或重启恢复算法。执行协议的唯一当前权威是
+[业务 Agent Workspace 原生 pytest 测试资产实现方案](./engineering/业务AgentWorkspace原生pytest测试资产实现方案.md)，
+测试与正式测评的分权以
+[测试资产组合治理](./engineering/测试资产组合治理.md) 为准。
 
-### 13.1 核心对象
+### 13.1 用户主动作
 
-| 对象 | 定位 | 权威来源 |
+测试发布阶段保留三个彼此独立、可审计的业务动作：
+
+1. **生成回归测试候选**：只产生测试意图、完整文件 Diff 和断言依据，不写入 Workspace，也不运行测试。
+2. **确认待发布变更**：把用户确认的配置与测试文件收口到同一待发布版本；确认本身不隐式执行测试。
+3. **运行并判断是否发布**：用户显式触发当前待发布版本的完整测试，查看结果和阻塞原因，再决定发布或返工。
+
+状态推进只能是这些业务动作成功后的副作用。查看测试文件、日志、Diff、历史运行或 Trace 都是辅助入口，
+不得占用决策卡主按钮。
+
+### 13.2 页面信息归属
+
+| 区域 | 展示内容 | 不应混入 |
 | --- | --- | --- |
-| `RegressionTestDesign` | 治理 Agent 给出的测试语义候选 | 事项内容子资源 |
-| Workspace 测试文件 | 可执行 pytest 测试资产 | 精确 Git commit 中的 `tests/test_*.py` |
-| `AgentTestSuiteSummary` | 指定提交测试目录、文件、诊断和摘要的派生视图 | 运行时扫描，不单独保存测试正文 |
-| `AgentTestRun` | 平台固定命令的一次执行证据 | SQLite 运行记录 + pytest 输出 |
-| `AgentTestSchedule` / `AgentTestScheduleEvent` | 每 Agent 定时策略及触发审计 | SQLite 调度记录，不保存测试正文 |
-| `AgentChangeSet` | 同一未发布改动的业务关联 | 后端版本治理记录 |
-| `Release` | 发布、强制发布警告、恢复和回滚事实 | 后端发布记录 |
+| 决策卡 | 当前唯一主决策、依据、后果、来源和确认状态 | 命令、容器、挂载、内部状态机 |
+| 测试设计面板 | 测试意图、覆盖目标、完整候选 Diff、断言依据 | 伪造的通过状态 |
+| 待发布版本面板 | 修复前/待发布版本、配置与测试 Diff、发布门摘要 | 把旧提交结果当成当前结果 |
+| 测试结果面板 | 状态、摘要、失败详情、证据可信度与重试入口 | 用 Workspace 自测冒充独立能力测评 |
+| 处理记录 | 本阶段业务动作及其结果 | 完整内部日志或全链路记录 |
 
-确认后的测试可执行正文只存在于 Workspace Git。确认前的回归测试代码候选是待审查 Diff，不是测试运行结果或第二套长期资产；`AgentTestRun` 不复制测试源码，Asset Registry 也不保存另一份测试 body。
+### 13.3 资产与可信度
 
-### 13.2 Workspace 目录契约
+- Workspace 测试与 Agent 配置属于同一版本；UI 只读投影测试内容和运行证据，不建立第二套测试正文。
+- 测试结果必须绑定当前待发布版本。历史通过、空测试、只有设计没有可执行文件，都不能显示为发布门已满足。
+- Workspace 自有回归证明“指定版本按约定执行并得到结果”，不等于独立证明业务正确性、安全性或整体能力提升。
+- P1 正式测评入口属于“业务 Agent 详情 → 测评”，不会成为四阶段工作台的第五阶段。
 
-```text
-workspace/
-├── CLAUDE.md
-├── .claude/
-├── .mcp.json
-└── tests/
-    ├── README.md
-    ├── conftest.py       # 可选
-    └── test_*.py
-```
+### 13.4 负向验收
 
-- 首版只接受 `tests/` 下的扁平 Python 文件；
-- `tests/test_*.py` 必须可被 Python 解析；
-- 测试依赖、fixture 和人工复核边界由 `tests/README.md` 说明；
-- 测试与 Agent Workspace 同 commit、同 Diff、同导入包和同发布版本；
-- 所有注册业务 Agent（含 `main-agent`）遵循相同结构；
-- governor 可使用项目测试目录验证自身，但不进入业务 Agent 注册表和发布链。
-
-### 13.3 从代码候选到可执行测试
-
-该流程固定为三个独立业务动作：
-
-1. **生成回归测试**：治理 Agent 只输出完整 pytest 代码、测试意图和断言依据；后端确定
-   `tests/test_feedback_<id>_<digest>.py` 路径并校验代码。结果展示为完整新增文件 Diff，不写入
-   Workspace、不提交 Git、不运行测试；生成失败时不得用启发式逻辑伪造测试。代码必须先直接断言
-   `assert not result.errors`，再对明确业务结果分别断言；`errors` 是 tuple，不能与空 list 比较。
-   固定业务词先用 `normalized_text = "".join(result.text.split())` 消除 Markdown 空格/换行差异再断言，但不得放宽业务语义。
-   反馈整理和优化方案中每个独立可观察的修复结果都必须有单独正向断言，不得只写入测试意图或断言依据。
-   自包含业务事实用例还必须禁止外部工具/文件取证，并对 `agent_activity.tool_calls` 为空做可执行断言；不允许用恢复后最终回答掩盖大量失败工具尝试。
-   仅检查非空、恒等比较、嵌套断言、辅助函数、`any(...)`、`A or B` 候选关键词，或只断言相反结果
-   未出现而遗漏目标结果，均不构成有效回归测试。输入中已有判断事实时应直接内嵌，
-   不得无依据地改写为依赖外部 MCP、数据库或网络数据的查询。
-2. **确认待发布变更**：校验事项、业务 Agent、归因、优化方案、执行记录和待发布变更仍属于同一链路；
-   在隔离 worktree 新增已确认测试文件，不覆盖、删除或弱化已有测试；将配置修改和测试文件压缩为
-   相对修复前版本的单一待发布 Git commit。失败时恢复原待发布提交。
-3. **运行测试**：用户在发布工作台显式触发后，平台 checkout 当前待发布 commit，运行完整 `tests/`
-   并创建 `source=release_check` 的 `AgentTestRun`。确认动作不得隐式排队或执行测试。
-
-同一待发布变更可以因返工产生更新的待发布提交。旧提交和旧运行继续可审计，但只允许当前待发布提交参与普通发布条件判断。
-
-### 13.4 agentgov_testkit
-
-开发者可以在 Workspace 测试中使用版本化 Python 包：
-
-```python
-from agentgov_testkit import invoke_agent
-
-
-def test_expected_behavior():
-    result = invoke_agent("输入一个业务问题")
-    assert "预期业务结论" in result.text
-```
-
-也可以使用 pytest 的 `agent` fixture。testkit 在一个 pytest session 内只解析一次精确 commit，但为每个
-测试函数创建并关闭独立 Agent 会话，避免历史消息和上下文窗口跨用例污染。testkit 封装被测 Agent 调用，
-不引入必须由开发者理解的平行 Client 类。测试断言在 pytest 进程中执行，平台不接收客户端上传的通过状态。
-
-### 13.5 平台固定执行
-
-平台执行命令固定为：
-
-```bash
-python -m pytest -q -p agentgov_testkit.pytest_plugin tests
-```
-
-客户端不能提交命令、工作目录、安装步骤、状态或报告。第一阶段只在 API 容器的受控 worktree 中执行，不自动安装任意依赖，也不把导入动作等同于执行测试。
-
-`AgentTestRun` 保存：
-
-```text
-test_run_id
-agent_id
-commit_sha
-change_set_id          # 可选业务关联
-schedule_id            # 定时触发时存在
-scheduled_for          # 定时计划窗口
-source
-status
-suite_digest           # 从该 commit 派生
-command
-stdout / stderr
-pytest items / report
-error
-created_at / started_at / completed_at
-```
-
-### 13.6 版本身份
-
-Git `commit_sha` 是被测版本的唯一权威标识。省略提交时，平台必须在创建测试会话或运行的请求内读取当前版本并固定一次；后续执行不能重新解释“最新”。
-
-`suite_digest` 只校验该提交中的测试内容，`change_set_id` 只关联同一未发布改动。两者不能与 commit 拼接成新的复合身份，也不能覆盖 commit 事实。
-
-用户界面统一显示“修复前版本”和“待发布版本”。`base_commit_sha`、`candidate_commit_sha` 作为代码字段保留，不改变用户展示口径。
-
-### 13.7 运行生命周期与重启
-
-```text
-queued -> running -> passed | failed | error | cancelled
-running --服务关闭或重启--> interrupted
-```
-
-- 尚未领取的 `queued` 运行在服务启动后重新入队；
-- 遗留 `running` 明确收口为 `interrupted`；
-- 取消请求持久化并终止整个 pytest 进程组；
-- 临时测试会话不伪装为跨进程可恢复，重启后返回 session unavailable；
-- stdout、stderr、item 和错误详情持久化且有大小上限。
-
-### 13.8 发布条件
-
-普通发布只接受当前待发布提交的通过证据：
-
-- 同一业务 Agent；
-- `AgentTestRun.commit_sha` 精确等于 `AgentChangeSet.candidate_commit_sha`；
-- 运行状态为 `passed`；
-- Workspace 在该提交上存在可运行测试；
-- 归因和执行 provenance 完整。
-
-旧提交通过、空测试目录、设计已确认但文件未生成、失败、错误、取消或中断都不能放行。平台固定运行当前待发布提交的完整 `workspace/tests/`，已有失败和新增失败都必须整改。反馈闭环待发布版本不能强制绕过测试条件；界面只保留历史强制发布记录的原阻塞项、操作人、原因和警告。未关联反馈、由版本治理 API 手工创建的待发布版本，其强制发布属于受保护例外且不出现在本工作台；provenance 不完整始终不可绕过。
-
-### 13.9 导入、导出与远程开发
-
-- 新建和覆盖导入都要求包根目录 `agent.yaml.agent.id` 有效，并与 URL 路径中的目标 `agent_id`
-  逐字一致；缺失、无效、格式错误或来源 ID 冲突时明确拒绝，平台不改写身份；
-- 导入此前不存在的 ID 会创建新业务 Agent；已有 ID 必须携带预期当前提交版本才能覆盖；
-- 缺少 `tests/`、README 或测试文件时允许导入并返回结构化 warning；
-- 开发者可在本地运行 pytest，通过 testkit 连接已导入 Agent；
-- 平台远程接口负责调用精确版本的被测 Agent，不上传或反向执行开发者本地任意测试代码。
-
-### 13.10 资产复利中心
-
-一级导航“资产复利中心”包含两个页签，默认进入“测试资产”：“测试资产”只读投影 Workspace Git 与平台
-运行/调度证据；“治理资产”继续管理方法论、执行资产的沉淀与跨 Agent 复用，并展示审计记录投影。
-审计记录只能随来源关系追溯，不能被继承或复制。
-长期一级资产分类仍是数据/证据、方法论和执行三类，当前 `audit` 只是横切审计维度的 API/UI
-过滤值，不定义第四类资产。测试页不展示通用资产的“沉淀新资产”“继承复用”动作，也不提供
-跨 Agent 自动复制测试代码。
-
-测试资产按业务 Agent 展示文件数、当前有效 commit、suite digest/诊断、最近运行和定时状态。Agent 详情
-固定分为：
-
-1. **测试文件**：只允许读取当前 suite 中的 `tests/test_*.py`，以只读 Python 代码视图展示行号、搜索、
-   复制和折叠；右侧符号轨道投影顶层 class/function 与 `Test*` 类的直接 `test_*` 方法，可预览并定位
-   精确行号。正文仍只存在于 Workspace Git。
-2. **运行历史**：轻量摘要分页并支持状态/来源筛选；点击后再加载 stdout、stderr、pytest item、
-   invocation 和结构化错误。
-3. **定时策略**：每 Agent 唯一，支持常用频率和自定义五字段 Cron、IANA 时区，最短间隔 15 分钟；
-   保存配置不立即运行。
-
-这里的“Agent 详情”是测试资产页中的测试证据详情，不等同于业务 Agent 产品详情或独立测评
-中心。P1 即在“业务 Agent 详情 → 测评”建立单 Agent 主入口，并复用 Scorecard/Violation 组件；
-当前测试详情只保留源码、sample/run 证据和可深链结果。出现第二 benchmark/protocol、跨 Agent
-campaign、持续隐藏集运营或专家评审队列时，组合运营进入独立测评中心。
-
-定时触发只读取触发时当前有效 commit，创建 `source=scheduled`、`change_set_id=null` 的运行；它不读取
-待发布 worktree，也不推进待发布变更或 release。错过多个窗口时只补一次，同 Agent/commit 已有活跃
-运行时合并并记录触发事件。测试与改进事项、待发布变更或 release 的 provenance 只有在持久化关联存在时
-才展示，不从文件名猜测来源。
-
-资产复利中心两个页签不再各自提供刷新按钮；Topbar“刷新”只刷新当前激活页签，隐藏页签不得产生请求。
-
-### 13.11 已删除设计
-
-以数据库测试正文副本为权威的 `TestDataset/EvalRun`、全局用例池、数据集生命周期和逐 case review
-链已经从活跃代码、API 和 UI 删除。历史 migration 与归档材料可保留旧名称用于升级和审计，但不得
-形成兼容入口。未来协议中立的 `EvaluationExecution/Assessment` 只能引用独立版本化评测包并复用
-当前执行证据，不能恢复旧正文副本或旧状态机。
-
-### 13.12 验收断言
-
-- 每个被测版本都由精确 `commit_sha` 标识；
-- 测试文件只从该提交的 `tests/` 读取；
-- 导入缺测试只告警，普通发布则被门禁阻断；
-- 客户端不能覆盖固定命令、运行状态和报告；
-- 生成只形成完整代码 Diff，确认只形成配置与测试同一待发布 commit，运行测试由独立显式动作触发；
-- 旧提交通过不能放行新提交；
-- 服务重启后 running/queued/session 三类状态均有明确处理；
-- 桌面、平板和移动端均能查看设计、测试文件、运行状态、错误详情和发布阻塞原因。
+- 生成测试后没有自动写入、自动运行或自动发布。
+- 查看类动作不出现在决策卡中。
+- 失败态同时提供结构化原因、证据详情和可执行重试/返工入口。
+- 页面不展示可由用户修改的命令、工作目录、状态、分数或平台权威字段。
+- 桌面、平板和移动端都能完成“生成 → 确认 → 运行 → 发布或返工”的主旅程。
 
 ## 14. 代码实现原则
 

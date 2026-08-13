@@ -12,6 +12,72 @@ from urllib.request import Request, urlopen
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
+_READINESS_STATUSES = frozenset({"not_checked", "checking", "ready", "degraded"})
+_READINESS_ERROR_CODES = frozenset(
+    {
+        "LITELLM_CLAUDE_CODE_COMPAT_FAILED",
+        "MODEL_AGENT_LOOP_CAPABILITY_FAILED",
+        "MODEL_PROVIDER_CONFIGURATION_MISSING",
+        "MODEL_PROVIDER_NOT_CHECKED",
+        "MODEL_PROVIDER_PROBE_IN_PROGRESS",
+        "MODEL_PROVIDER_READINESS_PROBE_FAILED",
+        "MODEL_PROVIDER_SIDECAR_UNAVAILABLE",
+        "MODEL_SCHEMA_EXACT_OUTPUT_FAILED",
+        "READINESS_RESPONSE_UNAVAILABLE",
+        "VLLM_BASE_URL_INVALID",
+        "VLLM_CHAT_PROBE_FAILED",
+        "VLLM_DIRECT_CLAUDE_CODE_COMPAT_FAILED",
+        "VLLM_MODELS_PROBE_FAILED",
+        "VLLM_TOOL_CALLING_UNSUPPORTED",
+        "VLLM_VERSION_PROBE_FAILED",
+    }
+)
+_READINESS_REASONS = frozenset(
+    {
+        "connection_error",
+        "invalid_json",
+        "invalid_version",
+        "missing_provider_configuration",
+        "missing_provider_endpoint",
+        "missing_route_endpoint",
+        "missing_version",
+        "request_failed",
+        "timeout",
+        "vllm_base_url_must_not_end_in_v1",
+    }
+)
+_READINESS_PROBES = frozenset(
+    {
+        "agent_runtime_capabilities",
+        "agent_tool_loop",
+        "chat",
+        "configuration",
+        "models",
+        "provider_route",
+        "schema_exact_json",
+        "sidecar_readiness",
+        "tool_calling",
+        "vllm_version",
+    }
+)
+_READINESS_ACTIONS = {
+    "LITELLM_CLAUDE_CODE_COMPAT_FAILED": "verify_provider_compatibility",
+    "MODEL_AGENT_LOOP_CAPABILITY_FAILED": "verify_agent_loop",
+    "MODEL_PROVIDER_CONFIGURATION_MISSING": "configure_provider",
+    "MODEL_PROVIDER_NOT_CHECKED": "wait_for_provider_probe",
+    "MODEL_PROVIDER_PROBE_IN_PROGRESS": "wait_for_provider_probe",
+    "MODEL_PROVIDER_READINESS_PROBE_FAILED": "retry_provider_probe",
+    "MODEL_PROVIDER_SIDECAR_UNAVAILABLE": "verify_sidecar",
+    "MODEL_SCHEMA_EXACT_OUTPUT_FAILED": "verify_schema_output",
+    "READINESS_RESPONSE_UNAVAILABLE": "retry_readiness_request",
+    "VLLM_BASE_URL_INVALID": "fix_provider_base_url",
+    "VLLM_CHAT_PROBE_FAILED": "verify_provider_capability",
+    "VLLM_DIRECT_CLAUDE_CODE_COMPAT_FAILED": "verify_provider_compatibility",
+    "VLLM_MODELS_PROBE_FAILED": "verify_provider_capability",
+    "VLLM_TOOL_CALLING_UNSUPPORTED": "verify_provider_capability",
+    "VLLM_VERSION_PROBE_FAILED": "verify_external_vllm",
+}
+
 
 def _env_value(path: Path, key: str) -> str | None:
     if not path.exists():
@@ -35,13 +101,32 @@ def _get_json(url: str, *, timeout: float) -> tuple[int | None, JsonObject | Non
     except HTTPError as exc:
         status_code = exc.code
         raw = exc.read(1024 * 1024)
-    except Exception as exc:
-        return None, None, f"{exc.__class__.__name__}: {exc}"
+    except Exception:
+        return None, None, "request_failed"
     try:
         payload = json.loads(raw.decode("utf-8"))
     except Exception:
-        return status_code, None, "response is not valid JSON"
+        return status_code, None, "invalid_json"
     return status_code, payload if isinstance(payload, dict) else None, None
+
+
+def _known_token(value: JsonValue, allowed: frozenset[str], fallback: str) -> str:
+    return value if isinstance(value, str) and value in allowed else fallback
+
+
+def _bounded_duration(value: JsonValue) -> int | None:
+    return value if type(value) is int and 0 <= value <= 86_400_000 else None
+
+
+def _readiness_diagnostics(readiness: JsonObject) -> tuple[str, str, str, str, int | None, bool | None, str | None]:
+    status = _known_token(readiness.get("status"), _READINESS_STATUSES, "unknown")
+    error_code = _known_token(readiness.get("error_code"), _READINESS_ERROR_CODES, "UNKNOWN_PROVIDER_READINESS_ERROR")
+    reason = _known_token(readiness.get("reason"), _READINESS_REASONS, "unknown")
+    probe = _known_token(readiness.get("probe"), _READINESS_PROBES, "unknown")
+    duration_ms = _bounded_duration(readiness.get("duration_ms"))
+    retryable_value = readiness.get("retryable")
+    retryable = retryable_value if type(retryable_value) is bool else None
+    return status, error_code, reason, probe, duration_ms, retryable, _READINESS_ACTIONS.get(error_code)
 
 
 def diagnose(*, api_base: str, wait_seconds: float, require_ready: bool) -> int:
@@ -67,21 +152,27 @@ def diagnose(*, api_base: str, wait_seconds: float, require_ready: bool) -> int:
             break
         time.sleep(0.25)
 
-    provider_status = str(readiness.get("status") or "unknown")
+    provider_status, error_code, reason, probe, duration_ms, retryable, action = _readiness_diagnostics(readiness)
     print(f"Model provider: {provider_status}")
-    for key in ("error_code", "reason", "probe", "duration_ms", "retryable", "action", "checked_at"):
-        value = readiness.get(key)
-        if value is not None:
-            print(f"{key}={value}")
+    if error_code != "UNKNOWN_PROVIDER_READINESS_ERROR":
+        print(f"error_code={error_code}")
+    if reason != "unknown":
+        print(f"reason={reason}")
+    if probe != "unknown":
+        print(f"probe={probe}")
+    if duration_ms is not None:
+        print(f"duration_ms={duration_ms}")
+    if retryable is not None:
+        print(f"retryable={str(retryable).lower()}")
+    if action is not None:
+        print(f"action={action}")
     if provider_status == "ready":
         print("结论: API 容器与外部模型 provider 均已就绪。")
     elif provider_status == "checking":
         print("结论: API 容器已存活；外部模型 provider 就绪探测仍在进行，不能把该探测当作镜像或容器启动失败。")
     else:
-        code = str(readiness.get("error_code") or "UNKNOWN_PROVIDER_READINESS_ERROR")
-        reason = str(readiness.get("reason") or "unknown")
         print(
-            f"根因: API 容器已存活；外部模型 provider 就绪探测失败（code={code}, reason={reason}）。这不是镜像启动失败，Compose dependency 报错只是次级症状。"
+            f"根因: API 容器已存活；外部模型 provider 就绪探测失败（code={error_code}, reason={reason}）。这不是镜像启动失败，Compose dependency 报错只是次级症状。"
         )
     return 0 if provider_status == "ready" or not require_ready else 2
 

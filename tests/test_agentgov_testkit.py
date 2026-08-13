@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,16 @@ from agentgov_testkit import (
 )
 from agentgov_testkit import _reporting as testkit_reporting
 from agentgov_testkit import _transport as testkit_transport
+
+
+class _FlushTrackingStringIO(io.StringIO):
+    def __init__(self) -> None:
+        super().__init__()
+        self.flushed = False
+
+    def flush(self) -> None:
+        self.flushed = True
+        super().flush()
 
 
 class _Response:
@@ -171,12 +182,23 @@ def test_pytest_plugin_writes_machine_readable_call_and_setup_failures(
             outcome="failed",
             duration=0.2,
             failed=True,
-            longrepr="fixture failed",
+            longrepr="fixture\u2028失败\u2029",
         )
     )
     pytest_plugin.pytest_sessionfinish(SimpleNamespace(), 1)
 
-    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    payload_json = report_path.read_text(encoding="utf-8")
+    output = _FlushTrackingStringIO()
+    monkeypatch.setattr(pytest_plugin.sys, "stdout", output)
+    pytest_plugin.pytest_unconfigure(SimpleNamespace())
+
+    assert pytest_plugin.WORKSPACE_REPORT_LOG_PREFIX == "AGENTGOV_WORKSPACE_REPORT_V1:"
+    assert output.getvalue() == f"{pytest_plugin.WORKSPACE_REPORT_LOG_PREFIX}{payload_json}\n"
+    assert payload_json.isascii()
+    assert payload_json.splitlines() == [payload_json]
+    assert output.flushed is True
+
+    payload = json.loads(payload_json)
     assert payload["exit_code"] == 1
     assert payload["invocations"] == [
         {
@@ -201,6 +223,62 @@ def test_pytest_plugin_writes_machine_readable_call_and_setup_failures(
             "outcome": "failed",
             "duration_seconds": 0.2,
             "phase": "setup",
-            "detail": "fixture failed",
+            "detail": "fixture\u2028失败\u2029",
         },
     ]
+
+
+def test_pytest_plugin_does_not_emit_report_without_path_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AGENTGOV_TEST_REPORT_PATH", str(tmp_path / "report.json"))
+    pytest_plugin.pytest_configure(SimpleNamespace())
+    pytest_plugin.pytest_sessionfinish(SimpleNamespace(), 0)
+    monkeypatch.delenv("AGENTGOV_TEST_REPORT_PATH")
+    output = _FlushTrackingStringIO()
+    monkeypatch.setattr(pytest_plugin.sys, "stdout", output)
+
+    pytest_plugin.pytest_unconfigure(SimpleNamespace())
+
+    assert output.getvalue() == ""
+
+
+def test_pytest_configure_clears_report_state_between_in_process_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AGENTGOV_TEST_REPORT_PATH", str(tmp_path / "report.json"))
+    pytest_plugin.pytest_configure(SimpleNamespace())
+    testkit_reporting.record_invocation(
+        AgentInvocation(
+            text="旧结果",
+            run_id="run-old",
+            session_id="session-old",
+            agent_version_id="commit-old",
+            langfuse_trace_id=None,
+            langfuse_trace_url=None,
+            errors=(),
+            raw={},
+        )
+    )
+    pytest_plugin.pytest_runtest_logreport(
+        SimpleNamespace(
+            when="call",
+            nodeid="tests/test_old.py::test_old",
+            outcome="passed",
+            duration=0.1,
+            failed=False,
+            longrepr="",
+        )
+    )
+    pytest_plugin.pytest_sessionfinish(SimpleNamespace(), 0)
+
+    pytest_plugin.pytest_configure(SimpleNamespace())
+    output = _FlushTrackingStringIO()
+    monkeypatch.setattr(pytest_plugin.sys, "stdout", output)
+    pytest_plugin.pytest_unconfigure(SimpleNamespace())
+
+    assert pytest_plugin._RESULTS == []
+    assert testkit_reporting.invocation_records() == []
+    assert output.getvalue() == ""

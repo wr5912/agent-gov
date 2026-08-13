@@ -1,8 +1,8 @@
 """Business Agent workspace package API contracts.
 
-The package endpoints intentionally expose one small synchronous workflow:
-export the current Git-backed workspace, import a complete replacement, and
-restore a prior commit as a new commit.  Operation state is not persisted.
+The HTTP package workflow remains synchronous from the caller's perspective.
+Overwrite and restore activation facts are durably journaled so Git, session,
+audit, and admission-fence outcomes can be reconciled after process failure.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class WorkspaceImportResponse(BaseModel):
     import_record_id: str
     test_suite_status: Literal["ready", "warning", "invalid"]
     test_file_count: int
-    test_suite_warnings: list[AgentTestDiagnostic] = Field(default_factory=list)
+    test_suite_diagnostics: list[AgentTestDiagnostic]
 
 
 class WorkspaceRestoreRequest(BaseModel):

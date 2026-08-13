@@ -1,76 +1,272 @@
-"""业务 Agent 删除：注册表 tombstone + 运行态存储清理。
-
-删除的三条边界，各有其理由：
-
-- **受保护业务 Agent 拒删**：其内置 Workspace 在仓库维护，删除必须经受保护 PR。
-- **删除前必须无活跃 turn / 无未终结 change set**：与导入/恢复共用同一把维护租约，因此二者
-  天然互斥；否则会删掉正在被使用的 workspace。
-- **rmtree 不在事务块内**：事务内只 tombstone 并标记清理待完成，提交后才动磁盘。磁盘删除
-  不可回滚，放进事务意味着事务回滚后磁盘已经回不去了。
-
-崩溃安全：tombstone 先落库，磁盘清理若中断，注册表仍是 tombstone（不可见、重启不复活），
-且 `create_business_agent` 会拒绝复用带未完成清理标记的 id，直到恢复器收口。
-"""
+"""Durable business-Agent deletion with exact-instance and inode-CAS fences."""
 
 from __future__ import annotations
 
-import shutil
-from dataclasses import dataclass
+import logging
+import re
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
+from typing import Literal, TypedDict
 
-from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
+from app.runtime.agent_deletion_fs import (
+    purge_quarantined_agent_layout,
+    quarantine_agent_layout,
+    remove_quarantine_witness,
+)
+from app.runtime.errors import FeedbackStoreError
+from app.runtime.stores.agent_deletion_store import (
+    AgentDeletionOperation,
+    AgentDeletionStore,
+    AgentDeletionStoreError,
+)
 
 
-class BusinessAgentDeletionError(RuntimeError):
-    """带 HTTP 状态与错误码的删除失败。"""
+class BusinessAgentDeletionError(FeedbackStoreError):
+    """A stable API-facing deletion failure."""
 
     def __init__(self, status_code: int, code: str, detail: str) -> None:
         super().__init__(detail)
         self.status_code = status_code
+        self.error_code = code
         self.code = code
         self.detail = detail
 
 
-def _remove_tree(path: Path) -> bool:
-    """删除一个真实目录，返回是否已确认删除。
-
-    symlink 一律不跟随、不删除——删除的目标是这个 Agent 自己的目录，跟随 symlink 会把删除
-    放大到目录之外。
-    """
-
-    if path.is_symlink():
-        return False
-    if not path.exists():
-        return True
-    if not path.is_dir():
-        return False
-    shutil.rmtree(path, ignore_errors=True)
-    return not path.exists()
+class AgentDeletionReconciliationSummary(TypedDict):
+    completed: int
+    cleanup_pending: int
 
 
-@dataclass(frozen=True)
-class BusinessAgentPurgeResult:
-    """删除清理的结果证据。
+class BusinessAgentDeletionService:
+    def __init__(
+        self,
+        store: AgentDeletionStore,
+        *,
+        data_dir: Path,
+        mutation_guard_for: Callable[[str], AbstractContextManager[None]] | None = None,
+        evict_agent: Callable[[str], None] | None = None,
+    ) -> None:
+        self._store = store
+        self._data_dir = data_dir
+        self._mutation_guard_for = mutation_guard_for or _no_mutation_guard
+        self._evict_agent = evict_agent or _no_evict
 
-    部分失败必须可见：注册表已 tombstone 但磁盘有残留时，调用方要能如实回报，而不是把它
-    当成删干净了。
-    """
+    def delete(
+        self,
+        *,
+        agent_id: str,
+        agent_instance_etag: str,
+        idempotency_key: str,
+    ) -> AgentDeletionOperation:
+        with self._mutation_guard_for(agent_id):
+            return self._delete_locked(
+                agent_id=agent_id,
+                agent_instance_etag=agent_instance_etag,
+                idempotency_key=idempotency_key,
+            )
 
-    workspace_removed: bool
+    def _delete_locked(
+        self,
+        *,
+        agent_id: str,
+        agent_instance_etag: str,
+        idempotency_key: str,
+    ) -> AgentDeletionOperation:
+        try:
+            operation = self._store.begin(
+                agent_id=agent_id,
+                agent_instance_etag=agent_instance_etag,
+                idempotency_key=idempotency_key,
+            )
+        except AgentDeletionStoreError as exc:
+            raise BusinessAgentDeletionError(exc.status_code, exc.code, exc.detail) from exc
+        self._evict_agent(agent_id)
+        if operation.state == "completed":
+            return self._cleanup_completed_witness(operation)
+        return self._reconcile_operation_locked(operation)
 
-    @property
-    def cleanup_complete(self) -> bool:
-        return self.workspace_removed
+    def reconcile_operation(self, operation: AgentDeletionOperation) -> AgentDeletionOperation:
+        with self._mutation_guard_for(operation.agent_id):
+            self._evict_agent(operation.agent_id)
+            return self._reconcile_operation_locked(operation)
+
+    def get_status(self, operation_id: str) -> AgentDeletionOperation:
+        operation = self._store.get(operation_id)
+        if operation is None:
+            raise BusinessAgentDeletionError(
+                404,
+                "AGENT_DELETION_OPERATION_NOT_FOUND",
+                "Agent deletion operation was not found",
+            )
+        return operation
+
+    def list_statuses(
+        self,
+        *,
+        state: Literal["cleanup_pending", "completed"],
+        limit: int,
+    ) -> list[AgentDeletionOperation]:
+        return self._store.list_recent(state=state, limit=limit)
+
+    def _reconcile_operation_locked(self, operation: AgentDeletionOperation) -> AgentDeletionOperation:
+        operation = self._ensure_durable_quarantine(operation)
+        if not operation.quarantine_confirmed:
+            return operation
+        result = purge_quarantined_agent_layout(
+            data_dir=self._data_dir,
+            workspace_path=operation.workspace_path,
+            quarantine_path=operation.quarantine_path,
+            expected=operation.expected_identity,
+        )
+        if result.state != "completed":
+            return self._store.record_cleanup_failure(
+                operation.operation_id,
+                error_code=result.error_code or "AGENT_DELETION_CLEANUP_PENDING",
+            )
+        operation = self._store.confirm_purge(operation.operation_id)
+        if not operation.purge_confirmed:
+            return self._store.record_cleanup_failure(
+                operation.operation_id,
+                error_code="AGENT_DELETION_PURGE_ACK_PENDING",
+            )
+        try:
+            completed = self._store.complete(operation.operation_id)
+        except AgentDeletionStoreError as exc:
+            raise BusinessAgentDeletionError(exc.status_code, exc.code, exc.detail) from exc
+        except Exception:
+            reread = self._store.get(operation.operation_id)
+            if reread is not None and reread.state == "completed":
+                return reread
+            if reread is not None:
+                try:
+                    return self._store.record_cleanup_failure(
+                        operation.operation_id,
+                        error_code="AGENT_DELETION_COMPLETION_ACK_PENDING",
+                    )
+                except Exception:
+                    final_reread = self._store.get(operation.operation_id)
+                    if final_reread is not None:
+                        return final_reread
+            raise
+        return self._cleanup_completed_witness(completed)
+
+    def _ensure_durable_quarantine(self, operation: AgentDeletionOperation) -> AgentDeletionOperation:
+        if operation.quarantine_confirmed:
+            return operation
+        result = quarantine_agent_layout(
+            data_dir=self._data_dir,
+            workspace_path=operation.workspace_path,
+            quarantine_path=operation.quarantine_path,
+            expected=operation.expected_identity,
+        )
+        if result.state == "cleanup_pending":
+            return self._store.record_cleanup_failure(
+                operation.operation_id,
+                error_code=result.error_code or "AGENT_DELETION_QUARANTINE_PENDING",
+            )
+        if result.state == "absent" and operation.expected_identity is not None:
+            return self._store.record_cleanup_failure(
+                operation.operation_id,
+                error_code="AGENT_DELETION_SOURCE_MISSING_BEFORE_QUARANTINE",
+            )
+        confirmed = self._store.confirm_quarantine(operation.operation_id)
+        if confirmed.quarantine_confirmed:
+            return confirmed
+        return self._store.record_cleanup_failure(
+            operation.operation_id,
+            error_code="AGENT_DELETION_QUARANTINE_ACK_PENDING",
+        )
+
+    def reconcile(self, *, limit: int = 100) -> AgentDeletionReconciliationSummary:
+        completed, pending = self._reconcile_pending_batch(limit=limit)
+        self._reconcile_witness_batch(limit=limit)
+        return {"completed": completed, "cleanup_pending": pending}
+
+    def _reconcile_pending_batch(self, *, limit: int) -> tuple[int, int]:
+        completed = 0
+        pending = 0
+        for operation in self._store.list_pending(limit=limit):
+            try:
+                result = self.reconcile_operation(operation)
+            except Exception:
+                _log_reconcile_failure(operation.operation_id, "AGENT_DELETION_RECONCILE_FAILED")
+                _record_pending_failure_best_effort(self._store, operation.operation_id)
+                pending += 1
+                continue
+            if result.state == "completed":
+                completed += 1
+            else:
+                pending += 1
+        return completed, pending
+
+    def _reconcile_witness_batch(self, *, limit: int) -> None:
+        for operation in self._store.list_witness_cleanup(limit=limit):
+            try:
+                with self._mutation_guard_for(operation.agent_id):
+                    self._evict_agent(operation.agent_id)
+                    self._cleanup_completed_witness(operation)
+            except Exception:
+                _log_reconcile_failure(operation.operation_id, "AGENT_DELETION_WITNESS_RECONCILE_FAILED")
+                _record_witness_failure_best_effort(self._store, operation.operation_id)
+
+    def _cleanup_completed_witness(self, operation: AgentDeletionOperation) -> AgentDeletionOperation:
+        if operation.state != "completed" or operation.witness_removed:
+            return operation
+        if operation.expected_identity is None or remove_quarantine_witness(
+            quarantine_path=operation.quarantine_path,
+            expected=operation.expected_identity,
+        ):
+            try:
+                return self._store.confirm_witness_removed(operation.operation_id)
+            except Exception:
+                reread = self._store.get(operation.operation_id)
+                if reread is not None:
+                    return reread
+                raise
+        return self._store.record_witness_cleanup_failure(operation.operation_id)
 
 
-def purge_business_agent_storage(*, data_dir: Path, agent_id: str) -> BusinessAgentPurgeResult:
-    """删除该 Agent 的全部运行态存储。"""
+def _no_mutation_guard(_: str) -> AbstractContextManager[None]:
+    return nullcontext()
 
+
+def _no_evict(_: str) -> None:
+    return None
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _log_reconcile_failure(operation_id: str, error_code: str) -> None:
+    _LOGGER.warning("Agent deletion reconcile isolated operation=%s error_code=%s", operation_id, error_code)
+
+
+def _record_pending_failure_best_effort(store: AgentDeletionStore, operation_id: str) -> None:
     try:
-        safe_id = validate_agent_id(agent_id)
-    except InvalidAgentId as exc:
-        raise BusinessAgentDeletionError(422, "INVALID_AGENT_ID", str(exc)) from exc
+        store.record_cleanup_failure(operation_id, error_code="AGENT_DELETION_RECONCILE_FAILED")
+    except Exception:
+        _log_reconcile_failure(operation_id, "AGENT_DELETION_RECONCILE_RECORD_FAILED")
 
-    layout = business_agent_layout(data_dir, safe_id)
-    workspace_removed = _remove_tree(layout.root)
-    return BusinessAgentPurgeResult(workspace_removed=workspace_removed)
+
+def _record_witness_failure_best_effort(store: AgentDeletionStore, operation_id: str) -> None:
+    try:
+        store.record_witness_cleanup_failure(operation_id)
+    except Exception:
+        _log_reconcile_failure(operation_id, "AGENT_DELETION_WITNESS_RECORD_FAILED")
+
+
+_STRONG_AGENT_ETAG = re.compile(r'^"([0-9a-f]{64})"$')
+
+
+def parse_agent_if_match(value: str | None) -> str:
+    """Parse one strong HTTP entity-tag and return its opaque instance CAS."""
+
+    match = _STRONG_AGENT_ETAG.fullmatch((value or "").strip())
+    if match is None:
+        raise BusinessAgentDeletionError(
+            409,
+            "AGENT_DELETION_PRECONDITION",
+            'If-Match must contain exactly one quoted strong Agent ETag, for example "<etag>".',
+        )
+    return match.group(1)

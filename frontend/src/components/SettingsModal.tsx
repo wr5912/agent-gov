@@ -1,15 +1,6 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+
 import {
-  Bot,
-  ExternalLink,
-  KeyRound,
-  Save,
-  Wrench,
-  X,
-  type LucideIcon,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  deleteBusinessAgent,
   getOpenAICompatAgent,
   listBusinessAgents,
   resetOpenAICompatAgent,
@@ -18,17 +9,31 @@ import {
   type OpenAICompatAgentConfig,
 } from "../api/runtime";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
+import {
+  DeveloperSettingsTab,
+  SettingsContentHeader,
+  SettingsFooter,
+  SettingsHeader,
+  SettingsNavigation,
+  type SettingsTab,
+} from "./SettingsModalSections";
 import { BusinessAgentManagementPanel } from "./BusinessAgentManagementPanel";
+import {
+  activateSettingsRequestContext,
+  beginSettingsRequest,
+  deactivateSettingsRequestContext,
+  settleSettingsRequest,
+  type SettingsRequestAuthority,
+  type SettingsRequestGeneration,
+} from "./settingsRequestContext";
+import {
+  PendingDeletionNotice,
+  usePendingDeletionOperations,
+} from "./usePendingDeletionOperations";
 import "./SettingsModal.css";
 
 // 四阶段改进治理 §2 平台设置：业务 Agent 管理 / Developer·Debug（纯配置）。
-// 资产 Registry 已提升为一级导航「资产复利」（W3 修订，三支柱 Playground/改进事项/资产复利）；旧反馈优化、API Docs、Langfuse 仍在此处。
-
-const SETTINGS_TABS: { key: SettingsTab; label: string; eyebrow: string; description: string; Icon: LucideIcon }[] = [
-  { key: "agents", label: "业务 Agent", eyebrow: "Agents", description: "导入、停用和维护业务 Agent。", Icon: Bot },
-  { key: "developer", label: "Developer", eyebrow: "Runtime", description: "配置本浏览器连接的 Runtime 与调试入口。", Icon: Wrench },
-];
-type SettingsTab = "agents" | "developer";
+// 资产 Registry 已提升为一级导航「资产复利」；旧反馈优化、API Docs、Langfuse 仍在此处。
 
 interface SettingsModalProps {
   open: boolean;
@@ -41,246 +46,414 @@ interface SettingsModalProps {
   onOpenAgentTestAssets: (agentId: string) => void;
 }
 
-export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, onSave, onAgentsChanged, onOpenAgentTestAssets }: SettingsModalProps) {
-  const [apiBase, setApiBase] = useState(config.apiBase);
-  const [apiKey, setApiKey] = useState(config.apiKey);
-  const [agents, setAgents] = useState<AgentSummary[]>([]);
-  // per-action pending key（如 `delete:${id}`、`lifecycle:${id}`），按钮就近显示 spinner/aria-busy。
+interface AgentSettingsTabProps {
+  config: RuntimeClientConfig;
+  agents: AgentSummary[];
+  loading: boolean;
+  externalBusy: boolean;
+  pending: string | null;
+  requestGeneration: { current: SettingsRequestGeneration };
+  reloadAgents: (authority?: SettingsRequestAuthority) => Promise<void>;
+  onAgentsChanged: () => void;
+  onBusyChange: (busy: boolean) => void;
+  onLifecycle: (agentId: string, status: string) => void;
+  onOpenTestAssets: (agentId: string) => void;
+  onDelete: (agentId: string) => void;
+}
+
+function SettingsAlerts({
+  error,
+  successMessage,
+}: {
+  error: string | undefined;
+  successMessage: string | undefined;
+}) {
+  return (
+    <>
+      {error ? (
+        <div className="error-box settings-error" data-testid="settings-error" role="alert" aria-live="assertive">
+          {error}
+        </div>
+      ) : null}
+      {successMessage ? (
+        <div className="settings-success" data-testid="settings-success" role="status" aria-live="polite">
+          <span>{successMessage}</span>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function AgentSettingsTab(props: AgentSettingsTabProps) {
+  return (
+    <section className="settings-section settings-section-agents" data-testid="settings-section-agents" role="tabpanel">
+      <BusinessAgentManagementPanel
+        config={props.config}
+        agents={props.agents}
+        loading={props.loading}
+        externalBusy={props.externalBusy}
+        pending={props.pending}
+        requestGeneration={props.requestGeneration}
+        reloadAgents={props.reloadAgents}
+        onAgentsChanged={props.onAgentsChanged}
+        onBusyChange={props.onBusyChange}
+        onLifecycle={props.onLifecycle}
+        onOpenTestAssets={props.onOpenTestAssets}
+        onDelete={props.onDelete}
+      />
+    </section>
+  );
+}
+
+type RunSettingsAction = <T>(
+  request: () => Promise<T>,
+  onSuccess: (value: T) => void,
+  actionKey?: string,
+  lanes?: readonly string[],
+) => void;
+
+const REGISTRY_LANE = "registry";
+const OPENAI_COMPAT_LANE = "openai-compat";
+const FEEDBACK_LANE = "feedback";
+
+function useSettingsRequestContext(config: RuntimeClientConfig, open: boolean) {
+  const generation = useRef<SettingsRequestGeneration>({ active: false, context: 0, lanes: {} });
+  useLayoutEffect(() => {
+    if (!open) {
+      deactivateSettingsRequestContext(generation.current);
+      return;
+    }
+    const context = activateSettingsRequestContext(generation.current);
+    return () => deactivateSettingsRequestContext(generation.current, context);
+  }, [config.apiBase, config.apiKey, open]);
+  return generation;
+}
+
+function useActionFeedback(
+  generation: { current: SettingsRequestGeneration },
+  config: RuntimeClientConfig,
+  open: boolean,
+) {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
-  const [agentsLoading, setAgentsLoading] = useState(false);
-  const [workspaceBusy, setWorkspaceBusy] = useState(false);
-  const [successMsg, setSuccessMsg] = useState<string | undefined>();
-  const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
-  const [openaiCompat, setOpenaiCompat] = useState<OpenAICompatAgentConfig | null>(null);
-  const [openaiCompatSel, setOpenaiCompatSel] = useState("");
-  const busy = pending !== null || workspaceBusy;
-
-  const activeTabMeta = useMemo(() => SETTINGS_TABS.find((tab) => tab.key === activeTab) ?? SETTINGS_TABS[0], [activeTab]);
-  // 出口业务 Agent 选项只来自实际注册表。
-  const openaiCompatOptions = useMemo(() => agents.map((agent) => agent.agent_id), [agents]);
-
-  const reloadAgents = useCallback(async () => {
+  const [successMessage, setSuccessMessage] = useState<string | undefined>();
+  useLayoutEffect(() => {
+    setPending(null);
     setError(undefined);
-    setAgentsLoading(true);
-    try {
-      const list = await listBusinessAgents(config);
-      setAgents(list);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setAgentsLoading(false);
-    }
-  }, [config]);
+    setSuccessMessage(undefined);
+  }, [config.apiBase, config.apiKey, open]);
+  const run = useCallback<RunSettingsAction>(
+    (request, onSuccess, actionKey = "busy", lanes = []) => {
+      const token = beginSettingsRequest(generation.current, [FEEDBACK_LANE, ...lanes]);
+      setPending(actionKey);
+      setError(undefined);
+      setSuccessMessage(undefined);
+      void settleSettingsRequest(
+        generation.current,
+        token,
+        Promise.resolve().then(request),
+        {
+          onSuccess,
+          onError: (cause) => setError(cause instanceof Error ? cause.message : String(cause)),
+          onFinally: () => setPending(null),
+          errorLanes: [FEEDBACK_LANE],
+          finallyLanes: [FEEDBACK_LANE],
+        },
+      );
+    },
+    [generation],
+  );
+  return {
+    error,
+    pending,
+    run,
+    setError,
+    setPending,
+    setSuccessMessage,
+    successMessage,
+  };
+}
 
+function useRuntimeFields(config: RuntimeClientConfig, open: boolean) {
+  const [apiBase, setApiBase] = useState(config.apiBase);
+  const [apiKey, setApiKey] = useState(config.apiKey);
   useEffect(() => {
     setApiBase(config.apiBase);
     setApiKey(config.apiKey);
-  }, [config, open]);
+  }, [config.apiBase, config.apiKey, open]);
+  return { apiBase, apiKey, setApiBase, setApiKey };
+}
 
+interface RegistryReloadEffects {
+  onStart: () => void;
+  onSuccess: (agents: AgentSummary[]) => void;
+  onError: (cause: unknown) => void;
+  onFinally: () => void;
+}
+
+export async function runSettingsRegistryReload(
+  generation: SettingsRequestGeneration,
+  origin: SettingsRequestAuthority | undefined,
+  request: () => Promise<AgentSummary[]>,
+  effects: RegistryReloadEffects,
+): Promise<void> {
+  if (origin && !origin.isCurrent()) return;
+  const originLanes = origin ? Object.keys(origin.token.lanes) : [];
+  const token = beginSettingsRequest(
+    generation,
+    [REGISTRY_LANE],
+    [FEEDBACK_LANE, ...originLanes],
+  );
+  effects.onStart();
+  await settleSettingsRequest(generation, token, request(), {
+    onSuccess: effects.onSuccess,
+    onError: effects.onError,
+    onFinally: effects.onFinally,
+    successLanes: [REGISTRY_LANE, ...originLanes],
+    errorLanes: [REGISTRY_LANE, FEEDBACK_LANE, ...originLanes],
+    finallyLanes: [REGISTRY_LANE, ...originLanes],
+  });
+}
+
+function useAgentRegistry(
+  config: RuntimeClientConfig,
+  open: boolean,
+  generation: { current: SettingsRequestGeneration },
+  run: RunSettingsAction,
+  setError: (error: string | undefined) => void,
+  onAgentsChanged: () => void,
+) {
+  const requestConfig = useMemo(
+    () => ({ apiBase: config.apiBase, apiKey: config.apiKey }),
+    [config.apiBase, config.apiKey],
+  );
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const reloadAgents = useCallback(async (origin?: SettingsRequestAuthority) => {
+    await runSettingsRegistryReload(
+      generation.current,
+      origin,
+      () => listBusinessAgents(requestConfig),
+      {
+        onStart: () => {
+          setError(undefined);
+          setLoading(true);
+        },
+        onSuccess: setAgents,
+        onError: (cause) => setError(cause instanceof Error ? cause.message : String(cause)),
+        onFinally: () => setLoading(false),
+      },
+    );
+  }, [generation, requestConfig, setError]);
   useEffect(() => {
     if (open) void reloadAgents();
   }, [open, reloadAgents]);
+  const handleLifecycle = useCallback(
+    (agentId: string, status: string) => {
+      run(
+        async () => {
+          await setBusinessAgentLifecycle(requestConfig, agentId, status);
+          return listBusinessAgents(requestConfig);
+        },
+        (value) => {
+          setAgents(value);
+          onAgentsChanged();
+        },
+        `lifecycle:${agentId}`,
+        [REGISTRY_LANE],
+      );
+    },
+    [onAgentsChanged, requestConfig, run],
+  );
+  return { agents, handleLifecycle, loading, reloadAgents, setAgents };
+}
 
+function useOpenAICompatSettings(
+  config: RuntimeClientConfig,
+  open: boolean,
+  generation: { current: SettingsRequestGeneration },
+  agents: AgentSummary[],
+  run: RunSettingsAction,
+) {
+  const requestConfig = useMemo(
+    () => ({ apiBase: config.apiBase, apiKey: config.apiKey }),
+    [config.apiBase, config.apiKey],
+  );
+  const [value, setValue] = useState<OpenAICompatAgentConfig | null>(null);
+  const [selection, setSelection] = useState("");
+  const options = useMemo(() => agents.map((agent) => agent.agent_id), [agents]);
   useEffect(() => {
     if (!open) return;
-    void getOpenAICompatAgent(config)
-      .then((cfg) => {
-        setOpenaiCompat(cfg);
-        setOpenaiCompatSel(cfg.effective_agent_id);
-      })
-      .catch(() => {
-        setOpenaiCompat(null);
-        setOpenaiCompatSel("");
-      });
-  }, [open, config]);
-
-  // 选中的出口业务 Agent 被删除时回退到默认或第一个可用 Agent。
+    const token = beginSettingsRequest(generation.current, [OPENAI_COMPAT_LANE]);
+    void settleSettingsRequest(
+      generation.current,
+      token,
+      getOpenAICompatAgent(requestConfig),
+      {
+        onSuccess: (response) => {
+          setValue(response);
+          setSelection(response.effective_agent_id);
+        },
+        onError: () => {
+          setValue(null);
+          setSelection("");
+        },
+      },
+    );
+  }, [generation, open, requestConfig]);
   useEffect(() => {
-    if (openaiCompatSel && !openaiCompatOptions.includes(openaiCompatSel)) {
-      setOpenaiCompatSel(agents.find((agent) => agent.default)?.agent_id ?? openaiCompatOptions[0] ?? "");
+    if (selection && !options.includes(selection)) {
+      setSelection(agents.find((agent) => agent.default)?.agent_id ?? options[0] ?? "");
     }
-  }, [agents, openaiCompatOptions, openaiCompatSel]);
+  }, [agents, options, selection]);
+  const applyResponse = useCallback((response: OpenAICompatAgentConfig) => {
+    setValue(response);
+    setSelection(response.effective_agent_id);
+  }, []);
+  const save = useCallback(() => {
+    run(
+      () => setOpenAICompatAgent(requestConfig, selection),
+      applyResponse,
+      "busy",
+      [OPENAI_COMPAT_LANE],
+    );
+  }, [applyResponse, requestConfig, run, selection]);
+  const reset = useCallback(() => {
+    run(
+      () => resetOpenAICompatAgent(requestConfig),
+      applyResponse,
+      "busy",
+      [OPENAI_COMPAT_LANE],
+    );
+  }, [applyResponse, requestConfig, run]);
+  return { options, reset, save, selection, setSelection, value };
+}
 
-  if (!open) return null;
-
-  const run = async (action: () => Promise<void>, actionKey = "busy") => {
-    setPending(actionKey);
-    setError(undefined);
-    setSuccessMsg(undefined);
-    try {
-      await action();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPending(null);
-    }
+function useSettingsModalController(props: SettingsModalProps) {
+  const requestContext = useSettingsRequestContext(props.config, props.open);
+  const runtime = useRuntimeFields(props.config, props.open);
+  const feedback = useActionFeedback(requestContext, props.config, props.open);
+  const registry = useAgentRegistry(
+    props.config,
+    props.open,
+    requestContext,
+    feedback.run,
+    feedback.setError,
+    props.onAgentsChanged,
+  );
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
+  const deletions = usePendingDeletionOperations({
+    open: props.open,
+    config: props.config,
+    agents: registry.agents,
+    setAgents: registry.setAgents,
+    setPending: feedback.setPending,
+    setError: feedback.setError,
+    setSuccessMessage: feedback.setSuccessMessage,
+    onAgentsChanged: props.onAgentsChanged,
+  });
+  const openaiCompat = useOpenAICompatSettings(
+    props.config,
+    props.open,
+    requestContext,
+    registry.agents,
+    feedback.run,
+  );
+  const selectTab = useCallback(
+    (tab: SettingsTab) => {
+      setActiveTab(tab);
+      feedback.setError(undefined);
+      feedback.setSuccessMessage(undefined);
+    },
+    [feedback.setError, feedback.setSuccessMessage],
+  );
+  const saveRuntime = useCallback(
+    () => props.onSave({ apiBase: runtime.apiBase.trim(), apiKey: runtime.apiKey.trim() }),
+    [props.onSave, runtime.apiBase, runtime.apiKey],
+  );
+  return {
+    activeTab,
+    busy: feedback.pending !== null || workspaceBusy,
+    deletions,
+    feedback,
+    openaiCompat,
+    registry,
+    requestContext,
+    runtime,
+    saveRuntime,
+    selectTab,
+    setWorkspaceBusy,
   };
+}
 
-  const handleSaveOpenaiCompat = () =>
-    void run(async () => {
-      const res = await setOpenAICompatAgent(config, openaiCompatSel);
-      setOpenaiCompat(res);
-      setOpenaiCompatSel(res.effective_agent_id);
-    });
+type SettingsModalController = ReturnType<typeof useSettingsModalController>;
 
-  const handleResetOpenaiCompat = () =>
-    void run(async () => {
-      const res = await resetOpenAICompatAgent(config);
-      setOpenaiCompat(res);
-      setOpenaiCompatSel(res.effective_agent_id);
-    });
-
-  const handleLifecycle = (agentId: string, status: string) => {
-    void run(async () => {
-      await setBusinessAgentLifecycle(config, agentId, status);
-      await reloadAgents();
-      onAgentsChanged();
-    }, `lifecycle:${agentId}`);
-  };
-
-  const handleDelete = (agentId: string) => {
-    // F1①安全快修：删除治理对象前二次确认；F1③：删后把治理影响面放到可见的反馈横幅（替换不可达的行内 <small>）。
-    const agent = agents.find((a) => a.agent_id === agentId);
-    const label = agent?.name ? `${agent.name}（${agentId}）` : agentId;
-    if (
-      !window.confirm(
-        `确认删除业务 Agent ${label}？\n\n将永久删除它的 Workspace、Claude 用户态和版本历史；运行、反馈与发布记录保留作审计。该操作不可撤销。`,
-      )
-    )
-      return;
-    void run(async () => {
-      const res = await deleteBusinessAgent(config, agentId);
-      const i = res.impact;
-      const impactText = `影响：runs ${i.runs} · feedback ${i.feedback_signals} · 改进事项 ${i.improvements} · tests ${i.test_runs} · 待发布变更 ${i.change_sets} · 发布 ${i.releases}`;
-      // 清理不完整时必须说出来：注册表已删除但磁盘有残留，同 id 重建会被安全供给流程拦住。
-      const cleanupText = res.cleanup_complete === false ? "；磁盘清理未完成，请检查运行卷残留" : "";
-      setSuccessMsg(`已删除业务 Agent ${label}（${impactText}）${cleanupText}`);
-      await reloadAgents();
-      onAgentsChanged();
-    }, `delete:${agentId}`);
-  };
-
+function SettingsModalView({
+  props,
+  controller,
+}: {
+  props: SettingsModalProps;
+  controller: SettingsModalController;
+}) {
+  const { deletions, feedback, openaiCompat, registry, runtime } = controller;
   return (
     <div className="settings-backdrop" role="presentation">
       <section className="settings-panel" data-testid="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title">
-        <header className="settings-header">
-          <div className="settings-header-main">
-            <span className="settings-kicker">平台配置</span>
-            <h3 id="settings-panel-title">设置</h3>
-            <p>业务 Agent 和开发者连接配置。</p>
-          </div>
-          <div className="settings-header-status" aria-label="设置摘要">
-            <span><Bot size={14} />{agents.length} Agent</span>
-          </div>
-          <button className="icon-button settings-close" type="button" onClick={onClose} aria-label="关闭">
-            <X size={18} />
-          </button>
-        </header>
-
-        {error ? <div className="error-box settings-error" data-testid="settings-error" role="alert" aria-live="assertive">{error}</div> : null}
-        {successMsg ? <div className="settings-success" data-testid="settings-success" role="status" aria-live="polite">{successMsg}</div> : null}
-
+        <SettingsHeader agentCount={registry.agents.length} onClose={props.onClose} />
+        <SettingsAlerts error={feedback.error} successMessage={feedback.successMessage} />
+        <PendingDeletionNotice
+          busy={controller.busy}
+          pendingDeletions={deletions.pendingDeletions}
+          onRefresh={deletions.handleRefreshDeletion}
+        />
         <div className="settings-layout">
-          <nav className="settings-navigation" data-testid="settings-navigation" role="tablist" aria-label="设置分组">
-            {SETTINGS_TABS.map(({ key, label, eyebrow, description, Icon }) => (
-              <button
-                className={`settings-nav-item ${activeTab === key ? "active" : ""}`}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === key}
-                data-testid={`settings-tab-${key}`}
-                key={key}
-                onClick={() => { setActiveTab(key); setError(undefined); setSuccessMsg(undefined); }}
-              >
-                <span className="settings-nav-icon"><Icon size={17} /></span>
-                <span className="settings-nav-copy">
-                  <small>{eyebrow}</small>
-                  <strong>{label}</strong>
-                  <em>{description}</em>
-                </span>
-              </button>
-            ))}
-          </nav>
-
+          <SettingsNavigation activeTab={controller.activeTab} onSelect={controller.selectTab} />
           <main className="settings-content" data-testid="settings-content">
-            <div className="settings-content-head">
-              <div>
-                <span>{activeTabMeta.eyebrow}</span>
-                <h4>{activeTabMeta.label}</h4>
-              </div>
-              <p>{activeTabMeta.description}</p>
-            </div>
-
-            {activeTab === "agents" ? (
-              <section className="settings-section settings-section-agents" data-testid="settings-section-agents" role="tabpanel">
-                <BusinessAgentManagementPanel
-                  config={config}
-                  agents={agents}
-                  loading={agentsLoading}
-                  externalBusy={pending !== null}
-                  pending={pending}
-                  reloadAgents={reloadAgents}
-                  onAgentsChanged={onAgentsChanged}
-                  onBusyChange={setWorkspaceBusy}
-                  onLifecycle={handleLifecycle}
-                  onOpenTestAssets={onOpenAgentTestAssets}
-                  onDelete={handleDelete}
-                />
-              </section>
+            <SettingsContentHeader activeTab={controller.activeTab} />
+            {controller.activeTab === "agents" ? (
+              <AgentSettingsTab
+                config={props.config}
+                agents={registry.agents}
+                loading={registry.loading}
+                externalBusy={feedback.pending !== null}
+                pending={feedback.pending}
+                requestGeneration={controller.requestContext}
+                reloadAgents={registry.reloadAgents}
+                onAgentsChanged={props.onAgentsChanged}
+                onBusyChange={controller.setWorkspaceBusy}
+                onLifecycle={registry.handleLifecycle}
+                onOpenTestAssets={props.onOpenAgentTestAssets}
+                onDelete={deletions.handleDelete}
+              />
             ) : null}
-
-            {activeTab === "developer" ? (
-              <section className="settings-section settings-section-developer" data-testid="settings-section-developer" role="tabpanel">
-                <div className="settings-runtime-grid">
-                  <label className="form-field">
-                    <span>Runtime API Base</span>
-                    <input data-testid="settings-api-base" value={apiBase} onChange={(e) => setApiBase(e.target.value)} placeholder="http://localhost:58080" />
-                  </label>
-                  <label className="form-field">
-                    <span>Runtime API Key</span>
-                    <input data-testid="settings-api-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="默认读取 docker/.env 中的 API_KEY" />
-                  </label>
-                </div>
-                <label className="form-field" data-testid="settings-openai-compat-agent">
-                  <span>OpenAI 兼容入口（/v1）出口 Agent</span>
-                  <select value={openaiCompatSel} onChange={(e) => setOpenaiCompatSel(e.target.value)} disabled={busy}>
-                    {openaiCompatOptions.map((id) => (
-                      <option key={id} value={id}>{id}</option>
-                    ))}
-                  </select>
-                  <small data-testid="settings-openai-compat-state">
-                    {openaiCompat?.configured
-                      ? `已显式配置：/v1 跑 ${openaiCompat.effective_agent_id}`
-                      : `未配置：/v1 默认运行 ${openaiCompat?.effective_agent_id ?? "默认业务 Agent"}`}
-                  </small>
-                  <div className="settings-developer-links">
-                    <button className="secondary-button" type="button" onClick={handleSaveOpenaiCompat} disabled={busy}>保存出口 Agent</button>
-                    {openaiCompat?.configured ? (
-                      <button className="secondary-button" type="button" onClick={handleResetOpenaiCompat} disabled={busy}>重置为默认</button>
-                    ) : null}
-                  </div>
-                </label>
-                <div className="settings-developer-links">
-                  <a className="secondary-button" href={apiDocsUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />API Docs</a>
-                  <a className="secondary-button" href={langfuseUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Langfuse</a>
-                </div>
-                <div className="settings-runtime-note">
-                  <KeyRound size={15} />
-                  <span>Runtime 连接配置保存到当前浏览器。</span>
-                </div>
-              </section>
+            {controller.activeTab === "developer" ? (
+              <DeveloperSettingsTab
+                apiBase={runtime.apiBase}
+                apiKey={runtime.apiKey}
+                apiDocsUrl={props.apiDocsUrl}
+                langfuseUrl={props.langfuseUrl}
+                busy={controller.busy}
+                openaiCompat={openaiCompat.value}
+                openaiCompatSelection={openaiCompat.selection}
+                openaiCompatOptions={openaiCompat.options}
+                onApiBaseChange={runtime.setApiBase}
+                onApiKeyChange={runtime.setApiKey}
+                onOpenAICompatChange={openaiCompat.setSelection}
+                onSaveOpenAICompat={openaiCompat.save}
+                onResetOpenAICompat={openaiCompat.reset}
+              />
             ) : null}
           </main>
         </div>
-
-        <footer className="settings-footer">
-          <button className="secondary-button" type="button" onClick={onClose}>关闭</button>
-          <button className="primary-button" type="button" data-testid="settings-save" onClick={() => onSave({ apiBase: apiBase.trim(), apiKey: apiKey.trim() })}>
-            <Save size={15} />保存 Runtime 并刷新
-          </button>
-        </footer>
+        <SettingsFooter onClose={props.onClose} onSave={controller.saveRuntime} />
       </section>
     </div>
   );
+}
+
+export function SettingsModal(props: SettingsModalProps) {
+  const controller = useSettingsModalController(props);
+  if (!props.open) return null;
+  return <SettingsModalView props={props} controller={controller} />;
 }

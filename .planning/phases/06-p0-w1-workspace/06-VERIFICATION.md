@@ -22,7 +22,7 @@ code_commits: [eff4762, be02782]
 | # | 事实 | 状态 | 当前候选证据 |
 | ---: | --- | --- | --- |
 | 1 | 锁定候选可运行完整 Workspace suite，全部通过且未删除安全断言或固定长期 leaf 数量 | ✓ VERIFIED | `be02782` 上完整目录 `58 passed`；数量只写入 SUMMARY/本报告，测试与配置没有固定总数断言 |
-| 2 | 危险 Bash 与已分类畸形输入都返回结构化 deny，不产生未处理异常或静默放行 | ✓ VERIFIED | `test_hooks.py` 通过真实 subprocess 覆盖危险删除、关机、Kubernetes、Docker prune、SSH、前导空格、路径前缀、sudo/wrapper/选项变体，以及非 JSON、错误顶层、非法工具名/tool_input/command；安全反例无 decision |
+| 2 | 已分类高风险执行意图与畸形输入都返回结构化 deny，不产生未处理异常或静默放行 | ✓ VERIFIED | `test_hooks.py` 通过真实 subprocess 覆盖破坏性文件系统操作、可用性中断、编排状态破坏、容器环境全局清理和外部远程访问等风险类别及其规范化变体，以及非 JSON、错误顶层、非法工具名/tool_input/command；低风险类别无 decision |
 | 3 | 审计只落到批准 runtime data 路径，原生配置和身份测试与当前权威一致 | ✓ VERIFIED | `resolve_log_path()` 固定 `DATA_DIR/transcripts/claude-hook-audit.jsonl` 并拒绝越界；测试证明敏感值不落盘；native-config 读取当前 settings/CLAUDE/manifest 权威 |
 | 4 | 初始化源安全扫描通过，变更没有越出单个内置 Workspace | ✓ VERIFIED | 修正后最终 `runtime-bootstrap-scan` 为 `ok: true`、无 high finding；`7f4f07b..be02782` 只有四个计划 allowlist 文件 |
 
@@ -43,18 +43,22 @@ GSD `verify.artifacts` 结果为 `4/4 all_passed`。
 
 | From | To | Via | 状态 | 证据 |
 | --- | --- | --- | --- | --- |
-| `tests/test_hooks.py` | `pre_tool_guard.py` | subprocess stdin/stdout 与 `hookSpecificOutput` | ✓ WIRED | GSD 自动检查通过；危险、畸形和安全反例均执行真实脚本 |
+| `tests/test_hooks.py` | `pre_tool_guard.py` | subprocess stdin/stdout 与 `hookSpecificOutput` | ✓ WIRED | GSD 自动检查通过；高风险、畸形和低风险类别均执行真实脚本 |
 | `post_tool_audit.py` | `<runtime>/data/transcripts/claude-hook-audit.jsonl` | `DATA_DIR` 或严格 Workspace 布局推导 | ✓ WIRED | 源码组合 `data_dir / "transcripts" / "claude-hook-audit.jsonl"`，测试在临时 runtime 布局验证实际落盘；GSD 的符号目标字符串启发式误报未引用，人工行为验证通过 |
 | `test_native_config.py` | `.claude/settings.json` / `CLAUDE.md` / `agent.yaml` | 只读加载当前权威文件 | ✓ WIRED | GSD 自动检查通过，四个 native-config leaf 全部通过 |
 
 **Wiring：3/3 verified**
+
+> 2026-08-11 边界更新：本报告保留 Phase 6 历史证据；当前权限与测试入口以初始化源、
+> `tests/quality_policy.json` 和 public exact-commit container lane 为准。宿主 root pytest 不收集
+> 业务 Workspace tests，内置 Agent 的文件读取、shell、Web 与 MCP 均保持禁用。
 
 ## Requirement 覆盖
 
 | Requirement | 状态 | 证明 |
 | --- | --- | --- |
 | P0W-01 | ✓ SATISFIED | 完整 Workspace `58 passed`；未固定总 leaf 数量 |
-| P0W-02 | ✓ SATISFIED | 破坏性删除、关机、Kubernetes、Docker prune、SSH 及等价 wrapper/选项变体均结构化 deny |
+| P0W-02 | ✓ SATISFIED | 六类高风险执行意图及其等价规范化变体均结构化 deny；报告不保留可执行样本 |
 | P0W-03 | ✓ SATISFIED | 非 JSON 返回 exit 0 + `PreToolUse/deny/reason`，无 stderr traceback |
 | P0W-04 | ✓ SATISFIED | list 顶层返回结构化 deny |
 | P0W-05 | ✓ SATISFIED | Bash command 缺失、空白、非字符串均结构化 deny |
@@ -66,11 +70,11 @@ GSD `verify.artifacts` 结果为 `4/4 all_passed`。
 
 ## 对抗性代码审查
 
-审查覆盖 correctness、readability、architecture、security、performance 五轴。首轮审查没有直接批准：发现规范命令测试未覆盖等价危险写法，实测前导空格、`/bin/rm`、`sudo -n`、`rm -fr` 与部分 Docker prune 会绕过分类器。
+审查覆盖 correctness、readability、architecture、security、performance 五轴。首轮审查没有直接批准：发现风险分类测试未覆盖路径前缀、权限包装、参数重排和链式结构等规范化变体，实测可绕过分类器。
 
 | Finding | 原严重度 | 处理 | 最终状态 |
 | --- | --- | --- | --- |
-| 等价 Bash 命令可绕过 P0W-02 分类 | Important | `be02782` 收紧命令段、wrapper、root 删除 flags 与 prune 分类，并新增危险/安全反例 | RESOLVED |
+| 等价高风险执行意图可绕过 P0W-02 分类 | Important | `be02782` 收紧语义边界、包装形式与参数规范化分类，并新增高风险/低风险类别回归 | RESOLVED |
 | 非法/缺失 tool name 会静默继续 | Important | 非字符串、空白或缺失 tool name 统一结构化 deny | RESOLVED |
 | 畸形 PostToolUse payload 产生 Python traceback | Warning | 增加稳定 `POST_TOOL_AUDIT_PAYLOAD_INVALID`，无 traceback | RESOLVED |
 
@@ -108,7 +112,7 @@ GSD `verify.artifacts` 结果为 `4/4 all_passed`。
 ## 范围与剩余风险
 
 - `mcp__sec-ops__*` 仍由 bootstrap scanner 标记为 medium review，但写工具有当前 native deny，且 Phase 8 会用固定上游和精确两工具 fixture 独立证明 P0-MCP capability；它不被本阶段 Workspace suite 冒充为已完成。
-- Bash hook 是当前 native permission/deny/sandbox 之外的硬拒绝防线，不声称是通用 shell parser；本阶段证明的是已分类危险矩阵及对抗性等价变体。Phase 7 仍必须把不可信 pytest 放入无 secret、无网络、无 live data、非 root sandbox。
+- Bash hook 是当前 native permission/deny/sandbox 之外的硬拒绝防线，不声称是通用 shell parser；本阶段证明的是已分类风险类别及其等价规范化变体。Phase 7 仍必须把不可信 pytest 放入无 secret、无网络、无 live data、非 root sandbox。
 - live Workspace、真实 volume、私有 env、runtime SQLite、`VERSION`、公开 API/OpenAPI/前端类型均不在本阶段变更范围，也没有进入提交差异。
 
 ## Human Verification

@@ -55,6 +55,10 @@ class PublicationIntent:
     previous_commit_sha: str | None = None
     source_improvement_id: str | None = None
     source_improvement_updated_at: str | None = None
+    test_run_id: str | None = None
+    test_receipt_digest: str | None = None
+    test_suite_digest: str | None = None
+    test_source_digest: str | None = None
 
     def to_payload(self) -> JsonObject:
         return {
@@ -72,6 +76,10 @@ class PublicationIntent:
             "previous_commit_sha": self.previous_commit_sha,
             "source_improvement_id": self.source_improvement_id,
             "source_improvement_updated_at": self.source_improvement_updated_at,
+            "test_run_id": self.test_run_id,
+            "test_receipt_digest": self.test_receipt_digest,
+            "test_suite_digest": self.test_suite_digest,
+            "test_source_digest": self.test_source_digest,
         }
 
     @classmethod
@@ -105,6 +113,10 @@ class PublicationIntent:
             previous_commit_sha=(str(value["previous_commit_sha"]) if value.get("previous_commit_sha") else None),
             source_improvement_id=(str(value["source_improvement_id"]) if value.get("source_improvement_id") else None),
             source_improvement_updated_at=(str(value["source_improvement_updated_at"]) if value.get("source_improvement_updated_at") else None),
+            test_run_id=(str(value["test_run_id"]) if value.get("test_run_id") else None),
+            test_receipt_digest=(str(value["test_receipt_digest"]) if value.get("test_receipt_digest") else None),
+            test_suite_digest=(str(value["test_suite_digest"]) if value.get("test_suite_digest") else None),
+            test_source_digest=(str(value["test_source_digest"]) if value.get("test_source_digest") else None),
         )
 
 
@@ -207,9 +219,7 @@ def validate_source_claim(db: Session, intent: PublicationIntent) -> None:
     expected = (intent.change_set_id, intent.release_id)
     actual = (claim.change_set_id, claim.release_id) if claim else None
     if actual != expected:
-        raise PublicationSourceConflict(
-            f"来源改进事项 {intent.source_improvement_id} 的发布预留不属于当前变更集"
-        )
+        raise PublicationSourceConflict(f"来源改进事项 {intent.source_improvement_id} 的发布预留不属于当前变更集")
 
 
 def record_publication_error(
@@ -398,9 +408,7 @@ def _source_claim(db: Session, intent: PublicationIntent) -> AgentReleaseSourceC
 
 
 def _source_conflict(intent: PublicationIntent, owner_change_set_id: str) -> PublicationSourceConflict:
-    return PublicationSourceConflict(
-        f"来源改进事项 {intent.source_improvement_id} 已由变更集 {owner_change_set_id} 持有发布预留，不能重复发布"
-    )
+    return PublicationSourceConflict(f"来源改进事项 {intent.source_improvement_id} 已由变更集 {owner_change_set_id} 持有发布预留，不能重复发布")
 
 
 def release_payload(
@@ -430,4 +438,8 @@ def release_payload(
         "force_published": intent.force,
         "force_publication_blocker": intent.force_publication_blocker if intent.force else None,
         "force_publish_reason": intent.note if intent.force else None,
+        "test_run_id": intent.test_run_id,
+        "test_receipt_digest": intent.test_receipt_digest,
+        "test_suite_digest": intent.test_suite_digest,
+        "test_source_digest": intent.test_source_digest,
     }

@@ -240,7 +240,7 @@ from/to build、scope、binding revision/CAS、principal、线上观察与回退
 
 候选 build 只有同时满足以下条件，`EvaluationOutcome` 才可记录为 `passed`：
 
-- 所有安全、越权、恶意输入和离线场景通过；
+- 所有安全、越权、无效输入和离线场景通过；
 - 至少一个目标归因指标相对 current 明确改善；
 - 其他主要指标无实质退化；
 - 改善能由候选方法解释，不来自放宽门禁或评估泄漏；

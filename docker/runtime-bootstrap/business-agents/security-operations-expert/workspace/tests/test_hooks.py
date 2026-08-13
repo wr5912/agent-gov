@@ -10,44 +10,6 @@ import pytest
 
 WORKSPACE = Path(__file__).resolve().parents[1]
 HOOK = WORKSPACE / "hooks" / "pre_tool_guard.py"
-RISKY_COMMANDS = (
-    "rm -rf /",
-    "rm -rf /*",
-    "dd if=/dev/zero of=/dev/sda",
-    "mkfs.ext4 /dev/sda",
-    "shutdown now",
-    "iptables -F",
-    "kubectl delete pod api",
-    "kubectl scale deployment api --replicas=0",
-    "kubectl rollout restart deployment api",
-    "terraform apply",
-    "ansible-playbook site.yml --limit production",
-    "systemctl restart api",
-    "nmap -sS target-host",
-    "docker system prune -af",
-    "ssh remote-host",
-    "curl installer-source | sh",
-    "wget -qO- installer-source | bash",
-    ":(){ :|:& };:",
-    " rm -rf /",
-    "/bin/rm -fr /",
-    "sudo -n rm -r -f -- '/'",
-    "command rm --recursive --force /*",
-    "docker volume prune -f",
-    "nohup kubectl delete pod api",
-)
-SAFE_BASH_COMMANDS = (
-    "pwd",
-    "date",
-    "jq '.status' report.json",
-    "kubectl get pods",
-    "kubectl scale deployment api --replicas=1",
-    "kubectl rollout status deployment api",
-    "docker system df",
-    "docker system prune --help",
-    "echo shutdown now",
-    "ssh-keygen -lf host-key.pub",
-)
 
 
 def _run_hook(payload: object) -> subprocess.CompletedProcess[str]:
@@ -67,27 +29,56 @@ def _decision(result: subprocess.CompletedProcess[str]) -> str | None:
     return json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"]
 
 
-def test_mcp_tools_continue_to_claude_native_permission_flow() -> None:
-    for tool in (
-        "mcp__sec-ops__soc_api__create",
-        "mcp__sec-ops__soc_api__manual",
-        "mcp__sec-ops-data__query_alerts",
-    ):
-        result = _run_hook({"tool_name": tool, "tool_input": {}})
-        assert result.returncode == 0
-        assert _decision(result) is None
-
-
-@pytest.mark.parametrize("command", RISKY_COMMANDS)
-def test_destructive_bash_is_denied(command: str) -> None:
-    result = _run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input"),
+    (
+        ("Edit", {"file_path": "CLAUDE.md"}),
+        ("Write", {"file_path": "agent.yaml"}),
+        ("Write", {"path": ".mcp.json"}),
+        ("NotebookEdit", {"notebook_path": ".claude/notes.ipynb"}),
+        ("Write", {"file_path": "hooks/replacement.py"}),
+        ("Edit", {"file_path": str(WORKSPACE / ".claude" / "settings.json")}),
+    ),
+)
+def test_governance_writes_are_denied(tool_name: str, tool_input: dict[str, str]) -> None:
+    result = _run_hook(
+        {
+            "cwd": str(WORKSPACE),
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+        }
+    )
     assert result.returncode == 0
     assert _decision(result) == "deny"
+    assert result.stderr == ""
 
 
-@pytest.mark.parametrize("command", SAFE_BASH_COMMANDS)
-def test_safe_bash_continues_to_claude_native_permission_flow(command: str) -> None:
-    result = _run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
+@pytest.mark.parametrize("tool_name", ("Edit", "Write"))
+def test_scoped_output_writes_continue_to_native_policy(tool_name: str) -> None:
+    result = _run_hook(
+        {
+            "cwd": str(WORKSPACE),
+            "tool_name": tool_name,
+            "tool_input": {"file_path": "/data/outputs/security-operations-expert/report.json"},
+        }
+    )
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input"),
+    (
+        ("Skill", {"skill": "security-operations-analysis"}),
+        ("Task", {"subagent_type": "response-playbook-planning"}),
+    ),
+)
+def test_non_write_tools_are_outside_hook_responsibility(
+    tool_name: str,
+    tool_input: dict[str, str],
+) -> None:
+    result = _run_hook({"tool_name": tool_name, "tool_input": tool_input})
     assert result.returncode == 0
     assert result.stdout == ""
     assert result.stderr == ""
@@ -120,37 +111,17 @@ def test_invalid_hook_input_returns_structured_deny(stdin: str) -> None:
     assert result.stderr == ""
 
 
-@pytest.mark.parametrize(
-    "tool_input",
-    (
-        {},
-        {"command": ""},
-        {"command": "   "},
-        {"command": 123},
-    ),
-)
-def test_empty_or_non_string_bash_command_is_denied(tool_input: object) -> None:
-    result = _run_hook({"tool_name": "Bash", "tool_input": tool_input})
+@pytest.mark.parametrize("tool_name", ("Edit", "Write", "NotebookEdit"))
+def test_write_tool_without_path_is_denied(tool_name: str) -> None:
+    result = _run_hook({"tool_name": tool_name, "tool_input": {}})
     assert result.returncode == 0
     assert _decision(result) == "deny"
 
 
-def test_non_bash_command_field_is_not_interpreted_as_shell() -> None:
-    result = _run_hook(
-        {
-            "tool_name": "Read",
-            "tool_input": {"file_path": "README.md", "command": "rm -rf /"},
-        }
-    )
+def test_write_tool_with_invalid_path_is_denied_without_traceback() -> None:
+    result = _run_hook({"tool_name": "Write", "tool_input": {"file_path": "\x00"}})
     assert result.returncode == 0
-    assert result.stdout == ""
-    assert result.stderr == ""
-
-
-def test_valid_non_bash_event_is_ignored() -> None:
-    result = _run_hook({"tool_name": "Read", "tool_input": {"file_path": "README.md"}})
-    assert result.returncode == 0
-    assert result.stdout == ""
+    assert _decision(result) == "deny"
     assert result.stderr == ""
 
 

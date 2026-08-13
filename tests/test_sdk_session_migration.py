@@ -10,7 +10,7 @@ from app.runtime.sdk_session_store import SqliteSdkSessionStore
 from app.runtime.session_store import LocalSessionStore
 from claude_agent_sdk import get_session_messages_from_store, project_key_for_directory
 
-from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID, register_test_business_agent_instance
 
 
 def _legacy_session(tmp_path):
@@ -37,6 +37,11 @@ def _legacy_session(tmp_path):
     ]
     transcript.write_text("".join(f"{json.dumps(entry)}\n" for entry in entries), encoding="utf-8")
     store = LocalSessionStore(tmp_path / "data" / "sessions")
+    register_test_business_agent_instance(
+        store.Session,
+        agent_id=ORDINARY_TEST_AGENT_ID,
+        workspace_dir=str(workspace),
+    )
     session = store.get_or_create_owned("api-session", agent_id=ORDINARY_TEST_AGENT_ID)
     session.sdk_session_id = sdk_session_id
     store.save(session)
@@ -113,6 +118,7 @@ def test_import_claim_is_cross_connection_fenced_and_expired_owner_cannot_finali
     other_process = LocalSessionStore(store.root)
     first = store.begin_sdk_store_import(
         session_id=session.session_id,
+        expected_instance_etag=store.public_business_agent_instance_etag(ORDINARY_TEST_AGENT_ID),
         sdk_session_id=sdk_session_id,
         sdk_project_key=project_key,
         lease_seconds=10,
@@ -124,6 +130,10 @@ def test_import_claim_is_cross_connection_fenced_and_expired_owner_cannot_finali
         project_key=project_key,
         sdk_session_id=sdk_session_id,
         import_id=first.token,
+        session_id=first.session_id,
+        agent_id=first.agent_id,
+        expected_instance_etag=first.expected_instance_etag,
+        claim_marker=first.marker,
     )
     asyncio.run(
         first_adapter.append(
@@ -135,6 +145,7 @@ def test_import_claim_is_cross_connection_fenced_and_expired_owner_cannot_finali
     with pytest.raises(SessionConflictError, match="already running"):
         other_process.begin_sdk_store_import(
             session_id=session.session_id,
+            expected_instance_etag=store.public_business_agent_instance_etag(ORDINARY_TEST_AGENT_ID),
             sdk_session_id=sdk_session_id,
             sdk_project_key=project_key,
             lease_seconds=10,
@@ -143,6 +154,7 @@ def test_import_claim_is_cross_connection_fenced_and_expired_owner_cannot_finali
 
     second = other_process.begin_sdk_store_import(
         session_id=session.session_id,
+        expected_instance_etag=store.public_business_agent_instance_etag(ORDINARY_TEST_AGENT_ID),
         sdk_session_id=sdk_session_id,
         sdk_project_key=project_key,
         lease_seconds=10,
@@ -154,6 +166,10 @@ def test_import_claim_is_cross_connection_fenced_and_expired_owner_cannot_finali
         project_key=project_key,
         sdk_session_id=sdk_session_id,
         import_id=second.token,
+        session_id=second.session_id,
+        agent_id=second.agent_id,
+        expected_instance_etag=second.expected_instance_etag,
+        claim_marker=second.marker,
     )
     asyncio.run(
         second_adapter.append(
@@ -179,6 +195,7 @@ def test_mapping_invalidation_discards_inflight_import_staging(tmp_path, operati
     assert session is not None
     claim = store.begin_sdk_store_import(
         session_id=session.session_id,
+        expected_instance_etag=store.public_business_agent_instance_etag(ORDINARY_TEST_AGENT_ID),
         sdk_session_id=sdk_session_id,
         sdk_project_key=project_key,
     )
@@ -188,6 +205,10 @@ def test_mapping_invalidation_discards_inflight_import_staging(tmp_path, operati
         project_key=project_key,
         sdk_session_id=sdk_session_id,
         import_id=claim.token,
+        session_id=claim.session_id,
+        agent_id=claim.agent_id,
+        expected_instance_etag=claim.expected_instance_etag,
+        claim_marker=claim.marker,
     )
     asyncio.run(
         adapter.append(

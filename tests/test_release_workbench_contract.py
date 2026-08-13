@@ -10,6 +10,15 @@ from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _release_workbench_source() -> str:
+    paths = (
+        "frontend/src/components/ReleaseWorkbench.tsx",
+        "frontend/src/components/ReleaseWorkbenchPanels.tsx",
+        "frontend/src/components/releaseWorkbenchController.ts",
+    )
+    return "\n".join((ROOT / path).read_text(encoding="utf-8") for path in paths)
+
+
 def test_change_set_response_hides_publication_intent_and_types_error() -> None:
     response = AgentChangeSetResponse.model_validate(
         {
@@ -50,7 +59,7 @@ def test_change_set_response_hides_publication_intent_and_types_error() -> None:
 
 
 def test_release_workbench_uses_exact_commit_test_gate_and_separate_publish_actions() -> None:
-    source = (ROOT / "frontend/src/components/ReleaseWorkbench.tsx").read_text(encoding="utf-8")
+    source = _release_workbench_source()
 
     assert 'data-testid="release-action-run-tests"' in source
     assert 'data-testid="release-action-cancel-tests"' in source
@@ -59,22 +68,28 @@ def test_release_workbench_uses_exact_commit_test_gate_and_separate_publish_acti
     assert 'data-testid="release-action-force"' not in source
     assert 'data-testid="release-action-retry-cleanup"' in source
     assert "latestExactRun(testRuns, selectedChangeSet?.candidate_commit_sha)" in source
-    assert 'testRun.status === "passed"' in source
-    assert "!selectedChangeSet.publication_blocker" in source
-    assert "selectedChangeSet.publication_error?.detail" in source
+    assert "selection.selectedChangeSet?.latest_test_run_id === tests.currentTestRun.test_run_id" in source
+    assert 'data-testid="release-test-eligibility"' in source
+    assert 'data-testid="release-test-receipt"' in source
+    assert "!selection.selectedChangeSet.publication_blocker" in source
+    assert 'selection.selectedChangeSet.status === "publishing"\n    && !selection.selectedChangeSet.publication_blocker' in source
+    assert "selected.publication_error?.detail" in source
     assert "selectedChangeSet?.latest_eval_run" not in source
     assert "reviewAgentChangeSetRegression" not in source
 
 
 def test_feedback_workbench_displays_historical_force_warning_without_force_action() -> None:
-    source = (ROOT / "frontend/src/components/ReleaseWorkbench.tsx").read_text(encoding="utf-8")
+    source = _release_workbench_source()
     runtime_api = "".join((ROOT / path).read_text(encoding="utf-8") for path in ("frontend/src/api/runtime.ts", "frontend/src/api/agentTesting.ts"))
 
     assert 'data-testid="release-action-force"' not in source
     assert 'data-testid="release-force-reason"' not in source
     assert "force: true" not in source
     assert "release.force_published" in source
-    assert "测试条件被管理员绕过" in source
+    assert "历史旧策略记录：该发布曾绕过当时阻断项" in source
+    assert "当前策略不可绕过发布条件" in source
+    assert "管理员加急发布" in source
+    assert "force 仅记录加急与审批审计，不可绕过发布条件" in source
     assert "release.force_publication_blocker" in source
     assert "release.force_publish_reason" in source
     assert "release.operator" in source

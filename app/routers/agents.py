@@ -1,104 +1,35 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
+from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 
 from app.agent_testing.schedule import AgentTestScheduleService
 from app.agent_testing.store import AgentTestingStore
-from app.runtime.agent_governance_schemas import AgentPresentationResponse
+from app.runtime.agent_governance_schemas import AgentDeleteResponse, AgentPresentationResponse
 from app.runtime.agent_governance_schemas import agent_summary_response as _summary
+from app.runtime.agent_paths import AgentId
 from app.runtime.errors import ConflictError, NotFoundError
 from app.runtime.schemas import (
-    AgentDeleteResponse,
-    AgentDeletionImpact,
     AgentLifecycleTransitionRequest,
     AgentSummaryResponse,
 )
-from app.runtime.settings import AppSettings
+from app.runtime.stores.agent_deletion_store import AgentDeletionOperation
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
-from app.runtime.stores.feedback_store import FeedbackStore
-from app.runtime.stores.improvement_store import ImprovementStore
-from app.services.agent_governance import AgentGovernanceService
-from app.services.business_agent_deletion import purge_business_agent_storage
+from app.services.business_agent_deletion import BusinessAgentDeletionService, parse_agent_if_match
 from app.services.business_agent_presentation import business_agent_presentation
 
 _IMPACT_COUNT_CAP = 1000
-
-
-def _deletion_impact(
-    agent_id: str,
-    *,
-    feedback_store: FeedbackStore,
-    improvement_store: ImprovementStore,
-    agent_governance: AgentGovernanceService,
-    agent_testing_store: AgentTestingStore,
-) -> AgentDeletionImpact:
-    """删除前的跨维度影响面提示，避免无声删除治理对象。
-
-    这些治理记录是已发生事实，删除 Agent 不级联删除它们——只是把「你将失去对多少证据的入口」
-    如实说出来。
-    """
-
-    return AgentDeletionImpact(
-        runs=len(feedback_store.list_runs(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
-        feedback_signals=len(feedback_store.list_signals(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
-        improvements=len(improvement_store.list_improvements(agent_id=agent_id)),
-        test_runs=len(agent_testing_store.list_runs(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
-        change_sets=len(agent_governance.list_change_sets(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
-        releases=len(agent_governance.list_releases(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
-    )
-
-
-def _delete_agent_with_storage(
-    agent_id: str,
-    *,
-    settings: AppSettings,
-    agent_registry_store: AgentRegistryStore,
-    feedback_store: FeedbackStore,
-    improvement_store: ImprovementStore,
-    agent_governance: AgentGovernanceService,
-    agent_testing_store: AgentTestingStore,
-    agent_test_schedule_service: AgentTestScheduleService | None = None,
-) -> AgentDeleteResponse:
-    """删除注册身份并清理其运行态存储。
-
-    事务与磁盘清理的先后是有意的：事务内只 tombstone，提交后才 rmtree。rmtree 不可回滚，
-    放进事务块意味着事务回滚后磁盘已经回不来。
-    """
-
-    impact = _deletion_impact(
-        agent_id,
-        feedback_store=feedback_store,
-        improvement_store=improvement_store,
-        agent_governance=agent_governance,
-        agent_testing_store=agent_testing_store,
-    )
-    # 与导入/导出/恢复共用同一把维护租约，因此删除与它们、与活跃 turn 天然互斥：租约获取本身
-    # 就拒绝存在活跃 run 的 Agent，不会删掉正在被使用的 workspace。
-    with agent_governance.version_maintenance.lease(agent_id=agent_id, kind="agent_delete", owner_id="api:agent-delete"):
-        deleted = agent_registry_store.delete_business_agent(agent_id)  # 受保护→400，未知→404
-        if agent_test_schedule_service is not None:
-            agent_test_schedule_service.disable_agent_schedule(agent_id)
-    cleanup = purge_business_agent_storage(data_dir=settings.data_dir, agent_id=agent_id)
-    # 缓存的版本 store 持有已被 rmtree 的 repository_dir；不失效会让同 id 重建命中悬空 store。
-    agent_governance.evict_agent_store(agent_id)
-    return AgentDeleteResponse(
-        deleted=_summary(deleted),
-        impact=impact,
-        workspace_removed=cleanup.workspace_removed,
-        cleanup_complete=cleanup.cleanup_complete,
-    )
+_SAFE_DELETION_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 
 
 def create_agents_router(
     *,
-    settings: AppSettings,
     agent_registry_store: AgentRegistryStore,
-    feedback_store: FeedbackStore,
-    improvement_store: ImprovementStore,
-    agent_governance: AgentGovernanceService,
     agent_testing_store: AgentTestingStore,
+    deletion_service: BusinessAgentDeletionService,
     agent_test_schedule_service: AgentTestScheduleService | None = None,
     require_api_key: Callable,
 ) -> APIRouter:
@@ -120,7 +51,7 @@ def create_agents_router(
         response_model=AgentPresentationResponse,
         summary="Read structured Welcome Card content for a registered business agent",
     )
-    async def get_agent_presentation(agent_id: str) -> AgentPresentationResponse:
+    async def get_agent_presentation(agent_id: AgentId) -> AgentPresentationResponse:
         record = agent_registry_store.get_agent(agent_id)
         if record is None:
             raise NotFoundError(f"Business agent not found: {agent_id}")
@@ -131,7 +62,7 @@ def create_agents_router(
         response_model=AgentSummaryResponse,
         summary="Transition a business agent's lifecycle status (rejects illegal transitions)",
     )
-    async def transition_agent(agent_id: str, req: AgentLifecycleTransitionRequest) -> AgentSummaryResponse:
+    async def transition_agent(agent_id: AgentId, req: AgentLifecycleTransitionRequest) -> AgentSummaryResponse:
         # 生命周期转移（AGV-020）；非法转移由状态机拒绝并返回可理解错误（409）。
         # eval 门（AGV-027）：从 evaluating 进入 active 必须有该 Agent 通过的评估运行——
         # 复用能力配置或修改配置后须评估通过才能激活，避免未验证配置直接上线。
@@ -144,21 +75,96 @@ def create_agents_router(
             agent_test_schedule_service.disable_agent_schedule(agent_id)
         return _summary(transitioned)
 
+    _register_deletion_routes(router, deletion_service)
+    return router
+
+
+def _register_deletion_routes(
+    router: APIRouter,
+    deletion_service: BusinessAgentDeletionService,
+) -> None:
     @router.delete(
         "/agent-registry/{agent_id}",
         response_model=AgentDeleteResponse,
+        responses={
+            202: {
+                "model": AgentDeleteResponse,
+                "description": "Agent 已下线，后台磁盘清理仍待完成。",
+                "headers": {
+                    "Location": {
+                        "description": "脱敏 deletion operation 状态查询入口。",
+                        "schema": {"type": "string"},
+                    }
+                },
+            }
+        },
         summary="Delete a business agent and report its governance impact",
     )
-    async def delete_agent(agent_id: str) -> AgentDeleteResponse:
-        return _delete_agent_with_storage(
-            agent_id,
-            settings=settings,
-            agent_registry_store=agent_registry_store,
-            feedback_store=feedback_store,
-            improvement_store=improvement_store,
-            agent_governance=agent_governance,
-            agent_testing_store=agent_testing_store,
-            agent_test_schedule_service=agent_test_schedule_service,
+    async def delete_agent(
+        agent_id: AgentId,
+        response: Response,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        if_match: str | None = Header(default=None, alias="If-Match"),
+    ) -> AgentDeleteResponse:
+        operation = deletion_service.delete(
+            agent_id=agent_id,
+            agent_instance_etag=parse_agent_if_match(if_match),
+            idempotency_key=idempotency_key or "",
         )
+        if operation.state == "completed":
+            response.status_code = status.HTTP_200_OK
+        else:
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Location"] = f"/api/agent-deletion-operations/{operation.operation_id}"
+        return _deletion_response(operation)
 
-    return router
+    @router.get(
+        "/agent-deletion-operations",
+        response_model=list[AgentDeleteResponse],
+        summary="Discover bounded pending or recent business-Agent deletion operations",
+    )
+    async def list_agent_deletion_operations(
+        state: Literal["cleanup_pending", "completed"] = Query(
+            default="cleanup_pending",
+            description="Durable deletion state to discover; pending is the recovery default.",
+        ),
+        limit: int = Query(
+            default=20,
+            ge=1,
+            le=100,
+            description="Maximum number of newest deletion operations to return.",
+        ),
+    ) -> list[AgentDeleteResponse]:
+        return [_deletion_response(operation) for operation in deletion_service.list_statuses(state=state, limit=limit)]
+
+    @router.get(
+        "/agent-deletion-operations/{operation_id}",
+        response_model=AgentDeleteResponse,
+        summary="Read one durable business-Agent deletion operation",
+    )
+    async def get_agent_deletion_operation(operation_id: str) -> AgentDeleteResponse:
+        return _deletion_response(deletion_service.get_status(operation_id))
+
+
+def _deletion_response(operation: AgentDeletionOperation) -> AgentDeleteResponse:
+    completed = operation.state == "completed"
+    return AgentDeleteResponse.model_validate(
+        {
+            "operation_id": operation.operation_id,
+            "state": operation.state,
+            "deleted": operation.deleted,
+            "impact": operation.impact,
+            "workspace_removed": completed and operation.purge_confirmed,
+            "cleanup_complete": completed,
+            "last_error_code": _last_error_code(operation),
+            "attempt_count": operation.attempt_count,
+            "updated_at": operation.updated_at,
+        }
+    )
+
+
+def _last_error_code(operation: AgentDeletionOperation) -> str | None:
+    value = operation.error.get("error_code")
+    if not isinstance(value, str) or _SAFE_DELETION_ERROR_CODE.fullmatch(value) is None:
+        return None
+    return value

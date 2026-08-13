@@ -32,6 +32,7 @@ VALIDATION_ERROR_COMPONENT = "HTTPValidationError"
 SECURITY_SCHEME_NAME = "HTTPBearer"
 RAW_EVENTS_PATH = "/api/debug/agent-runtime/raw-events"
 CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+AGENT_DELETION_PATH = "/api/agent-registry/{agent_id}"
 
 _HTTP_ERROR_SCHEMA: OpenApiObject = {
     "title": HTTP_ERROR_COMPONENT,
@@ -95,6 +96,7 @@ _ERROR_DESCRIPTIONS = {
 _MUTATING_METHODS = frozenset({"post", "put", "patch", "delete"})
 _DOMAIN_PREFIXES = (
     "/api/agent-registry",
+    "/api/agent-deletion-operations",
     "/api/agent-test-assets",
     "/api/agent-test-runs",
     "/api/agent-test-sessions",
@@ -272,10 +274,42 @@ def operation_items(schema: OpenApiMapping) -> list[tuple[str, str, OpenApiMappi
 
 def _apply_operation_contract(path: str, method: str, operation: OpenApiMutableMapping) -> None:
     _document_request_examples(path, method, operation)
+    _document_agent_deletion_headers(path, method, operation)
     _fix_streaming_success_response(path, operation)
     _document_sse_events(path, operation)
     for status_code in sorted(expected_error_statuses(path, method, operation)):
         _add_error_response(path, operation, status_code)
+
+
+def _document_agent_deletion_headers(path: str, method: str, operation: OpenApiMutableMapping) -> None:
+    if path != AGENT_DELETION_PATH or method != "delete":
+        return
+    documentation = {
+        "If-Match": (
+            'Required exact instance precondition as one strong quoted entity-tag, for example "<etag>".',
+            f'"{"a" * 64}"',
+        ),
+        "Idempotency-Key": (
+            "Required stable key for retries of this exact Agent instance deletion; derive it from the instance ETag, not the mutable Agent id.",
+            f"agent-delete:{'a' * 64}",
+        ),
+    }
+    parameters = operation.get("parameters", [])
+    if not isinstance(parameters, list):
+        return
+    for parameter in parameters:
+        if not isinstance(parameter, MutableMapping) or parameter.get("in") != "header":
+            continue
+        name = parameter.get("name")
+        if not isinstance(name, str) or name not in documentation:
+            continue
+        description, example = documentation[name]
+        parameter["required"] = True
+        # FastAPI 捕获层保持 Optional，才能把缺失 header 投影为稳定 domain 409；公开 OpenAPI
+        # 仍是 required non-null string，不能让生成客户端误以为显式 null 合法。
+        parameter["schema"] = {"type": "string"}
+        parameter["description"] = description
+        parameter["example"] = example
 
 
 def _document_request_examples(path: str, method: str, operation: OpenApiMutableMapping) -> None:

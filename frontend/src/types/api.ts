@@ -144,7 +144,7 @@ export interface paths {
         put?: never;
         /**
          * 发布已批准的 Agent 待发布变更
-         * @description Publish an approved change set for its owning business Agent. Normal publication requires the current candidate test gate to pass; force is restricted to eligible manual change sets and requires a reason.
+         * @description Publish an approved change set for its owning business Agent. Normal and administrator-expedited publication both require every current publication gate to pass; force requires a reason and only adds expedited approval audit semantics, never a gate waiver.
          */
         post: operations["publish_agent_change_set_api_agent_change_sets__change_set_id__publish_post"];
         delete?: never;
@@ -224,6 +224,40 @@ export interface paths {
          * @description Replace the selected editable UTF-8 config file. Read the file first and pass its sha256 as expected_sha256 to reject stale concurrent edits; content is the complete replacement, not a patch.
          */
         put: operations["update_agent_config_file_api_agent_config_file_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-deletion-operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Discover bounded pending or recent business-Agent deletion operations */
+        get: operations["list_agent_deletion_operations_api_agent_deletion_operations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-deletion-operations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one durable business-Agent deletion operation */
+        get: operations["get_agent_deletion_operation_api_agent_deletion_operations__operation_id__get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -716,7 +750,7 @@ export interface paths {
         put?: never;
         /**
          * Create Agent Test Run
-         * @description Create a durable full-suite test run for one business Agent. Omit commit_sha to pin the current active commit at request time, or pass a commit returned by the Agent test/repository APIs.
+         * @description Create a durable full-suite test run for one business Agent. The caller must supply an exact full 40-character commit returned by the Agent test/repository APIs; the server never resolves a moving current revision for this manual action.
          */
         post: operations["create_agent_test_run_api_agent_test_runs_post"];
         delete?: never;
@@ -2219,20 +2253,20 @@ export interface components {
         };
         /**
          * AgentChangeSetPublishRequest
-         * @description Publish an approved Agent change set, with an explicit forced-publication escape hatch.
+         * @description Publish an approved Agent change set; force only records an administrator-expedited path after every publication gate passes.
          */
         AgentChangeSetPublishRequest: {
             /**
              * Force
-             * @description Whether to use the audited forced-publication path.
+             * @description Whether to record an administrator-expedited publication after all gates pass; it never waives a gate.
              * @default false
              * @example false
              */
             force: boolean;
             /**
              * Force Reason
-             * @description Required audit reason when force is true.
-             * @example 紧急修复已由值班负责人复核。
+             * @description Required audit reason for administrator-expedited publication; it does not authorize bypassing a gate.
+             * @example 全部发布门禁已通过，值班负责人批准加急执行。
              */
             force_reason?: string | null;
             /**
@@ -2417,18 +2451,38 @@ export interface components {
         /** AgentDeleteResponse */
         AgentDeleteResponse: {
             /**
+             * Attempt Count
+             * @description 后台已持久化的清理尝试次数。
+             */
+            attempt_count: number;
+            /**
              * Cleanup Complete
-             * @description 磁盘清理是否完整。为 false 时注册表已删除但存在磁盘残留，同 id 重建会被安全供给流程拦住。
-             * @default true
+             * @description 磁盘清理是否完整；无论结果如何，已公开并删除的 Agent id 都保持永久保留。
              */
             cleanup_complete: boolean;
-            deleted: components["schemas"]["AgentSummaryResponse"];
+            deleted: components["schemas"]["DeletedAgentSummaryResponse"];
             /** @description 删除前的治理影响面提示，避免无声删除治理对象。 */
             impact: components["schemas"]["AgentDeletionImpact"];
             /**
+             * Last Error Code
+             * @description 最近一次后台清理失败的脱敏稳定错误码；不包含路径、token 或 inode。
+             */
+            last_error_code: string | null;
+            /** Operation Id */
+            operation_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "cleanup_pending" | "completed";
+            /**
+             * Updated At
+             * @description 该 durable deletion operation 最近一次状态更新时间。
+             */
+            updated_at: string;
+            /**
              * Workspace Removed
              * @description 该 Agent 的运行态目录（workspace/claude-root/version）是否已确认删除。
-             * @default true
              */
             workspace_removed: boolean;
         };
@@ -2952,6 +3006,14 @@ export interface components {
             status: "published" | "archived" | "rolled_back" | "rollback_failed";
             /** Tag Name */
             tag_name: string;
+            /** Test Receipt Digest */
+            test_receipt_digest?: string | null;
+            /** Test Run Id */
+            test_run_id?: string | null;
+            /** Test Source Digest */
+            test_source_digest?: string | null;
+            /** Test Suite Digest */
+            test_suite_digest?: string | null;
             /** Updated At */
             updated_at: string;
         } & {
@@ -3249,6 +3311,11 @@ export interface components {
              * @default false
              */
             default: boolean;
+            /**
+             * Instance Etag
+             * @description 当前业务 Agent 实例的精确删除与写入 CAS；不得替代持久事实的实例归属。
+             */
+            instance_etag: string;
             /** Name */
             name: string;
             /**
@@ -3350,6 +3417,17 @@ export interface components {
             schedule: components["schemas"]["AgentTestScheduleResponse"];
             suite: components["schemas"]["AgentTestSuiteSummary"];
         };
+        /** AgentTestCleanupReceipt */
+        AgentTestCleanupReceipt: {
+            /** Container Removed */
+            container_removed: boolean;
+            /** Error Codes */
+            error_codes: string[];
+            /** Label Residue Absent */
+            label_residue_absent: boolean;
+            /** Temporary Paths Removed */
+            temporary_paths_removed: boolean;
+        };
         /** AgentTestDiagnostic */
         AgentTestDiagnostic: {
             /** Code */
@@ -3364,6 +3442,37 @@ export interface components {
             /** Path */
             path?: string | null;
         };
+        /** AgentTestExecutionReceipt */
+        AgentTestExecutionReceipt: {
+            /**
+             * Assurance Level
+             * @constant
+             */
+            assurance_level: "execution_provenance";
+            cleanup: components["schemas"]["AgentTestCleanupReceipt"];
+            /** Container Id */
+            container_id?: string | null;
+            /**
+             * Contract
+             * @constant
+             */
+            contract: "agentgov.agent-test-execution-receipt.v1";
+            invocation: components["schemas"]["AgentTestInvocationReceipt"] | null;
+            isolation: components["schemas"]["AgentTestIsolationReceipt"] | null;
+            /**
+             * Lane
+             * @constant
+             */
+            lane: "p0-exact-commit";
+            /** Receipt Digest */
+            receipt_digest?: string | null;
+            result: components["schemas"]["AgentTestResultReceipt"];
+            target: components["schemas"]["AgentTestTargetReceipt"];
+            /** Test Run Id */
+            test_run_id: string;
+            /** Worker Id */
+            worker_id: string;
+        };
         /** AgentTestFileSymbol */
         AgentTestFileSymbol: {
             /**
@@ -3377,6 +3486,160 @@ export interface components {
             name: string;
             /** Qualified Name */
             qualified_name: string;
+        };
+        /** AgentTestInvocationReceipt */
+        AgentTestInvocationReceipt: {
+            /** Argv */
+            argv: string[];
+            /** Environment Digest */
+            environment_digest: string;
+            /** Environment Keys */
+            environment_keys: string[];
+            /** Image Id */
+            image_id: string;
+            /**
+             * Working Directory
+             * @constant
+             */
+            working_directory: "/workspace";
+        };
+        /** AgentTestIsolationReceipt */
+        AgentTestIsolationReceipt: {
+            /**
+             * Auto Remove
+             * @constant
+             */
+            auto_remove: false;
+            /** Cap Drop */
+            cap_drop: string[];
+            /** Devices */
+            devices: string[];
+            /**
+             * Docker Socket Mounted
+             * @constant
+             */
+            docker_socket_mounted: false;
+            /**
+             * Ipc Mode
+             * @constant
+             */
+            ipc_mode: "private";
+            /**
+             * Log Compression
+             * @constant
+             */
+            log_compression: false;
+            /**
+             * Log Driver
+             * @constant
+             */
+            log_driver: "local";
+            /**
+             * Log Max Bytes
+             * @constant
+             */
+            log_max_bytes: 1048576;
+            /**
+             * Log Max Files
+             * @constant
+             */
+            log_max_files: 1;
+            /**
+             * Memory Bytes
+             * @constant
+             */
+            memory_bytes: 536870912;
+            /**
+             * Memory Swap Bytes
+             * @constant
+             */
+            memory_swap_bytes: 536870912;
+            /** Mounts */
+            mounts: components["schemas"]["AgentTestSandboxMountReceipt"][];
+            /**
+             * Nano Cpus
+             * @constant
+             */
+            nano_cpus: 1000000000;
+            /**
+             * Network Disabled
+             * @constant
+             */
+            network_disabled: true;
+            /**
+             * Network Mode
+             * @constant
+             */
+            network_mode: "none";
+            /**
+             * Pid Mode
+             * @constant
+             */
+            pid_mode: "private";
+            /**
+             * Pids Limit
+             * @constant
+             */
+            pids_limit: 256;
+            /**
+             * Ports Published
+             * @constant
+             */
+            ports_published: false;
+            /**
+             * Privileged
+             * @constant
+             */
+            privileged: false;
+            /**
+             * Readonly Rootfs
+             * @constant
+             */
+            readonly_rootfs: true;
+            /**
+             * Restart Policy
+             * @constant
+             */
+            restart_policy: "no";
+            /** Security Opt */
+            security_opt: string[];
+            /**
+             * Shm Size Bytes
+             * @constant
+             */
+            shm_size_bytes: 16777216;
+            /**
+             * Tmpfs Nodev
+             * @constant
+             */
+            tmpfs_nodev: true;
+            /**
+             * Tmpfs Noexec
+             * @constant
+             */
+            tmpfs_noexec: true;
+            /**
+             * Tmpfs Nosuid
+             * @constant
+             */
+            tmpfs_nosuid: true;
+            /**
+             * Tmpfs Size Bytes
+             * @constant
+             */
+            tmpfs_size_bytes: 67108864;
+            /** Tmpfs Targets */
+            tmpfs_targets: string[];
+            /**
+             * User
+             * @constant
+             */
+            user: "65532:65532";
+            /**
+             * Uts Mode
+             * @constant
+             */
+            uts_mode: "private";
         };
         /**
          * AgentTestMessageRequest
@@ -3438,6 +3701,29 @@ export interface components {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
         };
+        /** AgentTestResultReceipt */
+        AgentTestResultReceipt: {
+            /** Duration Ms */
+            duration_ms: number;
+            /** Exit Code */
+            exit_code: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "error" | "cancelled" | "interrupted";
+            /** Stderr Digest */
+            stderr_digest: string;
+            /** Stdout Digest */
+            stdout_digest: string;
+            /**
+             * Workspace Report Authority
+             * @constant
+             */
+            workspace_report_authority: "agent_owned_unverified";
+            /** Workspace Report Digest */
+            workspace_report_digest: string;
+        };
         /**
          * AgentTestRunCreateRequest
          * @description Start a platform-owned Agent regression test run.
@@ -3451,10 +3737,10 @@ export interface components {
             agent_id: string;
             /**
              * Commit Sha
-             * @description Omit to pin the current active commit when this request is created.
-             * @example a1b2c3d4e5f6
+             * @description Exact full Git commit SHA selected by the caller.
+             * @example 0123456789abcdef0123456789abcdef01234567
              */
-            commit_sha?: string | null;
+            commit_sha: string;
         };
         /** AgentTestRunHistoryResponse */
         AgentTestRunHistoryResponse: {
@@ -3509,6 +3795,7 @@ export interface components {
             }[];
             /** Items */
             items?: components["schemas"]["AgentTestRunItemResponse"][];
+            receipt?: components["schemas"]["AgentTestExecutionReceipt"] | null;
             /** Report */
             report?: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -3519,6 +3806,10 @@ export interface components {
             scheduled_for?: string | null;
             /** Source */
             source: string;
+            /** Source Digest */
+            source_digest?: string | null;
+            /** Source Tree Sha */
+            source_tree_sha?: string | null;
             /** Started At */
             started_at?: string | null;
             /**
@@ -3561,12 +3852,21 @@ export interface components {
             duration_seconds?: number | null;
             /** Exit Code */
             exit_code?: number | null;
+            /**
+             * Receipt Available
+             * @default false
+             */
+            receipt_available: boolean;
             /** Schedule Id */
             schedule_id?: string | null;
             /** Scheduled For */
             scheduled_for?: string | null;
             /** Source */
             source: string;
+            /** Source Digest */
+            source_digest?: string | null;
+            /** Source Tree Sha */
+            source_tree_sha?: string | null;
             /** Started At */
             started_at?: string | null;
             /**
@@ -3578,6 +3878,29 @@ export interface components {
             suite_digest?: string | null;
             /** Test Run Id */
             test_run_id: string;
+        };
+        /** AgentTestSandboxMountReceipt */
+        AgentTestSandboxMountReceipt: {
+            /**
+             * Mount Type
+             * @constant
+             */
+            mount_type: "volume";
+            /**
+             * Read Only
+             * @constant
+             */
+            read_only: true;
+            /**
+             * Source Scope
+             * @constant
+             */
+            source_scope: "run_workspace_subpath";
+            /**
+             * Target
+             * @constant
+             */
+            target: "/workspace";
         };
         /** AgentTestScheduleEventResponse */
         AgentTestScheduleEventResponse: {
@@ -3710,8 +4033,15 @@ export interface components {
             commit_sha: string;
             /** Diagnostics */
             diagnostics?: components["schemas"]["AgentTestDiagnostic"][];
+            /** Live Test Files */
+            live_test_files?: string[];
             /** Readme Present */
             readme_present: boolean;
+            /**
+             * Requires Live Agent
+             * @default false
+             */
+            requires_live_agent: boolean;
             /** Suite Digest */
             suite_digest?: string | null;
             /** Test File Count */
@@ -3720,6 +4050,28 @@ export interface components {
             test_files?: string[];
             /** Tests Directory Present */
             tests_directory_present: boolean;
+        };
+        /** AgentTestTargetReceipt */
+        AgentTestTargetReceipt: {
+            /** Agent Id */
+            agent_id: string;
+            /** Commit Sha */
+            commit_sha: string;
+            /** Post Source Digest */
+            post_source_digest: string | null;
+            /** Pre Source Digest */
+            pre_source_digest: string | null;
+            /** Source Digest */
+            source_digest: string;
+            /**
+             * Source Observation
+             * @enum {string}
+             */
+            source_observation: "not_observed" | "pre_only" | "stable" | "changed";
+            /** Suite Digest */
+            suite_digest: string;
+            /** Tree Sha */
+            tree_sha: string;
         };
         /**
          * AgentTraceEvent
@@ -4482,6 +4834,33 @@ export interface components {
              * @constant
              */
             object: "list";
+        };
+        /**
+         * DeletedAgentSummaryResponse
+         * @description 删除回执的最小身份投影；不得回显运行卷路径或内部实例 token。
+         */
+        DeletedAgentSummaryResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Builtin */
+            builtin: boolean;
+            /** Category */
+            category: string;
+            /** Created At */
+            created_at: string;
+            /** Default */
+            default: boolean;
+            /** Name */
+            name: string;
+            /** Protected */
+            protected: boolean;
+            /** Requires Web Hitl */
+            requires_web_hitl: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "active" | "evaluating" | "deprecated" | "archived";
         };
         /**
          * DomainErrorResponse
@@ -6691,13 +7070,13 @@ export interface components {
             rollback_target_commit_sha?: string | null;
             /** Test File Count */
             test_file_count: number;
+            /** Test Suite Diagnostics */
+            test_suite_diagnostics: components["schemas"]["AgentTestDiagnostic"][];
             /**
              * Test Suite Status
              * @enum {string}
              */
             test_suite_status: "ready" | "warning" | "invalid";
-            /** Test Suite Warnings */
-            test_suite_warnings?: components["schemas"]["AgentTestDiagnostic"][];
             /** Tree Sha256 */
             tree_sha256: string;
         };
@@ -7748,6 +8127,108 @@ export interface operations {
             };
         };
     };
+    list_agent_deletion_operations_api_agent_deletion_operations_get: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Durable deletion state to discover; pending is the recovery default.
+                 * @example cleanup_pending
+                 */
+                state?: "cleanup_pending" | "completed";
+                /**
+                 * @description Maximum number of newest deletion operations to return.
+                 * @example 20
+                 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentDeleteResponse"][];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    get_agent_deletion_operation_api_agent_deletion_operations__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Opaque durable operation identifier addressed by this status read.
+                 * @example adop-20260729-001
+                 */
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentDeleteResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
     list_agent_jobs_api_agent_jobs_get: {
         parameters: {
             query?: {
@@ -7897,7 +8378,18 @@ export interface operations {
     delete_agent_api_agent_registry__agent_id__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /**
+                 * @description Required stable key for retries of this exact Agent instance deletion; derive it from the instance ETag, not the mutable Agent id.
+                 * @example agent-delete:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                 */
+                "Idempotency-Key": string;
+                /**
+                 * @description Required exact instance precondition as one strong quoted entity-tag, for example "<etag>".
+                 * @example "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                 */
+                "If-Match": string;
+            };
             path: {
                 /**
                  * @description Registered business Agent identifier addressed by this operation.
@@ -7912,6 +8404,17 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentDeleteResponse"];
+                };
+            };
+            /** @description Agent 已下线，后台磁盘清理仍待完成。 */
+            202: {
+                headers: {
+                    /** @description 脱敏 deletion operation 状态查询入口。 */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {

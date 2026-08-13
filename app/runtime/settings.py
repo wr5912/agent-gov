@@ -255,9 +255,9 @@ class AppSettings(BaseSettings):
         default="thinking_block_completed,assistant_response_completed",
         alias="SPEECH_SUMMARY_BOUNDARIES",
     )
-    speech_summary_timeout_seconds: float = Field(default=15.0, gt=0, le=300, alias="SPEECH_SUMMARY_TIMEOUT_SECONDS")
+    speech_summary_timeout_seconds: float = Field(default=15.0, gt=0, lt=60, alias="SPEECH_SUMMARY_TIMEOUT_SECONDS")
     speech_summary_terminal_drain_seconds: float = Field(
-        default=5.0,
+        default=20.0,
         ge=0,
         le=60,
         alias="SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS",
@@ -341,6 +341,8 @@ class AppSettings(BaseSettings):
     def _thinking_summary_requires_partial_messages(self) -> "AppSettings":
         if "thinking_block_completed" in self.speech_summary_boundaries and not self.include_partial_messages:
             raise ValueError("thinking_block_completed requires INCLUDE_PARTIAL_MESSAGES=true")
+        if self.speech_summary_boundaries and self.speech_summary_terminal_drain_seconds <= self.speech_summary_timeout_seconds:
+            raise ValueError("SPEECH_SUMMARY_TERMINAL_DRAIN_SECONDS must exceed SPEECH_SUMMARY_TIMEOUT_SECONDS")
         return self
 
     def model_post_init(self, __context: Any) -> None:

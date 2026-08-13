@@ -1,18 +1,35 @@
 #!/usr/bin/env python3
-"""Claude Code PreToolUse hook: hard-deny unsafe and governance-plane writes.
+"""Claude Code PreToolUse hook: protect the Workspace governance surface.
 
-This hook does not replace Claude Code authorization. Settings route SOC
-mutations away from the read-only Agent and hard-deny unsafe direct commands.
-This hook never returns allow; it only denies commands that must never run and
-any attempt to modify the Agent governance surface.
+Tool capability policy belongs to ``.claude/settings.json``. This hook has one
+responsibility: reject edits to the checked-in Agent identity and governance
+files. It never grants a tool call.
 """
 
+from __future__ import annotations
+
 import json
-import re
 import sys
+from pathlib import Path
+from typing import NoReturn
+
+WORKSPACE = Path(__file__).resolve().parent.parent
+WRITE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
+PATH_KEYS = ("file_path", "path", "notebook_path")
+PROTECTED_FILES = frozenset(
+    {
+        (WORKSPACE / ".mcp.json").resolve(),
+        (WORKSPACE / "CLAUDE.md").resolve(),
+        (WORKSPACE / "agent.yaml").resolve(),
+    }
+)
+PROTECTED_DIRECTORIES = (
+    (WORKSPACE / ".claude").resolve(),
+    (WORKSPACE / "hooks").resolve(),
+)
 
 
-def deny(reason: str) -> None:
+def deny(reason: str) -> NoReturn:
     print(
         json.dumps(
             {
@@ -28,102 +45,45 @@ def deny(reason: str) -> None:
     raise SystemExit(0)
 
 
+def resolve_candidate_path(raw_path: str, cwd: object) -> Path:
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        return candidate.resolve()
+    anchor = Path(cwd) if isinstance(cwd, str) and cwd.strip() else WORKSPACE
+    return (anchor / candidate).resolve()
+
+
+def is_protected_path(candidate: Path) -> bool:
+    if candidate in PROTECTED_FILES:
+        return True
+    return any(candidate == directory or candidate.is_relative_to(directory) for directory in PROTECTED_DIRECTORIES)
+
+
 try:
     payload = json.load(sys.stdin)
-except Exception:
-    deny("PreToolUse 守卫无法解析工具输入，安全起见已阻止。")
+except (json.JSONDecodeError, UnicodeDecodeError):
+    deny("PreToolUse 守卫无法解析工具输入，已阻止。")
 
 if not isinstance(payload, dict):
-    deny("PreToolUse 守卫收到非法顶层输入，安全起见已阻止。")
+    deny("PreToolUse 守卫收到非法顶层输入，已阻止。")
 
-tool_name_value = payload.get("tool_name")
-if not isinstance(tool_name_value, str) or not tool_name_value.strip():
-    deny("PreToolUse 守卫收到非法工具名称，安全起见已阻止。")
-tool_name = tool_name_value
-tool_input = payload.get("tool_input", {})
+tool_name = payload.get("tool_name")
+tool_input = payload.get("tool_input")
+if not isinstance(tool_name, str) or not tool_name.strip():
+    deny("PreToolUse 守卫收到非法工具名称，已阻止。")
 if not isinstance(tool_input, dict):
-    deny("PreToolUse 守卫收到非法工具参数，安全起见已阻止。")
+    deny("PreToolUse 守卫收到非法工具参数，已阻止。")
 
-command = ""
-if tool_name == "Bash":
-    command_value = tool_input.get("command")
-    if not isinstance(command_value, str) or not command_value.strip():
-        deny("PreToolUse 守卫收到空或非法 Bash 命令，安全起见已阻止。")
-    command = command_value
+if tool_name in WRITE_TOOLS:
+    raw_path = next((tool_input.get(key) for key in PATH_KEYS if tool_input.get(key) is not None), None)
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        deny("写工具缺少有效目标路径，已阻止。")
+    try:
+        candidate_path = resolve_candidate_path(raw_path, payload.get("cwd"))
+    except (OSError, RuntimeError, ValueError):
+        deny("写工具目标路径无效，已阻止。")
+    if is_protected_path(candidate_path):
+        deny("业务 Agent 治理文件由 AgentGov 管理，禁止在会话中修改。")
 
-SHELL_COMMAND_PREFIX = (
-    r"(?:^|(?:&&|\|\||;|\||\n))\s*"
-    r"(?:(?:command|exec|nohup)\s+)*"
-    r"(?:sudo(?:\s+(?:-n|-E|-H|-S|--non-interactive|(?:-u|--user)\s+\S+|--user=\S+))*\s+)?"
-    r"(?:(?:command|exec|nohup)\s+)*"
-)
-SHELL_SEGMENT = r"[^;&|\n]*"
-RM_RECURSIVE_OPTION = r"(?:-(?!-)[A-Za-z]*r[A-Za-z]*|--recursive)"
-RM_FORCE_OPTION = r"(?:-(?!-)[A-Za-z]*f[A-Za-z]*|--force)"
-ROOT_DELETE_TARGET = r"(?:/\*|/|[\"']/\*[\"']|[\"']/[\"'])(?:\s|$)"
-DENY_PATTERNS = (
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?rm\b"
-    rf"(?={SHELL_SEGMENT}\s{RM_RECURSIVE_OPTION}(?:\s|$))"
-    rf"(?={SHELL_SEGMENT}\s{RM_FORCE_OPTION}(?:\s|$))"
-    rf"{SHELL_SEGMENT}\s(?:--\s+)?{ROOT_DELETE_TARGET}",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?mkfs\.",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?dd\s+if={SHELL_SEGMENT}\s+of=/dev/",
-    rf"{SHELL_COMMAND_PREFIX}:\(\)\s*\{{\s*:\|:&\s*\}};:",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?curl\s+[^|]+\|\s*(?:\S*/)?(?:sh|bash)(?:\s|$)",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?wget\s+[^|]+\|\s*(?:\S*/)?(?:sh|bash)(?:\s|$)",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?shutdown(?:\s|$)",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?docker\s+"
-    rf"(?:system|container|image|network|volume|builder)\s+prune\b"
-    rf"(?!{SHELL_SEGMENT}(?:--help|-h)(?:\s|$))",
-)
-RISKY_PRODUCTION_PATTERNS = (
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?iptables\b{SHELL_SEGMENT}\s-F\b",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?kubectl\b{SHELL_SEGMENT}\bdelete\b",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?kubectl\b{SHELL_SEGMENT}\bscale\b{SHELL_SEGMENT}--replicas(?:=|\s+)0(?:\s|$)",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?kubectl\b{SHELL_SEGMENT}\brollout\s+restart\b",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?terraform\s+apply\b",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?ansible-playbook\b{SHELL_SEGMENT}(?:--limit\s+all|production|prod)",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?systemctl\s+(?:restart|stop)\b",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?(?:nmap|masscan)\b{SHELL_SEGMENT}(?:-sS|-sT|-A|--script)",
-    rf"{SHELL_COMMAND_PREFIX}(?:\S*/)?ssh(?:\s|$)",
-)
-GOVERNANCE_PATH_PATTERNS = (
-    r"(^|/|\s)\.mcp\.json($|/|\s)",
-    r"(^|/|\s)CLAUDE\.md($|/|\s)",
-    r"(^|/|\s)agent\.yaml($|/|\s)",
-    r"(^|/|\s)\.claude(/|\s|$)",
-    r"(^|/|\s)hooks(/|\s|$)",
-)
-BASH_MUTATION_PATTERN = re.compile(
-    r"(^|[;&|]\s*)(rm|mv|cp|install|chmod|chown|truncate|tee|sed\s+-i|perl\s+-pi)\b|>>?|\bopen\s*\(",
-    flags=re.IGNORECASE,
-)
-
-
-def is_governance_path(value: str) -> bool:
-    normalized = value.replace("\\", "/")
-    return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in GOVERNANCE_PATH_PATTERNS)
-
-
-if tool_name in {"Edit", "Write", "NotebookEdit"}:
-    candidate_paths = [
-        tool_input.get("file_path"),
-        tool_input.get("path"),
-        tool_input.get("notebook_path"),
-    ]
-    if any(isinstance(path, str) and is_governance_path(path) for path in candidate_paths):
-        deny("Agent 治理文件由 AgentGov seed 管理，禁止在会话中修改。")
-
-if command and is_governance_path(command) and BASH_MUTATION_PATTERN.search(command):
-    deny("检测到通过 Bash 修改 Agent 治理文件的尝试，已阻止。")
-
-for pattern in DENY_PATTERNS:
-    if command and re.search(pattern, command, flags=re.IGNORECASE):
-        deny("检测到高危破坏性命令，已阻止。请改为生成处置计划或 dry-run。")
-
-for pattern in RISKY_PRODUCTION_PATTERNS:
-    if command and re.search(pattern, command, flags=re.IGNORECASE):
-        deny("该命令可能影响生产环境，已阻止 Agent 直接执行。请改为输出处置计划（含审批、影响范围、回滚方案、验证方法）或由人工执行。")
-
-# No decision means continue with normal permission flow. This hook never allows.
+# No decision means continue with the native permission policy. This hook never allows.
 raise SystemExit(0)

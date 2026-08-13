@@ -27,9 +27,13 @@ from app.services.agent_version_maintenance import (
     is_agent_version_maintenance_active,
 )
 
+from business_agent_test_utils import register_test_business_agent_instance
+
 
 def test_durable_maintenance_blocks_runtime_for_only_its_agent(tmp_path) -> None:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    agent_a_etag = register_test_business_agent_instance(factory, agent_id="agent-a")
+    agent_b_etag = register_test_business_agent_instance(factory, agent_id="agent-b")
     coordinator = AgentVersionMaintenanceCoordinator(
         factory,
         lease_seconds=2,
@@ -47,9 +51,20 @@ def test_durable_maintenance_blocks_runtime_for_only_its_agent(tmp_path) -> None
         )
         with factory.begin() as db:
             with pytest.raises(AgentMaintenanceActiveError):
-                claim_runtime_admission(db, agent_id="agent-a")
+                claim_runtime_admission(
+                    db,
+                    agent_id="agent-a",
+                    expected_instance_etag=agent_a_etag,
+                )
         with factory.begin() as db:
-            assert claim_runtime_admission(db, agent_id="agent-b") > 0
+            assert (
+                claim_runtime_admission(
+                    db,
+                    agent_id="agent-b",
+                    expected_instance_etag=agent_b_etag,
+                )
+                > 0
+            )
 
 
 def test_active_runtime_turn_blocks_maintenance_but_not_another_agent(tmp_path) -> None:
@@ -147,6 +162,7 @@ def test_expired_workspace_activation_claim_invalidates_stale_sdk_mapping(
     maintenance_kind: str,
 ) -> None:
     store = LocalSessionStore(tmp_path / "sessions")
+    agent_etag = register_test_business_agent_instance(store.Session, agent_id="agent-a")
     store.save(
         LocalSession(
             session_id="session-a",
@@ -170,6 +186,7 @@ def test_expired_workspace_activation_claim_invalidates_stale_sdk_mapping(
         stale_snapshot,
         run_id="run-after-crash",
         agent_id="agent-a",
+        expected_instance_etag=agent_etag,
         new_sdk_session_id="fresh-sdk-session",
         sdk_project_key="project-a",
         resolve_agent_version_id=lambda: "version-after-crash",
@@ -194,6 +211,7 @@ def test_agent_version_resolver_failure_rolls_back_runtime_admission(
     tmp_path,
 ) -> None:
     store = LocalSessionStore(tmp_path / "sessions")
+    agent_etag = register_test_business_agent_instance(store.Session, agent_id="agent-a")
     session = store.get_or_create_owned("session-a", agent_id="agent-a")
 
     def fail_version_resolution() -> str:
@@ -204,6 +222,7 @@ def test_agent_version_resolver_failure_rolls_back_runtime_admission(
             session,
             run_id="run-a",
             agent_id="agent-a",
+            expected_instance_etag=agent_etag,
             new_sdk_session_id="new-sdk",
             sdk_project_key="project-a",
             resolve_agent_version_id=fail_version_resolution,
@@ -281,6 +300,7 @@ def test_expired_runtime_with_running_intent_fails_closed_until_reconciled(tmp_p
 
 def test_sqlite_write_barrier_serializes_runtime_claim_before_maintenance(tmp_path) -> None:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    agent_etag = register_test_business_agent_instance(factory, agent_id="agent-a")
     with factory.begin() as db:
         db.add(SessionRecordModel(session_id="session-a", agent_id="agent-a", metadata_json={}))
 
@@ -290,7 +310,11 @@ def test_sqlite_write_barrier_serializes_runtime_claim_before_maintenance(tmp_pa
 
     def claim_runtime_and_hold_transaction() -> None:
         with factory.begin() as db:
-            generation = claim_runtime_admission(db, agent_id="agent-a")
+            generation = claim_runtime_admission(
+                db,
+                agent_id="agent-a",
+                expected_instance_etag=agent_etag,
+            )
             session = db.get(SessionRecordModel, "session-a")
             assert session is not None
             session.active_run_id = "run-a"
@@ -324,6 +348,7 @@ def test_sqlite_write_barrier_serializes_runtime_claim_before_maintenance(tmp_pa
 
 def test_activation_guard_serializes_runtime_admission_until_side_effect_finishes(tmp_path) -> None:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    agent_etag = register_test_business_agent_instance(factory, agent_id="agent-a")
     claim = acquire_maintenance(
         factory,
         agent_id="agent-a",
@@ -345,7 +370,11 @@ def test_activation_guard_serializes_runtime_admission_until_side_effect_finishe
         runtime_started.set()
         try:
             with factory.begin() as db:
-                return claim_runtime_admission(db, agent_id="agent-a")
+                return claim_runtime_admission(
+                    db,
+                    agent_id="agent-a",
+                    expected_instance_etag=agent_etag,
+                )
         finally:
             runtime_finished.set()
 

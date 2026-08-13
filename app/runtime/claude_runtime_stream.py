@@ -169,6 +169,7 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[ManagedCla
                     run_id=context.run_id,
                     boundaries=runtime.settings.speech_summary_boundaries,
                     enabled=stream_run.with_speech_summary,
+                    task_timeout_seconds=runtime.settings.speech_summary_timeout_seconds,
                     emit=event_queue.put,
                 )
                 # 建议来源二选一:后端生成(受控特例,默认)走 SDK 原生 query/client——不加

@@ -8,6 +8,8 @@ from app.openapi_runtime_request_examples import RUNTIME_REQUEST_EXAMPLE_CONTRAC
 
 _AGENT_ID = "security-operations-expert"
 _OPERATOR = "platform-operator"
+_EXACT_COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567"
+_HISTORICAL_COMMIT_SHA = "fedcba9876543210fedcba9876543210fedcba98"
 
 
 _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract] = {
@@ -149,7 +151,7 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
     ),
     ("/api/agent-change-sets/{change_set_id}/publish", "post"): RequestExampleContract(
         media_type="application/json",
-        operation_description="Publish an approved change set for its owning business Agent. Normal publication requires the current candidate test gate to pass; force is restricted to eligible manual change sets and requires a reason.",
+        operation_description="Publish an approved change set for its owning business Agent. Normal and administrator-expedited publication both require every current publication gate to pass; force requires a reason and only adds expedited approval audit semantics, never a gate waiver.",
         examples={
             "normal_publish": _example(
                 "Publish through the normal tested path",
@@ -160,13 +162,13 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                 },
             ),
             "force_publish": _example(
-                "Force-publish an eligible manual candidate",
+                "Administrator-expedite an eligible manual candidate",
                 {
                     "operator": _OPERATOR,
                     "force": True,
-                    "force_reason": "紧急修复已完成人工复核，接受当前已记录的非反馈测试阻塞项。",
+                    "force_reason": "全部发布门禁已通过，值班负责人批准加急执行并记录审计。",
                 },
-                description="Never use force for feedback-linked candidates or incomplete provenance.",
+                description="Force only records administrator-expedited approval after all gates pass; it never waives test, provenance, or another publication blocker.",
             ),
         },
     ),
@@ -273,17 +275,20 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
     ),
     ("/api/agent-test-runs", "post"): RequestExampleContract(
         media_type="application/json",
-        operation_description="Create a durable full-suite test run for one business Agent. Omit commit_sha to pin the current active commit at request time, or pass a commit returned by the Agent test/repository APIs.",
+        operation_description="Create a durable full-suite test run for one business Agent. The caller must supply an exact full 40-character commit returned by the Agent test/repository APIs; the server never resolves a moving current revision for this manual action.",
         examples={
-            "current_active_commit": _example(
-                "Test the current active commit",
-                {"agent_id": _AGENT_ID},
-            ),
-            "specific_commit": _example(
-                "Test a specific Agent commit",
+            "visible_asset_commit": _example(
+                "Test the exact commit shown by the test asset view",
                 {
                     "agent_id": _AGENT_ID,
-                    "commit_sha": "commit-sha-from-agent-test-assets",
+                    "commit_sha": _EXACT_COMMIT_SHA,
+                },
+            ),
+            "historical_repository_commit": _example(
+                "Test an exact historical Agent commit",
+                {
+                    "agent_id": _AGENT_ID,
+                    "commit_sha": _HISTORICAL_COMMIT_SHA,
                 },
             ),
         },

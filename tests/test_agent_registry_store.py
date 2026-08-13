@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from app.runtime.agent_paths import business_agent_layout, business_agents_root
 from app.runtime.agent_profiles import build_business_agent_profile, build_profiles, discover_business_agents
+from app.runtime.agent_registry_db import AgentRegistryModel
+from app.runtime.errors import DataIntegrityError
 from app.runtime.protected_business_agents import (
     DEFAULT_BUSINESS_AGENT_ID,
     SECURITY_OPERATIONS_EXPERT_AGENT_ID,
@@ -20,8 +23,8 @@ from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app
-from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
-from test_agent_workspace_packages import _import_new_agent
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID, delete_test_business_agent
+from workspace_package_test_utils import import_new_agent as _import_new_agent
 
 
 def _load_app(monkeypatch, tmp_path, **kwargs):
@@ -51,28 +54,28 @@ def _store(tmp_path: Path) -> tuple[AgentRegistryStore, dict]:
 
 
 def _record_passed_test_run(module, *, agent_id: str, commit_sha: str, change_set_id: str) -> dict:
-    suite = module.agent_testing_service.inspect_suite(agent_id, commit_sha=commit_sha)
-    assert suite.runnable
-    assert suite.suite_digest
-    run = module.agent_testing_store.create_run(
+    run = module.agent_testing_service.create_run(
         agent_id=agent_id,
         commit_sha=commit_sha,
         change_set_id=change_set_id,
         source="release_check",
-        command=["python", "-m", "pytest", "-q", "-p", "agentgov_testkit.pytest_plugin", "tests"],
-        suite=suite.model_dump(mode="json"),
-        suite_digest=suite.suite_digest,
     )
-    claimed = module.agent_testing_store.claim_run(str(run["test_run_id"]))
+    claimed = module.agent_testing_store.claim_run(str(run["test_run_id"]), worker_id="registry-test-worker")
     assert claimed is not None
-    return module.agent_testing_store.finish_run(
+    finished = module.agent_testing_store.finish_run(
         str(run["test_run_id"]),
+        worker_id="registry-test-worker",
+        claim_generation=int(claimed["_claim_generation"]),
         status="passed",
-        report={"passed": 1, "failed": 0},
+        report={"exit_code": 0, "passed": 1, "failed": 0},
+        receipt=None,
         items=[{"nodeid": "tests/test_agent.py::test_agent", "outcome": "passed"}],
         stdout="1 passed",
         stderr="",
     )
+    eligible = {**finished, "receipt": {"receipt_digest": "1" * 64}}
+    module.agent_testing_service.latest_passed_for_commit = lambda **kwargs: eligible if kwargs == {"agent_id": agent_id, "commit_sha": commit_sha} else None
+    return finished
 
 
 def _write_runnable_agent_test(worktree: Path) -> None:
@@ -80,12 +83,7 @@ def _write_runnable_agent_test(worktree: Path) -> None:
     tests_dir.mkdir()
     tests_dir.joinpath("README.md").write_text("# Agent tests\n", encoding="utf-8")
     tests_dir.joinpath("test_agent.py").write_text(
-        "def test_agent(agent):\n"
-        "    result = agent.run('仅依据以下已给定事实回答，不调用任何工具或读取文件。回答必须包含测试通过。')\n"
-        "    assert not result.errors\n"
-        "    normalized_text = ''.join(result.text.split())\n"
-        "    assert '测试通过' in normalized_text\n"
-        "    assert result.raw['agent_activity']['tool_calls'] == []\n",
+        "def test_agent():\n    assert True\n",
         encoding="utf-8",
     )
 
@@ -106,6 +104,73 @@ def test_sync_is_idempotent(tmp_path: Path) -> None:
     store.sync_business_agents(profiles)
     store.sync_business_agents(profiles)  # 重复执行不得重复登记
     assert len(store.list_agents()) == 1
+
+
+def test_restart_discovery_skips_never_public_quarantine_without_requiring_ready_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings_with_data_dir(monkeypatch, tmp_path)
+    agent_id = "quarantined-create"
+    layout = business_agent_layout(settings.data_dir, agent_id)
+    layout.workspace.mkdir(parents=True)
+    factory = make_session_factory(settings.runtime_db_path)
+    store = AgentRegistryStore(factory, data_dir=settings.data_dir)
+    with factory.begin() as db:
+        db.add(
+            AgentRegistryModel(
+                agent_id=agent_id,
+                name="Interrupted create",
+                category="business",
+                workspace_dir=str(layout.workspace),
+                created_at="2026-08-10T00:00:00+00:00",
+                deleted_at="2026-08-10T00:01:00+00:00",
+                provision_state="ready",
+                provision_completed_token=None,
+                provision_previous_json={
+                    "kind": "workspace_must_be_absent",
+                    "workspace_dir": str(layout.workspace),
+                },
+            )
+        )
+
+    discovered = {profile.name: profile for profile in discover_business_agents(settings)}
+    assert agent_id in discovered
+    store.sync_business_agents(discovered)
+
+    assert store.list_agents() == []
+    with factory() as db:
+        row = db.get(AgentRegistryModel, agent_id)
+        assert row is not None and row.deleted_at
+        assert row.provision_completed_token is None
+
+
+def test_restart_sync_still_fails_closed_for_public_ready_row_without_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings_with_data_dir(monkeypatch, tmp_path)
+    agent_id = "public-missing-token"
+    layout = business_agent_layout(settings.data_dir, agent_id)
+    layout.workspace.mkdir(parents=True)
+    factory = make_session_factory(settings.runtime_db_path)
+    store = AgentRegistryStore(factory, data_dir=settings.data_dir)
+    with factory.begin() as db:
+        db.add(
+            AgentRegistryModel(
+                agent_id=agent_id,
+                name="Corrupt public row",
+                category="business",
+                workspace_dir=str(layout.workspace),
+                created_at="2026-08-10T00:00:00+00:00",
+                provision_state="ready",
+                provision_completed_token=None,
+            )
+        )
+
+    discovered = {profile.name: profile for profile in discover_business_agents(settings)}
+    with pytest.raises(DataIntegrityError, match="token is missing"):
+        store.sync_business_agents(discovered)
 
 
 def test_get_agent_returns_stable_identity(tmp_path: Path) -> None:
@@ -384,7 +449,7 @@ def test_delete_business_agent_reports_impact_and_protects_builtin_agent(monkeyp
         )
         assert schedule["enabled"] is True
 
-        deleted = client.delete("/api/agent-registry/soc-ops")
+        deleted = delete_test_business_agent(client, "soc-ops")
         assert deleted.status_code == 200
         body = deleted.json()
         assert body["deleted"]["agent_id"] == "soc-ops"
@@ -399,9 +464,9 @@ def test_delete_business_agent_reports_impact_and_protects_builtin_agent(monkeyp
         assert retained_schedule["next_run_at"] is None
         # 删除后不再出现在注册表。
         assert "soc-ops" not in {a["agent_id"] for a in client.get("/api/agent-registry").json()}
-        # 受保护的内置 Agent 不可删（400）；未知 agent_id 报 404。
-        assert client.delete(f"/api/agent-registry/{SECURITY_OPERATIONS_EXPERT_AGENT_ID}").status_code == 400
-        assert client.delete("/api/agent-registry/biz-unknown").status_code == 404
+        # 受保护和未知 Agent 均以精确前置条件冲突拒绝，不绕过 durable deletion 入口。
+        assert delete_test_business_agent(client, SECURITY_OPERATIONS_EXPERT_AGENT_ID).status_code == 409
+        assert delete_test_business_agent(client, "biz-unknown").status_code == 409
 
 
 def test_workspace_imported_business_agents_share_governance_without_builtin_special_cases(monkeypatch, tmp_path: Path) -> None:

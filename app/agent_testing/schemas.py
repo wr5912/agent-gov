@@ -8,6 +8,8 @@ from app.runtime.json_types import JsonObject
 from app.runtime.schemas import ChatResponse
 from app.runtime.state_machines import AgentTestRunStatus
 
+from .execution_contracts import AgentTestExecutionReceipt
+
 
 class AgentTestDiagnostic(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -28,6 +30,8 @@ class AgentTestSuiteSummary(BaseModel):
     test_file_count: int
     test_files: list[str] = Field(default_factory=list)
     suite_digest: str | None = None
+    requires_live_agent: bool = False
+    live_test_files: list[str] = Field(default_factory=list)
     diagnostics: list[AgentTestDiagnostic] = Field(default_factory=list)
 
     @property
@@ -39,7 +43,10 @@ class AgentTestRunCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_id: str
-    commit_sha: str | None = Field(default=None, description="Omit to pin the current active commit when this request is created.")
+    commit_sha: str = Field(
+        pattern=r"^[0-9a-f]{40}$",
+        description="Exact full Git commit SHA selected by the caller.",
+    )
 
 
 class AgentTestRunItemResponse(BaseModel):
@@ -70,6 +77,8 @@ class AgentTestRunResponse(BaseModel):
     duration_seconds: float | None = None
     exit_code: int | None = None
     suite_digest: str | None = None
+    source_digest: str | None = None
+    source_tree_sha: str | None = None
     command: list[str] = Field(default_factory=list)
     suite: JsonObject = Field(default_factory=dict)
     report: JsonObject = Field(default_factory=dict)
@@ -78,6 +87,7 @@ class AgentTestRunResponse(BaseModel):
     stdout: str = ""
     stderr: str = ""
     error: JsonObject = Field(default_factory=dict)
+    receipt: AgentTestExecutionReceipt | None = None
 
 
 class AgentTestRunSummaryResponse(BaseModel):
@@ -97,6 +107,9 @@ class AgentTestRunSummaryResponse(BaseModel):
     duration_seconds: float | None = None
     exit_code: int | None = None
     suite_digest: str | None = None
+    source_digest: str | None = None
+    source_tree_sha: str | None = None
+    receipt_available: bool = False
 
 
 class AgentTestRunHistoryResponse(BaseModel):

@@ -1,58 +1,32 @@
 #!/usr/bin/env node
-// 四阶段改进治理 §3 助手回复动作验收。
-// 默认模式：自启动 Vite + mock SSE，进入 main-flow 硬门，验证回复动作结构不回归。
-// 真实模式：设置 RUNTIME_UI_BASE + RUNTIME_API_BASE 后连真实容器 UI/API，跑真实 LLM 对话。
+// 助手回复动作验收：启动 Vite + mock SSE，覆盖消息动作和证据面板交互。
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
 import { scrollNavigationMetrics } from "./playground_scroll_test_helpers.mjs";
 import { mockAgentRunTrace, semanticTracePanelChecks } from "./playground_trace_test_helpers.mjs";
-
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const ts = "2026-06-18T00:00:00Z";
-
-function envv(name) {
-  try {
-    for (const l of readFileSync(new URL("../docker/.env", import.meta.url), "utf8").split(/\r?\n/)) {
-      const t = l.trim();
-      if (!t || t.startsWith("#")) continue;
-      const i = t.indexOf("=");
-      if (i > 0 && t.slice(0, i).trim() === name) return t.slice(i + 1).trim().replace(/^['"]|['"]$/g, "");
-    }
-  } catch { /* ignore */ }
-  return "";
-}
-
-const REAL = !!process.env.RUNTIME_UI_BASE;
-requireContainerAcceptance(REAL);
 const port = Number(process.env.MESSAGE_ACTIONS_PORT || 55198);
-const ui = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${port}`).replace(/\/$/, "");
-const api = (process.env.RUNTIME_API_BASE || "http://runtime.test").replace(/\/$/, "");
-const key = process.env.RUNTIME_API_KEY || envv("FRONTEND_RUNTIME_API_KEY") || envv("API_KEY") || "";
-const RETRIES = Number(process.env.RETRIES || 1);
+const ui = `http://127.0.0.1:${port}`;
+const api = "http://runtime.test";
+const key = "";
 const MAX_SSE_DOM_LATENCY_MS = 150;
 const screenshotDir = process.env.VERIFY_SCREENSHOT_DIR || mkdtempSync(join(tmpdir(), "agentgov-message-actions-"));
-
 function startVite() {
-  const child = spawn("pnpm", ["--dir", "frontend", "exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
-    cwd: repoRoot,
-    stdio: ["ignore", "inherit", "inherit"],
-    detached: true,
+  return spawn("pnpm", ["--dir", "frontend", "exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
+    cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"], detached: true,
   });
-  return child;
 }
-
 function killTree(child, signal) {
   try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* gone */ } }
 }
-
 async function stopChild(child) {
   if (!child || child.exitCode !== null) return;
   killTree(child, "SIGTERM");
@@ -61,7 +35,6 @@ async function stopChild(child) {
     child.once("exit", () => { clearTimeout(timeout); resolve(); });
   });
 }
-
 async function waitForVite() {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
@@ -73,20 +46,16 @@ async function waitForVite() {
   }
   throw new Error("vite not ready");
 }
-
 function json(route, payload) {
   return route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(payload) });
 }
-
 function sse(route, events) {
   return route.fulfill({
-    status: 200,
-    contentType: "text/event-stream; charset=utf-8",
+    status: 200, contentType: "text/event-stream; charset=utf-8",
     headers: { "access-control-allow-origin": "*" },
     body: events.map(({ event, data }) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join(""),
   });
 }
-
 function mockAgentRuns(includeMessages) {
   return Array.from({ length: 14 }, (_, index) => {
     const n = index + 1;
@@ -139,7 +108,6 @@ function mockAgentRuns(includeMessages) {
     };
   });
 }
-
 function mockConversationItems() {
   return mockAgentRuns(false).flatMap((run, index) => {
     const agentgov = index === 2
@@ -170,17 +138,15 @@ function mockConversationItems() {
         object: "conversation.item",
         type: "message",
         role: "assistant",
-        content: [
-          { type: "text", text: run.answer_summary },
-          { type: "tool_use", id: `tool-${index + 1}`, name: "Read", input: { file_path: "CLAUDE.md" } },
-        ],
+        content: [{ type: "text", text: run.answer_summary }, {
+          type: "tool_use", id: `tool-${index + 1}`, name: "Read", input: { file_path: "CLAUDE.md" },
+        }],
         parent_tool_use_id: null,
         agentgov,
       },
     ];
   });
 }
-
 function mockPayload(urlOrPath) {
   const url = typeof urlOrPath === "string" ? null : urlOrPath;
   const path = typeof urlOrPath === "string" ? urlOrPath : urlOrPath.pathname;
@@ -237,25 +203,21 @@ function mockPayload(urlOrPath) {
   if (path === "/api/agent-repository/current") return { agent_version_id: "v-mock", commit_sha: "mock", created_at: ts, reason: "current" };
   return {};
 }
-
 async function scrollDistance(page) {
   return page.getByTestId("playground-messages").evaluate((el) => Math.round(el.scrollHeight - el.clientHeight - el.scrollTop));
 }
-
 async function waitNearBottom(page) {
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="playground-messages"]');
     return !!el && el.scrollHeight > el.clientHeight && el.scrollHeight - el.clientHeight - el.scrollTop <= 24;
   }, null, { timeout: 5000 });
 }
-
 async function waitPreviewOpen(page) {
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="playground-scroll-preview"]');
     return !!el && Number(getComputedStyle(el).opacity) > 0.9;
   }, null, { timeout: 5000 });
 }
-
 async function mockMarkdownChecks(page) {
   const userMarkdown = page.locator('[data-message-id="history_msg_0_user"]').getByTestId("message-markdown");
   const assistantMarkdown = page.locator('[data-message-id="history_msg_0_assistant"]').getByTestId("message-markdown");
@@ -279,14 +241,19 @@ async function mockMarkdownChecks(page) {
     assistantRawMarkersHidden: !assistantText.includes("###") && !assistantText.includes("| --- |") && !assistantText.includes("```"),
   };
 }
-
-async function main() {
-  const server = REAL ? null : startVite();
-  if (!REAL) await waitForVite();
+async function withBrowser(callback) {
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
+  try { return await callback(browser); } finally { await browser.close(); }
+}
+async function main() {
+  const server = startVite();
+  await waitForVite();
+  let outcome;
+  try {
+    outcome = await withBrowser(async (browser) => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
   const requestedRuntimeUrls = [];
-  await page.addInitScript(([a, k, real]) => {
+  await page.addInitScript(([a, k]) => {
     window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: a, apiKey: k }));
     window.__agentgovLastStreamReceipt = null;
     window.__agentgovAssistantDomLatencies = [];
@@ -318,22 +285,12 @@ async function main() {
         }
       }).observe(document, { subtree: true, childList: true, characterData: true });
     }, { once: true });
-    if (!real) {
-      window.localStorage.setItem("playground-active-session", JSON.stringify("mock-session"));
-      window.localStorage.removeItem("playground-session-messages");
-    }
-  }, [api, key, REAL]);
+    window.localStorage.setItem("playground-active-session", JSON.stringify("mock-session"));
+    window.localStorage.removeItem("playground-session-messages");
+  }, [api, key]);
   let ok = false, detail = "";
   let sdkEventsRequestCount = 0;
-  try {
-    if (REAL) {
-      page.on("request", (request) => {
-        const url = new URL(request.url());
-        if (request.url().startsWith(api)) requestedRuntimeUrls.push(`${url.pathname}${url.search}`);
-      });
-    }
-    if (!REAL) {
-      await page.route("**/*", async (route) => {
+    await page.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         if (url.hostname !== "runtime.test") return route.continue();
         requestedRuntimeUrls.push(`${url.pathname}${url.search}`);
@@ -421,10 +378,9 @@ async function main() {
         }
         return json(route, mockPayload(url));
       });
-    }
     await page.goto(ui, { waitUntil: "domcontentloaded" });
     await page.getByTestId("playground").waitFor({ timeout: 20000 });
-    const nativeReducerChecks = REAL ? { skipped: true } : await page.evaluate(async () => {
+    const nativeReducerChecks = await page.evaluate(async () => {
       const { ClaudeSdkEvidenceReducer } = await import("/src/api/claudeSdkStream.ts");
       const reducer = new ClaudeSdkEvidenceReducer();
       reducer.setRunId("run-browser-reducer");
@@ -461,61 +417,50 @@ async function main() {
         subagentTextNotAnswer: subagent.finalText === undefined && subagent.traceEvents[0]?.scope === "subagent",
       };
     });
-    const maxAttempts = REAL ? RETRIES : 1;
-    for (let attempt = 1; attempt <= maxAttempts && !ok; attempt += 1) {
+    for (let attempt = 1; attempt <= 1 && !ok; attempt += 1) {
       try {
-        if (REAL) {
-          await page.locator(".composer textarea").fill("用一句话说明你的角色。");
-          await page.getByRole("button", { name: "发送" }).click();
-        }
         await page.getByTestId("message-actions").first().waitFor({ timeout: 90000 });
         const counts = {};
         for (const t of ["message-action-create-feedback", "message-action-view-trace", "message-action-get-context", "message-action-rerun"]) {
           counts[t] = await page.getByTestId(t).count();
         }
-        let markdownChecks = { skipped: REAL };
-        if (!REAL) {
-          markdownChecks = { skipped: false, ...await mockMarkdownChecks(page) };
-        }
-        let scrollChecks = { skipped: REAL };
-        if (!REAL) {
-          await page.getByTestId("playground-scroll-navigator").waitFor({ timeout: 8000 });
-          await waitNearBottom(page);
-          const initialDistance = await scrollDistance(page);
-          await page.getByTestId("playground-messages").evaluate((el) => {
-            el.scrollTop = 0;
-            el.dispatchEvent(new Event("scroll", { bubbles: true }));
-          });
-          await page.getByTestId("playground-jump-to-bottom").waitFor({ timeout: 5000 });
-          const jumpVisibleAfterUp = await page.getByTestId("playground-jump-to-bottom").isVisible().catch(() => false);
-          await page.getByTestId("playground-scroll-rail").hover();
-          await waitPreviewOpen(page);
-          const previewItemCount = await page.getByTestId("playground-scroll-preview-item").count();
-          const previewRoles = await page.getByTestId("playground-scroll-preview-item").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
-          const markCount = await page.getByTestId("playground-scroll-mark").count();
-          const markRoles = await page.getByTestId("playground-scroll-mark").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
-          const navigationMetrics = await scrollNavigationMetrics(page);
-          await page.getByTestId("playground-scroll-preview-item").first().click();
-          await page.waitForFunction(() => {
-            const el = document.querySelector('[data-testid="playground-messages"]');
-            return !!el && el.scrollTop <= 80;
-          }, null, { timeout: 5000 });
-          const nearTopAfterPreviewClick = await page.getByTestId("playground-messages").evaluate((el) => el.scrollTop <= 80);
-          await page.getByTestId("playground-jump-to-bottom").click();
-          await waitNearBottom(page);
-          scrollChecks = {
-            skipped: false,
-            initialDistance,
-            jumpVisibleAfterUp,
-            previewItemCount,
-            previewRoles,
-            markCount,
-            markRoles,
-            navigationMetrics,
-            nearTopAfterPreviewClick,
-            distanceAfterJump: await scrollDistance(page),
-          };
-        }
+        const markdownChecks = { skipped: false, ...await mockMarkdownChecks(page) };
+        await page.getByTestId("playground-scroll-navigator").waitFor({ timeout: 8000 });
+        await waitNearBottom(page);
+        const initialDistance = await scrollDistance(page);
+        await page.getByTestId("playground-messages").evaluate((el) => {
+          el.scrollTop = 0;
+          el.dispatchEvent(new Event("scroll", { bubbles: true }));
+        });
+        await page.getByTestId("playground-jump-to-bottom").waitFor({ timeout: 5000 });
+        const jumpVisibleAfterUp = await page.getByTestId("playground-jump-to-bottom").isVisible().catch(() => false);
+        await page.getByTestId("playground-scroll-rail").hover();
+        await waitPreviewOpen(page);
+        const previewItemCount = await page.getByTestId("playground-scroll-preview-item").count();
+        const previewRoles = await page.getByTestId("playground-scroll-preview-item").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
+        const markCount = await page.getByTestId("playground-scroll-mark").count();
+        const markRoles = await page.getByTestId("playground-scroll-mark").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
+        const navigationMetrics = await scrollNavigationMetrics(page);
+        await page.getByTestId("playground-scroll-preview-item").first().click();
+        await page.waitForFunction(() => {
+          const el = document.querySelector('[data-testid="playground-messages"]');
+          return !!el && el.scrollTop <= 80;
+        }, null, { timeout: 5000 });
+        const nearTopAfterPreviewClick = await page.getByTestId("playground-messages").evaluate((el) => el.scrollTop <= 80);
+        await page.getByTestId("playground-jump-to-bottom").click();
+        await waitNearBottom(page);
+        const scrollChecks = {
+          skipped: false,
+          initialDistance,
+          jumpVisibleAfterUp,
+          previewItemCount,
+          previewRoles,
+          markCount,
+          markRoles,
+          navigationMetrics,
+          nearTopAfterPreviewClick,
+          distanceAfterJump: await scrollDistance(page),
+        };
         await page.getByTestId("message-action-view-trace").first().click();
         await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
         const traceBox = await page.getByTestId("playground-evidence-panel").boundingBox();
@@ -531,7 +476,7 @@ async function main() {
         const resizeAria = await resizeHandle.getAttribute("aria-valuenow");
         const traceTabCount = await page.locator(".evidence-tab").count();
         const traceTabVisible = await page.getByTestId("evidence-tab-trace").isVisible().catch(() => false);
-        const semanticTraceChecks = REAL ? { skipped: true } : { skipped: false, ...await semanticTracePanelChecks(page) };
+        const semanticTraceChecks = { skipped: false, ...await semanticTracePanelChecks(page) };
         const traceDrawerCount = await page.getByTestId("trace-drawer").count();
         const legacyModalVisible = await page.locator(".detail-modal-card").isVisible().catch(() => false);
         const historyTraceHref = await page.getByTestId("playground-evidence-panel")
@@ -540,52 +485,35 @@ async function main() {
           .catch(() => "");
         await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
         await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-
         await page.reload({ waitUntil: "domcontentloaded" });
         await page.getByTestId("message-actions").first().waitFor({ timeout: 30000 });
         await page.getByTestId("message-action-view-trace").first().click();
         await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
-        const restoredSemanticTraceChecks = REAL ? { skipped: true } : { skipped: false, ...await semanticTracePanelChecks(page) };
+        const restoredSemanticTraceChecks = { skipped: false, ...await semanticTracePanelChecks(page) };
         const restoredTraceHref = await page.getByTestId("playground-evidence-panel").getByTestId("trace-open-langfuse").getAttribute("href").catch(() => "");
         await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
         await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-
-        let historyTraceStatusChecks = { skipped: REAL };
-        if (!REAL) {
-          await page.locator('[data-message-id="history_msg_2_assistant"]').getByTestId("message-action-view-trace").click();
-          await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 5000 });
-          const untracedLabel = await page.getByTestId("trace-langfuse-unavailable").innerText();
-          const untracedLinkCount = await page.getByTestId("playground-evidence-panel").getByTestId("trace-open-langfuse").count();
-          await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
-          await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 });
-
-          const unlinkedTraceDisabled = await page.locator('[data-message-id="history_msg_4_assistant"]').getByTestId("message-action-view-trace").isDisabled();
-          historyTraceStatusChecks = {
-            skipped: false,
-            tracedHref: historyTraceHref,
-            untracedLabel,
-            untracedLinkCount,
-            unlinkedTraceDisabled,
-          };
-        }
-
+        await page.locator('[data-message-id="history_msg_2_assistant"]').getByTestId("message-action-view-trace").click();
+        await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 5000 });
+        const untracedLabel = await page.getByTestId("trace-langfuse-unavailable").innerText();
+        const untracedLinkCount = await page.getByTestId("playground-evidence-panel").getByTestId("trace-open-langfuse").count();
+        await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
+        await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 });
+        const unlinkedTraceDisabled = await page.locator('[data-message-id="history_msg_4_assistant"]').getByTestId("message-action-view-trace").isDisabled();
+        const historyTraceStatusChecks = { skipped: false, tracedHref: historyTraceHref, untracedLabel, untracedLinkCount, unlinkedTraceDisabled };
         await page.getByTestId("message-action-create-feedback").first().click();
         await page.getByTestId("feedback-drawer").waitFor({ timeout: 8000 });
         const feedbackSize = await page.getByTestId("feedback-drawer").getAttribute("data-size");
         const feedbackBox = await page.getByTestId("feedback-drawer").boundingBox();
         await page.getByTestId("feedback-drawer").getByLabel("关闭").click();
         await page.getByTestId("feedback-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-
         await page.getByTestId("playground-session-trigger").click();
         await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
         const sessionBox = await page.getByTestId("playground-session-sidebar").boundingBox();
         const sessionText = await page.getByTestId("playground-session-sidebar").innerText();
-        const sessionDeleteMatchesRunState = REAL
-          ? true
-          : !(await page.getByTestId("session-sidebar-delete").first().isDisabled());
+        const sessionDeleteMatchesRunState = !(await page.getByTestId("session-sidebar-delete").first().isDisabled());
         await page.getByTestId("playground-session-trigger").click();
         await page.getByTestId("playground-session-sidebar").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-
         await page.getByTestId("playground-runtime-settings-trigger").click();
         await page.getByTestId("playground-runtime-settings-drawer").waitFor({ timeout: 8000 });
         const settingsSize = await page.getByTestId("playground-runtime-settings-drawer").getAttribute("data-size");
@@ -594,66 +522,51 @@ async function main() {
         const debugClosed = await page.getByTestId("runtime-debug-section").evaluate((el) => !el.open).catch(() => false);
         await page.getByTestId("playground-runtime-settings-drawer").getByLabel("关闭").click();
         await page.getByTestId("playground-runtime-settings-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-
-        let autoPanelChecks = { skipped: true };
-        if (!REAL) {
-          await page.getByTestId("playground-session-trigger").click();
-          await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
-          await page.getByTestId("playground-messages").evaluate((el) => {
-            el.scrollTop = 0;
-            el.dispatchEvent(new Event("scroll", { bubbles: true }));
-          });
-          const rowsBeforeSend = await page.locator("[data-message-id]").count();
-          await page.locator(".composer textarea").fill("请再用一句话说明你的角色。");
-          await page.getByRole("button", { name: "发送" }).click();
-          await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
-          await page.waitForFunction((count) => document.querySelectorAll("[data-message-id]").length > count, rowsBeforeSend, { timeout: 90000 });
-          await waitNearBottom(page);
-          const suggestion = page.getByTestId("prompt-suggestion");
-          await suggestion.waitFor({ timeout: 8000 });
-          const requestsBeforeSuggestionClick = sdkEventsRequestCount;
-          const suggestionChips = suggestion.getByTestId("prompt-suggestion-item");
-          // mock 一帧送 3 条 ⇒ 必须渲染 3 个 chip。不测这条的话,多候选退化回单条也照样绿
-          // (下面的 first() 点击对单条同样成立)。
-          const suggestionChipCount = await suggestionChips.count();
-          const suggestionChipTexts = await suggestionChips.allInnerTexts();
-          const latestAssistantText = (
-            await page.locator('[data-message-role="assistant"] [data-testid="message-markdown"]').last().innerText()
-          ).trim();
-          const domLatencies = await page.evaluate(() => window.__agentgovAssistantDomLatencies || []);
-          const sortedDomLatencies = [...domLatencies].sort((left, right) => left - right);
-          const domLatencyP95 = sortedDomLatencies.length
-            ? sortedDomLatencies[Math.max(0, Math.ceil(sortedDomLatencies.length * 0.95) - 1)]
-            : Number.POSITIVE_INFINITY;
-          const liveTraceHref = await page.getByTestId("playground-evidence-panel")
-            .getByTestId("trace-open-langfuse")
-            .getAttribute("href")
-            .catch(() => "");
-          // 多候选下容器内有多个 button,必须按 per-chip testid 取,否则 strict-mode violation
-          await suggestionChips.first().click();
-          await page.waitForTimeout(100);
-          autoPanelChecks = {
-            skipped: false,
-            sessionCollapsedAfterSend: await page.getByTestId("playground-session-sidebar").count() === 0,
-            evidenceOpenAfterSend: await page.getByTestId("playground-evidence-panel").isVisible().catch(() => false),
-            traceTabAfterSend: await page.getByTestId("evidence-tab-trace").isVisible().catch(() => false),
-            autoBottomAfterSend: await scrollDistance(page) <= 24,
-            suggestionRenderedAllCandidates: suggestionChipCount === 3,
-            suggestionChipTextsMatchFrame:
-              suggestionChipTexts.join("|") === "继续检查失败路径。|看一下日志|换个角度分析",
-            suggestionFilledInput: await page.getByTestId("chat-composer-input").inputValue() === "继续检查失败路径。",
-            suggestionDidNotAutoSend: sdkEventsRequestCount === requestsBeforeSuggestionClick,
-            suggestionClearedAfterUse: await page.getByTestId("prompt-suggestion").count() === 0,
-            canonicalAssistantTextExact: latestAssistantText === "我是 AgentGov 测试助手。",
-            sseReceiptToDomSamples: domLatencies.length,
-            sseReceiptToDomP95Ms: domLatencyP95,
-            sseReceiptToDomThresholdMs: MAX_SSE_DOM_LATENCY_MS,
-            traceFromSessionSurvivesResult: liveTraceHref.includes("/project/agent-gov/traces/mock-trace-live"),
-          };
-          await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
-          await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-        }
-
+        await page.getByTestId("playground-session-trigger").click();
+        await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
+        await page.getByTestId("playground-messages").evaluate((el) => {
+          el.scrollTop = 0;
+          el.dispatchEvent(new Event("scroll", { bubbles: true }));
+        });
+        const rowsBeforeSend = await page.locator("[data-message-id]").count();
+        await page.locator(".composer textarea").fill("请再用一句话说明你的角色。");
+        await page.getByRole("button", { name: "发送" }).click();
+        await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
+        await page.waitForFunction((count) => document.querySelectorAll("[data-message-id]").length > count, rowsBeforeSend, { timeout: 90000 });
+        await waitNearBottom(page);
+        const suggestion = page.getByTestId("prompt-suggestion");
+        await suggestion.waitFor({ timeout: 8000 });
+        const requestsBeforeSuggestionClick = sdkEventsRequestCount;
+        const suggestionChips = suggestion.getByTestId("prompt-suggestion-item");
+        // mock 一帧送 3 条，防止多候选退化回单条仍通过 first() 点击。
+        const suggestionChipCount = await suggestionChips.count();
+        const suggestionChipTexts = await suggestionChips.allInnerTexts();
+        const latestAssistantText = (await page.locator('[data-message-role="assistant"] [data-testid="message-markdown"]').last().innerText()).trim();
+        const domLatencies = await page.evaluate(() => window.__agentgovAssistantDomLatencies || []);
+        const sortedDomLatencies = [...domLatencies].sort((left, right) => left - right);
+        const domLatencyP95 = sortedDomLatencies.length ? sortedDomLatencies[Math.max(0, Math.ceil(sortedDomLatencies.length * 0.95) - 1)] : Number.POSITIVE_INFINITY;
+        const liveTraceHref = await page.getByTestId("playground-evidence-panel").getByTestId("trace-open-langfuse").getAttribute("href").catch(() => "");
+        await suggestionChips.first().click();
+        await page.waitForTimeout(100);
+        const autoPanelChecks = {
+          skipped: false,
+          sessionCollapsedAfterSend: await page.getByTestId("playground-session-sidebar").count() === 0,
+          evidenceOpenAfterSend: await page.getByTestId("playground-evidence-panel").isVisible().catch(() => false),
+          traceTabAfterSend: await page.getByTestId("evidence-tab-trace").isVisible().catch(() => false),
+          autoBottomAfterSend: await scrollDistance(page) <= 24,
+          suggestionRenderedAllCandidates: suggestionChipCount === 3,
+          suggestionChipTextsMatchFrame: suggestionChipTexts.join("|") === "继续检查失败路径。|看一下日志|换个角度分析",
+          suggestionFilledInput: await page.getByTestId("chat-composer-input").inputValue() === "继续检查失败路径。",
+          suggestionDidNotAutoSend: sdkEventsRequestCount === requestsBeforeSuggestionClick,
+          suggestionClearedAfterUse: await page.getByTestId("prompt-suggestion").count() === 0,
+          canonicalAssistantTextExact: latestAssistantText === "我是 AgentGov 测试助手。",
+          sseReceiptToDomSamples: domLatencies.length,
+          sseReceiptToDomP95Ms: domLatencyP95,
+          sseReceiptToDomThresholdMs: MAX_SSE_DOM_LATENCY_MS,
+          traceFromSessionSurvivesResult: liveTraceHref.includes("/project/agent-gov/traces/mock-trace-live"),
+        };
+        await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
+        await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
         const drawerChecks = {
           traceWidth: Math.round(traceBox?.width || 0),
           resizedTraceWidth: Math.round(resizedTraceBox?.width || 0),
@@ -680,7 +593,6 @@ async function main() {
           historySourceChecks: {
             conversationItemsRequested: requestedRuntimeUrls.some((value) => value.startsWith("/v1/conversations/conv_mock-session/items?")),
             conversationItemsPaginated: requestedRuntimeUrls.some((value) => value.startsWith("/v1/conversations/conv_mock-session/items?") && value.includes("after=msg_13")),
-            realConversationItemsRequested: requestedRuntimeUrls.some((value) => /^\/v1\/conversations\/[^/]+\/items\?/.test(value)),
             sqliteMessageRestoreAbsent: !requestedRuntimeUrls.some((value) => value.startsWith("/api/agent-runs?") && value.includes("include_messages=true")),
             localMessageCacheAbsent: await page.evaluate(() => window.localStorage.getItem("playground-session-messages") === null),
             nativeSdkStreamSent: sdkEventsRequestCount > 0,
@@ -711,17 +623,14 @@ async function main() {
           && drawerChecks.settingsNoSessionHistory
           && debugClosed
           && !legacyModalVisible
-          && (!REAL || historyTraceHref.includes("/traces/"))
-          && (!REAL || restoredTraceHref.includes("/traces/"))
-          && (!REAL || drawerChecks.historySourceChecks.realConversationItemsRequested)
-          && (REAL || (
+          && (
             !nativeReducerChecks.skipped
             && nativeReducerChecks.stableBlockIdentity
             && nativeReducerChecks.thinkingDeltaAccumulated
             && nativeReducerChecks.canonicalTextExact
             && nativeReducerChecks.subagentTextNotAnswer
-          ))
-          && (REAL || (
+          )
+          && (
             drawerChecks.historySourceChecks.conversationItemsRequested
             && drawerChecks.historySourceChecks.conversationItemsPaginated
             && drawerChecks.historySourceChecks.sqliteMessageRestoreAbsent
@@ -729,8 +638,8 @@ async function main() {
             && drawerChecks.historySourceChecks.nativeSdkStreamSent
             && drawerChecks.historySourceChecks.responsesBridgeAbsent
             && drawerChecks.historySourceChecks.chatBridgeAbsent
-          ))
-          && (REAL || (
+          )
+          && (
             !historyTraceStatusChecks.skipped
             && historyTraceStatusChecks.tracedHref.includes("/project/agent-gov/traces/mock-trace-1")
             && historyTraceStatusChecks.untracedLabel === "无 Langfuse Trace"
@@ -742,8 +651,8 @@ async function main() {
             && semanticTraceChecks.toolUseCount === 1
             && semanticTraceChecks.thinkingTokenNoiseAbsent
             && restoredSemanticTraceChecks.eventIds.join("|") === semanticTraceChecks.eventIds.join("|")
-          ))
-          && (REAL || (
+          )
+          && (
             !markdownChecks.skipped
             && markdownChecks.markdownContainerCount >= 28
             && markdownChecks.userStrong > 0
@@ -758,8 +667,8 @@ async function main() {
             && markdownChecks.assistantListItems >= 2
             && markdownChecks.assistantLinkTarget === "_blank"
             && markdownChecks.assistantRawMarkersHidden
-          ))
-          && (REAL || (
+          )
+          && (
             !scrollChecks.skipped
             && scrollChecks.initialDistance <= 24
             && scrollChecks.jumpVisibleAfterUp
@@ -773,8 +682,8 @@ async function main() {
             && scrollChecks.navigationMetrics.avgGap <= 30
             && scrollChecks.nearTopAfterPreviewClick
             && scrollChecks.distanceAfterJump <= 24
-          ))
-          && (REAL || (
+          )
+          && (
             !autoPanelChecks.skipped
             && autoPanelChecks.sessionCollapsedAfterSend
             && autoPanelChecks.evidenceOpenAfterSend
@@ -789,44 +698,46 @@ async function main() {
             && autoPanelChecks.sseReceiptToDomSamples > 0
             && autoPanelChecks.sseReceiptToDomP95Ms <= autoPanelChecks.sseReceiptToDomThresholdMs
             && autoPanelChecks.traceFromSessionSurvivesResult
-          ));
+          );
         detail = JSON.stringify({ counts, drawerChecks });
         if (ok) await page.screenshot({ path: join(screenshotDir, "agentgov-improvement-ui-after-message-actions.png") });
-        if (!REAL) {
-          await page.locator(".composer textarea").fill("触发截断流负测");
-          await page.getByRole("button", { name: "发送" }).click();
-          await page.waitForFunction(() => {
-            const messages = document.querySelectorAll('[data-message-role="assistant"]');
-            return messages[messages.length - 1]?.textContent?.includes("Stream ended before agentgov.done");
-          }, undefined, { timeout: 8000 });
-          const terminalFailureText = await page.locator('[data-message-role="assistant"]').last().innerText();
-          const failureTraceHref = await page.getByTestId("playground-evidence-panel")
-            .getByTestId("trace-open-langfuse")
-            .getAttribute("href")
-            .catch(() => "");
-          const terminalFailureCheck = {
-            partialTextPreserved: terminalFailureText.includes("半截响应"),
-            interruptionVisible: terminalFailureText.includes("运行失败")
-              && terminalFailureText.includes("Stream ended before agentgov.done"),
-            traceAvailableWithoutResult: failureTraceHref.includes("/project/agent-gov/traces/mock-trace-failure"),
-          };
-          ok = ok
-            && terminalFailureCheck.partialTextPreserved
-            && terminalFailureCheck.interruptionVisible
-            && terminalFailureCheck.traceAvailableWithoutResult;
-          detail = JSON.stringify({ counts, drawerChecks, terminalFailureCheck });
-        }
+        await page.locator(".composer textarea").fill("触发截断流负测");
+        await page.getByRole("button", { name: "发送" }).click();
+        await page.waitForFunction(() => {
+          const messages = document.querySelectorAll('[data-message-role="assistant"]');
+          return messages[messages.length - 1]?.textContent?.includes("Stream ended before agentgov.done");
+        }, undefined, { timeout: 8000 });
+        const terminalFailureText = await page.locator('[data-message-role="assistant"]').last().innerText();
+        const failureTraceHref = await page.getByTestId("playground-evidence-panel")
+          .getByTestId("trace-open-langfuse")
+          .getAttribute("href")
+          .catch(() => "");
+        const terminalFailureCheck = {
+          partialTextPreserved: terminalFailureText.includes("半截响应"),
+          interruptionVisible: terminalFailureText.includes("运行失败")
+            && terminalFailureText.includes("Stream ended before agentgov.done"),
+          traceAvailableWithoutResult: failureTraceHref.includes("/project/agent-gov/traces/mock-trace-failure"),
+        };
+        ok = ok
+          && terminalFailureCheck.partialTextPreserved
+          && terminalFailureCheck.interruptionVisible
+          && terminalFailureCheck.traceAvailableWithoutResult;
+        detail = JSON.stringify({ counts, drawerChecks, terminalFailureCheck });
       } catch (e) {
         ok = false;
         detail = `attempt ${attempt}: ${e instanceof Error ? e.message.slice(0, 80) : e}`;
         console.error("retry:", detail);
       }
     }
+      return { ok, detail };
+    });
   } finally {
-    await browser.close();
     await stopChild(server);
   }
-  console.log(JSON.stringify({ status: ok ? "passed" : "failed", mode: REAL ? "real-container" : "mock", rule: "message-actions", detail }, null, 2));
-  process.exit(ok ? 0 : 1);
+  console.log(JSON.stringify({ status: outcome.ok ? "passed" : "failed", mode: "mock", rule: "message-actions", detail: outcome.detail }, null, 2));
+  process.exit(outcome.ok ? 0 : 1);
 }
-main().catch((e) => { console.error(e instanceof Error ? e.stack || e.message : e); process.exit(2); });
+main().catch((error) => {
+  console.error(error instanceof Error ? error.stack || error.message : error);
+  process.exit(2);
+});

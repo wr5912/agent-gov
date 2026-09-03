@@ -4,13 +4,15 @@ import argparse
 import json
 import os
 import sys
+import tempfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping, cast
+from typing import cast
 
 CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-gov"
-LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-gov")
 _CONTAINER_MARKER_ENV = "RUNTIME_CONTAINER"
 _TRUTHY_CONTAINER_MARKERS = {"1", "true", "yes", "on", "container"}
+_openapi_runtime_directory: tempfile.TemporaryDirectory[str] | None = None
 OpenApiSchema = Mapping[str, object]
 
 
@@ -53,7 +55,16 @@ def _local_default_volume_root() -> Path:
         return Path(root)
     if os.environ.get(_CONTAINER_MARKER_ENV, "").strip().lower() in _TRUTHY_CONTAINER_MARKERS:
         return CONTAINER_RUNTIME_VOLUME_ROOT
-    return LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
+    return _isolated_openapi_volume_root()
+
+
+def _isolated_openapi_volume_root() -> Path:
+    """Keep offline schema generation out of every developer's runtime data."""
+
+    global _openapi_runtime_directory
+    if _openapi_runtime_directory is None:
+        _openapi_runtime_directory = tempfile.TemporaryDirectory(prefix="agent-gov-openapi-")
+    return Path(_openapi_runtime_directory.name)
 
 
 def _apply_local_defaults(_project_root: Path) -> None:

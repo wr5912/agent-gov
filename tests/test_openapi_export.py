@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -18,19 +19,24 @@ from fastapi.routing import APIRoute
 from scripts.audit_openapi_contract import audit_live_matches_local, audit_schema
 from scripts.export_openapi import (
     CONTAINER_RUNTIME_VOLUME_ROOT,
-    LOCAL_DEBUG_RUNTIME_VOLUME_ROOT,
     _apply_local_defaults,
     _local_default_volume_root,
     build_openapi_schema,
 )
 
 
-def test_export_openapi_local_defaults_use_debug_volume_unless_container_mode(monkeypatch):
+def test_export_openapi_local_defaults_use_isolated_volume_unless_container_mode(monkeypatch):
     monkeypatch.delenv("HOST_RUNTIME_VOLUME_ROOT", raising=False)
     monkeypatch.delenv("RUNTIME_VOLUME_MODE", raising=False)
     monkeypatch.delenv("RUNTIME_CONTAINER", raising=False)
 
-    assert _local_default_volume_root() == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
+    isolated_root = _local_default_volume_root()
+    assert isolated_root == _local_default_volume_root()
+    assert isolated_root.is_dir()
+    assert isolated_root.name.startswith("agent-gov-openapi-")
+    assert isolated_root != Path("/tmp/local-debug-volume-agent-gov")
+    assert stat.S_IMODE(isolated_root.stat().st_mode) & 0o077 == 0
+    assert os.access(isolated_root, os.W_OK)
 
     monkeypatch.setenv("RUNTIME_CONTAINER", "1")
     assert _local_default_volume_root() == CONTAINER_RUNTIME_VOLUME_ROOT
@@ -39,7 +45,7 @@ def test_export_openapi_local_defaults_use_debug_volume_unless_container_mode(mo
     assert _local_default_volume_root() == Path("/tmp/custom-runtime-root")
 
 
-def test_export_openapi_applies_local_debug_env_file_mode(monkeypatch):
+def test_export_openapi_applies_isolated_host_defaults(monkeypatch):
     original = os.environ.copy()
     for key in (
         "RUNTIME_VOLUME_MODE",
@@ -57,13 +63,14 @@ def test_export_openapi_applies_local_debug_env_file_mode(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
     try:
+        isolated_root = _local_default_volume_root()
         _apply_local_defaults(Path.cwd())
 
         assert "RUNTIME_VOLUME_MODE" not in os.environ
         assert os.environ["RUNTIME_CONTAINER"] == "0"
-        assert os.environ["HOST_RUNTIME_VOLUME_ROOT"] == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT.as_posix()
-        assert os.environ["WORKSPACE_DIR"] == (LOCAL_DEBUG_RUNTIME_VOLUME_ROOT / "main-workspace").as_posix()
-        assert os.environ["DATA_DIR"] == (LOCAL_DEBUG_RUNTIME_VOLUME_ROOT / "data").as_posix()
+        assert os.environ["HOST_RUNTIME_VOLUME_ROOT"] == isolated_root.as_posix()
+        assert os.environ["WORKSPACE_DIR"] == (isolated_root / "main-workspace").as_posix()
+        assert os.environ["DATA_DIR"] == (isolated_root / "data").as_posix()
     finally:
         os.environ.clear()
         os.environ.update(original)
@@ -267,9 +274,7 @@ def test_responses_named_examples_explain_strict_and_control_modes() -> None:
     assert examples["agentgov_control_stream"]["value"]["agentgov"]["with_speech_summary"] is True
     assert examples["agentgov_control_stream"]["value"]["stream"] is True
     assert examples["agentgov_control_structured"]["value"]["instructions"]
-    assert {
-        type(message["content"]).__name__ for message in examples["agentgov_control_structured"]["value"]["input"]
-    } == {"str", "list"}
+    assert {type(message["content"]).__name__ for message in examples["agentgov_control_structured"]["value"]["input"]} == {"str", "list"}
     assert "agentgov" not in examples["strict_openai"]["value"]
     assert "previous_response_id" not in examples["continue_with_conversation"]["value"]
     assert "conversation" not in examples["continue_with_previous_response_id"]["value"]
@@ -579,9 +584,7 @@ def test_openapi_non_200_success_operations_do_not_gain_fake_200() -> None:
             "named request examples differ",
         ),
         (
-            lambda schema: schema["components"]["schemas"]["AgentRepositoryStatusResponse"]["properties"]["status"].update(
-                enum=["draft", "published"]
-            ),
+            lambda schema: schema["components"]["schemas"]["AgentRepositoryStatusResponse"]["properties"]["status"].update(enum=["draft", "published"]),
             "component AgentRepositoryStatusResponse.status enum",
         ),
     ],

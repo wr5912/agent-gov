@@ -1,6 +1,7 @@
 .idea
 /.env
 docker/.env
+docker/.env.mockllm
 docker/.env.local
 docker/.env.local-debug
 docker/.env.bak*

@@ -143,6 +143,9 @@ export default function App() {
     return undefined;
   }, [activeMessages, activeTraceMessageId, streamingAssistantMessageId]);
   const activeTraceEvents = activeTraceMessage?.events || [];
+  const activeTraceSourceUserInput = activeTraceMessage
+    ? precedingUserInput(activeMessages, activeTraceMessage.id)
+    : undefined;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -459,10 +462,8 @@ export default function App() {
 
   function rerunMessage(message: ChatMessage) {
     if (streaming) return;
-    const idx = activeMessages.findIndex((m) => m.id === message.id);
-    for (let i = idx - 1; i >= 0; i -= 1) {
-      if (activeMessages[i].role === "user") { promptSuggestion.handleInputChange(activeMessages[i].content); break; }
-    }
+    const source = precedingUserInput(activeMessages, message.id);
+    if (source !== undefined) promptSuggestion.handleInputChange(source);
   }
 
   return (
@@ -538,6 +539,7 @@ export default function App() {
           {evidencePanelOpen ? (
             <PlaygroundEvidencePanel
               message={activeTraceMessage}
+              sourceUserInput={activeTraceSourceUserInput}
               events={activeTraceEvents}
               streaming={streaming}
               langfuseUrl={langfuseUrl}
@@ -593,4 +595,12 @@ export default function App() {
       />
     </div>
   );
+}
+
+function precedingUserInput(messages: ChatMessage[], messageId: string) {
+  const index = messages.findIndex((message) => message.id === messageId);
+  for (let current = index - 1; current >= 0; current -= 1) {
+    if (messages[current].role === "user") return messages[current].content;
+  }
+  return undefined;
 }

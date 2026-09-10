@@ -22,11 +22,7 @@ class AgentConfigFileUpdateRequest(BaseModel):
         default=None,
         description="Current file sha256 returned by GET; rejects stale edits when mismatched.",
     )
-    session_id: Optional[str] = Field(
-        default=None,
-        description="Optional API session to detach from its Claude SDK resume id after applying this config.",
-    )
 
 
 class AgentConfigFileUpdateResponse(AgentConfigFileResponse):
-    sdk_session_invalidated: bool = False
+    existing_sessions_unchanged: bool = True

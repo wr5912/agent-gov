@@ -1,72 +1,21 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 from typing import Optional
+from weakref import WeakValueDictionary
 
-from sqlalchemy import JSON, ForeignKey, Index, String, Text, create_engine, event, text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy import JSON, ForeignKey, Index, String, create_engine, event, inspect
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from .json_types import JsonObject
 from .protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from .runtime_db_base import Base, utc_now
-from .runtime_db_migrations import (
-    migrate_0005_agent_governance,
-    migrate_0006_remove_agent_job_output_contract_column,
-    migrate_0007_agent_registry,
-    migrate_0008_feedback_signal_agent_id,
-    migrate_0009_agent_registry_status,
-    migrate_0010_scenario_packs,
-    migrate_0011_change_set_release_agent_id,
-    migrate_0012_eval_run_agent_id,
-    migrate_0014_improvement_feedback_context,
-    migrate_0015_improvement_content_generated_by,
-    migrate_0016_execution_application_binding,
-    migrate_0017_regression_assessments,
-    migrate_0018_agent_registry_origin_tombstone,
-    migrate_0019_improvement_detail_columns,
-    migrate_0020_claude_user_input_requests,
-    migrate_0021_improvement_generation_trace_refs,
-    migrate_0022_remove_legacy_batch_optimization_chain,
-    migrate_0023_eval_case_targeted_regression_layer,
-    migrate_0024_feedback_case_agent_id,
-    migrate_0025_agent_governance_legacy_paths,
-    migrate_0026_normalized_feedback_generation_refs,
-    migrate_0027_agent_registry_requires_web_hitl,
-    migrate_0028_remove_improvement_automation_policy,
-    migrate_0029_agent_release_tag_claims,
-    migrate_0030_improvement_execution_intents,
-    migrate_0031_feedback_case_assignments,
-    migrate_0032_improvement_execution_source_revisions,
-    migrate_0034_repair_feedback_case_assignments,
-    migrate_0035_session_active_run_lease,
-)
-from .runtime_db_migrations_0033 import migrate_0033_repair_improvement_stages_from_artifacts
-from .runtime_db_migrations_0036 import migrate_0036_agent_maintenance_feedback_and_session_reconciliation
-from .runtime_db_migrations_0037 import migrate_0037_eval_runs_use_typed_dataset_snapshots
-from .runtime_db_migrations_0038 import migrate_0038_remove_agent_registry_requires_web_hitl
-from .runtime_db_migrations_0039 import migrate_0039_test_dataset_revision_provenance
-from .runtime_db_migrations_0040 import migrate_0040_archive_and_remove_legacy_evaluation_chain
-from .runtime_db_migrations_0041 import migrate_0041_agent_registry_provisioning_saga
-from .runtime_db_migrations_0042 import migrate_0042_retire_persisted_agent_job_queue
-from .runtime_db_migrations_0043 import migrate_0043_response_disposition_claims
-from .runtime_db_migrations_0044 import migrate_0044_agent_release_source_claims
-from .runtime_db_migrations_0045 import migrate_0045_drop_response_disposition_claims
-from .runtime_db_migrations_0046 import migrate_0046_remove_agent_registry_origin
-from .runtime_db_migrations_0047 import migrate_0047_rename_business_agent_evidence_fields
-from .runtime_db_migrations_0048 import migrate_0048_workspace_pytest_source_of_truth
-from .runtime_db_migrations_0049 import migrate_0049_rename_regression_test_design
-from .runtime_db_migrations_0050 import migrate_0050_deduplicate_active_agent_test_runs
-from .runtime_db_migrations_0051 import migrate_0051_replace_regression_design_with_pytest_code
-from .runtime_db_migrations_0052 import migrate_0052_agent_test_asset_schedules
-from .schema_self_heal import sync_missing_columns
 
-_ENGINE_CACHE: dict[Path, Engine] = {}
+_ENGINE_CACHE: WeakValueDictionary[Path, Engine] = WeakValueDictionary()
 _ENGINE_CACHE_LOCK = RLock()
 
 from app.agent_testing.models import (  # noqa: E402,F401
@@ -76,13 +25,30 @@ from app.agent_testing.models import (  # noqa: E402,F401
     AgentTestScheduleModel,
     AgentWorkspaceImportRecordModel,
 )
+from app.runtime_gateway.models import (  # noqa: E402,F401
+    AgentRunModel,
+    RuntimeAgentDeletionIntentModel,
+    RuntimeAgentVersionModel,
+    RuntimeCutoverLedgerModel,
+    RuntimeEphemeralResourceModel,
+    RuntimePendingActionModel,
+    RuntimeReceiptModel,
+    RuntimeSessionBindingModel,
+    RuntimeTeamDeliveryModel,
+)
 
+# Fresh-schema 的目标集合必须与调用方 import 顺序无关。集中加载所有声明在
+# 独立模块中的 Base model，随后再做精确 schema 校验。
+from . import agent_registry_db as _agent_registry_db  # noqa: E402,F401
+from . import asset_db as _asset_db  # noqa: E402,F401
+from . import improvement_db as _improvement_db  # noqa: E402,F401
 from .agent_maintenance_db import (  # noqa: E402,F401
     AgentAdmissionStateModel,
     AgentReleaseOperationModel,
     AgentWorktreeCleanupTaskModel,
 )
-from .claude_user_input_db import ClaudeUserInputRequestModel  # noqa: E402,F401
+
+_SCHEMA_EPOCH = "agentscope-runtime-v1"
 
 
 class SchemaMigration(Base):
@@ -90,46 +56,6 @@ class SchemaMigration(Base):
 
     version: Mapped[str] = mapped_column(String(64), primary_key=True)
     applied_at: Mapped[str] = mapped_column(String(64), default=utc_now)
-
-
-class SessionRecordModel(Base):
-    __tablename__ = "sessions"
-
-    session_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    sdk_session_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    # Backend-owned owning business Agent, set by the
-    # runtime at chat time. Authoritative source for resolving a session's transcript directory.
-    agent_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    title: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    turns: Mapped[int] = mapped_column(default=0)
-    metadata_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-    active_run_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
-    active_run_expires_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    active_run_generation: Mapped[int] = mapped_column(default=0, server_default=text("0"))
-    sdk_project_key: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    sdk_store_ready_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    sdk_store_migration_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-
-from .sdk_session_db import SdkSessionEntryModel, SessionTurnIntentModel  # noqa: E402,F401
-
-
-class AgentRunModel(Base):
-    __tablename__ = "agent_runs"
-
-    run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    session_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    sdk_session_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    alert_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
-    case_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    langfuse_trace_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
-    langfuse_trace_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class FeedbackSignalModel(Base):
@@ -362,16 +288,6 @@ Index("ux_agent_release_source_claims_change_set", AgentReleaseSourceClaimModel.
 Index("ux_agent_release_source_claims_release", AgentReleaseSourceClaimModel.release_id, unique=True)
 
 
-class RuntimeSettingModel(Base):
-    """运营者级运行时设置 KV（如 /v1 出口 Agent）。backend-owned，经设置 API 读写。"""
-
-    __tablename__ = "runtime_settings"
-
-    key: Mapped[str] = mapped_column(String(256), primary_key=True)
-    value_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-
-
 def runtime_db_path_from_data_dir(data_dir: Path) -> Path:
     return data_dir / "runtime.sqlite3"
 
@@ -439,235 +355,37 @@ def make_session_factory(db_path: Path) -> sessionmaker:
 
 
 def ensure_schema(engine: Engine) -> None:
-    Base.metadata.create_all(engine)
-    _run_runtime_migrations(engine)
-    sync_missing_columns(engine)  # 自愈 create_all 加列盲区（共享 Base 的模型加列后补齐已存在卷缺列）
-    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    with factory.begin() as session:
-        if not session.get(SchemaMigration, "0001_sqlalchemy_runtime_store"):
-            session.add(SchemaMigration(version="0001_sqlalchemy_runtime_store", applied_at=utc_now()))
+    """Create only an empty AgentScope epoch, or validate an exact existing one.
 
+    The atomic cutover deliberately has no legacy migration path.  A database
+    with any old/unknown table, a partial table set, or a mismatched column set
+    is refused before ``create_all`` can mutate it.
+    """
 
-def _runtime_migrations():
-    return (
-        ("0002_regression_assets", _migrate_0002_regression_assets),
-        ("0003_agent_jobs", _migrate_0003_agent_jobs),
-        ("0004_unify_agent_jobs", _migrate_0004_unify_agent_jobs),
-        ("0005_agent_governance", migrate_0005_agent_governance),
-        ("0006_remove_agent_job_output_contract_column", migrate_0006_remove_agent_job_output_contract_column),
-        ("0007_agent_registry", migrate_0007_agent_registry),
-        ("0008_feedback_signal_agent_id", migrate_0008_feedback_signal_agent_id),
-        ("0009_agent_registry_status", migrate_0009_agent_registry_status),
-        ("0010_scenario_packs", migrate_0010_scenario_packs),
-        ("0011_change_set_release_agent_id", migrate_0011_change_set_release_agent_id),
-        ("0012_eval_run_agent_id", migrate_0012_eval_run_agent_id),
-        ("0014_improvement_feedback_context", migrate_0014_improvement_feedback_context),
-        ("0015_improvement_content_generated_by", migrate_0015_improvement_content_generated_by),
-        ("0016_execution_application_binding", migrate_0016_execution_application_binding),
-        ("0017_regression_assessments", migrate_0017_regression_assessments),
-        ("0018_agent_registry_origin_tombstone", migrate_0018_agent_registry_origin_tombstone),
-        ("0019_improvement_detail_columns", migrate_0019_improvement_detail_columns),
-        ("0020_claude_user_input_requests", migrate_0020_claude_user_input_requests),
-        ("0021_improvement_generation_trace_refs", migrate_0021_improvement_generation_trace_refs),
-        ("0022_remove_legacy_batch_optimization_chain", migrate_0022_remove_legacy_batch_optimization_chain),
-        ("0023_eval_case_targeted_regression_layer", migrate_0023_eval_case_targeted_regression_layer),
-        ("0024_feedback_case_agent_id", migrate_0024_feedback_case_agent_id),
-        ("0025_agent_governance_legacy_paths", migrate_0025_agent_governance_legacy_paths),
-        ("0026_normalized_feedback_generation_refs", migrate_0026_normalized_feedback_generation_refs),
-        ("0027_agent_registry_requires_web_hitl", migrate_0027_agent_registry_requires_web_hitl),
-        ("0028_remove_improvement_automation_policy", migrate_0028_remove_improvement_automation_policy),
-        ("0029_agent_release_tag_claims", migrate_0029_agent_release_tag_claims),
-        ("0030_improvement_execution_intents", migrate_0030_improvement_execution_intents),
-        ("0031_feedback_case_assignments", migrate_0031_feedback_case_assignments),
-        ("0032_improvement_execution_source_revisions", migrate_0032_improvement_execution_source_revisions),
-        ("0033_repair_improvement_stages_from_artifacts", migrate_0033_repair_improvement_stages_from_artifacts),
-        ("0034_repair_feedback_case_assignments", migrate_0034_repair_feedback_case_assignments),
-        ("0035_session_active_run_lease", migrate_0035_session_active_run_lease),
-        (
-            "0036_agent_maintenance_feedback_and_session_reconciliation",
-            migrate_0036_agent_maintenance_feedback_and_session_reconciliation,
-        ),
-        (
-            "0037_eval_runs_use_typed_dataset_snapshots",
-            migrate_0037_eval_runs_use_typed_dataset_snapshots,
-        ),
-        (
-            "0038_remove_agent_registry_requires_web_hitl",
-            migrate_0038_remove_agent_registry_requires_web_hitl,
-        ),
-        (
-            "0039_test_dataset_revision_provenance",
-            migrate_0039_test_dataset_revision_provenance,
-        ),
-        (
-            "0040_archive_and_remove_legacy_evaluation_chain",
-            migrate_0040_archive_and_remove_legacy_evaluation_chain,
-        ),
-        (
-            "0041_agent_registry_provisioning_saga",
-            migrate_0041_agent_registry_provisioning_saga,
-        ),
-        (
-            "0042_retire_persisted_agent_job_queue",
-            migrate_0042_retire_persisted_agent_job_queue,
-        ),
-        ("0043_response_disposition_claims", migrate_0043_response_disposition_claims),
-        ("0044_agent_release_source_claims", migrate_0044_agent_release_source_claims),
-        ("0045_drop_response_disposition_claims", migrate_0045_drop_response_disposition_claims),
-        ("0046_remove_agent_registry_origin", migrate_0046_remove_agent_registry_origin),
-        ("0047_rename_business_agent_evidence_fields", migrate_0047_rename_business_agent_evidence_fields),
-        ("0048_workspace_pytest_source_of_truth", migrate_0048_workspace_pytest_source_of_truth),
-        ("0049_rename_regression_test_design", migrate_0049_rename_regression_test_design),
-        ("0050_deduplicate_active_agent_test_runs", migrate_0050_deduplicate_active_agent_test_runs),
-        ("0051_replace_regression_design_with_pytest_code", migrate_0051_replace_regression_design_with_pytest_code),
-        ("0052_agent_test_asset_schedules", migrate_0052_agent_test_asset_schedules),
-    )
-
-
-def _run_runtime_migrations(engine: Engine) -> None:
-    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    with factory.begin() as session:
-        applied = {str(row.version) for row in session.query(SchemaMigration).all()}
-    for version, migrate in _runtime_migrations():
-        if version in applied:
-            continue
-        with engine.begin() as connection:
-            migrate(connection)
-        with factory.begin() as session:
-            if not session.get(SchemaMigration, version):
-                session.add(SchemaMigration(version=version, applied_at=utc_now()))
-
-
-def _migrate_0002_regression_assets(connection: Connection) -> None:
-    connection.exec_driver_sql("DROP INDEX IF EXISTS ix_eval_cases_source_feedback_case_unique")
-    columns = _table_columns(connection, "eval_cases")
-    if not columns:
+    inspector = inspect(engine)
+    expected_tables = set(Base.metadata.tables)
+    existing_tables = set(inspector.get_table_names())
+    if existing_tables:
+        unknown = sorted(existing_tables - expected_tables)
+        missing = sorted(expected_tables - existing_tables)
+        if unknown or missing:
+            raise RuntimeError(
+                f"Runtime database is not the exact AgentScope schema epoch (unknown={unknown}, missing={missing})",
+            )
+        for table_name, table in Base.metadata.tables.items():
+            actual_columns = {column["name"] for column in inspector.get_columns(table_name)}
+            expected_columns = {column.name for column in table.columns}
+            if actual_columns != expected_columns:
+                raise RuntimeError(
+                    f"Runtime database column contract mismatch for {table_name} (actual={sorted(actual_columns)}, expected={sorted(expected_columns)})",
+                )
+        factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with factory() as session:
+            if session.get(SchemaMigration, _SCHEMA_EPOCH) is None:
+                raise RuntimeError("Runtime database is missing the AgentScope schema epoch marker")
         return
-    for column_name, ddl in {
-        "asset_layer": "VARCHAR(64) DEFAULT 'candidate'",
-        "promotion_status": "VARCHAR(64) DEFAULT 'candidate'",
-        "blocking_policy": "VARCHAR(64) DEFAULT 'non_blocking'",
-        "source_feedback_case_id": "VARCHAR(128)",
-        "source_run_id": "VARCHAR(128)",
-        "scenario_pack": "VARCHAR(128)",
-        "severity": "VARCHAR(64) DEFAULT 'medium'",
-        "flaky_status": "VARCHAR(64) DEFAULT 'stable'",
-        "variant_role": "VARCHAR(64) DEFAULT 'original_reproduction'",
-        "content_hash": "VARCHAR(64)",
-        "last_run_at": "VARCHAR(64)",
-        "last_result_status": "VARCHAR(64)",
-        "failure_rate": "FLOAT",
-        "superseded_by_eval_case_id": "VARCHAR(128)",
-        "payload_json": "JSON",
-    }.items():
-        if column_name not in columns:
-            connection.exec_driver_sql(f"ALTER TABLE eval_cases ADD COLUMN {column_name} {ddl}")
-    connection.exec_driver_sql(
-        """
-        UPDATE eval_cases
-        SET
-            asset_layer = CASE
-                WHEN status = 'draft' THEN 'candidate'
-                WHEN status = 'archived' THEN COALESCE(asset_layer, 'candidate')
-                WHEN source_feedback_case_id IS NULL THEN 'targeted_regression'
-                ELSE 'historical_bug'
-            END,
-            promotion_status = CASE
-                WHEN status = 'active' THEN 'approved'
-                WHEN status = 'archived' THEN 'archived'
-                ELSE 'candidate'
-            END,
-            blocking_policy = CASE
-                WHEN status = 'active' AND source_feedback_case_id IS NULL THEN 'blocking'
-                WHEN status = 'active' THEN 'blocking_if_relevant'
-                ELSE 'non_blocking'
-            END,
-            severity = COALESCE(severity, 'medium'),
-            flaky_status = COALESCE(flaky_status, 'stable'),
-            variant_role = COALESCE(variant_role, 'original_reproduction')
-        WHERE asset_layer IS NULL OR promotion_status IS NULL OR blocking_policy IS NULL
-        """
-    )
 
-    rows = connection.exec_driver_sql("SELECT eval_case_id, payload_json FROM eval_cases WHERE content_hash IS NULL").fetchall()
-    for eval_case_id, payload_json in rows:
-        content_hash = _eval_case_content_hash(payload_json, str(eval_case_id))
-        connection.exec_driver_sql(
-            "UPDATE eval_cases SET content_hash = ? WHERE eval_case_id = ?",
-            (content_hash, eval_case_id),
-        )
-
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_cases_source_feedback_case_id ON eval_cases (source_feedback_case_id)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_cases_asset_layer ON eval_cases (asset_layer)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_cases_promotion_status ON eval_cases (promotion_status)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_cases_blocking_policy ON eval_cases (blocking_policy)")
-    connection.exec_driver_sql(
-        "CREATE UNIQUE INDEX IF NOT EXISTS ix_eval_cases_source_variant_hash ON eval_cases (source_feedback_case_id, variant_role, content_hash)"
-    )
-
-
-def _migrate_0003_agent_jobs(connection: Connection) -> None:
-    connection.exec_driver_sql(
-        """
-        CREATE TABLE IF NOT EXISTS agent_jobs (
-            job_id VARCHAR(128) NOT NULL PRIMARY KEY,
-            job_type VARCHAR(64) NOT NULL,
-            scope_kind VARCHAR(64) NOT NULL,
-            scope_id VARCHAR(256) NOT NULL,
-            status VARCHAR(64) NOT NULL,
-            profile_name VARCHAR(128) NOT NULL,
-            created_at VARCHAR(64) NOT NULL,
-            started_at VARCHAR(64),
-            completed_at VARCHAR(64),
-            input_path VARCHAR(2048) NOT NULL,
-            raw_output_path VARCHAR(2048) NOT NULL,
-            validated_output_path VARCHAR(2048) NOT NULL,
-            error_path VARCHAR(2048) NOT NULL,
-            runtime_version VARCHAR(64) NOT NULL,
-            schema_version VARCHAR(64) NOT NULL,
-            timeout_seconds INTEGER,
-            retry_count INTEGER,
-            profile_version_json JSON,
-            input_json JSON,
-            raw_output_json JSON,
-            validated_output_json JSON,
-            error_json JSON
-        )
-        """
-    )
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_job_type ON agent_jobs (job_type)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_scope_kind ON agent_jobs (scope_kind)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_scope_id ON agent_jobs (scope_id)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_status ON agent_jobs (status)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_profile_name ON agent_jobs (profile_name)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_created_at ON agent_jobs (created_at)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_type_status_created ON agent_jobs (job_type, status, created_at)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_scope_type_created ON agent_jobs (scope_kind, scope_id, job_type, created_at)")
-
-
-def _migrate_0004_unify_agent_jobs(connection: Connection) -> None:
-    connection.exec_driver_sql("DROP TABLE IF EXISTS feedback_jobs")
-    connection.exec_driver_sql("DROP TABLE IF EXISTS optimization_executions")
-
-
-def _table_columns(connection: Connection, table_name: str) -> set[str]:
-    return {str(row[1]) for row in connection.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()}
-
-
-def _eval_case_content_hash(payload_json: object, fallback: str) -> str:
-    try:
-        payload = json.loads(payload_json) if isinstance(payload_json, str) else dict(payload_json or {})
-    except (TypeError, ValueError):
-        payload = {"eval_case_id": fallback}
-    stable = {
-        "prompt": payload.get("prompt"),
-        "expected_behavior": payload.get("expected_behavior"),
-        "checks_json": payload.get("checks_json") or {},
-        "labels": sorted(str(item) for item in payload.get("labels") or []),
-        "asset_layer": payload.get("asset_layer"),
-        "source_feedback_case_id": payload.get("source_feedback_case_id"),
-        "source_kind": payload.get("source_kind"),
-        "source_id": payload.get("source_id"),
-    }
-    encoded = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    with factory.begin() as session:
+        session.add(SchemaMigration(version=_SCHEMA_EPOCH, applied_at=utc_now()))

@@ -28,7 +28,7 @@ from app.services.workspace_execution_applier import WorkspaceExecutionApplier
 logger = logging.getLogger(__name__)
 
 RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
-_BASE_CONFIG_TARGETS = ["CLAUDE.md", ".claude/settings.json", ".mcp.json"]
+_BASE_CONFIG_TARGETS = ["AGENT.md", "agent.yaml"]
 _MAX_SKILL_TARGETS = 12
 _INVALID_CHANGE_SET_STATES = {"rejected", "abandoned", "failed"}
 _EXECUTION_CLAIM_TTL_SECONDS = 600
@@ -56,22 +56,22 @@ def _editable_target_for_hint(target_hint: str, targets: list[str]) -> str | Non
     hint = Path(target_hint.strip().replace("\\", "/")).as_posix().casefold()
     if not hint:
         return None
+    # 模型可以在权威路径后附带 ``-> 章节``；只匹配开头的完整路径，避免把
+    # ``subagents/x/AGENT.md`` 误认成根 ``AGENT.md`` 并越界修改系统 prompt。
+    hinted_path = hint.split("->", 1)[0].strip()
     for target in targets:
         normalized = Path(target).as_posix().casefold()
-        aliases = {normalized}
-        if normalized.startswith(".claude/"):
-            aliases.add(normalized.removeprefix(".claude/"))
-        if any(alias in hint for alias in aliases):
+        if normalized == hinted_path:
             return target
     generic = hint.strip()
     if generic in {"prompt", "system_prompt"}:
-        return next((target for target in targets if Path(target).as_posix() == "CLAUDE.md"), None)
+        return next((target for target in targets if Path(target).as_posix() == "AGENT.md"), None)
     if generic in {"mcp", "mcp_config"}:
-        return next((target for target in targets if Path(target).as_posix() == ".mcp.json"), None)
+        return next((target for target in targets if Path(target).as_posix().startswith("mcp/")), None)
     if generic in {"runtime_config", "settings"}:
-        return next((target for target in targets if Path(target).as_posix() == ".claude/settings.json"), None)
+        return next((target for target in targets if Path(target).as_posix() == "agent.yaml"), None)
     if generic == "skill":
-        return next((target for target in targets if Path(target).as_posix().startswith(".claude/skills/")), None)
+        return next((target for target in targets if Path(target).as_posix().startswith("skills/")), None)
     return None
 
 
@@ -85,10 +85,13 @@ class CandidateEvidence:
 
 def _editable_config_targets(worktree: Path) -> list[str]:
     targets = list(_BASE_CONFIG_TARGETS)
-    skills_dir = worktree / ".claude" / "skills"
+    skills_dir = worktree / "skills"
     if skills_dir.is_dir():
         for skill_md in sorted(skills_dir.glob("*/SKILL.md"))[:_MAX_SKILL_TARGETS]:
             targets.append(skill_md.relative_to(worktree).as_posix())
+    mcp_dir = worktree / "mcp"
+    if mcp_dir.is_dir():
+        targets.extend(path.relative_to(worktree).as_posix() for path in sorted(mcp_dir.glob("*.json"))[:_MAX_SKILL_TARGETS])
     return targets
 
 

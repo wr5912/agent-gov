@@ -9,7 +9,7 @@ function isLoopbackHost(hostname: string): boolean {
 }
 
 export function defaultLangfuseUrl(): string {
-  const configured = (import.meta.env.VITE_LANGFUSE_URL || "http://localhost:53000").trim();
+  const configured = (import.meta.env.VITE_LANGFUSE_URL || "http://localhost:50402").trim();
   let parsed: URL | null = null;
   try {
     parsed = new URL(configured);
@@ -19,7 +19,7 @@ export function defaultLangfuseUrl(): string {
   if (parsed && !isLoopbackHost(parsed.hostname)) return configured;
   if (typeof window !== "undefined" && window.location?.hostname) {
     const protocol = window.location.protocol === "https:" ? "https" : "http";
-    const port = parsed?.port || "53000";
+    const port = parsed?.port || "50402";
     return `${protocol}://${window.location.hostname}${port ? `:${port}` : ""}`;
   }
   return configured;

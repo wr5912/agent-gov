@@ -124,8 +124,8 @@ class AgentGovernanceService:
         """按 agent_id 选版本 store。
 
         每个业务 Agent（含 main-agent）的版本库 root 在其 **workspace**（git 就地版本化配置），
-        worktrees/releases 落 ``data_dir/business-agents/{agent_id}/version/`` 兄弟目录，
-        claude-root 因去嵌套在 workspace 之外、天然不进版本源。懒初始化并缓存。
+        worktrees/releases 落 ``data_dir/business-agents/{agent_id}/version/`` 兄弟目录；
+        AgentScope 的 Session Workspace 由独立 Runtime 管理，不进入该版本库。懒初始化并缓存。
         """
         normalized = self._normalize_agent_id(agent_id)
         existing = self._agent_stores.get(normalized)
@@ -145,6 +145,24 @@ class AgentGovernanceService:
         store.ensure_bootstrap()
         self._agent_stores[normalized] = store
         return store
+
+    def _store_for_read_only(self, agent_id: str | None) -> GitAgentVersionStore:
+        """构造不 bootstrap、不创建目录的 Runtime 查询句柄。"""
+
+        normalized = self._normalize_agent_id(agent_id)
+        existing = self._agent_stores.get(normalized)
+        if existing is not None:
+            return existing
+        if self.agent_exists is not None and not self.agent_exists(normalized):
+            raise AgentGovernanceError(404, f"Agent not registered for version governance: {normalized}")
+        layout = business_agent_layout(self.feedback_store.data_dir, normalized)
+        return GitAgentVersionStore(
+            repository_dir=layout.workspace,
+            worktrees_dir=layout.version_base / "worktrees",
+            releases_dir=layout.version_base / "releases",
+            repository_name=f"{normalized}-config",
+            create_directories=False,
+        )
 
     def repository_status(self, agent_id: str | None = None) -> JsonObject:
         return self._store_for(agent_id).repository_status()
@@ -266,7 +284,10 @@ class AgentGovernanceService:
         if execution_job_id and bound_execution and bound_execution != execution_job_id:
             raise AgentGovernanceError(409, "Agent change set belongs to a different execution")
         store = self._store_for(change_set.get("agent_id"))
-        diff = store.diff_versions(change_set["base_commit_sha"], candidate_commit_sha) or {}
+        diff = store.diff_versions(change_set["base_commit_sha"], candidate_commit_sha)
+        if diff is None:
+            raise AgentGovernanceError(409, "Unable to inspect candidate paths for mandatory approval")
+        sensitive_paths = self._manual_approval_paths(diff)
         fields = {
             "candidate_commit_sha": candidate_commit_sha,
             "execution_job_id": execution_job_id or change_set.get("execution_job_id"),
@@ -274,12 +295,21 @@ class AgentGovernanceService:
             "diff_summary": diff_summary(diff),
             "latest_test_run_id": None,
             "latest_test_run": None,
+            "approval_note": None,
         }
+        if sensitive_paths:
+            fields.update(
+                {
+                    "approval_reason": "Sensitive Harness paths changed: " + ", ".join(sensitive_paths),
+                    "impact_scope": "MCP, Agent manifest, or subagent execution boundary",
+                    "rollback_plan": f"Restore base commit {change_set['base_commit_sha']}",
+                },
+            )
         return self._transition_change_set(
             change_set_id,
-            "candidate_committed",
+            "pending_approval" if sensitive_paths else "candidate_committed",
             fields=fields,
-            action="candidate_committed",
+            action="approval_requested" if sensitive_paths else "candidate_committed",
             operator=operator,
         )
 
@@ -305,6 +335,13 @@ class AgentGovernanceService:
         )
 
     def approve_change_set(self, change_set_id: str, *, operator: str = "runtime", note: str | None = None) -> JsonObject:
+        change_set = self.get_change_set(change_set_id)
+        if change_set is None:
+            raise AgentGovernanceError(404, "Agent change set not found")
+        if change_set.get("status") != "pending_approval":
+            raise AgentGovernanceError(409, "Agent change set must have a recorded approval request before approval")
+        if not all(str(change_set.get(field) or "").strip() for field in ("approval_reason", "impact_scope", "rollback_plan")):
+            raise AgentGovernanceError(409, "Agent change set approval request is incomplete")
         return self._transition_change_set(change_set_id, "approved", fields={"approval_note": note}, action="approved", operator=operator)
 
     def reject_change_set(self, change_set_id: str, *, operator: str = "runtime", note: str | None = None) -> JsonObject:
@@ -529,13 +566,9 @@ class AgentGovernanceService:
                 validate_intent_provenance(db, intent)
                 return intent
             source_revision = capture_publication_source(db, change_set_id)
-            candidate = str(row.candidate_commit_sha or "")
-            if not candidate:
-                raise AgentGovernanceError(409, "Agent change set has no candidate commit")
+            candidate = self._validated_publication_candidate(row)
             publication_blocker = self._publication_blocker_for_change_set(payload)
-            self._validate_publication_start(
-                row.status, publication_blocker=publication_blocker, force=force, feedback_managed=source_revision is not None
-            )
+            self._validate_publication_start(row.status, publication_blocker=publication_blocker, force=force, feedback_managed=source_revision is not None)
             if force and not (note or "").strip():
                 raise AgentGovernanceError(422, "Force publication requires an explicit reason")
             existing_release = self._release_row_for_change_set(db, change_set_id)
@@ -589,6 +622,34 @@ class AgentGovernanceService:
         except PublicationReservationLost:
             return self._publication_intent_after_reservation_race(change_set_id, requested_tag_name=tag_name)
         return intent
+
+    def _validated_publication_candidate(self, row: AgentChangeSetModel) -> str:
+        candidate = str(row.candidate_commit_sha or "")
+        if not candidate:
+            raise AgentGovernanceError(409, "Agent change set has no candidate commit")
+        store = self._store_for(row.agent_id)
+        diff = store.diff_versions(str(row.base_commit_sha or ""), candidate)
+        if diff is None:
+            raise AgentGovernanceError(409, "Unable to inspect candidate paths for mandatory approval")
+        if row.status != "approved" and self._manual_approval_paths(diff):
+            raise AgentGovernanceError(
+                409,
+                "MCP, Agent manifest, and subagent changes require explicit manual approval before publication",
+            )
+        return candidate
+
+    @staticmethod
+    def _manual_approval_paths(diff: JsonObject) -> tuple[str, ...]:
+        sensitive: set[str] = set()
+        for bucket in ("added", "modified", "deleted"):
+            entries = diff.get(bucket)
+            if not isinstance(entries, list):
+                raise AgentGovernanceError(409, "Candidate diff is invalid for mandatory approval")
+            for entry in entries:
+                path = entry.get("path") if isinstance(entry, dict) else None
+                if isinstance(path, str) and (path == "agent.yaml" or path.startswith(("mcp/", "subagents/"))):
+                    sensitive.add(path)
+        return tuple(sorted(sensitive))
 
     def _publication_intent_after_reservation_race(self, change_set_id: str, *, requested_tag_name: str | None) -> PublicationIntent:
         with self.feedback_store.Session() as db:

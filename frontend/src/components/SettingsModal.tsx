@@ -10,12 +10,8 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   deleteBusinessAgent,
-  getOpenAICompatAgent,
   listBusinessAgents,
-  resetOpenAICompatAgent,
   setBusinessAgentLifecycle,
-  setOpenAICompatAgent,
-  type OpenAICompatAgentConfig,
 } from "../api/runtime";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import { BusinessAgentManagementPanel } from "./BusinessAgentManagementPanel";
@@ -52,13 +48,8 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | undefined>();
   const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
-  const [openaiCompat, setOpenaiCompat] = useState<OpenAICompatAgentConfig | null>(null);
-  const [openaiCompatSel, setOpenaiCompatSel] = useState("");
-  const busy = pending !== null || workspaceBusy;
 
   const activeTabMeta = useMemo(() => SETTINGS_TABS.find((tab) => tab.key === activeTab) ?? SETTINGS_TABS[0], [activeTab]);
-  // 出口业务 Agent 选项只来自实际注册表。
-  const openaiCompatOptions = useMemo(() => agents.map((agent) => agent.agent_id), [agents]);
 
   const reloadAgents = useCallback(async () => {
     setError(undefined);
@@ -82,26 +73,6 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
     if (open) void reloadAgents();
   }, [open, reloadAgents]);
 
-  useEffect(() => {
-    if (!open) return;
-    void getOpenAICompatAgent(config)
-      .then((cfg) => {
-        setOpenaiCompat(cfg);
-        setOpenaiCompatSel(cfg.effective_agent_id);
-      })
-      .catch(() => {
-        setOpenaiCompat(null);
-        setOpenaiCompatSel("");
-      });
-  }, [open, config]);
-
-  // 选中的出口业务 Agent 被删除时回退到默认或第一个可用 Agent。
-  useEffect(() => {
-    if (openaiCompatSel && !openaiCompatOptions.includes(openaiCompatSel)) {
-      setOpenaiCompatSel(agents.find((agent) => agent.default)?.agent_id ?? openaiCompatOptions[0] ?? "");
-    }
-  }, [agents, openaiCompatOptions, openaiCompatSel]);
-
   if (!open) return null;
 
   const run = async (action: () => Promise<void>, actionKey = "busy") => {
@@ -117,20 +88,6 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
     }
   };
 
-  const handleSaveOpenaiCompat = () =>
-    void run(async () => {
-      const res = await setOpenAICompatAgent(config, openaiCompatSel);
-      setOpenaiCompat(res);
-      setOpenaiCompatSel(res.effective_agent_id);
-    });
-
-  const handleResetOpenaiCompat = () =>
-    void run(async () => {
-      const res = await resetOpenAICompatAgent(config);
-      setOpenaiCompat(res);
-      setOpenaiCompatSel(res.effective_agent_id);
-    });
-
   const handleLifecycle = (agentId: string, status: string) => {
     void run(async () => {
       await setBusinessAgentLifecycle(config, agentId, status);
@@ -145,7 +102,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
     const label = agent?.name ? `${agent.name}（${agentId}）` : agentId;
     if (
       !window.confirm(
-        `确认删除业务 Agent ${label}？\n\n将永久删除它的 Workspace、Claude 用户态和版本历史；运行、反馈与发布记录保留作审计。该操作不可撤销。`,
+        `确认删除业务 Agent ${label}？\n\n将永久删除它的 Workspace、Runtime 用户态和版本历史；运行、反馈与发布记录保留作审计。该操作不可撤销。`,
       )
     )
       return;
@@ -235,32 +192,13 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                 <div className="settings-runtime-grid">
                   <label className="form-field">
                     <span>Runtime API Base</span>
-                    <input data-testid="settings-api-base" value={apiBase} onChange={(e) => setApiBase(e.target.value)} placeholder="http://localhost:58080" />
+                    <input data-testid="settings-api-base" value={apiBase} onChange={(e) => setApiBase(e.target.value)} placeholder="http://localhost:50400" />
                   </label>
                   <label className="form-field">
                     <span>Runtime API Key</span>
                     <input data-testid="settings-api-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="默认读取 docker/.env 中的 API_KEY" />
                   </label>
                 </div>
-                <label className="form-field" data-testid="settings-openai-compat-agent">
-                  <span>OpenAI 兼容入口（/v1）出口 Agent</span>
-                  <select value={openaiCompatSel} onChange={(e) => setOpenaiCompatSel(e.target.value)} disabled={busy}>
-                    {openaiCompatOptions.map((id) => (
-                      <option key={id} value={id}>{id}</option>
-                    ))}
-                  </select>
-                  <small data-testid="settings-openai-compat-state">
-                    {openaiCompat?.configured
-                      ? `已显式配置：/v1 跑 ${openaiCompat.effective_agent_id}`
-                      : `未配置：/v1 默认运行 ${openaiCompat?.effective_agent_id ?? "默认业务 Agent"}`}
-                  </small>
-                  <div className="settings-developer-links">
-                    <button className="secondary-button" type="button" onClick={handleSaveOpenaiCompat} disabled={busy}>保存出口 Agent</button>
-                    {openaiCompat?.configured ? (
-                      <button className="secondary-button" type="button" onClick={handleResetOpenaiCompat} disabled={busy}>重置为默认</button>
-                    ) : null}
-                  </div>
-                </label>
                 <div className="settings-developer-links">
                   <a className="secondary-button" href={apiDocsUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />API Docs</a>
                   <a className="secondary-button" href={langfuseUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Langfuse</a>

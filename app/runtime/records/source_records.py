@@ -39,15 +39,24 @@ class AgentRunRecord(StrictRuntimeRecord):
 
     run_id: str
     created_at: str
-    session_id: Optional[str] = None
-    sdk_session_id: Optional[str] = None
-    agent_version_id: Optional[str] = None
+    session_id: str
+    agent_id: str
+    agent_version_id: str
+    runtime_agent_id: str
+    harness_digest: str
+    status: str
+    reply_ids: list[str] = Field(default_factory=list)
+    trace_id: Optional[str] = None
+    trace_url: Optional[str] = None
+    trace_status: str = "pending"
+    terminal_reason: Optional[str] = None
+    error_json: JsonObject | None = Field(default=None, alias="error", serialization_alias="error")
     alert_id: Optional[str] = None
     case_id: Optional[str] = None
+    metadata: JsonObject = Field(default_factory=dict)
+    started_at: Optional[str] = None
+    updated_at: str
     completed_at: Optional[str] = None
-    langfuse_trace_id: Optional[str] = None
-    langfuse_trace_url: Optional[str] = None
-    payload: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_shape(self) -> AgentRunRecord:
@@ -58,75 +67,62 @@ class AgentRunRecord(StrictRuntimeRecord):
         return self
 
     def to_payload(self) -> JsonObject:
-        payload = dict(self.payload)
-        payload.update(
-            {
-                "run_id": self.run_id,
-                "created_at": self.created_at,
-                "session_id": self.session_id,
-                "sdk_session_id": self.sdk_session_id,
-                "agent_version_id": self.agent_version_id,
-                "alert_id": self.alert_id,
-                "case_id": self.case_id,
-                "completed_at": self.completed_at,
-                "langfuse_trace_id": self.langfuse_trace_id,
-                "langfuse_trace_url": self.langfuse_trace_url,
-            }
-        )
-        return payload
+        return self.model_dump(mode="json", by_alias=True)
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, object]) -> AgentRunRecord:
-        raw_payload = dict(payload)
-        return cls.model_validate(
-            {
-                "run_id": raw_payload.get("run_id"),
-                "created_at": raw_payload.get("created_at"),
-                "session_id": raw_payload.get("session_id"),
-                "sdk_session_id": raw_payload.get("sdk_session_id"),
-                "agent_version_id": raw_payload.get("agent_version_id"),
-                "alert_id": raw_payload.get("alert_id"),
-                "case_id": raw_payload.get("case_id"),
-                "completed_at": raw_payload.get("completed_at"),
-                "langfuse_trace_id": raw_payload.get("langfuse_trace_id"),
-                "langfuse_trace_url": raw_payload.get("langfuse_trace_url"),
-                "payload": raw_payload,
-            }
-        )
+        return cls.model_validate(dict(payload))
 
     @classmethod
     def from_row(cls, row: AgentRunModel) -> AgentRunRecord:
-        payload = dict(row.payload_json or {})
-        payload.update(
+        return cls.model_validate(
             {
                 "run_id": row.run_id,
                 "session_id": row.session_id,
-                "sdk_session_id": row.sdk_session_id,
+                "agent_id": row.agent_id,
                 "agent_version_id": row.agent_version_id,
+                "runtime_agent_id": row.runtime_agent_id,
+                "harness_digest": row.harness_digest,
+                "status": row.status,
+                "reply_ids": list(row.reply_ids_json or []),
+                "trace_id": row.trace_id,
+                "trace_url": row.trace_url,
+                "trace_status": row.trace_status,
+                "terminal_reason": row.terminal_reason,
+                "error": dict(row.error_json) if row.error_json else None,
                 "alert_id": row.alert_id,
                 "case_id": row.case_id,
+                "metadata": dict(row.metadata_json or {}),
                 "created_at": row.created_at,
+                "started_at": row.started_at,
+                "updated_at": row.updated_at,
                 "completed_at": row.completed_at,
-                "langfuse_trace_id": row.langfuse_trace_id,
-                "langfuse_trace_url": row.langfuse_trace_url,
             }
         )
-        return cls.from_payload(payload)
 
 
 def upsert_agent_run_record(db: Any, record: AgentRunRecord) -> None:
     """Project one validated run record inside the caller's transaction."""
     values = {
         "session_id": record.session_id,
-        "sdk_session_id": record.sdk_session_id,
+        "agent_id": record.agent_id,
         "agent_version_id": record.agent_version_id,
+        "runtime_agent_id": record.runtime_agent_id,
+        "harness_digest": record.harness_digest,
+        "status": record.status,
+        "reply_ids_json": record.reply_ids,
+        "trace_id": record.trace_id,
+        "trace_url": record.trace_url,
+        "trace_status": record.trace_status,
+        "terminal_reason": record.terminal_reason,
+        "error_json": record.error_json,
         "alert_id": record.alert_id,
         "case_id": record.case_id,
+        "metadata_json": record.metadata,
         "created_at": record.created_at,
+        "started_at": record.started_at,
+        "updated_at": record.updated_at,
         "completed_at": record.completed_at,
-        "langfuse_trace_id": record.langfuse_trace_id,
-        "langfuse_trace_url": record.langfuse_trace_url,
-        "payload_json": record.to_payload(),
     }
     row = db.get(AgentRunModel, record.run_id)
     if row is None:

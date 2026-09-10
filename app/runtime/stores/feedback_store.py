@@ -57,7 +57,7 @@ class FeedbackStore(
 
     def set_langfuse_trace_fetcher(self, fetcher: Callable[[str], Optional[JsonObject]]) -> None:
         # The fetcher is owned by the backend so Langfuse credentials never enter
-        # internal Agent prompts or Claude Code tool configuration.
+        # internal Agent prompts or AgentScope tool configuration.
         self.langfuse_trace_fetcher = fetcher
 
     def _current_agent_version_id(self, agent_id: Optional[str] = None) -> Optional[str]:

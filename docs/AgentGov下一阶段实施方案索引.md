@@ -12,11 +12,12 @@
 下一阶段采用 **Conditional Go**：
 
 - 本轮文档整改先固定平台能力地图、三类资产、评测权威、控制面和临时决策退出条件；
-- P0 随后收口业务 Agent Workspace 全量测试和独立 P0-MCP 平台回执，但不把单个 Agent 测试
-  并入根静态 collection，也不把 `29` 固化为平台契约；
-- P0 通过后，P1 网络安全协议化回归/发布准入与 P2A Runtime 边界提取可以并行；
-- P2B Governor 受控学习基础可先建设账本和候选，但必须等待一条 P1 真实证据及 P2A gateway
-  后才能退出；
+- 旧 P0/P0-MCP 文档记录的是 Claude Runtime epoch 的历史准入与工具切片，现已归档；不得把
+  其中 `sdk_session_id`、Claude hooks、旧卷或旧 Runtime 断言带入当前实现；
+- 后续 P1 网络安全协议化回归/发布准入以当前 AgentScope Runtime 公共契约和公开质量门为前置；
+  旧 P2A Claude Runtime 路线也已归档，不再作为下一阶段；
+- P2B Governor 受控学习基础可先建设账本和候选，但退出前必须取得一条 P1 真实证据，并通过
+  当前 AgentScope Runtime Gateway 契约；
 - P3 是扩展组合准入框架；统一 EvalOps、资产关系、单组织控制面、数据治理和运营能力属于平台
   横切基础，不以安全垂域完整 MVP 作为永久前置。
 
@@ -32,13 +33,13 @@
 | [AgentGov 核心功能测试用例](./AgentGov核心功能测试用例.md)                                                  | 长期验收锚点    | 每个阶段必须绑定并增强具体 AGV 用例                                         |
 | [网络安全智能体测评工程需求](./网络安全智能体测评工程需求文档.md)                                                       | 产品能力目标方案  | 定义安全测评目标、对象、评分、安全门和完整 MVP                                    |
 | [Governor 自研究与受控自学习能力需求](./Governor自研究与受控自学习能力需求.md)                                        | 产品能力目标方案  | 定义 Governor 二阶治理闭环与安全边界                                      |
-| [多 Runtime 适配、外部 CLI 旁路与 Multica 协作边界方案](./engineering/多Runtime适配与外部CLI旁路及Multica协作边界方案.md) | 目标架构方案    | 定义 Runtime 长期边界和迁移方向                                         |
+| [旧多 Runtime 与 Claude 路线](./archive/obsolete/多Runtime适配与外部CLI旁路及Multica协作边界方案.md) | 历史归档 | 已由根 `README.md` 的 AgentScope Runtime 公共契约取代，仅供审计追溯 |
 | [反馈闭环当前实现基线](./反馈闭环当前实现基线.md)                                                               | 当前实现基线    | 解释当前代码、API、存储、四阶段流程和发布门                                      |
 | 本索引及下列阶段方案                                                                                  | 当前实施评审入口  | 决定下一轮先做什么、暂不做什么以及如何验收                                        |
-| [P0 模拟 MCP 平台验收实施方案](./engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md)                          | P0 配套工程方案 | 只定义隔离合成夹具、真实 Runtime 工具闭环和阶段回执                               |
+| [旧 P0 模拟 MCP 平台验收实施方案](./archive/obsolete/AgentGov下一阶段P0模拟MCP平台验收实施方案.md) | 历史归档 | 旧 Claude Runtime 合成工具切片，仅供审计，不证明当前 AgentScope Runtime |
 
-三份单项目标方案继续 `keep`，不合并、不归档；它们分别解释安全测评、Governor 学习和 Runtime，
-不构成平台能力全集。平台能力面、资产分类、评测关系和控制面边界以长期产品权威及本索引为准。
+安全测评与 Governor 学习两份目标方案继续 `keep`；旧 Runtime 目标方案已归档，不再构成当前或
+下一阶段依赖。平台能力面、资产分类、评测关系和控制面边界以长期产品权威及本索引为准。
 阶段方案只把已选切片落实为可执行边界，不复制完整长期正文。已归档的旧《AgentGov 目标达成
 分阶段执行计划》继续只承担历史审计价值，不恢复为活跃入口。
 
@@ -56,9 +57,10 @@
 - 核心功能测试用例在 2026-07-30 基线为 28 个 `current`、22 个 `gap`；AGV-002、AGV-043
   对应端到端治理链和内置业务 Agent 闭环，AGV-045 必须由跨业务 Agent 能力包及逐 Agent 评测
   证明，不能由 Governor 自身 shadow 学习替代；
-- `ClaudeRuntime`、流式 Runtime 和 Governor 中心服务已接近 800 行架构阈值，新增职责必须进入
-  独立子域，不能继续在中心文件中堆叠分支；
-- `sdk_session_id` 已跨越 DB、OpenAPI、SSE、前端和测试，当前不具备低风险局部改名条件；
+- 旧 `ClaudeRuntime`、Responses 与 SDK session 链路已在 AgentScope 原子切换中删除；当前执行
+  seam 是 `app/runtime_gateway/`，不得恢复旧 facade 或双轨；
+- 当前公开标识固定为 `session_id`、`run_id`、`reply_id`、`trace_id` 的职责映射，不保留
+  `sdk_session_id` 兼容字段；
 - 当前 Governor 有受控生成、Trace、变更和发布基础，但没有不可变学习证据、能力版本、
   独立评估和可信人工启用链。
 
@@ -69,7 +71,7 @@
 | 平台面 | 当前可用基础 | 下一阶段最小动作 | 长期退出结果 |
 | --- | --- | --- | --- |
 | 业务 Agent 与资产治理 | Workspace 包、per-Agent Git、change set/release、只读测试资产 | 建立测试/评测/改进/发布的关系投影；不复制正文 | 能力包跨 Agent 复用并逐 Agent 独立评测 |
-| Runtime 执行 | Claude 原生受管链、会话、HITL、Trace | 提取中立内部事实和能力边界；验证第二类真实协议差异 | 同部署可治理后端绑定不同 Runtime 的 BusinessAgentVersion |
+| Runtime 执行 | AgentScope Runtime、窄 Gateway、canonical messages、原生暂停事件与 OTel Trace | 保持单路径契约、补足运行证据与可靠性 | 版本固定、可追溯、可恢复的 AgentScope 执行面 |
 | Feedback 与改进 | 四阶段事项、归因、优化、执行和发布 | 用 P1 失败证据进入现有闭环 | 线上结果反哺改进并可追溯到精确版本 |
 | Evaluation 与 Release | Workspace pytest、`AgentTestRun`、精确发布门 | 分离 Agent 自有回归与独立发布基准，冻结协议中立语义 | 跨 Agent/协议 campaign、隐藏集、人工评审和周期再评估 |
 | Policy 与控制 | 当前 API 认证、后端状态与审计基础 | 单组织 principal/resource scope 边界和职责分离 | 独立治理控制面，不接管外部业务权限 |
@@ -89,8 +91,8 @@
 | 方法论资产 | 评分规程、安全门槛、评测协议 | capability 语义、降级和生命周期规则 | 归因方法、适用条件、反证和淘汰规则 | 资产适用、评审、保留/删除和运营策略 |
 | 执行资产 | Workspace 可见测试、独立发布评测包、fixture、Ground Truth | Runtime 原生包、adapter、contract suite | prompt、skill、job spec、typed contract、候选 build、dev/holdout pack | EvalOps 编排、资产关系和通用集成机制 |
 | 横切治理维度 | Agent commit、suite/protocol revision、digest、Release、审计、scope | Runtime kind、adapter/native version、capability digest、provenance | capability key/build、ApplicabilityScope、评审/激活/回退记录 | version、provenance、audit、scope、lifecycle |
-| 当前边界 | 测试运行和发布门已存在，独立发布基准未落地 | Claude 原生实现成熟，中立事实与验证缝隙未收口 | 事项级执行已存在，二阶学习闭环未实现 | 只有分散能力，没有统一平台合同 |
-| 本轮目标 | 形成首条协议化回归和发布准入证据，不宣称整体能力提升 | 建立 Claude 委托的中立内部边界并用第二协议证伪 | 形成不改变线上行为、评估精确 build 的 shadow 学习证据 | 固定长期 seam、启动门和独立实施顺序 |
+| 当前边界 | 测试运行和发布门已存在，独立发布基准未落地 | AgentScope 已是唯一生产 Runtime，Gateway 和标识映射已落地 | 事项级执行已存在，二阶学习闭环未实现 | 只有分散能力，没有统一平台合同 |
+| 本轮目标 | 形成首条协议化回归和发布准入证据，不宣称整体能力提升 | 保持 AgentScope 单路径并积累真实 run/trace/recovery 证据 | 形成不改变线上行为、评估精确 build 的 shadow 学习证据 | 固定长期 seam、启动门和独立实施顺序 |
 
 P0-MCP 不改变上表的业务治理对象。其被验对象是 AgentGov Runtime/MCP/证据投影，固定 commit 的
 `security-operations-expert` 只是测试载体，两个外部仓库只是可丢弃夹具。该回执不属于 Agent
@@ -100,12 +102,12 @@ P0-MCP 不改变上表的业务治理对象。其被验对象是 AgentGov Runtim
 ## 6. 总体闭环与依赖
 
 ```text
-P0 准入收口
+历史 P0 准入收口（已归档）
   ├─ 精确 commit 的 Workspace 全量测试零未分类失败（29 仅为当前快照）
-  └─ P0-MCP capability slice：Claude / Streamable HTTP / tools / read-only / no-auth
+  └─ P0-MCP capability slice（历史验收切片）
   ↓
   ├─ P1 安全协议化回归/发布准入 → ImprovementItem → candidate → paired evidence → Release
-  └─ P2A Runtime 边界提取 + Claude 委托 adapter + 第二类协议 spike
+  └─ AgentScope Runtime Gateway（当前已落地的执行基线）
        ↓
 P2B Governor evidence → MethodCandidate → immutable capability build → blind shadow evaluation
        ↓
@@ -114,26 +116,27 @@ P3 扩展组合准入
   └─ 可选扩展：安全完整 MVP / Runtime 公共迁移 / Governor 受控激活 / 外部 adapter
 ```
 
-P1 与 P2A 可在 P0 退出后并行，避免把 Runtime 平台边界永久绑定安全垂域。P2B 的账本、候选和
-评估开发可以提前进行，但接入统一 `ManagedExecutionDriver` 和阶段退出必须同时等待 P2A gateway
-与至少一条 P1 真实闭环证据。P3 的平台基础和扩展线分别满足自身启动门；安全完整 MVP 不阻断
+P1 以当前 AgentScope Runtime Gateway 和公开质量门为前置；不再重跑已归档 P0，也不把它作为
+当前依赖。AgentScope Runtime Gateway 是当前基线，不再作为并行的未来 P2A。
+P2B 的账本、候选和评估开发可以提前进行，但接入执行面和阶段退出必须同时通过当前 Gateway
+契约与至少一条 P1 真实闭环证据。P3 的平台基础和扩展线分别满足自身启动门；安全完整 MVP 不阻断
 与其无依赖的身份、数据、运营或通用集成基础。
 
 ## 7. 阶段方案
 
 | 阶段 | 方案 | 核心产物 | 退出结果 |
 | --- | --- | --- | --- |
-| P0 | [准入收口实施方案](./engineering/AgentGov下一阶段P0准入收口实施方案.md) | per-Agent 全量测试、质量策略 lane、Runtime 生命周期裁决 | 形成无单 Agent 平台特例的开发基线 |
-| P0-MCP 配套 | [模拟 MCP 平台验收实施方案](./engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md) | 固定上游、过滤 OpenAPI、直接协议与 AgentGov live 回执 | 关闭已声明 capability slice 的回执 GAP，不产生领域结论 |
+| 历史 P0 | [已归档的准入收口实施方案](./archive/obsolete/AgentGov下一阶段P0准入收口实施方案.md) | 旧 epoch 的 per-Agent 测试与生命周期裁决 | 仅供审计，不是当前实施门 |
+| 历史 P0-MCP | [已归档的模拟 MCP 平台验收实施方案](./archive/obsolete/AgentGov下一阶段P0模拟MCP平台验收实施方案.md) | 旧 Claude Runtime 合成工具切片 | 仅供审计，不证明当前 AgentScope 能力 |
 | P1 | [网络安全测评纵向闭环实施方案](./engineering/AgentGov下一阶段P1网络安全测评纵向闭环实施方案.md) | 8 个静态案例、独立发布基准引用、typed Scorecard/Violation、paired evidence、改进事项闭环 | 首条协议化回归和发布准入证据，不宣称整体能力提升 |
-| P2A | [Runtime 边界提取与 Claude Adapter 实施方案](./engineering/AgentGov下一阶段P2ARuntime边界提取与ClaudeAdapter实施方案.md) | 中立内部事实、小端口、registry/gateway、Claude 委托、第二协议 spike | Claude 行为等价且抽象经非 Claude 语义证伪 |
+| 历史 P2A | [已归档的 Runtime 边界与 Claude Adapter 方案](./archive/obsolete/AgentGov下一阶段P2ARuntime边界提取与ClaudeAdapter实施方案.md) | 历史迁移思路 | 已由 AgentScope 原子切换取代，不是待实施阶段 |
 | P2B | [Governor 受控学习基础实施方案](./engineering/AgentGov下一阶段P2BGovernor受控学习基础实施方案.md) | 不可变证据、候选 capability build、ApplicabilityScope、盲化 shadow 评估 | 精确 build 可评估但不自动生效 |
 | P3 | [扩展组合准入框架](./engineering/AgentGov下一阶段P3扩展准入实施方案.md) | 平台基础与各扩展线的独立启动门、迁移、运营和回退要求 | 形成后续独立里程碑，不把准入评审伪装为已实施 |
 
 ## 8. 已选实施裁决
 
-1. **P0 双门独立收口**：精确 commit 的 Workspace 全量测试和 P0-MCP 回执分别阻断；当前
-   `29` 只作基线快照，退出标准是声明范围零未分类失败。
+1. **历史 P0 不再作为门**：精确 commit 的 Workspace 全量测试仍是稳定资产边界，但旧 P0 的
+   `29` 与 P0-MCP Claude capability tuple 都只是历史快照；当前只按 AgentScope 质量门验收。
 2. **业务 Agent 测试独立执行**：质量策略登记通用 per-Agent lane、owner 和资源类别，不把任何
    业务 Agent Workspace 测试加入根静态 collection；真正的平台 runner/隔离契约留在根测试。
 3. **模拟 MCP 只验精确 slice**：固定原始上游提交，只覆盖
@@ -153,9 +156,9 @@ P1 与 P2A 可在 P0 退出后并行，避免把 Runtime 平台边界永久绑�
 9. **安全门独立否决**：高综合分不能抵消工具越界、虚构证据、敏感泄露或高风险动作越权。
 10. **一次 run 不重开**：`interrupted` 是该 run 的终态；恢复同一 Runtime session 创建新
     `run_id` 并保留恢复血缘。
-11. **Runtime 近期单选、长期后端绑定**：P2A 只启用 `claude-code`，禁止客户端逐请求切换；长期
-    同部署可治理绑定不同 Runtime 的 BusinessAgentVersion。公开主键最终使用 opaque platform session ID，
-    native session 只作为内部 provenance。
+11. **Runtime 单路径且版本固定**：生产只启用 AgentScope Runtime；客户端不能逐请求切换
+    Runtime，也不能覆盖 model、credential、权限或 Harness。会话固定业务 Agent 版本，
+    `session_id/run_id/reply_id/trace_id` 按各自职责关联。
 12. **Governor 评测精确 build**：P2B 只产出 shadow 证据；candidate 必须物化为不可变
     capability build，dev/holdout 分离，结果按 ApplicabilityScope 解释，不能用无范围全局指针传播。
 13. **三类一级资产**：数据/证据、方法论和执行资产是稳定分类；version、provenance、audit、
@@ -186,7 +189,7 @@ P1 与 P2A 可在 P0 退出后并行，避免把 Runtime 平台边界永久绑�
   不使用 layered override 术语。
 - 宿主机 Python/PyCharm 继续选择 `docker/.env.local-debug`；其结果不能声明为容器验收。
 - Vite 只使用 `frontend/.env.local`，不增加独立 Runtime 选择器。
-- 容器持久化根继续为 `${HOME}/volume-agent-gov`；P0、P1、P2A、P2B 均不改变卷布局。
+- 容器持久化根继续为 `${HOME}/volume-agent-gov`；P0、P1、P2B 均不改变卷布局。
 - 独立评测包以受控 Git 内容为真相源，候选运行权限只能读取本次公开输入；数据库和 Registry 不
   复制 pack 正文，隐藏集访问必须审计并支持轮换。
 - P0-MCP 是上述卷规则之外的隔离验收：使用独立 Compose project 和临时 Runtime/MCP 数据，
@@ -201,17 +204,19 @@ P1 与 P2A 可在 P0 退出后并行，避免把 Runtime 平台边界永久绑�
 
 | 对象 | 动作 | 原因 |
 | --- | --- | --- |
-| 三份产品能力目标方案 | `keep` + 对齐 | 继续定义单项长期目标，但不再被解释为平台能力全集 |
+| 安全测评与 Governor 两份产品能力目标方案 | `keep` + 对齐 | 继续定义单项长期目标，但不再被解释为平台能力全集 |
+| 旧 Runtime/Claude/Responses 方案 | `archive/obsolete` | 已被 AgentScope 原子切换取代，仅保留审计价值 |
 | 当前实现基线与核心功能测试用例 | `keep` | 继续提供当前事实和验收锚点 |
-| 本索引、五份阶段主方案及一份 P0 配套方案 | `keep` + 修订 | 提供本轮可执行节奏、长期 seam、阶段硬门和退出条件 |
+| 本索引、P1/P2B/P3 阶段方案 | `keep` + 修订 | 提供后续治理节奏、长期 seam、阶段硬门和退出条件 |
+| 旧 P0/P0-MCP 阶段方案 | `archive/obsolete` | 属于 Claude Runtime epoch，与 fresh AgentScope schema 不兼容 |
 | 旧分阶段执行计划 | `no-op` | 已归档且仍有历史审计价值，不恢复、不删除 |
 | README 活跃索引 | 更新 | 保证所有新增文档可发现 |
 
 阶段实现完成后，只更新真实完成部分：当前实现变化进入基线文档，AGV 状态按证据升级；未实现的
 后续阶段继续保持目标方案或评审稿状态。
 
-P0-MCP 完成并形成可复现回执后，其实施稿退出“下一阶段”主阅读顺序，转为历史验收材料；归档或
-保留原路径必须届时按引用矩阵决定，当前不提前移动。
+P0/P0-MCP 已退出“下一阶段”主阅读顺序并移入历史归档；其回执不得替代当前 AgentScope Runtime
+或 MCP Harness 验收。
 
 ## 12. 临时决策与退出台账
 
@@ -220,7 +225,7 @@ P0-MCP 完成并形成可复现回执后，其实施稿退出“下一阶段”�
 | 安全 Workspace 当前 29 个静态 leaf | 提供可复现基线 | per-Agent exact-commit lane，不依赖固定数量 | 用例增删或第二 Agent 接入时只更新该 Agent suite，不改平台契约 |
 | P1 通过 `AgentTestRun` 执行 sample | 复用成熟 pytest runner 和证据采集 | `EvaluationExecution/Assessment/ComparisonGroup` 作为独立聚合，只引用 sample run | 第二执行协议或非 pytest sample 出现时新增 adapter，不改领域对象 |
 | P1 建立 Agent 详情测评入口 | 单 Agent 发布评测已是正式产品任务 | 测试资产只深链 sample/run；组件可由测评中心复用 | 第二 benchmark/protocol、跨 Agent campaign、持续隐藏集运营或专家队列任一出现时启用测评中心 |
-| P2A 每部署只启用 Claude | 先证明调用方边界与行为等价 | BusinessAgentVersion backend-owned RuntimeBinding 和内部中立事实 | 第二 Runtime 真实需求与协议 spike 通过 |
+| AgentScope 是唯一生产 Runtime | 原子切换已完成，避免执行与事实双轨 | 版本固定会话、窄 Gateway、原生事件和 OTel 关联 | 只有新的独立产品决策才能启动另一 Runtime 迁移 |
 | P2B 只有 shadow outcome | 缺可信身份、职责分离和线上安全证据 | 评估、人工决定、激活记录分离，activation 绑定精确 build/scope | control plane、canary、观察窗和回滚阈值全部获批 |
 | 单组织单部署 | 当前不建设组织和成员产品 | principal/resource scope 贯穿治理资源 | 出现跨组织托管或共享控制面真实需求时另立多租户 ADR |
 
@@ -240,17 +245,15 @@ P0-MCP 完成并形成可复现回执后，其实施稿退出“下一阶段”�
 
 评审本索引时应一次确认：
 
-- 是否接受“P0 → P1/P2A 受限并行 → P2B → P3 平台基础/独立扩展”的依赖关系；
-- 是否接受 P0 必须同时关闭 14 个 Workspace 失败和独立 P0-MCP GAP，但 Workspace 测试不进入
-  根静态 collection、`29` 不作为稳定平台契约；
-- 是否接受固定原始 `openapi-mcp-server`/`mock_service` commit 只作为隔离合成夹具，且
-  P0-MCP 不验证认证、生产安全或业务 Agent 能力；
+- 是否接受“P0 → P1 → P2B → P3 平台基础/独立扩展”的治理依赖，且 AgentScope Runtime
+  作为已落地基线独立验收；
+- 是否接受旧 P0/P0-MCP 已归档，其 `29`、`sdk_session_id`、Claude hooks 与合成 capability tuple
+  都不构成当前 AgentScope 实施或验收口径；
 - 是否接受 P1 的 8 案例、无工具、确定性评分和独立安全否决范围，以及 Workspace 可见回归包与
   evaluator-owned 发布基准分权；
 - 是否接受 P1 只称协议化回归/发布准入，能力提升必须另有 paired、重复执行、隐藏样本和线上结果；
 - 是否接受失败测评按 finding/case 关系通过幂等业务动作进入改进事项，而不是自动推进后续阶段；
-- 是否接受 P2A 暂不迁移公开会话字段、不接第二生产 Runtime，但必须用第二类真实协议 spike
-  验证中立边界；
+- 是否接受旧 P2A 已归档，当前不接第二生产 Runtime，也不恢复 Claude/Responses 兼容双轨；
 - 是否接受 P2B 只评估精确 capability build 并保持 shadow，不提供自动启用；
 - 是否接受 P3 是扩展组合准入框架，平台横切基础不被安全完整 MVP 永久阻断；
 - 是否接受单组织先行、三类一级资产、Agent 详情/测评中心/测试资产的产品入口分工；

@@ -28,7 +28,6 @@ from ..runtime_db import (
     FeedbackSignalModel,
     FeedbackSourceAnnotationModel,
     PendingCorrelationModel,
-    SessionTurnIntentModel,
     SocEventModel,
     utc_now,
 )
@@ -67,8 +66,7 @@ class FeedbackSourceStoreMixin:
     ) -> list[JsonObject]:
         stmt = select(AgentRunModel).order_by(AgentRunModel.created_at.desc()).limit(limit)
         if agent_id:
-            # run 的 agent_id 存于 payload_json，按 Agent 维度过滤运行（business Agent 间不串扰）。
-            stmt = stmt.where(AgentRunModel.payload_json["agent_id"].as_string() == agent_id)
+            stmt = stmt.where(AgentRunModel.agent_id == agent_id)
         if run_id:
             stmt = stmt.where(AgentRunModel.run_id == run_id)
         if session_id:
@@ -78,28 +76,18 @@ class FeedbackSourceStoreMixin:
         if case_id:
             stmt = stmt.where(AgentRunModel.case_id == case_id)
         with self.Session() as db:
-            return [self._run_payload_with_turn_intent(db, row) for row in db.scalars(stmt).all()]
+            return [self._run_payload(row) for row in db.scalars(stmt).all()]
 
     def find_run(self, *, run_id: Optional[str] = None) -> Optional[JsonObject]:
         if not run_id:
             return None
         with self.Session() as db:
             row = db.get(AgentRunModel, run_id)
-            return self._run_payload_with_turn_intent(db, row) if row else None
+            return self._run_payload(row) if row else None
 
     @staticmethod
-    def _run_payload_with_turn_intent(db: Any, row: AgentRunModel) -> JsonObject:
-        payload = AgentRunRecord.from_row(row).to_payload()
-        intent = db.get(SessionTurnIntentModel, row.run_id)
-        if intent is None:
-            return payload
-        if payload.get("turn_status") is None:
-            payload["turn_status"] = intent.status
-        if payload.get("turn_index") is None:
-            payload["turn_index"] = intent.base_turns + 1
-        if payload.get("turn_error") is None and intent.error_json:
-            payload["turn_error"] = dict(intent.error_json)
-        return payload
+    def _run_payload(row: AgentRunModel) -> JsonObject:
+        return AgentRunRecord.from_row(row).to_payload()
 
     def find_run_for_event(self, event: JsonObject) -> Optional[JsonObject]:
         with self.Session() as db:

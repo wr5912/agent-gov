@@ -86,7 +86,7 @@ class _FakeStore:
         return "cand-tests-sha"
 
     def diff_versions(self, a, b):
-        return {"changed_files": ["CLAUDE.md"] if a != b else [], "from": a, "to": b}
+        return {"changed_files": ["AGENT.md"] if a != b else [], "from": a, "to": b}
 
     def worktree_commit_sha(self, worktree):
         return self.head
@@ -257,7 +257,7 @@ def test_draft_plan_blocks_execution_until_separately_confirmed(tmp_path):
         return {
             "status": "ready",
             "summary": "已执行 draft 方案",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=fake)
@@ -310,8 +310,8 @@ def test_governor_success_applies_and_binds_version(tmp_path):
         kwargs["trace_callback"]({"trace_id": "tr-exec", "trace_url": "http://lf/tr-exec"})
         return {
             "status": "ready",
-            "summary": "已在 CLAUDE.md 补充时间校验指令",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "summary": "已在 AGENT.md 补充时间校验指令",
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready, exec_app=exec_app)
@@ -322,12 +322,12 @@ def test_governor_success_applies_and_binds_version(tmp_path):
     assert rec.generated_by == "governor"
     assert rec.applied_agent_version_id == "ver-cand-sha"
     assert rec.change_set_id == gov.created[0]
-    assert rec.applied_diff.get("changed_files") == ["CLAUDE.md"]
+    assert rec.applied_diff.get("changed_files") == ["AGENT.md"]
     assert rec.generation_trace_id == "tr-exec"
     assert rec.generation_trace_url == "http://lf/tr-exec"
     assert exec_app.applied and gov.committed == gov.created and not gov.abandoned
-    assert seen["target_paths"] == ["CLAUDE.md"]
-    assert exec_app.allowed_targets == [{"CLAUDE.md"}]
+    assert seen["target_paths"] == ["AGENT.md"]
+    assert exec_app.allowed_targets == [{"AGENT.md"}]
     change_set = gov.change_sets[rec.change_set_id]
     assert change_set["source_improvement_id"] == "imp-1"
     assert change_set["source_attribution_id"] == attribution.attribution_id
@@ -395,7 +395,7 @@ def test_apply_failure_abandons_change_set_and_falls_back(tmp_path):
         return {
             "status": "ready",
             "summary": "s",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready, exec_app=exec_app)
@@ -414,7 +414,7 @@ def test_idempotent_when_already_applied(tmp_path):
         return {
             "status": "ready",
             "summary": "s",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
@@ -435,7 +435,7 @@ def test_applied_execution_is_not_reused_for_a_new_plan_revision(tmp_path):
         return {
             "status": "ready",
             "summary": "bound to one plan revision",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
@@ -459,7 +459,7 @@ def test_unbound_heuristic_execution_does_not_block_reapply(tmp_path):
         return {
             "status": "ready",
             "summary": "旧记录已被真实执行覆盖",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
@@ -491,7 +491,7 @@ def test_existing_unapplied_change_set_resumes_instead_of_false_idempotence(tmp_
         return {
             "status": "ready",
             "summary": "s",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
@@ -519,7 +519,7 @@ def test_reapply_when_change_set_invalidated(tmp_path):
         return {
             "status": "ready",
             "summary": "重跑生成新候选",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
@@ -660,7 +660,7 @@ def test_parallel_apply_creates_only_one_change_set(tmp_path):
         return {
             "status": "ready",
             "summary": "single winner",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=blocking_runner)
@@ -690,7 +690,7 @@ def test_plan_and_attribution_cannot_change_while_execution_is_applying(tmp_path
         return {
             "status": "ready",
             "summary": "source revision remained stable",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=blocking_runner)
@@ -746,12 +746,12 @@ def test_source_revision_fences_finalize_and_same_change_set_takeover(tmp_path):
             claim_token=claim.claim_token,
             claim_generation=claim.claim_generation,
             summary="stale candidate",
-            changes_applied=["edit: CLAUDE.md"],
+            changes_applied=["edit: AGENT.md"],
             agent_version="ver-stale",
             risk_level="low",
             rollback_strategy="reset",
             rollback_instructions=["reset"],
-            applied_diff={"changed_files": ["CLAUDE.md"]},
+            applied_diff={"changed_files": ["AGENT.md"]},
         )
     with pytest.raises(ConflictError, match="different source revision"):
         content.execution_claims.claim_execution(
@@ -777,7 +777,7 @@ def test_candidate_reconciles_in_same_request_after_execution_finalize_failure(t
         return {
             "status": "ready",
             "summary": "candidate persisted before DB finalize",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
@@ -808,7 +808,7 @@ def test_unmarked_worktree_commit_is_reconciled_in_same_request(tmp_path, monkey
         return {
             "status": "ready",
             "summary": "commit survives mark failure",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
@@ -835,7 +835,7 @@ def test_deterministic_candidate_reconciliation_failure_releases_applying_claim(
         return {
             "status": "ready",
             "summary": "candidate exists but finalize is corrupt",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
@@ -862,7 +862,7 @@ def test_background_reconciler_recovers_expired_candidate_after_process_crash(tm
         return {
             "status": "ready",
             "summary": "candidate committed before process crash",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
@@ -907,7 +907,7 @@ def test_missing_link_is_reconciled_in_same_request_after_finalize(tmp_path):
         return {
             "status": "ready",
             "summary": "execution finalizes before link",
-            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+            "operations": [{"operation": "append_text", "path": "AGENT.md", "append_text": "x", "expected_sha256": "s"}],
         }
 
     content = _content(tmp_path)
@@ -977,11 +977,11 @@ def test_materialized_feedback_test_rebinds_same_unpublished_change_set(tmp_path
         content,
         "imp-1",
         summary="已生成待发布版本",
-        changes_applied=["CLAUDE.md"],
+        changes_applied=["AGENT.md"],
         agent_version="cand-sha",
         change_set_id="agc-tests",
         applied_agent_version_id="cand-sha",
-        applied_diff={"changed_files": ["CLAUDE.md"]},
+        applied_diff={"changed_files": ["AGENT.md"]},
     )
     with content._session_factory.begin() as db:
         row = db.get(ExecutionRecordModel, execution.execution_id)

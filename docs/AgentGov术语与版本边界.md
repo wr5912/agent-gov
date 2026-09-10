@@ -50,7 +50,7 @@
 | --- | --- | --- | --- | --- |
 | 业务 Agent | `BusinessAgent` | `agent` | `agent_id` | 被治理对象；所有注册业务 Agent（含 `main-agent`）遵循同一运行与治理机制。 |
 | 业务 Agent 版本 | `BusinessAgentVersion` | 当前由 Workspace commit、待发布变更和 release 表达 | `agent_id + commit_sha` | 测试、测评、发布和回滚的精确被治理对象；长期可绑定 Runtime，但客户端不能逐请求改写。 |
-| 业务 Agent Workspace | `BusinessAgentWorkspace` | `workspace` | 由 `agent_id` 归属 | Runtime 原生项目目录；当前 `claude-code` 实现承载 `CLAUDE.md`、`.mcp.json`、`.claude/` 等配置，其他 Runtime 使用各自原生包，不做自动翻译。 |
+| 业务 Agent Workspace | `BusinessAgentWorkspace` | `workspace` | 由 `agent_id` 归属 | AgentScope Harness 的版本化事实源；承载 `AGENT.md`、`agent.yaml`、`mcp/`、`skills/`、`subagents/` 和 `tests/`，不保留旧 Runtime 兼容双轨。 |
 | 运行态 Workspace | `LiveWorkspace` | `workspace_dir` | 由 `agent_id` 归属 | `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/` 中当前实际运行和版本化的 Runtime 原生 Workspace。 |
 | 业务 Agent Workspace 包 | `BusinessAgentWorkspacePackage` | `workspace/import`、`workspace/export` | 目标 `agent_id` | 完整 `.tar.gz` 交换包；普通新 Agent 的唯一创建输入，也是跨环境迁移和覆盖载体。 |
 | 内置业务 Agent | `BuiltinBusinessAgent` | `builtin` | `agent_id` | 随当前代码版本提供出生 Workspace 的业务 Agent；当前唯一值为 `security-operations-expert`。 |
@@ -93,7 +93,7 @@
 | 历史名称 | 当前含义 | 四阶段改进治理映射 | 使用规则 |
 | --- | --- | --- | --- |
 | `main agent` / `main-agent` | 历史首个业务 Agent 示例 | 普通注册业务 Agent | 不再是默认、内置、受保护、模板或隐式兜底；长期文档只在历史说明或“所有注册业务 Agent（含 main-agent）”中使用。 |
-| `main_agent_version_id` / `has_main_agent_version` / `main_agent_claude_md` | 旧代码把任意被治理业务 Agent 称为 main Agent | `business_agent_version_id` / `has_business_agent_version` / `business_agent_claude_md` | 活跃 OpenAPI、证据包和治理输出只使用中性字段；旧证据包由一次性数据库迁移改写，不保留双字段兼容。 |
+| `main_agent_version_id` / `has_main_agent_version` / `main_agent_claude_md` | 旧代码把任意被治理业务 Agent 称为 main Agent，并把指令锁定为 Claude 文件 | `business_agent_version_id` / `has_business_agent_version` / `AGENT.md` Harness 证据 | 活跃 OpenAPI、证据包和治理输出只使用中性字段与 AgentScope Harness 路径；不保留双字段或旧指令文件兼容。 |
 | `seed` / `seed catalog` / `general template` | 已删除的业务 Agent 出生与创建双轨 | 运行卷初始化源 + Workspace 包导入 | 活跃实现和文档不得恢复；历史归档可保留。 |
 | `origin=seed/user` | 已删除的注册表来源投影 | `builtin`、`default`、`protected` 三个独立派生属性 | 不再持久化，不得用于删除、准入或 UI 标签。 |
 | `feedback signal` / `反馈信号` | 当前反馈来源或待关联信号 | `Feedback` 的来源类型之一 | 当前实现文档可保留；四阶段改进治理用户文案改为“反馈”。 |

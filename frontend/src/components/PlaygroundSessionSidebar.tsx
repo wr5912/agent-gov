@@ -1,4 +1,4 @@
-import { MessageSquarePlus, RefreshCw, Trash2 } from "lucide-react";
+import { MessageSquarePlus, RefreshCw } from "lucide-react";
 import type { SessionInfo } from "../types/runtime";
 
 interface PlaygroundSessionSidebarProps {
@@ -6,7 +6,6 @@ interface PlaygroundSessionSidebarProps {
   activeSessionId?: string;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
-  onDeleteSession: (sessionId: string) => void;
   onRefresh: () => void;
   streaming: boolean;
 }
@@ -16,7 +15,6 @@ export function PlaygroundSessionSidebar({
   activeSessionId,
   onSelectSession,
   onNewSession,
-  onDeleteSession,
   onRefresh,
   streaming,
 }: PlaygroundSessionSidebarProps) {
@@ -40,7 +38,6 @@ export function PlaygroundSessionSidebar({
         {sessions.length === 0 ? (
           <div className="empty-state">暂无会话。发送第一条消息后会自动创建。</div>
         ) : sessions.map((session) => {
-          const deleteBlocked = Boolean(session.active_run_id) || (streaming && activeSessionId === session.session_id);
           return (
             <article
               className={`session-sidebar-item ${activeSessionId === session.session_id ? "active" : ""}`.trim()}
@@ -55,18 +52,7 @@ export function PlaygroundSessionSidebar({
                 onClick={() => onSelectSession(session.session_id)}
               >
                 <strong>{session.title || session.session_id}</strong>
-                <span>{session.turns} turns · {formatDate(session.updated_at)}</span>
-              </button>
-              <button
-                className="icon-button session-sidebar-delete"
-                data-testid="session-sidebar-delete"
-                type="button"
-                title={deleteBlocked ? "会话运行中" : "删除会话映射"}
-                aria-label="删除会话映射"
-                disabled={deleteBlocked}
-                onClick={() => onDeleteSession(session.session_id)}
-              >
-                <Trash2 size={14} />
+                <span>{statusLabel(session.status)} · {formatDate(session.updated_at)}</span>
               </button>
             </article>
           );
@@ -74,6 +60,13 @@ export function PlaygroundSessionSidebar({
       </div>
     </aside>
   );
+}
+
+function statusLabel(status: SessionInfo["status"]) {
+  if (status === "running") return "运行中";
+  if (status === "awaiting_permission") return "等待确认";
+  if (status === "awaiting_external_result") return "等待外部结果";
+  return "空闲";
 }
 
 function formatDate(value: string) {

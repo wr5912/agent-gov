@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import tarfile
 
+import yaml
+
 
 def package_with_agent_id(package: bytes, agent_id: str) -> bytes:
     """重打测试包并显式声明目标 ID，模拟包所有者修改而非平台改写。"""
@@ -15,7 +17,18 @@ def package_with_agent_id(package: bytes, agent_id: str) -> bytes:
             source = source_archive.extractfile(member)
             assert source is not None
             files[relative] = (source.read(), member.mode)
-    files["agent.yaml"] = (f"agent:\n  id: {agent_id}\n".encode(), 0o644)
+    raw_manifest = files.get("agent.yaml", (b"", 0o644))[0]
+    loaded = yaml.safe_load(raw_manifest.decode("utf-8")) if raw_manifest else {}
+    manifest = loaded if isinstance(loaded, dict) else {}
+    agent = manifest.get("agent")
+    if not isinstance(agent, dict):
+        agent = {}
+        manifest["agent"] = agent
+    agent["id"] = agent_id
+    files["agent.yaml"] = (
+        yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True).encode("utf-8"),
+        0o644,
+    )
 
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as target_archive:

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Callable, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 from sqlalchemy.orm import sessionmaker
 
-from ..agent_profiles import AgentRuntimeProfile, read_requires_web_hitl
+from ..agent_profiles import AgentRuntimeProfile, read_requires_human_confirmation
 from ..agent_registry_db import AgentRegistryModel
 from ..errors import BusinessRuleViolation, ConflictError, DataIntegrityError, NotFoundError
 from ..protected_business_agents import is_protected_business_agent
@@ -32,7 +32,7 @@ class AgentRegistryRecord:
     workspace_dir: str
     created_at: str
     status: str = "active"
-    requires_web_hitl: bool = False  # 从 workspace project settings permissions.ask 派生的只读观测值
+    requires_web_hitl: bool = False  # 兼容展示字段；值来自 agent.yaml 的逐次确认模式
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,8 @@ class AgentRegistryStore:
 
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory
+        # 由 composition root 接入 Runtime 删除账本；默认值保持独立 store 测试可用。
+        self.deletion_pending: Callable[[str], bool] = lambda _agent_id: False
 
     def sync_business_agents(self, profiles: dict[str, AgentRuntimeProfile]) -> None:
         with self._session_factory.begin() as db:
@@ -128,6 +130,8 @@ class AgentRegistryStore:
 
         若该 agent_id 是被 tombstone 删除的旧行（deleted_at 非空），允许复用并清除 tombstone。
         """
+        if self.deletion_pending(agent_id):
+            raise ConflictError(f"Business agent {agent_id} still has pending Runtime cleanup")
         clean_name = name.strip()
         if not clean_name:
             raise BusinessRuleViolation("Business agent name cannot be empty")
@@ -167,11 +171,13 @@ class AgentRegistryStore:
             category="business",
             workspace_dir=workspace_dir,
             created_at=created_at,
-            requires_web_hitl=read_requires_web_hitl(Path(workspace_dir)),
+            requires_web_hitl=read_requires_human_confirmation(Path(workspace_dir)),
         )
 
     def reserve_business_agent(self, *, name: str, agent_id: str, workspace_dir: str) -> AgentProvisionReservation:
         """Persist an invisible, exclusive creation intent before touching the workspace."""
+        if self.deletion_pending(agent_id):
+            raise ConflictError(f"Business agent {agent_id} still has pending Runtime cleanup")
         clean_name = name.strip()
         if not clean_name:
             raise BusinessRuleViolation("Business agent name cannot be empty")
@@ -330,6 +336,21 @@ class AgentRegistryStore:
             row.deleted_at = utc_now()  # tombstone：sync/discover 均跳过，重启不复活
         return record
 
+    def tombstone_business_agent_generation(self, agent_id: str, *, expected_created_at: str) -> None:
+        """幂等 tombstone 精确代际，供可恢复的 Runtime 删除 saga 使用。"""
+
+        if is_protected_business_agent(agent_id):
+            raise BusinessRuleViolation(
+                f"Business agent '{agent_id}' is protected: its built-in Workspace lives in the project repository"
+            )
+        with self._session_factory.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = db.get(AgentRegistryModel, agent_id)
+            if row is None or row.created_at != expected_created_at:
+                raise ConflictError(f"Business agent generation changed during deletion: {agent_id}")
+            if not row.deleted_at:
+                row.deleted_at = utc_now()
+
 
 def _record(row: AgentRegistryModel) -> AgentRegistryRecord:
     return AgentRegistryRecord(
@@ -339,7 +360,7 @@ def _record(row: AgentRegistryModel) -> AgentRegistryRecord:
         workspace_dir=row.workspace_dir,
         created_at=row.created_at,
         status=row.status or "active",
-        requires_web_hitl=read_requires_web_hitl(Path(row.workspace_dir)),
+        requires_web_hitl=read_requires_human_confirmation(Path(row.workspace_dir)),
     )
 
 

@@ -5,10 +5,12 @@
 > 工程阶段说明：P1 是安全测评能力的首个研发切片，不是完整网络安全测评 MVP，也不是四阶段
 > 改进治理工作台的新用户阶段。
 >
-> 前置方案：[P0 准入收口实施方案](./AgentGov下一阶段P0准入收口实施方案.md)。
+> 历史前置：[已归档的 P0 准入收口实施方案](../archive/obsolete/AgentGov下一阶段P0准入收口实施方案.md)。
 >
 > 平台夹具边界：
-> [P0 模拟 MCP 平台验收实施方案](./AgentGov下一阶段P0模拟MCP平台验收实施方案.md)。
+> 历史工具切片：[已归档的 P0 模拟 MCP 平台验收实施方案](../archive/obsolete/AgentGov下一阶段P0模拟MCP平台验收实施方案.md)。
+> 两份旧 P0 文档不再构成 Runtime 实施前置；当前执行前置是根 `README.md` 的 AgentScope
+> Runtime 单路径和公开验收门。
 >
 > 需求依据：[网络安全智能体测评工程需求](../网络安全智能体测评工程需求文档.md)。
 
@@ -373,7 +375,7 @@ Hostile 输出包含伪造 ID、commit、score、approval、status 或 provenanc
   不得把 pytest 字段固化到通用测评领域。
 - evaluator-owned benchmark 与业务 Agent checkout 分离挂载；隔离测试必须证明 Agent 文件工具和
   Subagent 都无法枚举、读取或将 holdout 包带出执行环境。
-- 不手解析 Claude CLI transcript；运行事实来自 SDK/Agent 原生能力。
+- 不手解析 Runtime 私有 transcript；运行事实来自 AgentScope 原生事件与 AgentGov canonical 投影。
 - 路由增加真实业务动作前检查路由数；超过 20 路由前拆分 evidence/improvement bridge 子路由。
 - DB row、运行时投影和 API response 分开建模，共享字段类型但不因相似而继承同一宽松模型。
 - P1 直接持久最小协议中立元数据：execution 记录保存 BusinessAgentVersion/protocol/purpose/
@@ -436,9 +438,11 @@ P0-MCP 使用独立 `container-security-mcp-test` lane，只作为 P0 平台回�
 7. `make runtime-bootstrap-scan`；
 8. `make codex-guard`、`make typecheck`、`make main-flow-test`；
 9. 阶段提交前串行 `make test`；
-10. 公共 `make container-live-test` 使用当前工作树重建并 force-recreate 后，由隔离
-    evaluator runner 对真实 `security-operations-expert` baseline/candidate 执行 8-case holdout；
-    该入口不启动 P0-MCP fixture，所有 case `allowed_tools=[]`。
+10. 公共 `make container-live-test` 使用当前工作树和一次性 Compose root/project 验证真实
+    AgentScope Session/SSE/chat/message/run/reply/trace/feedback 链；P1 退出前还必须新增独立的隔离
+    evaluator runner 对真实 `security-operations-expert` baseline/candidate 执行 8-case holdout。
+    当前 live target 不能冒充该尚未交付的评测证据；两者都不启动历史 P0-MCP fixture，所有
+    P1 case `allowed_tools=[]`。
 
 P1 退出必须有一条完整证据：
 

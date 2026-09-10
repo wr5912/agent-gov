@@ -1,0 +1,5 @@
+# 私有配置及其回退备份不得发送给 Docker builder；保留 .env.example。
+**/.env
+**/.env.local
+**/.env.local-debug
+**/.env.bak*

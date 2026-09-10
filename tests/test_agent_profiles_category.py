@@ -1,14 +1,11 @@
-"""AGV-005 业务 Agent 与治理 Agent 的结构化身份和原生项目策略边界。"""
+"""业务 Agent 与 governor 的结构化身份和 AgentScope Harness 边界。"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import get_args
 
-from app.runtime.agent_job_runner import AgentJobRunner
 from app.runtime.agent_profiles import (
-    GOVERNANCE_AGENT_ROLES,
     GOVERNOR_PROFILE,
     AgentRole,
     agent_category,
@@ -25,19 +22,16 @@ def _settings() -> AppSettings:
     return AppSettings(_env_file=None)
 
 
-def test_governance_roles_are_single_source_of_truth() -> None:
-    all_roles = set(get_args(AgentRole))
-    assert all_roles - {"business-agent"} == GOVERNANCE_AGENT_ROLES
-    assert GOVERNANCE_AGENT_ROLES.isdisjoint({"business-agent"})
+def test_agent_roles_are_single_source_of_truth() -> None:
+    assert set(get_args(AgentRole)) == {"business-agent", GOVERNOR_PROFILE}
 
 
 def test_agent_categories_are_derived_from_role() -> None:
     assert agent_category("business-agent") == "business"
-    for role in GOVERNANCE_AGENT_ROLES:
-        assert agent_category(role) == "governance"
+    assert agent_category(GOVERNOR_PROFILE) == "governance"
 
 
-def test_business_agent_profile_only_selects_native_project_policy() -> None:
+def test_business_agent_profile_contains_only_governed_workspace_identity() -> None:
     settings = _settings()
     workspace = settings.data_dir / "business-agents" / "soc-ops" / "workspace"
     profile = build_business_agent_profile(settings, agent_id="soc-ops", workspace_dir=workspace)
@@ -47,48 +41,24 @@ def test_business_agent_profile_only_selects_native_project_policy() -> None:
     assert profile.name == "soc-ops"
     assert profile.agent_id == "soc-ops"
     assert profile.workspace_dir == workspace
-    assert profile.project_settings_path == workspace / ".claude" / "settings.json"
     assert isinstance(profile.workspace_dir, Path)
-    assert not hasattr(profile, "readable_paths")
-    assert not hasattr(profile, "writable_paths")
-    assert not hasattr(profile, "denied_paths")
+    assert not hasattr(profile, "project_settings_path")
+    assert not hasattr(profile, "permission_mode")
 
 
-def test_candidate_profile_keeps_runtime_name_separate_from_business_agent_owner() -> None:
+def test_candidate_profile_names_each_immutable_candidate_uniquely() -> None:
     settings = _settings()
     workspace = settings.data_dir / "business-agents" / "soc-ops" / "version" / "worktrees" / "agc-1"
 
     profile = candidate_profile(settings, agent_id="soc-ops", workspace_dir=workspace, candidate_id="agc-1")
 
-    assert profile.name == "soc-ops-candidate"
+    assert profile.name == "soc-ops-candidate-agc-1"
     assert profile.agent_id == "soc-ops"
     assert profile.workspace_dir == workspace
 
 
-def test_build_profiles_exposes_only_governance_profiles() -> None:
-    """静态 profile 只有治理执行者；业务 Agent 一律由磁盘发现与注册表提供。"""
-
+def test_build_profiles_exposes_only_governor() -> None:
     profiles = build_profiles(_settings())
     assert LEGACY_MAIN_AGENT_ID not in profiles
-    assert {name for name, profile in profiles.items() if profile.category == "governance"} == GOVERNANCE_AGENT_ROLES
-    assert [name for name, profile in profiles.items() if profile.category == "business"] == []
-
-
-def test_governor_build_options_uses_project_discovery_without_policy_injection() -> None:
-    settings = _settings()
-    profiles = build_profiles(settings)
-    runner = AgentJobRunner(
-        settings=settings,
-        profiles=profiles,
-        env_builder=lambda profile: {},
-        output_formatter=SimpleNamespace(),
-        provider_router=SimpleNamespace(claude_env=lambda: {}),
-    )
-
-    options = runner.build_options(profiles[GOVERNOR_PROFILE])
-
-    assert list(options.setting_sources or []) == ["project"]
-    assert options.hooks is None
-    assert options.permission_mode is None
-    assert options.allowed_tools == []
-    assert options.disallowed_tools == []
+    assert set(profiles) == {GOVERNOR_PROFILE}
+    assert profiles[GOVERNOR_PROFILE].category == "governance"

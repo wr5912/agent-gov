@@ -37,7 +37,7 @@ def test_delete_purges_disk_and_recreate_does_not_inherit(app_module) -> None:
 
     with TestClient(app_module.app) as client:
         workspace = _create(client, "probe-agent")
-        (workspace / "CLAUDE.md").write_text("前一个 Agent 的私有内容\n", encoding="utf-8")
+        (workspace / "AGENT.md").write_text("前一个 Agent 的私有内容\n", encoding="utf-8")
 
         deleted = client.request("DELETE", "/api/agent-registry/probe-agent")
         assert deleted.status_code == 200, deleted.text
@@ -45,10 +45,10 @@ def test_delete_purges_disk_and_recreate_does_not_inherit(app_module) -> None:
         assert body["workspace_removed"] is True
         assert body["cleanup_complete"] is True
         assert not workspace.exists()
-        assert not workspace.parent.exists()  # 整个 root（含 claude-root/version）都清掉
+        assert not workspace.parent.exists()  # 整个 Agent root（含 version）都清掉
 
         recreated = _create(client, "probe-agent", name="重建的 Agent")
-        content = (recreated / "CLAUDE.md").read_text(encoding="utf-8")
+        content = (recreated / "AGENT.md").read_text(encoding="utf-8")
         assert "前一个 Agent 的私有内容" not in content
         assert "重建的 Agent" in content
 
@@ -85,7 +85,7 @@ def test_deleted_agent_is_not_runnable(app_module) -> None:
         _create(client, "gone-agent")
         client.request("DELETE", "/api/agent-registry/gone-agent")
 
-        response = client.post("/api/chat", json={"message": "hi", "agent_id": "gone-agent"})
+        response = client.post("/api/runtime/sessions/", json={"agent_id": "gone-agent"})
 
     assert response.status_code == 404
 

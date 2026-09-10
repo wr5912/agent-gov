@@ -92,4 +92,25 @@ describe("playgroundRunReducer", () => {
     expect(canSubmitPlaygroundUserInput(awaiting)).toBe(true);
     expect(canSubmitPlaygroundUserInput(cancelling)).toBe(false);
   });
+
+  it("keeps a restored HITL run awaiting while its exact run handle is rebound", () => {
+    const running = playgroundRunReducer(initialPlaygroundRunState, {
+      type: "observe_backend_run",
+      operationId: "detached-1",
+      sessionId: "session-1",
+      runId: "run-1",
+    });
+    const awaiting = playgroundRunReducer(running, {
+      type: "awaiting_input",
+      operationId: "detached-1",
+    });
+    const rebound = playgroundRunReducer(awaiting, {
+      type: "run_handle",
+      operationId: "detached-1",
+      sessionId: "session-1",
+      runId: "run-1",
+    });
+
+    expect(rebound.phase).toBe("awaiting_input");
+  });
 });

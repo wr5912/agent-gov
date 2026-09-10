@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
+import yaml
+
 from app.runtime.business_agent_workspace import WorkspaceProvisionEntry
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.json_types import JsonObject
@@ -93,18 +95,20 @@ def read_workspace_package(
 
 
 def validate_workspace_config_entries(entries: tuple[WorkspaceProvisionEntry, ...]) -> None:
-    required_objects = {".mcp.json", ".claude/settings.json"}
     for entry in entries:
         path = entry.relative_path.as_posix()
-        if path not in required_objects:
+        is_manifest = path == "agent.yaml" or path.startswith("subagents/") and path.endswith("/agent.yaml")
+        is_mcp = path.startswith("mcp/") and path.endswith(".json")
+        if not is_manifest and not is_mcp:
             continue
         try:
-            value = json.loads(entry.content.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            text = entry.content.decode("utf-8")
+            value = yaml.safe_load(text) if is_manifest else json.loads(text)
+        except (UnicodeDecodeError, json.JSONDecodeError, yaml.YAMLError) as exc:
             raise WorkspacePackageError(
                 422,
                 "WORKSPACE_PACKAGE_CONFIG_INVALID",
-                f"Workspace config must be a UTF-8 JSON object: {path}",
+                f"Workspace config must be a valid UTF-8 object: {path}",
             ) from exc
         if not isinstance(value, dict):
             raise WorkspacePackageError(

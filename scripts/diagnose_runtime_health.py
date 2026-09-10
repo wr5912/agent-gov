@@ -48,7 +48,7 @@ def diagnose(*, api_base: str, wait_seconds: float, require_ready: bool) -> int:
     live_status, live, live_error = _get_json(f"{api_base.rstrip('/')}/health/live", timeout=3)
     if live_error or live_status is None or not 200 <= live_status < 300 or not live or live.get("status") != "ok":
         print(f"API: unhealthy status={live_status or 'unreachable'} error={live_error or 'invalid liveness response'}")
-        print("根因: API liveness 不可达；当前不能归因于外部模型 provider，请检查 API 容器状态与 health log。")
+        print("根因: AgentGov API liveness 不可达；请检查 agent-gov-api 容器状态与 health log。")
         return 1
     print("API: healthy")
 
@@ -56,7 +56,7 @@ def diagnose(*, api_base: str, wait_seconds: float, require_ready: bool) -> int:
     readiness: JsonObject = {}
     while True:
         _, payload, readiness_error = _get_json(f"{api_base.rstrip('/')}/health/ready", timeout=3)
-        readiness = payload.get("model_provider", {}) if payload and isinstance(payload.get("model_provider"), dict) else {}
+        readiness = payload.get("runtime_service", {}) if payload and isinstance(payload.get("runtime_service"), dict) else {}
         if readiness_error or readiness.get("status") != "checking" or time.monotonic() >= deadline:
             if readiness_error:
                 readiness = {
@@ -67,27 +67,22 @@ def diagnose(*, api_base: str, wait_seconds: float, require_ready: bool) -> int:
             break
         time.sleep(0.25)
 
-    provider_status = str(readiness.get("status") or "unknown")
-    print(f"Model provider: {provider_status}")
-    for key in ("error_code", "reason", "probe", "duration_ms", "retryable", "action", "checked_at"):
+    runtime_status = str(readiness.get("status") or "unknown")
+    print(f"AgentScope Runtime: {runtime_status}")
+    for key in ("error_code", "message", "reason", "route", "status_code", "retryable", "action", "checked_at"):
         value = readiness.get(key)
         if value is not None:
             print(f"{key}={value}")
-    if provider_status == "ready":
-        print("结论: API 容器与外部模型 provider 均已就绪。")
-    elif provider_status == "checking":
-        print("结论: API 容器已存活；外部模型 provider 就绪探测仍在进行，不能把该探测当作镜像或容器启动失败。")
+    if runtime_status == "ready":
+        print("结论: AgentGov API 与唯一 AgentScope Runtime 均已就绪。")
     else:
-        code = str(readiness.get("error_code") or "UNKNOWN_PROVIDER_READINESS_ERROR")
-        reason = str(readiness.get("reason") or "unknown")
-        print(
-            f"根因: API 容器已存活；外部模型 provider 就绪探测失败（code={code}, reason={reason}）。这不是镜像启动失败，Compose dependency 报错只是次级症状。"
-        )
-    return 0 if provider_status == "ready" or not require_ready else 2
+        reason = str(readiness.get("reason") or readiness.get("message") or "unknown")
+        print(f"根因: AgentGov API 已存活，但 AgentScope Runtime 尚未就绪（reason={reason}）。")
+    return 0 if runtime_status == "ready" or not require_ready else 2
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Print API liveness and cached model provider readiness.")
+    parser = argparse.ArgumentParser(description="Print AgentGov API liveness and AgentScope Runtime readiness.")
     parser.add_argument(
         "--env-file",
         type=Path,
@@ -97,7 +92,7 @@ def main() -> int:
     parser.add_argument("--wait-seconds", type=float, default=0)
     parser.add_argument("--require-ready", action="store_true")
     args = parser.parse_args()
-    host_port = os.getenv("HOST_PORT") or _env_value(args.env_file, "HOST_PORT") or "58080"
+    host_port = os.getenv("HOST_PORT") or _env_value(args.env_file, "HOST_PORT") or "50400"
     api_base = args.api_base or os.getenv("API_BASE") or _env_value(args.env_file, "API_BASE") or f"http://localhost:{host_port}"
     return diagnose(
         api_base=api_base,

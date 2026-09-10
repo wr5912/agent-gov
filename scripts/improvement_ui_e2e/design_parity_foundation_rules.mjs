@@ -160,7 +160,7 @@ const RULES = [
     const collapsedAria = await page.getByTestId("playground-session-trigger").getAttribute("aria-expanded").catch(() => "");
     return { ok: trigger && closedBefore && open && width >= 260 && width <= 340 && expandedAria === "true" && expandedLabel === "折叠会话栏" && duplicatedCloseInSidebar === 0 && closedAfterToggle && collapsedAria === "false" && hasSessionControls && noRuntimeSettings, detail: `trigger=${trigger} defaultCollapsed=${closedBefore} open=${open} width=${Math.round(width)} expanded=${expandedAria}/${expandedLabel} sidebarCloseButtons=${duplicatedCloseInSidebar} closedAfterToggle=${closedAfterToggle}/${collapsedAria} sessionControls=${hasSessionControls} noRuntimeSettings=${noRuntimeSettings}` };
   } },
-  { id: "playground-runtime-settings-drawer", phase: "P1", desc: "Playground 运行设置进入独立抽屉，且不混入会话历史", async fn(page) {
+  { id: "playground-runtime-settings-drawer", phase: "P1", desc: "Playground 运行设置进入独立抽屉，只暴露 AgentScope 能力、请求上下文和受控 Harness 编辑", async fn(page) {
     await page.getByTestId("nav-playground").click();
     const trigger = await has(page, "playground-runtime-settings-trigger");
     if (trigger) await page.getByTestId("playground-runtime-settings-trigger").click();
@@ -170,8 +170,14 @@ const RULES = [
     const size = open ? await drawer.getAttribute("data-size") : null;
     const agentSettingsSection = open && await has(page, "runtime-agent-settings");
     const parameterSettingsSection = open && await has(page, "runtime-parameter-settings");
-    const maxTurnsControl = open && await drawer.locator('input[type="number"]').count() === 1;
-    const hasRuntimeSettings = agentSettingsSection && parameterSettingsSection && maxTurnsControl;
+    const alertIdControl = open && await drawer.getByLabel("Alert ID").count() === 1;
+    const caseIdControl = open && await drawer.getByLabel("Case ID").count() === 1;
+    const legacyNumericControls = open ? await drawer.locator('input[type="number"]').count() : -1;
+    const hasRuntimeSettings = agentSettingsSection
+      && parameterSettingsSection
+      && alertIdControl
+      && caseIdControl
+      && legacyNumericControls === 0;
     const noMisleadingControls = open
       && !(await textIncludes(drawer, "Skills Mode"))
       && !(await textIncludes(drawer, "Allowed Tools"))
@@ -187,21 +193,23 @@ const RULES = [
     if (debug) await debug.locator("summary").click().catch(() => {});
     const debugVisible = open ? await textIncludes(drawer, "Runtime") && !(await textIncludes(drawer, "Events")) && !(await textIncludes(drawer, "Subagents / Skills")) : false;
     const agentConfigVisible = open ? await textIncludes(drawer, "Agent 配置") && await textIncludes(drawer, "版本治理运行态") : false;
-    const mcpEditButton = open ? await has(page, "runtime-config-edit-mcp") : false;
-    let mcpEditorOpened = false;
-    let mcpEditorApplied = false;
-    if (mcpEditButton) {
-      await page.getByTestId("runtime-config-edit-mcp").click();
+    const instructionsEditButton = open ? await has(page, "runtime-config-edit-instructions") : false;
+    const directMcpEditButton = open ? await has(page, "runtime-config-edit-mcp") : false;
+    let instructionsEditorOpened = false;
+    let instructionsEditorApplied = false;
+    if (instructionsEditButton) {
+      await page.getByTestId("runtime-config-edit-instructions").click();
       await page.getByTestId("agent-config-file-editor").waitFor({ timeout: 8000 }).catch(() => {});
-      mcpEditorOpened = await visible(page, "agent-config-file-editor");
-      if (mcpEditorOpened) {
-        await fillJsonEditor(page, '{"mcpServers":{"parity":{"command":"node","args":["server.js"]}}}\n');
-        await page.getByTestId("agent-config-file-editor-format").click();
+      instructionsEditorOpened = await visible(page, "agent-config-file-editor");
+      if (instructionsEditorOpened) {
+        await fillJsonEditor(page, "# AgentScope Harness\n\n在每次运行中核验时间边界。\n");
         await page.getByTestId("agent-config-file-editor-apply").click();
         await page.getByTestId("agent-config-file-editor-status").waitFor({ timeout: 8000 }).catch(() => {});
-        mcpEditorApplied = await visible(page, "agent-config-file-editor-status");
+        instructionsEditorApplied = await visible(page, "agent-config-file-editor-status");
+        await page.waitForTimeout(50);
+        await page.waitForLoadState("networkidle");
       }
-      if (mcpEditorOpened) await page.getByTestId("agent-config-file-editor").getByRole("button", { name: "关闭" }).click().catch(() => {});
+      if (instructionsEditorOpened) await page.getByTestId("agent-config-file-editor").getByRole("button", { name: "关闭" }).click().catch(() => {});
       await page.getByTestId("agent-config-file-editor").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
     }
     const noLegacyGovernancePath = open ? !(await textIncludes(drawer, "/data/agent-governance")) : false;
@@ -210,8 +218,8 @@ const RULES = [
       await drawer.waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
     }
     return {
-      ok: trigger && open && size === "wide" && hasRuntimeSettings && noMisleadingControls && noSessionHistory && debugClosed && debugVisible && agentConfigVisible && mcpEditorOpened && mcpEditorApplied && noLegacyGovernancePath,
-      detail: `trigger=${trigger} open=${open} size=${size} runtimeSettings=${hasRuntimeSettings} sections=${agentSettingsSection}/${parameterSettingsSection} maxTurns=${maxTurnsControl} noMisleadingControls=${noMisleadingControls} noSessionHistory=${noSessionHistory} debugClosed=${debugClosed} debugVisible=${debugVisible} agentConfig=${agentConfigVisible} mcpEditor=${mcpEditorOpened}/${mcpEditorApplied} legacyPath=${!noLegacyGovernancePath}`,
+      ok: trigger && open && size === "wide" && hasRuntimeSettings && noMisleadingControls && noSessionHistory && debugClosed && debugVisible && agentConfigVisible && instructionsEditorOpened && instructionsEditorApplied && !directMcpEditButton && noLegacyGovernancePath,
+      detail: `trigger=${trigger} open=${open} size=${size} runtimeSettings=${hasRuntimeSettings} sections=${agentSettingsSection}/${parameterSettingsSection} context=${alertIdControl}/${caseIdControl} legacyNumeric=${legacyNumericControls} noMisleadingControls=${noMisleadingControls} noSessionHistory=${noSessionHistory} debugClosed=${debugClosed} debugVisible=${debugVisible} agentConfig=${agentConfigVisible} instructionsEditor=${instructionsEditorOpened}/${instructionsEditorApplied} directMcpEditor=${directMcpEditButton} legacyPath=${!noLegacyGovernancePath}`,
     };
   } },
   { id: "message-actions", phase: "P1", desc: "助手回复动作含 创建反馈/查看Trace/获取上下文（领域级 data-testid）", async fn(page) {
@@ -224,6 +232,7 @@ const RULES = [
   { id: "playground-scroll-navigation", phase: "P1", desc: "Playground 长对话自动置底、上滚暂停、一键置底与滚动预览导航", async fn(page) {
     await page.getByTestId("nav-playground").click();
     await page.getByTestId("playground-scroll-navigator").waitFor({ timeout: 8000 });
+    await page.waitForLoadState("networkidle");
     await waitNearBottom(page);
     const initialDistance = await scrollDistance(page);
     await page.getByTestId("playground-messages").evaluate((el) => {
@@ -253,6 +262,7 @@ const RULES = [
       && await page.getByTestId("playground-runtime-settings-drawer").count() === 0;
     const anchorRolesOk = previewRoles.every((role) => role === "user") && markRoles.every((role) => role === "user");
     await seedPlaygroundMessages(page, 1);
+    await page.waitForLoadState("networkidle");
     await page.getByTestId("playground-scroll-rail").hover();
     await waitPreviewOpen(page);
     const singlePreviewRoles = await page.getByTestId("playground-scroll-preview-item")
@@ -262,6 +272,7 @@ const RULES = [
     const singleTurnFallback = singlePreviewRoles.join(",") === "user,assistant"
       && singleMarkRoles.join(",") === "user,assistant";
     await seedPlaygroundMessages(page, 4);
+    await page.waitForLoadState("networkidle");
     await page.getByTestId("playground-messages").evaluate((el) => {
       el.scrollTop = 0;
       el.dispatchEvent(new Event("scroll", { bubbles: true }));
@@ -278,12 +289,15 @@ const RULES = [
       window.sessionStorage.setItem("parity-preserve-playground-session", "1");
       window.localStorage.setItem("playground-active-session", JSON.stringify("density-check-0"));
     });
+    await page.waitForLoadState("networkidle");
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByTestId("playground").waitFor({ timeout: 8000 });
+    await page.waitForLoadState("networkidle");
     const noOverflowNavigator = await page.getByTestId("playground-scroll-navigator").count() === 0;
     await page.evaluate(() => window.sessionStorage.removeItem("parity-preserve-playground-session"));
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByTestId("playground").waitFor({ timeout: 8000 });
+    await page.waitForLoadState("networkidle");
 
     const ok = initialDistance <= 24
       && jump
@@ -308,7 +322,7 @@ const RULES = [
       && noPanelMix;
     return { ok, detail: `initial=${initialDistance} jump=${jump} large=${previewItems}/${markCount}/${largeMetrics.railHeight}px gap=${largeMetrics.minGap}-${largeMetrics.maxGap} userOnly=${anchorRolesOk} singleFallback=${singlePreviewRoles.join("+")}/${singleMarkRoles.join("+")} few=${fewPreviewItems}/${fewMarkCount}/${fewMetrics.railHeight}px avgGap=${fewMetrics.avgGap} fewUserOnly=${fewRolesOk} noOverflow=${noOverflowNavigator} center=${largeMetrics.centerDelta}/${fewMetrics.centerDelta} nearTop=${nearTop} final=${finalDistance} noPanelMix=${noPanelMix}` };
   } },
-  { id: "trace-evidence-panel", phase: "P0", desc: "有 run_id 的历史消息从 AgentRun 重放稳定语义 Trace，不从 transcript 伪造事件或 Langfuse 元数据", async fn(page) {
+  { id: "trace-evidence-panel", phase: "P0", desc: "有 run_id 的历史消息通过 AgentGov 查询 OTel/Langfuse 映射，不从 transcript 伪造语义事件", async fn(page) {
     await page.getByTestId("nav-playground").click();
     if (!(await has(page, "message-action-view-trace"))) return { ok: false, detail: "无 Trace 入口" };
     const traceAction = page.locator('[data-testid="message-action-view-trace"]:not([disabled])').first();
@@ -321,13 +335,18 @@ const RULES = [
     const legacy = await page.locator(".detail-modal-card").isVisible().catch(() => false);
     const traceDrawer = await page.getByTestId("trace-drawer").count();
     const panelText = await page.getByTestId("playground-evidence-panel").innerText().catch(() => "");
+    const traceMapped = await waitForObservedRequest((request) => (
+      request.method === "GET"
+      && /^\/api\/agent-runs\/[^/]+\/trace$/.test(request.path)
+    ));
     const langfuse = await has(page, "trace-open-langfuse");
     const langfuseHref = await page.getByTestId("trace-open-langfuse").first().getAttribute("href").catch(() => "");
     const concreteTrace = (langfuseHref || "").includes("/project/agent-gov/traces/") && !(langfuseHref || "").includes("langfuse-web:3000");
     await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
     await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    const sdkBlockEvidence = panelText.includes("tool_use") || panelText.includes("Read");
-    return { ok: panel && traceTab && tabCount === 1 && !legacy && traceDrawer === 0 && sdkBlockEvidence && (!langfuse || concreteTrace), detail: `panel=${panel} traceTab=${traceTab} tabCount=${tabCount} legacyModal=${legacy} traceDrawer=${traceDrawer} sdkBlocks=${sdkBlockEvidence} langfuse=${langfuse} href=${langfuseHref}` };
+    const runContext = panelText.includes("run：") && !panelText.includes("run：-");
+    const sessionContext = panelText.includes("session：") && !panelText.includes("session：-");
+    return { ok: panel && traceTab && tabCount === 1 && !legacy && traceDrawer === 0 && traceMapped && runContext && sessionContext && langfuse && concreteTrace, detail: `panel=${panel} traceTab=${traceTab} tabCount=${tabCount} legacyModal=${legacy} traceDrawer=${traceDrawer} traceMapped=${traceMapped} context=${runContext}/${sessionContext} langfuse=${langfuse} href=${langfuseHref}` };
   } },
   { id: "panel-size-policy", phase: "P0", desc: "侧栏、tab 面板与抽屉按职责分档且打开后稳定", async fn(page) {
     await page.getByTestId("nav-playground").click();

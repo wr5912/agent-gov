@@ -11,7 +11,6 @@ from app.runtime.agent_admission import AgentMaintenanceClaimLost
 from app.runtime.agent_git_raw_storage import RawGitStorageError
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.agent_paths import business_agent_layout
-from app.runtime.session_store import LocalSession
 from app.services import agent_version_maintenance
 from app.services import agent_workspace_git_operations as workspace_git_operations
 from app.services import agent_workspace_package_codec as workspace_codec
@@ -33,7 +32,7 @@ from test_agent_workspace_packages import (
 
 def test_workspace_import_rejects_missing_or_invalid_http_multipart_contract(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    package = _workspace_package({"CLAUDE.md": b"# multipart\n"})
+    package = _workspace_package({"AGENT.md": b"# multipart\n"})
     with TestClient(module.app) as client:
         missing_length_request = client.build_request(
             "POST",
@@ -153,7 +152,7 @@ def test_new_agent_import_compensates_git_and_registry_when_finalize_fails(monke
         lambda _reservation: (_ for _ in ()).throw(RuntimeError("injected finalize failure")),
     )
     package = _workspace_package(
-        {"CLAUDE.md": b"# imported\n", ".mcp.json": b'{"mcpServers": {}}\n'},
+        {"AGENT.md": b"# imported\n"},
         agent_id="finalize-failure",
     )
     with TestClient(module.app, raise_server_exceptions=False) as client:
@@ -176,7 +175,7 @@ def test_workspace_import_rejects_invalid_configs_and_size_limits_before_mutatio
         invalid_json = client.post(
             "/api/agent-registry/invalid-json/workspace/import",
             data={"name": "invalid"},
-            files={"package": ("invalid.tar.gz", _workspace_package({".mcp.json": b"[]"}), "application/gzip")},
+            files={"package": ("invalid.tar.gz", _workspace_package({"mcp/invalid.json": b"[]"}), "application/gzip")},
         )
         with monkeypatch.context() as scoped:
             scoped.setattr(workspace_codec, "MAX_SINGLE_MEMBER_BYTES", 4)
@@ -310,7 +309,7 @@ def test_workspace_import_rejects_empty_pax_path_and_large_reversed_path_conflic
 
 
 def test_workspace_import_maps_tarfile_recursion_error_to_invalid_package(monkeypatch, tmp_path: Path) -> None:
-    package = _workspace_package({"CLAUDE.md": b"# valid preflight\n"})
+    package = _workspace_package({"AGENT.md": b"# valid preflight\n"})
     monkeypatch.setattr(workspace_codec.tarfile, "open", lambda *args, **kwargs: (_ for _ in ()).throw(RecursionError("metadata chain")))
 
     with pytest.raises(workspace_codec.WorkspacePackageError) as exc_info:
@@ -329,7 +328,7 @@ def test_workspace_export_rejects_symlink_and_oversized_tree_without_advancing_h
         created = _import_new_agent(client, agent_id="export-guard", name="export guard")
         workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=export-guard").json()["commit_sha"]
-        (workspace / "linked").symlink_to("CLAUDE.md")
+        (workspace / "linked").symlink_to("AGENT.md")
         symlinked = client.post("/api/agent-registry/export-guard/workspace/export")
         after_symlink = client.get("/api/agent-repository/current?agent_id=export-guard").json()["commit_sha"]
         (workspace / "linked").unlink()
@@ -393,9 +392,9 @@ def test_workspace_export_unstages_original_dirty_state_when_snapshot_commit_fai
         created = _import_new_agent(client, agent_id="commit-failure", name="commit failure")
         workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline = client.get("/api/agent-repository/current?agent_id=commit-failure").json()["commit_sha"]
-        original_content = (workspace / "CLAUDE.md").read_bytes()
+        original_content = (workspace / "AGENT.md").read_bytes()
         changed_content = original_content + b"\n# dirty before failed export\n"
-        (workspace / "CLAUDE.md").write_bytes(changed_content)
+        (workspace / "AGENT.md").write_bytes(changed_content)
 
         def fail_snapshot_commit(repository: Path, args: list[str], *, check: bool = True) -> bytes:
             if args[:3] == ["commit", "-m", "Snapshot live workspace before package operation"]:
@@ -411,14 +410,14 @@ def test_workspace_export_unstages_original_dirty_state_when_snapshot_commit_fai
     assert response.json()["detail"] == "Git workspace operation failed"
     assert str(tmp_path) not in response.text
     assert current == baseline
-    assert (workspace / "CLAUDE.md").read_bytes() == changed_content
+    assert (workspace / "AGENT.md").read_bytes() == changed_content
     assert subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=workspace, check=False).returncode == 0
     assert subprocess.run(["git", "diff", "--quiet"], cwd=workspace, check=False).returncode == 1
 
 
 def test_workspace_import_rechecks_lease_immediately_before_activation(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    package = _workspace_package({"CLAUDE.md": b"# replacement\n"}, agent_id="lease-target")
+    package = _workspace_package({"AGENT.md": b"# replacement\n"}, agent_id="lease-target")
     calls = 0
     original_assert = agent_version_maintenance.AgentVersionMaintenanceLease.assert_active
 
@@ -432,7 +431,7 @@ def test_workspace_import_rechecks_lease_immediately_before_activation(monkeypat
     with TestClient(module.app) as client:
         created = _import_new_agent(client, agent_id="lease-target", name="lease target")
         workspace = Path(created.json()["agent"]["workspace_dir"])
-        baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
+        baseline_bytes = (workspace / "AGENT.md").read_bytes()
         baseline = client.get("/api/agent-repository/current?agent_id=lease-target").json()["commit_sha"]
         monkeypatch.setattr(agent_version_maintenance.AgentVersionMaintenanceLease, "assert_active", fail_second_assert)
         response = client.post(
@@ -445,13 +444,13 @@ def test_workspace_import_rechecks_lease_immediately_before_activation(monkeypat
     assert response.status_code == 409
     assert response.json()["error_code"] == "WORKSPACE_MAINTENANCE_CONFLICT"
     assert current == baseline
-    assert (workspace / "CLAUDE.md").read_bytes() == baseline_bytes
+    assert (workspace / "AGENT.md").read_bytes() == baseline_bytes
 
 
 def test_workspace_import_reports_success_after_merge_even_if_lease_release_is_lost(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     package = _workspace_package(
-        {"CLAUDE.md": b"# applied despite late release loss\n"},
+        {"AGENT.md": b"# applied despite late release loss\n"},
         agent_id="late-loss",
     )
     with TestClient(module.app) as client:
@@ -467,72 +466,7 @@ def test_workspace_import_reports_success_after_merge_even_if_lease_release_is_l
 
     assert response.status_code == 200
     assert response.json()["action"] == "overwritten"
-    assert (workspace / "CLAUDE.md").read_bytes() == b"# applied despite late release loss\n"
-
-
-def test_workspace_import_does_not_activate_when_sdk_session_invalidation_fails(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
-    package = _workspace_package({"CLAUDE.md": b"# must not activate\n"}, agent_id="invalidate-failure")
-    with TestClient(module.app) as client:
-        created = _import_new_agent(client, agent_id="invalidate-failure", name="invalidate failure")
-        workspace = Path(created.json()["agent"]["workspace_dir"])
-        baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
-        baseline = client.get("/api/agent-repository/current?agent_id=invalidate-failure").json()["commit_sha"]
-        monkeypatch.setattr(
-            module.session_store,
-            "clear_inactive_sdk_sessions_for_agent_in_transaction",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("injected invalidation failure")),
-        )
-        response = client.post(
-            "/api/agent-registry/invalidate-failure/workspace/import",
-            data={"expected_current_commit_sha": baseline},
-            files={"package": ("replacement.tar.gz", package, "application/gzip")},
-        )
-        current = client.get("/api/agent-repository/current?agent_id=invalidate-failure").json()["commit_sha"]
-
-    assert response.status_code == 503
-    assert response.json()["error_code"] == "WORKSPACE_SESSION_INVALIDATION_FAILED"
-    assert current == baseline
-    assert (workspace / "CLAUDE.md").read_bytes() == baseline_bytes
-
-
-def test_workspace_import_rejects_file_created_during_session_invalidation(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
-    package = _workspace_package(
-        {"CLAUDE.md": b"# must not activate across a dirty race\n"},
-        agent_id="dirty-race",
-    )
-    original_invalidation = module.session_store.clear_inactive_sdk_sessions_for_agent_in_transaction
-    with TestClient(module.app) as client:
-        created = _import_new_agent(client, agent_id="dirty-race", name="dirty race")
-        workspace = Path(created.json()["agent"]["workspace_dir"])
-        (workspace / ".gitignore").write_bytes(b"*.secret\n")
-        baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
-        baseline = client.post("/api/agent-registry/dirty-race/workspace/export").headers["x-agent-commit-sha"]
-        concurrent_file = workspace / "concurrent.secret"
-
-        def invalidate_then_write(db, *, agent_id: str) -> int:
-            cleared = original_invalidation(db, agent_id=agent_id)
-            concurrent_file.write_bytes(b"preserve concurrent writer\n")
-            return cleared
-
-        monkeypatch.setattr(
-            module.session_store,
-            "clear_inactive_sdk_sessions_for_agent_in_transaction",
-            invalidate_then_write,
-        )
-        response = client.post(
-            "/api/agent-registry/dirty-race/workspace/import",
-            data={"expected_current_commit_sha": baseline},
-            files={"package": ("replacement.tar.gz", package, "application/gzip")},
-        )
-        current = client.get("/api/agent-repository/current?agent_id=dirty-race").json()["commit_sha"]
-
-    assert response.status_code == 409
-    assert response.json()["error_code"] == "WORKSPACE_DIRTY_CONFLICT"
-    assert current == baseline
-    assert (workspace / "CLAUDE.md").read_bytes() == baseline_bytes
-    assert concurrent_file.read_bytes() == b"preserve concurrent writer\n"
+    assert (workspace / "AGENT.md").read_bytes() == b"# applied despite late release loss\n"
 
 
 def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(monkeypatch, tmp_path: Path) -> None:
@@ -540,7 +474,7 @@ def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(monke
     package = _workspace_package(
         {
             ".gitignore": b"*.secret\n",
-            "CLAUDE.md": b"# candidate must not overwrite the concurrent file\n",
+            "AGENT.md": b"# candidate must not overwrite the concurrent file\n",
             "collision.secret": b"candidate bytes\n",
         },
         agent_id="merge-race",
@@ -552,15 +486,8 @@ def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(monke
         workspace = Path(created.json()["agent"]["workspace_dir"])
         (workspace / ".gitignore").write_bytes(b"*.secret\n")
         baseline = client.post("/api/agent-registry/merge-race/workspace/export").headers["x-agent-commit-sha"]
-        baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
+        baseline_bytes = (workspace / "AGENT.md").read_bytes()
         concurrent_file = workspace / "collision.secret"
-        session = LocalSession(
-            session_id="merge-race-session",
-            sdk_session_id="merge-race-sdk",
-            agent_id="merge-race",
-            turns=1,
-        )
-        module.session_store.save(session)
 
         def inject_ignored_file_before_merge(repository: Path, args: list[str], *, check: bool = True) -> bytes:
             nonlocal injected
@@ -577,17 +504,15 @@ def test_workspace_import_does_not_overwrite_ignored_file_created_at_merge(monke
         )
         current = client.get("/api/agent-repository/current?agent_id=merge-race").json()["commit_sha"]
 
-    saved = module.session_store.get(session.session_id)
     assert injected
     assert response.status_code == 409
     assert response.json()["error_code"] == "WORKSPACE_GIT_OPERATION_FAILED"
     assert current == baseline
-    assert (workspace / "CLAUDE.md").read_bytes() == baseline_bytes
+    assert (workspace / "AGENT.md").read_bytes() == baseline_bytes
     assert concurrent_file.read_bytes() == b"concurrent writer wins\n"
-    assert saved is not None and saved.sdk_session_id == "merge-race-sdk"
 
 
-def test_workspace_import_compensates_git_and_session_mapping_when_activation_commit_fails(
+def test_workspace_import_compensates_git_when_activation_commit_fails(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -595,7 +520,7 @@ def test_workspace_import_compensates_git_and_session_mapping_when_activation_co
     package = _workspace_package(
         {
             ".gitignore": b"*.secret\n",
-            "CLAUDE.md": b"# candidate whose DB commit will fail\n",
+            "AGENT.md": b"# candidate whose DB commit will fail\n",
         },
         agent_id="commit-race",
     )
@@ -605,15 +530,8 @@ def test_workspace_import_compensates_git_and_session_mapping_when_activation_co
         workspace = Path(created.json()["agent"]["workspace_dir"])
         (workspace / ".gitignore").write_bytes(b"*.secret\n")
         baseline = client.post("/api/agent-registry/commit-race/workspace/export").headers["x-agent-commit-sha"]
-        baseline_bytes = (workspace / "CLAUDE.md").read_bytes()
+        baseline_bytes = (workspace / "AGENT.md").read_bytes()
         concurrent_file = workspace / "preserve.secret"
-        session = LocalSession(
-            session_id="commit-race-session",
-            sdk_session_id="commit-race-sdk",
-            agent_id="commit-race",
-            turns=1,
-        )
-        module.session_store.save(session)
         session_class = module.agent_governance.version_maintenance.session_factory.class_
         original_commit = session_class.commit
 
@@ -634,13 +552,11 @@ def test_workspace_import_compensates_git_and_session_mapping_when_activation_co
         )
         current = client.get("/api/agent-repository/current?agent_id=commit-race").json()["commit_sha"]
 
-    saved = module.session_store.get(session.session_id)
     assert commit_failed
     assert response.status_code == 500
     assert current == baseline
-    assert (workspace / "CLAUDE.md").read_bytes() == baseline_bytes
+    assert (workspace / "AGENT.md").read_bytes() == baseline_bytes
     assert concurrent_file.read_bytes() == b"preserve across compensation\n"
-    assert saved is not None and saved.sdk_session_id == "commit-race-sdk"
 
 
 def test_workspace_export_cleans_artifact_and_restores_dirty_state_when_release_is_lost(monkeypatch, tmp_path: Path) -> None:

@@ -25,7 +25,7 @@ export function TraceDrawer({
   return (
     <DrawerShell
       title="Trace 细节"
-      description={`${events.length} 个完整 SDK 语义事件，创建于 ${formatFullTime(message.createdAt)}`}
+      description={`${events.length} 个原生 AgentScope 事件，创建于 ${formatFullTime(message.createdAt)}`}
       size={drawerSize}
       testId="trace-drawer"
       className="trace-drawer"
@@ -220,13 +220,13 @@ function toolCallFromRecord(record: Record<string, unknown>): Record<string, unk
   const recordType = stringValue(record.type)?.toLowerCase() || "";
   const hookEvent = hookEventName(record) || "";
   const name = toolNameFromRecord(record);
-  const isToolUse = recordType.includes("tool_use");
-  const hasToolUseShape = Boolean(name && "input" in record && ["id", "tool_use_id", "toolUseID"].some((key) => key in record));
+  const isToolUse = recordType.includes("tool_use") || recordType.includes("tool_call");
+  const hasToolUseShape = Boolean(name && ("input" in record || "delta" in record) && ["id", "tool_call_id", "tool_use_id", "toolUseID"].some((key) => key in record));
   const isHookToolUse = ["PreToolUse", "PermissionRequest"].includes(hookEvent);
   if (!name || (!isToolUse && !hasToolUseShape && !isHookToolUse)) return undefined;
 
   const entry: Record<string, unknown> = { name };
-  copyFirst(record, entry, ["id", "tool_use_id", "toolUseID"], "tool_use_id");
+  copyFirst(record, entry, ["tool_call_id", "id", "tool_use_id", "toolUseID"], "tool_use_id");
   copyFirst(record, entry, ["input", "tool_input", "toolInput"], "input");
   copyFirst(record, entry, ["agent_id", "agentId"], "agent_id");
   copyFirst(record, entry, ["agent_type", "agentType"], "agent_type");
@@ -238,14 +238,14 @@ function toolResultFromRecord(record: Record<string, unknown>): Record<string, u
   const recordType = stringValue(record.type)?.toLowerCase() || "";
   const hookEvent = hookEventName(record) || "";
   const isToolResult = recordType.includes("tool_result");
-  const hasToolResultShape = "tool_use_id" in record && "content" in record;
+  const hasToolResultShape = ("tool_call_id" in record || "tool_use_id" in record) && ("delta" in record || "content" in record);
   const isHookResult = ["PostToolUse", "PostToolUseFailure"].includes(hookEvent);
   if (!isToolResult && !hasToolResultShape && !isHookResult) return undefined;
 
   const entry: Record<string, unknown> = {};
-  copyFirst(record, entry, ["tool_use_id", "toolUseID", "id"], "tool_use_id");
-  copyFirst(record, entry, ["tool_name", "toolName", "name"], "name");
-  copyFirst(record, entry, ["content", "tool_response", "toolResponse", "error"], "content");
+  copyFirst(record, entry, ["tool_call_id", "tool_use_id", "toolUseID", "id"], "tool_use_id");
+  copyFirst(record, entry, ["tool_call_name", "tool_name", "toolName", "name"], "name");
+  copyFirst(record, entry, ["delta", "content", "tool_response", "toolResponse", "error"], "content");
   if (!entry.name) {
     const name = toolNameFromRecord(record);
     if (name) entry.name = name;
@@ -255,7 +255,7 @@ function toolResultFromRecord(record: Record<string, unknown>): Record<string, u
 }
 
 function toolNameFromRecord(record: Record<string, unknown>): string | undefined {
-  const direct = stringValue(record.name) || stringValue(record.tool_name) || stringValue(record.toolName);
+  const direct = stringValue(record.name) || stringValue(record.tool_call_name) || stringValue(record.tool_name) || stringValue(record.toolName);
   if (direct) return direct;
   const hookName = stringValue(record.hook_name);
   if (hookName?.includes(":")) return hookName.split(/:(.*)/s)[1] || undefined;

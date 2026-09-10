@@ -1,6 +1,6 @@
 # Claude 原生业务Agent人类确认机制对抗审查整改计划
 
-> 归档说明（2026-07-10）：本文记录 canonical Responses/HITL 落地前的对抗审查与执行计划，仅用于历史审计，不再代表当前接口。当前外部契约见 [AgentGov 集成指南](../../AgentGov集成指南.md)，工程决策见 [Responses-first ADR](../../engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)。
+> 归档说明（2026-07-10，2026-09-09 更新）：本文仅用于历史审计，不再代表当前接口。当前外部契约见 [AgentGov 集成指南](../../AgentGov集成指南.md)；被取代的 [Responses-first ADR](../obsolete/OpenAI兼容接口能否替代原生Chat端点评估.md) 也已归档。
 >
 > 文档状态：历史整改计划；2026-07-13 起由当前运行时契约取代。本文保留决策背景，文中的 `bypassPermissions`、仅开关开启才挂 callback、Bash 全量直放和普通请求禁止 `updated_input` 的绝对表述不再代表现状。
 > 生成日期：2026-06-29。

@@ -12,8 +12,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from scripts.bootstrap_runtime_volume import load_runtime_env
-
 from app.runtime.advisory_lock import advisory_lock
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
 from app.runtime.config_file_schemas import (
@@ -21,14 +19,11 @@ from app.runtime.config_file_schemas import (
     AgentConfigFileUpdateRequest,
     AgentConfigFileUpdateResponse,
 )
-from app.runtime.errors import SessionConflictError
 from app.runtime.execution_targets import MAX_EXECUTION_TARGET_CONTEXT_BYTES, WorkspaceExecutionTargetPolicy
-from app.runtime.managed_agent_policy import validate_managed_mcp_content
-from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
-EDITABLE_AGENT_CONFIG_FILES = {".mcp.json": "application/json"}
+EDITABLE_AGENT_CONFIG_FILES = {"agent.yaml": "application/yaml", "AGENT.md": "text/markdown"}
 _TEMP_FILE_ATTEMPTS = 16
 
 
@@ -66,11 +61,9 @@ class AgentConfigFileService:
         *,
         settings: AppSettings,
         agent_registry_store: AgentRegistryStore,
-        session_store: LocalSessionStore,
     ) -> None:
         self._settings = settings
         self._agent_registry_store = agent_registry_store
-        self._session_store = session_store
 
     def read_file(self, *, agent_id: str, path: str) -> AgentConfigFileResponse:
         safe_agent_id, target = self._resolve_target(agent_id=agent_id, path=path)
@@ -85,7 +78,7 @@ class AgentConfigFileService:
             content=content,
             sha256=snapshot.sha256,
             size_bytes=len(snapshot.data or b""),
-            content_type=EDITABLE_AGENT_CONFIG_FILES[path],
+            content_type=self._content_type(path),
         )
 
     def update_file(
@@ -121,17 +114,6 @@ class AgentConfigFileService:
                             operation="config update",
                         )
                     raise AgentConfigFileError(409, f"Config file update failed: {exc.cause.__class__.__name__}") from exc
-                try:
-                    invalidated = self._invalidate_session(agent_id=safe_agent_id, session_id=request.session_id)
-                except Exception:
-                    self._rollback_replacement(
-                        directory_fd=directory_fd,
-                        target_name=target.name,
-                        original=original,
-                        replacement_data=replacement_data,
-                        operation="session invalidation",
-                    )
-                    raise
         return AgentConfigFileUpdateResponse(
             agent_id=safe_agent_id,
             path=path,
@@ -140,14 +122,14 @@ class AgentConfigFileService:
             content=request.content,
             sha256=hashlib.sha256(replacement_data).hexdigest(),
             size_bytes=len(replacement_data),
-            content_type=EDITABLE_AGENT_CONFIG_FILES[path],
-            sdk_session_invalidated=invalidated,
+            content_type=self._content_type(path),
+            existing_sessions_unchanged=True,
         )
 
     def _resolve_target(self, *, agent_id: str, path: str) -> tuple[str, Path]:
         safe_agent_id = self._validate_agent_id(agent_id)
-        if path not in EDITABLE_AGENT_CONFIG_FILES:
-            raise AgentConfigFileError(422, "Only project .mcp.json is editable from this endpoint")
+        if path not in EDITABLE_AGENT_CONFIG_FILES and not self._is_mcp_path(path):
+            raise AgentConfigFileError(422, "Only agent.yaml, AGENT.md, and mcp/<name>.json are editable")
         record = self._agent_registry_store.get_agent(safe_agent_id)
         if record is None:
             raise AgentConfigFileError(404, f"Business agent not found: {safe_agent_id}")
@@ -171,6 +153,21 @@ class AgentConfigFileService:
             return validate_agent_id(agent_id)
         except InvalidAgentId as exc:
             raise AgentConfigFileError(422, str(exc)) from exc
+
+    @staticmethod
+    def _is_mcp_path(path: str) -> bool:
+        candidate = Path(path)
+        return (
+            len(candidate.parts) == 2
+            and candidate.parts[0] == "mcp"
+            and candidate.suffix == ".json"
+            and candidate.name not in {".json", ".."}
+            and not candidate.is_absolute()
+        )
+
+    @classmethod
+    def _content_type(cls, path: str) -> str:
+        return "application/json" if cls._is_mcp_path(path) else EDITABLE_AGENT_CONFIG_FILES[path]
 
     @contextmanager
     def _locked_parent(self, target: Path, *, exclusive: bool) -> Iterator[int]:
@@ -311,40 +308,21 @@ class AgentConfigFileService:
         data = content.encode("utf-8")
         if len(data) > MAX_EXECUTION_TARGET_CONTEXT_BYTES:
             raise AgentConfigFileError(413, "Config file content is too large")
-        if path == ".mcp.json":
+        if self._is_mcp_path(path):
             try:
                 parsed = json.loads(content)
             except json.JSONDecodeError as exc:
                 raise AgentConfigFileError(422, f"Invalid JSON: {exc.msg}") from exc
             if not isinstance(parsed, dict):
-                raise AgentConfigFileError(422, ".mcp.json must contain a JSON object")
-            env = dict(load_runtime_env(self._settings.settings_env_file)) if self._settings.settings_env_file else dict(os.environ)
-            runtime_root = Path("/") if self._settings.data_dir.resolve() == Path("/data") else self._settings.data_dir.resolve().parent
-            violations = validate_managed_mcp_content(
-                content,
-                agent_id=agent_id,
-                runtime_mode=self._settings.runtime_volume_mode,
-                env=env,
-                runtime_root=runtime_root,
-            )
-            if violations:
-                details = "; ".join(f"{item.rule_id}:{item.detail}" for item in violations)
-                raise AgentConfigFileError(422, f"Managed MCP policy rejected the update: {details}")
+                raise AgentConfigFileError(422, "MCP config must contain a JSON object")
+            if any(key in parsed for key in ("command", "args")):
+                raise AgentConfigFileError(422, "Process-spawning MCP configuration is forbidden")
+        elif path == "agent.yaml":
+            import yaml
 
-    def _invalidate_session(self, *, agent_id: str, session_id: str | None) -> bool:
-        if not session_id:
-            return False
-        session = self._session_store.get(session_id)
-        if session is None:
-            return False
-        if session.agent_id and session.agent_id != agent_id:
-            raise AgentConfigFileError(409, "Session belongs to a different business agent")
-        if not session.agent_id:
-            raise AgentConfigFileError(409, "Session has no unambiguous business agent owner")
-        if not session.sdk_session_id:
-            return False
-        try:
-            self._session_store.clear_sdk_session(session, agent_id=agent_id)
-        except SessionConflictError as exc:
-            raise AgentConfigFileError(409, str(exc)) from exc
-        return True
+            try:
+                parsed = yaml.safe_load(content)
+            except yaml.YAMLError as exc:
+                raise AgentConfigFileError(422, f"Invalid YAML: {exc.__class__.__name__}") from exc
+            if not isinstance(parsed, dict):
+                raise AgentConfigFileError(422, "agent.yaml must contain a mapping")

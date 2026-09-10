@@ -30,7 +30,7 @@ P3 不默认启动任何扩展。每条扩展线独立启动、验收和退出�
 | 资产分类 | 一级仍是数据/证据、方法论和执行资产；版本、provenance、审计、scope 和生命周期是横切治理维度 |
 | 生命周期 | 评测基准、能力包和 Governor 能力均通过新的不可变 revision/build 演进，旧 revision/build 不可原地修改；评估、启用、废弃、回退和审计分别留痕 |
 | 反馈归属 | 运行、反馈、评测、发布和线上结果均归属到 Agent、version、scenario/protocol 和 project/resource scope |
-| 本轮上游方案边界 | 按评审稿，P1 是单安全 Agent 的窄评测纵切片，P2A 是 Runtime 边界提取，P2B 只生成并评估 shadow candidate；这些是计划交付边界，不代表当前运行态已实现，也不证明平台化扩展已完成 |
+| 本轮上游方案边界 | P1 是单安全 Agent 的窄评测纵切片，P2B 只生成并评估 shadow candidate；AgentScope Runtime 已作为当前执行基线独立落地，这些事实仍不证明平台化扩展已完成 |
 | 目标能力边界 | 平台能在不牺牲评测独立性、资产归属、身份作用域、数据治理和可回退性的前提下增加垂域、Runtime、能力包和集成 |
 
 P3 继续遵循统一闭环：
@@ -44,7 +44,8 @@ P3 继续遵循统一闭环：
 
 任一扩展线开始前必须满足：
 
-- 它所依赖的来源阶段已通过退出门：安全完整 MVP 依赖 P1，Runtime 公共迁移依赖 P2A，Governor 启用依赖 P2B；不相关的扩展线不互相充当全局门；
+- 它所依赖的来源阶段已通过退出门：安全完整 MVP 依赖 P1，Runtime 扩展必须先通过当前
+  AgentScope Gateway 与原子迁移门，Governor 启用依赖 P2B；不相关的扩展线不互相充当全局门；
 - 绑定明确 AGV 用例、真实用户任务、精确被治理对象和业务 owner；
 - 对本线适用的 EvalOps、资产关系、身份/scope、数据治理、集成可靠性和 SLO/成本维度逐项给出 `applicable` 或有证据的 `not-applicable`；
 - 公开 API、DB、OpenAPI、前端、env、Workspace 和历史数据有删除/迁移/保留清单；
@@ -52,7 +53,7 @@ P3 继续遵循统一闭环：
 - 不把目标文档、mock、local-debug 结果或某个旗舰 Agent 的通过证据当作通用平台能力；
 - 发布点由用户确认，不因进入 P3 自动 bump `VERSION` 或创建 tag。
 
-P0 的[模拟 MCP 平台回执](./AgentGov下一阶段P0模拟MCP平台验收实施方案.md)只证明隔离合成夹具中的工具发现、调用和证据采集，不证明动态安全场景、MCP 认证、生产网络或高风险审批已就绪。
+历史 P0 的[已归档模拟 MCP 平台回执](../archive/obsolete/AgentGov下一阶段P0模拟MCP平台验收实施方案.md)只证明旧 Claude Runtime 隔离合成夹具中的工具发现、调用和证据采集，不证明当前 AgentScope Runtime、动态安全场景、MCP 认证、生产网络或高风险审批已就绪。
 
 ## 4. 平台基础准入维度
 
@@ -158,27 +159,24 @@ P3 采用“单组织先行”，不在本阶段建设完整多租户产品。�
 
 P0-MCP 只可复用“OpenAPI → MCP → Runtime 原生 facts”技术认识。安全扩展必须新建领域协议、认证/授权边界、场景 Ground Truth、失败注入和独立评分；若仍只需要平台 smoke，本扩展线保持未启动。
 
-## 6. 扩展组合 B：Runtime 公共契约迁移与第二 Runtime
+## 6. 扩展组合 B：未来 Runtime 扩展的重新决策门
 
 ### 6.1 启动条件
 
-- P2A Claude gateway 与真实容器行为等价，且至少一条代表性真实 managed business-Agent flow
-  已完整穿越 gateway；该证据可以来自 P1，也可以来自具备等价 run/session/HITL/Trace 边界的其他
-  已批准业务流，不把 Runtime 演进永久绑定网络安全垂域；
-- 至少一个非 Claude 真实协议 spike 已用于证伪端口设计，不以 fake driver 单独声称 Runtime 中立；
-- 历史 SQLite 中 Claude session 数据完成只读兼容分析；
-- OpenAPI、SSE、前端和上层客户端 breaking change 已获批准。
+- 当前 AgentScope Gateway 已有代表性业务 Agent 的 run/session/reply/trace、暂停恢复和真实容器证据；
+- 出现清晰的第二 Runtime 业务需求、owner、预算和不可由 AgentScope 满足的能力差距；
+- 对目标 Runtime 固定版本完成真实协议 spike，不以 fake driver 声称兼容；
+- 数据、OpenAPI、SSE、前端和上层客户端的单次原子迁移与回退方案已获批准。
 
 ### 6.2 目标契约
 
-公共 API 只暴露不透明的 `platform_session_id`。内部 `RuntimeSessionRef` 保留不可替代的 Runtime provenance：
+当前公共 API 继续使用 AgentScope `session_id`，并以 AgentGov `run_id` 关联 `reply_id` 与
+`trace_id`。在新的独立产品决策获批前，不新增 Runtime selector、别名字段、双写或第二生产路径。
+若未来启动迁移，目标契约必须保持后端拥有 Runtime 绑定和不可替代的 provenance：
 
 ```text
-PlatformSessionRef:
-  platform_session_id
-
 RuntimeSessionRef (internal):
-  platform_session_id
+  session_id
   runtime_kind
   runtime_instance_key?
   native_session_id
@@ -186,18 +184,18 @@ RuntimeSessionRef (internal):
   project_scope
 ```
 
-- `native_session_id` 不组成公开可寻址主键，也不要求外部客户端识别 Runtime 种类；
-- DB、records、API response、SSE、OpenAPI、前端生成类型和 ContextPackage 在同一迁移里程碑原子切换；
+- 外部客户端不识别或选择 Runtime 种类；
+- DB、records、API response、SSE、OpenAPI 和前端生成类型在同一迁移里程碑原子切换；
 - 不保留长期 alias、双写或请求双字段；历史快照通过明确 projection 读取，不放宽当前 response schema；
 - 每个 BusinessAgentVersion 由后端绑定一个 Runtime，每次 run 只使用该绑定；客户端不得在请求中选择或覆盖 Runtime；
 - 长期同一 AgentGov 部署可治理使用不同 Runtime 的 BusinessAgentVersion，不以“单部署单 Runtime”作为产品永久边界；
 - run 仍不可重开，session resume 创建新 `run_id`；重复 migration、历史脏数据、回滚和真实数据 UI 必须验证。
 
-### 6.3 Adapter 演进
+### 6.3 实施约束
 
-公共迁移稳定后，再把 Claude 执行、session、HITL、事件和 telemetry 按 P2A 小端口迁入 `runtime_adapters/claude_code`。每迁一个端口先跑等价 suite，再删除旧 facade；生产路径旧 symbol 最终清零。
-
-第二 Runtime 只在真实业务需求和固定版本 spike 通过后实施：先做 managed adapter，使用原生 Workspace/Governor 包，运行同一 contract suite，对不支持能力 fail-closed；不转换 Claude 配置，不并行承诺多个候选 Runtime。
+第二 Runtime 只在上述重新决策门通过后实施：使用独立 managed adapter 和原生 Harness，运行同一
+contract suite，对不支持能力 fail-closed。切换必须是单一原子变更；不能转换或兼容旧 Claude
+配置，不能长期保留 alias、双写、旧 facade 或多个候选生产 Runtime。
 
 ## 7. 扩展组合 C：Governor 受控启用、观察与回退
 
@@ -274,7 +272,7 @@ Multica 不再作为 P3 的独立产品扩展线或任何阶段的前置依赖�
 | 通用集成 | 认证、幂等、重试、重复/乱序、超时、撤销、部分失败 | 真实外部 API/CLI、断网与对账记录 |
 | SLO/经济性 | 队列压力、限流、超时、预算超限、观测完整性 | 声明窗口内的延迟/错误/吞吐/单次成本报告 |
 | 安全旗舰 MVP | 数据授权、隐藏集、baseline/candidate、专家争议、工具失败、安全审批 | 专家复核、隔离环境、真实容器；P0-MCP 回执不替代 |
-| Runtime 公共迁移 | fresh/历史 DB、重复/回滚 migration、OpenAPI/type、非 Claude spike、非法状态 | 真实数据列表/详情/UI、Claude live 与第二协议证据 |
+| AgentScope Runtime 运行验收 | fresh epoch/旧 DB 拒绝、OpenAPI/type、非法状态、原生事件与 OTel 关联 | 50 个实质不同 run、10 并发、3 次真实浏览器、2 小时 soak 与完整 OTLP trace |
 | Governor 启用 | 未授权、build 篡改、scope 不匹配、评估失败、并发、幂等、canary 超阈值、回退 | 精确 build/pack/evaluator、principal、canary 观察和 activation/rollback trace |
 | observer/协作候选 | pairing、spool、重复/乱序、coverage、秘密排除、未配置负向断言 | 真实 CLI/候选平台、断网和进程重启 |
 

@@ -53,9 +53,7 @@ def test_agent_job_projection_rejects_invalid_persisted_status(tmp_path) -> None
     with store.Session.begin() as db:
         db.add(_historical_job("job-invalid-status"))
     with store.Session.begin() as db:
-        db.execute(
-            text("UPDATE agent_jobs SET status = 'unknown_status' WHERE job_id = 'job-invalid-status'")
-        )
+        db.execute(text("UPDATE agent_jobs SET status = 'unknown_status' WHERE job_id = 'job-invalid-status'"))
 
     with pytest.raises(ValidationError):
         store.get_agent_job("job-invalid-status")

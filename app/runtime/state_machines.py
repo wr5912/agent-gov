@@ -144,27 +144,6 @@ AGENT_PROVISION_TRANSITIONS: Mapping[str, set[str]] = {
     "ready": {"provisioning"},
 }
 
-# One SDK turn owns exactly one persistence intent. Running intents may only
-# enter a terminal state; retries create a new run instead of reopening the
-# previous intent.
-SESSION_TURN_INTENT_STATES = {
-    "running",
-    "succeeded",
-    "failed",
-    "cancelled",
-    "interrupted",
-}
-
-SESSION_TURN_INTENT_TERMINAL_STATES = SESSION_TURN_INTENT_STATES - {"running"}
-
-SESSION_TURN_INTENT_TRANSITIONS: Mapping[str, set[str]] = {
-    "running": set(SESSION_TURN_INTENT_TERMINAL_STATES),
-    "succeeded": set(),
-    "failed": set(),
-    "cancelled": set(),
-    "interrupted": set(),
-}
-
 # 改进事项阶段（四阶段改进治理 跨代重建：事项级单一领域实体 ImprovementItem 的生命周期单一来源）。
 # 七段对应中文 反馈收集/系统整理/归因分析/优化方案/执行优化/回归测试/发布；release 为终态。
 # 允许回退边（如 regression -> optimization）以支持返工，但不得跨段跳跃，由状态机统一判定。
@@ -217,10 +196,10 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     },
     "agent_change_set": {
         "draft": {"execution_ready", "candidate_committed", "pending_approval", "abandoned", "failed"},
-        "execution_ready": {"candidate_committed", "abandoned", "failed"},
-        "candidate_committed": {"pending_approval", "approved", "publishing", "rejected", "abandoned", "failed"},
-        "pending_approval": {"candidate_committed", "approved", "rejected", "abandoned", "failed"},
-        "approved": {"candidate_committed", "publishing", "rejected", "abandoned", "failed"},
+        "execution_ready": {"candidate_committed", "pending_approval", "abandoned", "failed"},
+        "candidate_committed": {"pending_approval", "publishing", "rejected", "abandoned", "failed"},
+        "pending_approval": {"candidate_committed", "pending_approval", "approved", "rejected", "abandoned", "failed"},
+        "approved": {"candidate_committed", "pending_approval", "publishing", "rejected", "abandoned", "failed"},
         "rejected": {"abandoned"},
         "publishing": {"candidate_committed", "approved", "published"},
         "published": set(),
@@ -236,7 +215,6 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     "agent_release_operation": AGENT_RELEASE_OPERATION_TRANSITIONS,
     "agent_lifecycle": AGENT_LIFECYCLE_TRANSITIONS,
     "agent_provision": AGENT_PROVISION_TRANSITIONS,
-    "session_turn_intent": SESSION_TURN_INTENT_TRANSITIONS,
     "improvement_stage": IMPROVEMENT_STAGE_TRANSITIONS,
     "improvement_execution": IMPROVEMENT_EXECUTION_TRANSITIONS,
 }
@@ -251,7 +229,6 @@ _KNOWN_STATES = {
     "agent_release_operation": AGENT_RELEASE_OPERATION_STATES,
     "agent_lifecycle": AGENT_LIFECYCLE_STATES,
     "agent_provision": AGENT_PROVISION_STATES,
-    "session_turn_intent": SESSION_TURN_INTENT_STATES,
     "improvement_stage": IMPROVEMENT_STAGES,
     "improvement_execution": IMPROVEMENT_EXECUTION_STATES,
 }

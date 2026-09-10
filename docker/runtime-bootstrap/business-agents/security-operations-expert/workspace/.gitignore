@@ -1,6 +1,6 @@
-# Local/private Claude Code state
-CLAUDE.local.md
-.claude/settings.local.json
+# Local/private AgentScope Runtime state
+AGENT.local.md
+agent.local.yaml
 
 # 运行态数据（sessions/transcripts/uploads/outputs/agent-memory）在 /data 下、不在本 workspace 子树内，
 # gitignore 无法用 ../ 跳出目录，故不在此声明；运行卷不入 git。

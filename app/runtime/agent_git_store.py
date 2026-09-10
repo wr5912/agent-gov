@@ -13,7 +13,16 @@ from pathlib import Path
 from typing import Optional, Protocol
 
 from app.runtime.advisory_lock import advisory_lock
+from app.runtime.agent_git_errors import AgentGitError
 from app.runtime.agent_git_raw_storage import RawGitStorageError, configure_raw_git_storage
+from app.runtime.agent_git_read_helpers import (
+    file_diff_status,
+    file_entry,
+    read_file_at_ref,
+    run_git_read_only,
+    safe_relative_path,
+    sha256_file,
+)
 from app.runtime.agent_git_workspace_diff import (
     MAX_FILE_DIFF_BYTES,
     parse_workspace_changes,
@@ -34,10 +43,6 @@ class AgentVersionProvider(Protocol):
     def current_version_id(self) -> Optional[str]: ...
 
     def is_maintenance_active(self) -> bool: ...
-
-
-class AgentGitError(RuntimeError):
-    """Raised when Git-backed Agent governance cannot complete an operation."""
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,7 @@ class GitAgentVersionStore:
         repository_name: str = "business-agent-config",
         git_user_name: str = "AgentGov",
         git_user_email: str = "agent-runtime@example.local",
+        create_directories: bool = True,
     ) -> None:
         self.repository_dir = repository_dir
         self.worktrees_dir = worktrees_dir
@@ -81,14 +87,14 @@ class GitAgentVersionStore:
         self._maintenance = False
         self._lock = threading.RLock()
         self._process_lock_path = self.worktrees_dir.parent / ".repository.lock"
-        self.repository_dir.mkdir(parents=True, exist_ok=True)
-        self.worktrees_dir.mkdir(parents=True, exist_ok=True)
-        self.releases_dir.mkdir(parents=True, exist_ok=True)
+        if create_directories:
+            self._prepare_storage_directories()
 
     def is_maintenance_active(self) -> bool:
         return self._maintenance
 
     def ensure_bootstrap(self) -> JsonObject:
+        self._prepare_storage_directories()
         with self._mutation_guard():
             self._ensure_git_available()
             if not (self.repository_dir / ".git").exists():
@@ -103,6 +109,11 @@ class GitAgentVersionStore:
                     self._commit_empty("Initialize empty main agent configuration", cwd=self.repository_dir)
             return self.version_summary(self._current_commit_sha_no_bootstrap() or "", reason="current")
 
+    def _prepare_storage_directories(self) -> None:
+        self.repository_dir.mkdir(parents=True, exist_ok=True)
+        self.worktrees_dir.mkdir(parents=True, exist_ok=True)
+        self.releases_dir.mkdir(parents=True, exist_ok=True)
+
     def current_version_id(self) -> Optional[str]:
         try:
             return self.current_commit_sha()
@@ -112,6 +123,33 @@ class GitAgentVersionStore:
     def current_commit_sha(self) -> Optional[str]:
         self._ensure_repo_ready()
         return self._current_commit_sha_no_bootstrap()
+
+    def inspect_clean_head(self) -> tuple[str, bool]:
+        """只读返回当前完整 commit 与 dirty 状态。
+
+        该探针专供 Runtime GET/授权路径使用：不初始化仓库、不写 repo
+        config/info/exclude，也不修改全局 ``safe.directory``。任何缺失、所有权
+        或 Git 错误都直接 fail closed，由显式 provision 路径决定是否 bootstrap。
+        """
+
+        self._ensure_git_available()
+        if self.repository_dir.is_symlink() or not self.repository_dir.is_dir():
+            raise AgentGitError("Agent repository is not a safe directory")
+        git_entry = self.repository_dir / ".git"
+        if not git_entry.exists() or git_entry.is_symlink():
+            raise AgentGitError("Agent repository is not initialized")
+        commit = run_git_read_only(
+            ["rev-parse", "--verify", "HEAD^{commit}"],
+            cwd=self.repository_dir,
+        ).strip()
+        if len(commit) != 40 or any(character not in "0123456789abcdef" for character in commit):
+            raise AgentGitError("Agent repository HEAD is not a full Git commit")
+        raw_status = run_git_read_only(
+            ["status", "--porcelain=v1", "--untracked-files=all", "--no-renames", "--ignored"],
+            cwd=self.repository_dir,
+        )
+        changes = parse_workspace_changes(raw_status, normalize_path=safe_relative_path)
+        return commit, bool(changes)
 
     def resolve_commit_sha(self, ref: str) -> str:
         """Resolve one ref to a commit owned by this Agent repository."""
@@ -196,7 +234,7 @@ class GitAgentVersionStore:
             return self.repository_status()
 
     def workspace_file_diff(self, path: str) -> JsonObject:
-        safe_path = self._safe_relative_path(path)
+        safe_path = safe_relative_path(path)
         if not safe_path:
             return workspace_diff_error(path, "invalid_path", "路径不是合法的 workspace 相对路径。")
         changes = {str(item["path"]): item for item in self._workspace_changes()}
@@ -351,8 +389,8 @@ class GitAgentVersionStore:
             if not line.strip():
                 continue
             status, _, path = line.partition("\t")
-            before = self._file_entry(left, path) if status in {"M", "D"} else None
-            after = self._file_entry(right, path) if status in {"M", "A"} else None
+            before = file_entry(self.repository_dir, left, path) if status in {"M", "D"} else None
+            after = file_entry(self.repository_dir, right, path) if status in {"M", "A"} else None
             if status == "A" and after:
                 added.append(after)
             elif status == "D" and before:
@@ -369,7 +407,7 @@ class GitAgentVersionStore:
         }
 
     def diff_version_file(self, from_version_id: str, to_version_id: str, path: str) -> Optional[JsonObject]:
-        safe_path = self._safe_relative_path(path)
+        safe_path = safe_relative_path(path)
         if not safe_path:
             return None
         try:
@@ -377,17 +415,17 @@ class GitAgentVersionStore:
             right = self._resolve_ref(to_version_id)
         except AgentGitError:
             return None
-        before = self._read_file_at_ref(left, safe_path)
-        after = self._read_file_at_ref(right, safe_path)
-        status = self._file_diff_status(before, after)
+        before = read_file_at_ref(self.repository_dir, left, safe_path)
+        after = read_file_at_ref(self.repository_dir, right, safe_path)
+        status = file_diff_status(before, after)
         result: JsonObject = {
             "from_version_id": left,
             "to_version_id": right,
             "path": safe_path,
             "archive_path": safe_path,
             "status": status,
-            "before": self._file_entry(left, safe_path) if before is not None else None,
-            "after": self._file_entry(right, safe_path) if after is not None else None,
+            "before": file_entry(self.repository_dir, left, safe_path) if before is not None else None,
+            "after": file_entry(self.repository_dir, right, safe_path) if after is not None else None,
             "unified_diff": "",
             "is_text": False,
             "truncated": False,
@@ -521,7 +559,7 @@ class GitAgentVersionStore:
             "ref": ref,
             "commit_sha": resolved,
             "archive_path": str(archive_path),
-            "sha256": self._sha256_file(archive_path),
+            "sha256": sha256_file(archive_path),
         }
 
     def rollback_to_ref(
@@ -570,16 +608,28 @@ class GitAgentVersionStore:
             self._git(["clean", "-fd"], cwd=self.repository_dir)
 
     def read_text_at_ref(self, ref: str, path: str) -> str | None:
-        safe_path = self._safe_relative_path(path)
+        safe_path = safe_relative_path(path)
         if not safe_path:
             raise AgentGitError(f"Invalid workspace path: {path!r}")
-        raw = self._read_file_at_ref(self._resolve_ref(ref), safe_path)
+        raw = read_file_at_ref(self.repository_dir, self._resolve_ref(ref), safe_path)
         if raw is None:
             return None
         try:
             return raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise AgentGitError(f"Workspace file is not UTF-8: {safe_path}") from exc
+
+    def list_paths_at_ref(self, ref: str) -> list[str]:
+        """列出一个受本仓库拥有的 commit 中全部普通 Git 路径。"""
+
+        resolved = self._resolve_ref(ref)
+        raw = self._git(["ls-tree", "-r", "--name-only", resolved], cwd=self.repository_dir, check=False)
+        paths: list[str] = []
+        for value in raw.splitlines():
+            safe = safe_relative_path(value.strip())
+            if safe:
+                paths.append(safe)
+        return paths
 
     @contextmanager
     def mutation_guard(self) -> Iterator[None]:
@@ -599,12 +649,12 @@ class GitAgentVersionStore:
             ["status", "--porcelain=v1", "--untracked-files=all", "--no-renames", "--ignored"],
             cwd=self.repository_dir,
         )
-        return parse_workspace_changes(raw, normalize_path=self._safe_relative_path)
+        return parse_workspace_changes(raw, normalize_path=safe_relative_path)
 
     def _requested_dirty_paths(self, paths: list[str], current: dict[str, JsonObject]) -> list[str]:
         requested: list[str] = []
         for path in paths:
-            safe_path = self._safe_relative_path(path)
+            safe_path = safe_relative_path(path)
             if not safe_path:
                 raise AgentGitError(f"Invalid workspace path: {path}")
             if safe_path not in current:
@@ -731,59 +781,9 @@ class GitAgentVersionStore:
         raw = self._git(["ls-tree", "-r", "--name-only", commit_sha], cwd=self.repository_dir, check=False)
         return sum(1 for line in raw.splitlines() if line.strip())
 
-    def _file_entry(self, ref: str, path: str) -> JsonObject | None:
-        data = self._read_file_at_ref(ref, path)
-        if data is None:
-            return None
-        return {
-            "path": path,
-            "type": "file",
-            "sha256": hashlib.sha256(data).hexdigest(),
-            "size": len(data),
-        }
-
-    def _read_file_at_ref(self, ref: str, path: str) -> bytes | None:
-        safe_path = self._safe_relative_path(path)
-        if not safe_path:
-            return None
-        proc = subprocess.run(
-            ["git", "show", f"{ref}:{safe_path}"],
-            cwd=str(self.repository_dir),
-            capture_output=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            return None
-        return proc.stdout
-
-    def _file_diff_status(self, before: bytes | None, after: bytes | None) -> str:
-        if before is None and after is None:
-            return "missing"
-        if before is None:
-            return "added"
-        if after is None:
-            return "deleted"
-        return "unchanged" if before == after else "modified"
-
-    def _safe_relative_path(self, path: str) -> str | None:
-        raw = str(path or "").strip().replace("\\", "/")
-        if raw.startswith("workspace/"):
-            raw = raw.removeprefix("workspace/")
-        rel = Path(raw)
-        if not raw or rel.is_absolute() or ".." in rel.parts:
-            return None
-        return rel.as_posix()
-
     def _owned_worktree_path(self, path: Path) -> Path:
         resolved = path.expanduser().resolve()
         worktrees_root = self.worktrees_dir.expanduser().resolve()
         if resolved.parent != worktrees_root:
             raise AgentGitError("Candidate worktree path escapes the governed worktree root")
         return resolved
-
-    def _sha256_file(self, path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()

@@ -1,10 +1,15 @@
 import type { RuntimeClientConfig } from "../types/runtime";
 
-const DEFAULT_API_BASE = import.meta.env.VITE_RUNTIME_API_BASE || "http://localhost:58080";
+const DEFAULT_API_BASE = import.meta.env.VITE_RUNTIME_API_BASE || "http://localhost:50400";
 const DEFAULT_API_KEY = import.meta.env.VITE_RUNTIME_API_KEY || "";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
-const LEGACY_DOCKER_API_BASES = new Set([
+const DEFAULT_DOCKER_API_BASES = new Set([
+  "http://localhost:50400",
+  "http://127.0.0.1:50400",
+]);
+// 仅迁移已有 localStorage 的旧默认值；不继续监听或兼容旧服务端口。
+const PREVIOUS_STORED_API_BASES = new Set([
   "http://localhost:58080",
   "http://127.0.0.1:58080",
 ]);
@@ -42,7 +47,7 @@ export function defaultRuntimeConfig(): RuntimeClientConfig {
 }
 
 export function resolveRuntimeApiBase(configuredBase: string): string {
-  const normalized = normalizeBase(configuredBase || "http://localhost:58080");
+  const normalized = normalizeBase(configuredBase || "http://localhost:50400");
   if (typeof window === "undefined" || !window.location?.hostname) return normalized;
   if (isLoopbackHost(window.location.hostname)) return normalized;
   let parsed: URL;
@@ -64,8 +69,12 @@ function isLoopbackHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1";
 }
 
-export function isLegacyDockerApiBase(apiBase: string): boolean {
-  return LEGACY_DOCKER_API_BASES.has(normalizeBase(apiBase));
+export function shouldMigrateStoredApiBase(apiBase: string, currentDefault: string): boolean {
+  const stored = normalizeBase(apiBase);
+  const target = normalizeBase(currentDefault);
+  if (stored === target) return false;
+  return PREVIOUS_STORED_API_BASES.has(stored)
+    || (DEFAULT_DOCKER_API_BASES.has(stored) && !DEFAULT_DOCKER_API_BASES.has(target));
 }
 
 export function makeUrl(config: RuntimeClientConfig, path: string): string {
@@ -80,6 +89,14 @@ export function authHeaders(config: RuntimeClientConfig): HeadersInit {
     headers.Authorization = `Bearer ${config.apiKey.trim()}`;
   }
   return headers;
+}
+
+/** AgentScope Runtime currently requires an explicit temporary user identity. */
+export function runtimeHeaders(config: RuntimeClientConfig): HeadersInit {
+  return {
+    ...authHeaders(config),
+    "X-User-ID": "agentgov-ui",
+  };
 }
 
 export async function requestJson<T>(config: RuntimeClientConfig, path: string, init?: RuntimeRequestInit): Promise<T> {

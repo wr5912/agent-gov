@@ -5,8 +5,3 @@ function randomId(): string {
 export function newId(prefix: string): string {
   return `${prefix}_${randomId()}`;
 }
-
-// 会话 ID 使用裸 UUID，便于首次 SDK 调用直接对齐 session_id 与 sdk_session_id。
-export function newSessionId(): string {
-  return randomId();
-}

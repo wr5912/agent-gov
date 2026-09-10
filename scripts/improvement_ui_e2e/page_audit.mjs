@@ -18,7 +18,10 @@ function isExpectedHttpError(item, expectedHttpErrors) {
 export function isExpectedRequestCancellation(item) {
   if (item.method !== "GET" || !/ERR_ABORTED|NS_BINDING_ABORTED/.test(item.error)) return false;
   try {
-    return new URL(item.url).pathname.endsWith("/presentation");
+    const url = new URL(item.url);
+    if (url.pathname.endsWith("/presentation")) return true;
+    if (/^\/api\/runtime\/sessions\/[^/]+\/(messages|status)$/.test(url.pathname)) return true;
+    return url.pathname === "/api/agent-runs" && url.searchParams.has("session_id");
   } catch {
     return false;
   }
@@ -161,6 +164,7 @@ export async function screenshotAndAudit(page, screenshotDir, name) {
 
 export function assertNoForbiddenUiRequests(requests) {
   const forbidden = requests.filter((request) => {
+    if (/^\/api\/sessions(?:\/|$)/.test(request.path)) return true;
     if (request.method === "PUT" && /\/execution$/.test(request.path)) return true;
     if (/\/improvements\/[^/]+\/lifecycle$/.test(request.path)) return true;
     if (request.method === "POST" && request.path === "/api/assets") {

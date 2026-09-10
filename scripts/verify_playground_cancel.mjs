@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// Playground run cancellation contract:
-// mock mode owns a deliberately blocked SSE stream; real mode exercises rebuilt Compose UI/API.
-import { spawn } from "node:child_process";
+// Playground AgentScope session interruption contract:
+// mock mode owns a deliberately blocked Session SSE stream; real mode exercises rebuilt Compose UI/API.
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -10,16 +9,32 @@ import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
+import { provisionRuntimeAgent } from "./improvement_ui_e2e/runtime_client.mjs";
+import {
+  attachCancelNetworkEvidence,
+  exercisePlaygroundCancellation,
+  installPendingCancelProbe,
+} from "./improvement_ui_e2e/playground_cancel_evidence.mjs";
+import {
+  attachUiDiagnostics,
+  cleanupResources,
+  closeMockServer,
+  failureDiagnostic,
+  listenLoopback,
+  runtimeConnection,
+  startMockUi,
+  waitForUi,
+} from "./improvement_ui_e2e/playground_cancel_runtime.mjs";
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+const governanceAgentId = "security-operations-expert";
+const runtimeAgentId = "runtime-cancel-mock";
+const agentVersionId = "v-cancel-mock";
 const real = Boolean(process.env.RUNTIME_UI_BASE);
 requireContainerAcceptance(real);
 
-const uiPort = Number(process.env.PLAYGROUND_CANCEL_UI_PORT || 55248);
-const uiBase = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${uiPort}`).replace(/\/$/, "");
-const configuredApiBase = process.env.RUNTIME_API_BASE?.replace(/\/$/, "");
 const screenshotDir = process.env.VERIFY_SCREENSHOT_DIR
   || mkdtempSync(join(tmpdir(), "agentgov-playground-cancel-"));
 
@@ -40,59 +55,13 @@ function envValue(name) {
   return "";
 }
 
-function startVite() {
-  return spawn(
-    "pnpm",
-    ["--dir", "frontend", "exec", "vite", "--host", "127.0.0.1", "--port", String(uiPort), "--strictPort"],
-    {
-      cwd: repoRoot,
-      stdio: ["ignore", "inherit", "inherit"],
-      detached: true,
-    },
-  );
-}
-
-function killTree(child, signal) {
-  try {
-    process.kill(-child.pid, signal);
-  } catch {
-    try { child.kill(signal); } catch { /* already gone */ }
-  }
-}
-
-async function stopChild(child) {
-  if (!child || child.exitCode !== null) return;
-  killTree(child, "SIGTERM");
-  await new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      killTree(child, "SIGKILL");
-      resolve();
-    }, 2000);
-    child.once("exit", () => {
-      clearTimeout(timeout);
-      resolve();
-    });
-  });
-}
-
-async function waitForUrl(url, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-    } catch {
-      // Retry while Vite/Compose becomes ready.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(`URL did not become ready: ${url}`);
-}
-
 function writeCorsHeaders(res, extra = {}) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Authorization,Content-Type,Idempotency-Key,X-User-ID",
+  );
   res.setHeader(
     "Access-Control-Expose-Headers",
     "X-AgentGov-Run-Id,X-AgentGov-Session-Id",
@@ -106,8 +75,8 @@ function json(res, body, status = 200) {
   res.end(JSON.stringify(body));
 }
 
-function nativeSseEvent(name, data) {
-  return `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+function nativeSseEvent(data) {
+  return `data: ${JSON.stringify(data)}\n\n`;
 }
 
 async function readJson(req) {
@@ -117,33 +86,12 @@ async function readJson(req) {
 }
 
 function mockPayload(pathname, state) {
-  const now = Math.floor(Date.now() / 1000);
   if (pathname === "/health") {
     return { status: "ok", model: "cancel-mock", provider_key_configured: true };
   }
-  if (pathname === "/v1/conversations") {
-    return state.sessionId
-      ? {
-          data: [{
-            id: `conv_${state.sessionId}`,
-            created_at: now,
-            title: "取消竞态验收",
-            metadata: {},
-            agentgov: {
-              sdk_session_id: "sdk-cancel-mock",
-              agent_id: "security-operations-expert",
-              updated_at: now,
-              turns: state.secondCompleted ? 1 : 0,
-              active_run_id: state.activeRunId,
-              active_run_expires_at: state.activeRunId ? "2099-01-01T00:00:00Z" : null,
-            },
-          }],
-        }
-      : { data: [] };
-  }
   if (pathname === "/api/agent-registry") {
     return [{
-      agent_id: "security-operations-expert",
+      agent_id: governanceAgentId,
       name: "Security Operations Expert",
       category: "business",
       workspace_dir: "/runtime/business-agent",
@@ -153,11 +101,14 @@ function mockPayload(pathname, state) {
       default: true,
       protected: true,
       requires_web_hitl: false,
+      agent_version_id: agentVersionId,
+      harness_digest: "a".repeat(64),
+      runtime_agent_id: runtimeAgentId,
     }];
   }
   if (pathname.endsWith("/presentation")) {
     return {
-      agent_id: "security-operations-expert",
+      agent_id: governanceAgentId,
       version: "cancel-mock",
       summary: "Playground cancellation acceptance agent.",
       starter_prompts: [],
@@ -168,18 +119,18 @@ function mockPayload(pathname, state) {
   }
   if (pathname === "/api/agent-repository/current") {
     return {
-      agent_version_id: "v-cancel-mock",
+      agent_version_id: agentVersionId,
       commit_sha: "cancel-mock",
       created_at: "2026-07-28T00:00:00Z",
       reason: "current",
     };
   }
   if (pathname === "/api/config") return { mappings: [] };
-  if (pathname === "/api/agent-runs") return [];
+  if (pathname === "/api/agent-runs") return state.runs;
   if (pathname === "/api/agents" || pathname === "/api/skills") return [];
   if (pathname === "/api/agent-change-sets" || pathname === "/api/agent-releases") return [];
-  if (/^\/v1\/conversations\/[^/]+\/items$/.test(pathname)) {
-    return { object: "list", data: [], first_id: null, last_id: null, has_more: false };
+  if (/^\/api\/agent-runs\/[^/]+$/.test(pathname)) {
+    return state.runs.find((run) => pathname.endsWith(`/${run.run_id}`)) || {};
   }
   if (/^\/api\/agent-runs\/[^/]+\/trace$/.test(pathname)) {
     return { run_id: "run-cancel-mock", status: "unavailable", events: [] };
@@ -192,11 +143,14 @@ async function startMockApi() {
     sessionId: "",
     activeRunId: null,
     streamRequests: 0,
-    cancelRunIds: [],
+    chatRequests: 0,
+    interruptSessions: [],
     firstStream: null,
-    cancelRequestedAt: 0,
+    interruptRequestedAt: 0,
     firstStreamClosedAt: 0,
     secondCompleted: false,
+    status: "idle",
+    runs: [],
   };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://mock-runtime");
@@ -206,114 +160,193 @@ async function startMockApi() {
       res.end();
       return;
     }
-    if (req.method === "POST" && url.pathname === "/api/agent-runtime/sdk-events") {
+    if (req.method === "POST" && url.pathname === "/api/runtime/sessions/") {
       const body = await readJson(req);
-      state.streamRequests += 1;
-      state.sessionId = String(body.session_id || "cancel-session");
-      const runId = state.streamRequests === 1 ? "run-cancel-mock" : "run-after-cancel";
+      if (body.agent_id !== runtimeAgentId) return json(res, { detail: "agent mismatch" }, 422);
+      state.sessionId ||= "cancel-session";
+      json(res, { session_id: state.sessionId }, 201);
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/runtime/sessions/") {
+      const sessions = state.sessionId ? [{
+        session: {
+          id: state.sessionId,
+          agent_id: runtimeAgentId,
+          name: "取消竞态验收",
+          created_at: "2026-09-09T00:00:00Z",
+          updated_at: "2026-09-09T00:00:00Z",
+          metadata: {},
+        },
+        is_running: state.status !== "idle",
+        status: state.status,
+        team: null,
+      }] : [];
+      json(res, { sessions, total: sessions.length });
+      return;
+    }
+    const sessionRoute = url.pathname.match(/^\/api\/runtime\/sessions\/([^/]+)\/(stream|messages|status|interrupt)$/);
+    if (sessionRoute && decodeURIComponent(sessionRoute[1]) === state.sessionId) {
+      const action = sessionRoute[2];
+      if (req.method === "GET" && action === "messages") {
+        const messages = state.runs
+          .filter((run) => run.status === "interrupted" || run.status === "succeeded")
+          .map((run) => ({
+            id: run.reply_ids[0],
+            name: "agent",
+            role: "assistant",
+            content: [{
+              type: "text",
+              text: run.status === "succeeded" ? "SECOND_OK" : "已生成的部分输出",
+            }],
+            metadata: { run_id: run.run_id },
+            created_at: "2026-09-09T00:00:02Z",
+            finished_reason: run.status === "succeeded" ? "completed" : "interrupted",
+            error: null,
+          }));
+        json(res, { messages, is_running: state.status !== "idle", has_more: false });
+        return;
+      }
+      if (req.method === "GET" && action === "status") {
+        json(res, { session_id: state.sessionId, status: state.status });
+        return;
+      }
+      if (req.method === "GET" && action === "stream") {
+        state.streamRequests += 1;
+        writeCorsHeaders(res, {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.writeHead(200);
+        res.flushHeaders();
+        res.write(":\n\n");
+        state.currentStream = res;
+        if (state.streamRequests === 1) {
+          state.firstStream = res;
+          res.on("close", () => { state.firstStreamClosedAt = Date.now(); });
+        }
+        return;
+      }
+      if (req.method === "POST" && action === "interrupt") {
+        state.interruptSessions.push(state.sessionId);
+        state.interruptRequestedAt = Date.now();
+        json(res, { session_id: state.sessionId }, 202);
+        setTimeout(() => {
+          state.status = "idle";
+          state.activeRunId = null;
+          const run = state.runs.find((item) => item.run_id === "run-cancel-mock");
+          if (run) run.status = "interrupted";
+          state.firstStream?.end(nativeSseEvent({
+            id: "cancel-end",
+            created_at: "2026-09-09T00:00:02Z",
+            metadata: {},
+            type: "REPLY_END",
+            session_id: state.sessionId,
+            reply_id: "reply-cancel",
+            finished_reason: "interrupted",
+            error: null,
+          }));
+        }, 350);
+        return;
+      }
+    }
+    if (req.method === "POST" && url.pathname === "/api/runtime/chat/") {
+      const body = await readJson(req);
+      state.chatRequests += 1;
+      const runId = state.chatRequests === 1 ? "run-cancel-mock" : "run-after-cancel";
+      const replyId = state.chatRequests === 1 ? "reply-cancel" : "reply-after-cancel";
       state.activeRunId = runId;
+      state.status = "running";
+      state.runs.push({
+        run_id: runId,
+        session_id: state.sessionId,
+        agent_id: governanceAgentId,
+        agent_version_id: agentVersionId,
+        runtime_agent_id: runtimeAgentId,
+        client_operation_id: body.client_operation_id,
+        status: "running",
+        reply_ids: [replyId],
+        created_at: "2026-09-09T00:00:00Z",
+        updated_at: "2026-09-09T00:00:00Z",
+      });
       writeCorsHeaders(res, {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
         "X-AgentGov-Run-Id": runId,
         "X-AgentGov-Session-Id": state.sessionId,
       });
       res.writeHead(200);
-      res.flushHeaders();
-      res.write(nativeSseEvent("agentgov.session", {
-        run_id: runId,
+      res.end(JSON.stringify({ status: "started", session_id: state.sessionId }));
+      const stream = state.currentStream;
+      setTimeout(() => stream?.write(nativeSseEvent({
+        id: `start-${state.chatRequests}`,
+        created_at: "2026-09-09T00:00:00Z",
+        metadata: {},
+        type: "REPLY_START",
         session_id: state.sessionId,
-        sdk_session_id: "sdk-cancel-mock",
-        agent_version_id: "v-cancel-mock",
-      }));
-      if (state.streamRequests === 1) {
-        state.firstStream = res;
-        res.on("close", () => { state.firstStreamClosedAt = Date.now(); });
-        res.write(nativeSseEvent("claude.sdk.StreamEvent", {
-          uuid: "cancel-partial",
-          session_id: "sdk-cancel-mock",
-          parent_tool_use_id: null,
-          event: {
-            type: "content_block_delta",
-            index: 0,
-            delta: { type: "text_delta", text: "已生成的部分输出" },
-          },
-        }));
-        return;
+        reply_id: replyId,
+        name: "agent",
+        role: "assistant",
+      })), 20);
+      setTimeout(() => stream?.write(nativeSseEvent({
+        id: `delta-${state.chatRequests}`,
+        created_at: "2026-09-09T00:00:01Z",
+        metadata: {},
+        type: "TEXT_BLOCK_DELTA",
+        reply_id: replyId,
+        block_id: `block-${state.chatRequests}`,
+        delta: state.chatRequests === 1 ? "已生成的部分输出" : "SECOND_OK",
+      })), 40);
+      if (state.chatRequests === 2) {
+        setTimeout(() => {
+          state.status = "idle";
+          state.activeRunId = null;
+          state.secondCompleted = true;
+          const run = state.runs.find((item) => item.run_id === runId);
+          if (run) run.status = "succeeded";
+          stream?.end(nativeSseEvent({
+            id: "second-end",
+            created_at: "2026-09-09T00:00:02Z",
+            metadata: {},
+            type: "REPLY_END",
+            session_id: state.sessionId,
+            reply_id: replyId,
+            finished_reason: "completed",
+            error: null,
+          }));
+        }, 60);
       }
-      const answer = "SECOND_OK";
-      res.write(nativeSseEvent("claude.sdk.AssistantMessage", {
-        message_id: "after-cancel-message",
-        parent_tool_use_id: null,
-        session_id: "sdk-cancel-mock",
-        model: "mock",
-        content: [{ text: answer }],
-      }));
-      res.write(nativeSseEvent("agentgov.result", {
-        run_id: runId,
-        session_id: state.sessionId,
-        agent_version_id: "v-cancel-mock",
-        agent_activity: { tool_calls: [], tool_results: [], tool_names: [] },
-      }));
-      state.activeRunId = null;
-      state.secondCompleted = true;
-      res.end(nativeSseEvent("agentgov.done", {}));
-      return;
-    }
-    const cancelMatch = url.pathname.match(/^\/api\/agent-runs\/([^/]+)\/cancel$/);
-    if (req.method === "POST" && cancelMatch) {
-      const runId = decodeURIComponent(cancelMatch[1]);
-      state.cancelRunIds.push(runId);
-      state.cancelRequestedAt = Date.now();
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      state.activeRunId = null;
-      state.firstStream?.write(nativeSseEvent("agentgov.cancelled", {
-        run_id: runId,
-        session_id: state.sessionId,
-        turn_status: "cancelled",
-      }));
-      state.firstStream?.end(nativeSseEvent("agentgov.done", {}));
-      json(res, {
-        run_id: runId,
-        session_id: state.sessionId,
-        turn_status: "cancelled",
-        cancelled: true,
-        completed_at: "2026-07-28T00:01:00Z",
-        session_active_run_id: null,
-      });
       return;
     }
     json(res, mockPayload(url.pathname, state));
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("mock API did not bind a TCP port");
+  const address = await listenLoopback(server);
   return {
     apiBase: `http://127.0.0.1:${address.port}`,
     state,
-    close: () => new Promise((resolve) => server.close(resolve)),
+    close: () => closeMockServer(server),
   };
 }
 
 async function main() {
-  const mockApi = real ? null : await startMockApi();
-  const apiBase = configuredApiBase || mockApi?.apiBase;
-  if (!apiBase) throw new Error("RUNTIME_API_BASE is required in real-container mode");
-  const apiKey = process.env.RUNTIME_API_KEY
-    || envValue("FRONTEND_RUNTIME_API_KEY")
-    || envValue("API_KEY");
-  const vite = real ? null : startVite();
-  const requestedPaths = [];
-  let browser;
+  let mockApi, ui, browser;
+  let stage = "runtime_start";
+  let diagnostics = [];
   try {
-    await waitForUrl(uiBase, real ? 60000 : 30000);
+    mockApi = real ? null : await startMockApi();
+    const connection = runtimeConnection({ real, environment: process.env, mockApiBase: mockApi?.apiBase, readDeploymentEnv: envValue });
+    const config = { ...connection, actionTimeoutMs: real ? 120000 : 15000 };
+    const { apiBase, apiKey } = connection;
+    ui = real ? null : await startMockUi({ frontendRoot: join(repoRoot, "frontend"), apiBase });
+    const uiBase = real ? process.env.RUNTIME_UI_BASE.replace(/\/$/, "") : ui.uiBase;
+    stage = "ui_ready";
+    await waitForUi(uiBase, real ? 60000 : 30000);
+    const binding = real ? await provisionRuntimeAgent(config, governanceAgentId) : {
+      governance_agent_id: governanceAgentId, runtime_agent_id: runtimeAgentId, agent_version_id: agentVersionId,
+    };
     browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
     const page = await browser.newPage({ viewport: { width: 1440, height: 920 } });
-    page.on("request", (request) => {
-      if (!request.url().startsWith(apiBase)) return;
-      const url = new URL(request.url());
-      requestedPaths.push(`${request.method()} ${url.pathname}`);
-    });
+    diagnostics = attachUiDiagnostics(page);
+    const network = attachCancelNetworkEvidence(page, apiBase);
+    await installPendingCancelProbe(page);
     await page.addInitScript(([base, key]) => {
       window.localStorage.setItem(
         "runtime-client-config",
@@ -323,6 +356,7 @@ async function main() {
       window.localStorage.removeItem("playground-selected-business-agent");
       window.localStorage.removeItem("playground-session-messages");
     }, [apiBase, apiKey]);
+    stage = "playground_ready";
     await page.goto(uiBase, { waitUntil: "domcontentloaded" });
     await page.getByTestId("playground").waitFor({ timeout: 30000 });
     await page.getByTestId("topbar-agent-switcher").waitFor({ timeout: 30000 });
@@ -331,64 +365,10 @@ async function main() {
       return selector instanceof HTMLSelectElement && Boolean(selector.value);
     }, undefined, { timeout: 30000 });
 
-    const input = page.getByTestId("chat-composer-input");
-    await input.fill(
-      real
-        ? "请生成一份较长的分步排查清单，至少 80 条，每条给出解释。"
-        : "生成长任务用于取消竞态验收",
-    );
-    await page.getByTestId("chat-send").click();
-    const stop = page.getByTestId("chat-stop");
-    await stop.waitFor({ timeout: 30000 });
-    if (!real) {
-      await page.getByText("已生成的部分输出", { exact: true }).waitFor({ timeout: 10000 });
-    }
-    await stop.click();
-
-    let pendingLocked = true;
-    if (!real) {
-      await page.waitForFunction(() => {
-        const button = document.querySelector('[data-testid="chat-stop"]');
-        return button?.hasAttribute("disabled") && button.textContent?.includes("停止中");
-      }, undefined, { timeout: 5000 });
-      await input.fill("停止确认前不得发送");
-      await input.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
-      await page.waitForTimeout(100);
-      pendingLocked = mockApi.state.streamRequests === 1;
-    }
-
-    await page.getByTestId("chat-send").waitFor({ timeout: real ? 120000 : 15000 });
-    const firstAssistant = page.locator('[data-message-role="assistant"]').last();
-    const firstText = await firstAssistant.innerText();
-    const cancellationNotRenderedAsFailure = !firstText.includes("运行失败")
-      && !firstText.includes("SESSION_CONFLICT");
-
-    await input.fill(real ? "只回复 SECOND_OK" : "取消后立即重试");
-    await page.getByTestId("chat-send").click();
-    await page.getByTestId("chat-send").waitFor({ timeout: real ? 120000 : 15000 });
-    const bodyText = await page.locator("body").innerText();
-    const secondAssistantText = await page.locator('[data-message-role="assistant"]').last().innerText();
-    const exactCancelPath = requestedPaths.some((path) => (
-      path === "POST /api/agent-runs/run-cancel-mock/cancel"
-    )) || (real && requestedPaths.some((path) => /^POST \/api\/agent-runs\/[^/]+\/cancel$/.test(path)));
-    const result = {
-      pendingLocked,
-      exactCancelPath,
-      secondRequestSent: requestedPaths.filter(
-        (path) => path === "POST /api/agent-runtime/sdk-events",
-      ).length === 2,
-      cancellationNotRenderedAsFailure,
-      noSessionConflict: !bodyText.includes("SESSION_CONFLICT"),
-      followUpCompleted: real ? secondAssistantText.trim().length > 0 : secondAssistantText.includes("SECOND_OK"),
-      cancelBeforeFirstStreamClose: real
-        ? true
-        : mockApi.state.cancelRequestedAt > 0
-          && mockApi.state.firstStreamClosedAt >= mockApi.state.cancelRequestedAt,
-      cancelRunIds: real ? undefined : mockApi.state.cancelRunIds,
-    };
-    const passed = Object.entries(result)
-      .filter(([key]) => key !== "cancelRunIds")
-      .every(([, value]) => value === true);
+    await page.getByTestId("topbar-agent-switcher").selectOption(governanceAgentId);
+    stage = "cancellation";
+    const { result, runs } = await exercisePlaygroundCancellation(page, config, binding, network, real);
+    const passed = Object.values(result).every((value) => value === true);
     await page.screenshot({
       path: join(screenshotDir, "playground-cancel-and-retry.png"),
       fullPage: true,
@@ -397,16 +377,26 @@ async function main() {
       status: passed ? "passed" : "failed",
       mode: real ? "real-container" : "mock",
       result,
+      runs,
     }, null, 2));
     if (!passed) process.exitCode = 1;
+  } catch (error) {
+    console.error(JSON.stringify(failureDiagnostic(error, stage, diagnostics)));
+    process.exitCode = 2;
   } finally {
-    await browser?.close();
-    await stopChild(vite);
-    await mockApi?.close();
+    const failed = await cleanupResources([
+      { name: "browser", close: () => browser?.close() },
+      { name: "ui", close: () => ui?.close() },
+      { name: "mock_api", close: () => mockApi?.close() },
+    ]);
+    if (failed.length) {
+      console.error(JSON.stringify({ status: "failed", stage: "cleanup", code: "RESOURCE_CLEANUP_FAILED", resources: failed }));
+      process.exitCode = 2;
+    }
   }
 }
 
 main().catch((error) => {
-  console.error(`verify_playground_cancel failed: ${error?.stack || error}`);
+  console.error(JSON.stringify(failureDiagnostic(error, "bootstrap", [])));
   process.exit(2);
 });

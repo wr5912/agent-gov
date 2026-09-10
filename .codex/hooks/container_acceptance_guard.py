@@ -9,26 +9,18 @@ from collections.abc import Mapping
 PRIVATE_MAKE_TARGETS = (
     "_container-core-smoke",
     "_container-openapi-check",
-    "_container-live-test",
-    "_container-speech-summary-test",
-    "_container-health-e2e",
     "_smoke",
     "_ui-smoke",
     "_ui-feedback-smoke",
-    "_ui-openai-responses-smoke",
+    "_ui-playground-cancel-smoke",
     "_langfuse-smoke",
 )
-PRIVATE_FRONTEND_SCRIPTS = (
-    "verify:real-container:impl",
-    "verify:openai-responses-container:impl",
-    "verify:provider-health-container:impl",
-)
+PRIVATE_FRONTEND_SCRIPTS = ("verify:real-container:impl",)
 DIRECT_ACCEPTANCE_SCRIPTS = (
-    "scripts/run_healthcheck_container_e2e.sh",
+    "scripts/run_container_acceptance.py",
+    "scripts/langfuse_smoke.py",
     "scripts/verify_improvement_ui_real_container.mjs",
-    "scripts/verify_openai_responses_container.mjs",
-    "scripts/verify_provider_health_container.mjs",
-    "scripts/verify_speech_summary_container.py",
+    "scripts/verify_playground_cancel.mjs",
 )
 SHELL_BOUNDARY = r"(?:^|(?:&&|\|\||;|\|)\s*)"
 PREFIX = r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+\s+)*(?:command\s+)?"
@@ -76,12 +68,6 @@ def _matches_direct_script(command: str) -> bool:
     return re.search(interpreted, command) is not None or re.search(executable, command) is not None
 
 
-def _matches_live_pytest(command: str) -> bool:
-    runner = r"(?:pytest|python(?:3(?:\.\d+)?)?\s+-m\s+pytest)"
-    pattern = rf"{SHELL_BOUNDARY}{PREFIX}(?:\S*/)?{runner}\b[^;&|]*\btests/test_live_runtime_acceptance\.py(?=\s|$|:)"
-    return re.search(pattern, command) is not None
-
-
 def bypass_reason(command: str) -> str | None:
     if _matches_private_make(command):
         return "私有容器验收 Make 目标不能直接调用"
@@ -89,8 +75,6 @@ def bypass_reason(command: str) -> str | None:
         return "真实容器前端 :impl 脚本不能直接调用"
     if _matches_direct_script(command):
         return "真实容器验收脚本不能绕过公共 Make 入口"
-    if _matches_live_pytest(command):
-        return "live pytest 必须通过 make container-live-test"
     return None
 
 

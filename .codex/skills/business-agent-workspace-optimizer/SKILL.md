@@ -1,11 +1,11 @@
 ---
 name: "business-agent-workspace-optimizer"
-description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 Workspace。用户要求修改某个业务 Agent 的 CLAUDE.md、.mcp.json、.claude/settings.json、skills、agents、rules、hooks、commands、tests，或离线修改运行态及内置业务 Agent Workspace 时使用。"
+description: "开发、配置和优化 AgentGov 业务 Agent 的 AgentScope Harness。用户要求修改某个业务 Agent 的 AGENT.md、agent.yaml、mcp、skills、subagents、tests，或离线修改运行态及内置业务 Agent Workspace 时使用。"
 ---
 
 # 业务 Agent Workspace 优化
 
-本技能供工程师、Codex 和 Claude 离线开发业务 Agent Workspace。它不提供产品内自优化能力，
+本技能供工程师和开发智能体离线开发业务 Agent Workspace。它不提供产品内自优化能力，
 不创建治理 Agent，也不替代 Workspace 包导入、change set、release 或反馈治理流程。
 
 ## 稳定边界
@@ -31,7 +31,7 @@ description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 W
   Agent，不属于业务 Agent。
 
 以下任务不适用：新增注册表/API/生命周期模型、修改反馈归属、让业务 Agent 运行时自行改配置、
-修改 `version/` 或 Claude 会话状态、绕过 Workspace 包导入、自动发布生产版本。
+修改 `version/`、AgentScope Session/Message/AgentState、绕过 Workspace 包导入、自动发布生产版本。
 
 ## 目标解析矩阵
 
@@ -42,21 +42,21 @@ description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 W
 | 已注册业务 Agent | 运行态 Workspace | `${RUNTIME_ROOT}/data/business-agents/<agent_id>/workspace/` | 用户给定路径或 `GET /api/agent-registry` 的 `workspace_dir` | 配置、权限、目标测试、下一 turn |
 | 内置业务 Agent | 运行卷初始化源 | `docker/runtime-bootstrap/business-agents/<agent_id>/workspace/` | 明确要求修改该内置配置 | 准入扫描、Agent 自测、空卷初始化 |
 | governor | 治理 Agent Workspace | `${RUNTIME_ROOT}/governor-workspace/` 或仓库初始化源 | 用户明确指定 governor | 治理 Agent 专项验证 |
-| runtime 父目录或并列层 | 非 Workspace | `data/`、`business-agents/`、`<agent_id>/version/`、`claude-root/` | 只是父目录或状态目录 | no-op 并重新定位 |
+| runtime 父目录或并列层 | 非 Workspace | `data/`、`business-agents/`、`<agent_id>/version/`、`agentscope-runtime/` | 只是父目录或状态目录 | no-op 并重新定位 |
 
 只说“业务 Agent”且无法唯一定位时先确认目标，不默认选择 `main-agent`。
 不得把 `${RUNTIME_ROOT}/data` 或 `data/business-agents/` 父目录当作修改目标；必须定位到单个业务 Agent 的 Workspace。
 
 ## 路径硬门
 
-允许修改单个已确认 Workspace 内的 `CLAUDE.md`、`.mcp.json`、`.claude/`、hooks、commands、
-`tests/` 和业务文件。默认拒绝：
+允许修改单个已确认 Workspace 内的 `AGENT.md`、`agent.yaml`、`mcp/`、`skills/`、
+`subagents/`、`tests/` 和业务文件。默认拒绝：
 
 - 任意 `.../version/` 和其中的 per-Agent Git 管理文件；
-- 任意 `.../claude-root/`、`claude-roots/`；
+- 任意 AgentScope Runtime `data/`、`workspaces/` 与 Session 状态目录；
 - `data/runtime.sqlite3*`、`data/agent-governance/`、`data/outputs/`、`data/transcripts/`、
   `data/uploads/`、`langfuse/` 和 `.git/`；
-- 仓库初始化源中的 `.env*`、`.mcp.local.json`、`settings.local.json`、`CLAUDE.local.md`、
+- 仓库初始化源中的 `.env*`、`agent.local.yaml`、`mcp/*.local.json`、
   `secrets/` 或任何真实凭据。
 
 不能整目录拒绝 `data/`，因为运行态业务 Agent Workspace 位于其下；但 `data/` 和 `data/business-agents/` 父目录本身也不是优化目标。
@@ -68,19 +68,19 @@ description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 W
 
 ### 1. 读取现状
 
-- 读取 `CLAUDE.md`、`.mcp.json`、`.claude/settings.json`。
-- 检查 `.claude/skills/`、`.claude/agents/`、`.claude/rules/`、hooks、commands 和 `tests/`。
+- 读取 `AGENT.md`、`agent.yaml` 与 `mcp/*.json`。
+- 检查 `skills/`、`subagents/*/AGENT.md`、`subagents/*/agent.yaml` 和 `tests/`。
 - 简要列出已有能力、工具、权限边界、缺口以及目标文件。
 
 ### 2. 映射需求
 
-- 角色、行为边界和输出契约：`CLAUDE.md`。
-- 可复用流程：`.claude/skills/<skill>/SKILL.md`。
-- 子角色：`.claude/agents/*.md`。
-- 工具接入：`.mcp.json`，同时核对 `.claude/settings.json` 权限。
+- 角色、行为边界和输出契约：`AGENT.md`。
+- 可复用流程：`skills/<skill>/SKILL.md`。
+- 子角色：`subagents/<id>/AGENT.md` 与 `subagents/<id>/agent.yaml`。
+- 工具接入：`mcp/*.json`；凭据只使用环境变量引用，不写入 Harness。
 - Playground 静态 Welcome Card：`agent.yaml.presentation`；只配置摘要、开场内容、输入框提示和建议任务，
-  不创建会话、不伪装 assistant 消息，也不替代 Claude 原生 `AskUserQuestion`。
-- 硬拒绝或审计：`.claude/rules/*` 或 hooks。
+  不创建会话、不伪装 assistant 消息，也不替代 AgentScope 原生确认事件。
+- 硬拒绝或审计：`agent.yaml.workspace_policy` 与 Runtime 受控 middleware。
 - 行为验收：Workspace `tests/test_*.py`、专项测试或可重复验证命令。
 
 ### 3. 修改
@@ -93,12 +93,12 @@ description: "开发、配置和优化 AgentGov 业务 Agent 的 Claude 原生 W
 
 ### 4. 验证
 
-- `.mcp.json` 与 `.claude/settings.json` 必须是 JSON object。
+- `agent.yaml` 必须通过 AgentScope Harness schema；`mcp/*.json` 必须是 JSON object 且仅含凭据引用。
 - `SKILL.md` 必须有合法 `name` 和 `description` frontmatter。
 - 通用业务 Agent 的宽泛 Bash 默认进入 `ask`；只允许审计过的具体低风险规则进入 `allow`。
   run 级授权必须按低风险类别隔离，高风险或未分类请求不得整轮放行。
-- 工具、权限、确认和业务流程契约只从目标 Workspace 的 `README.md`、`CLAUDE.md`、`agent.yaml`、
-  `.mcp.json` 与 `.claude/settings.json` 读取；本通用 skill 不硬编码具体工具名或领域流程，后端不得
+- 工具、权限、确认和业务流程契约只从目标 Workspace 的 `README.md`、`AGENT.md`、`agent.yaml`、
+  `mcp/`、`skills/` 与 `subagents/` 读取；本通用 skill 不硬编码具体工具名或领域流程，后端不得
   按 Agent ID 添加第二套授权。
 - `agent.yaml.presentation` 若存在，必须保持静态展示语义；Agent 身份和名称仍以平台注册表为准，
   建议任务只能填入输入框，不能自动发送。

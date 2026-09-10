@@ -14,28 +14,8 @@
   },
   "owners": [
     {
-      "id": "runtime-platform",
-      "description": "容器、模型提供商、运行时编排与持久化基础设施",
-      "contacts": ["@wr5912"]
-    },
-    {
-      "id": "improvement-governance",
-      "description": "反馈、改进事项、评测与发布闭环",
-      "contacts": ["@wr5912"]
-    },
-    {
       "id": "agent-lifecycle",
-      "description": "业务 Agent 配置、版本、发布与回滚生命周期",
-      "contacts": ["@wr5912"]
-    },
-    {
-      "id": "security-response",
-      "description": "鉴权、权限、响应处置与安全边界",
-      "contacts": ["@wr5912"]
-    },
-    {
-      "id": "frontend-experience",
-      "description": "Playground 与治理工作台的浏览器体验",
+      "description": "业务 Agent Harness、版本、发布与回滚生命周期",
       "contacts": ["@wr5912"]
     },
     {
@@ -44,8 +24,28 @@
       "contacts": ["@wr5912"]
     },
     {
+      "id": "frontend-experience",
+      "description": "Playground 与治理工作台的浏览器体验",
+      "contacts": ["@wr5912"]
+    },
+    {
+      "id": "improvement-governance",
+      "description": "反馈、改进事项、评测与发布闭环",
+      "contacts": ["@wr5912"]
+    },
+    {
       "id": "integrations",
-      "description": "SDK、Langfuse、OpenAI 与外部协议集成",
+      "description": "AgentScope、Langfuse、OpenAPI 与外部协议集成",
+      "contacts": ["@wr5912"]
+    },
+    {
+      "id": "runtime-platform",
+      "description": "AgentScope Runtime、Gateway、容器编排与持久化基础设施",
+      "contacts": ["@wr5912"]
+    },
+    {
+      "id": "security-response",
+      "description": "鉴权、权限、凭据与响应处置边界",
       "contacts": ["@wr5912"]
     }
   ],
@@ -57,7 +57,7 @@
     },
     {
       "id": "runtime-deployment",
-      "description": "真实容器、运行时依赖与模型提供商可用性",
+      "description": "AgentScope Runtime、Gateway 与真实容器可用性",
       "risk": "critical"
     },
     {
@@ -67,12 +67,12 @@
     },
     {
       "id": "security-boundaries",
-      "description": "身份、权限、越权与响应处置控制",
+      "description": "身份、权限、凭据隔离与响应处置控制",
       "risk": "critical"
     },
     {
       "id": "agent-lifecycle",
-      "description": "业务 Agent 创建、版本与发布生命周期",
+      "description": "业务 Agent 创建、Harness 版本与发布生命周期",
       "risk": "high"
     },
     {
@@ -82,14 +82,14 @@
     },
     {
       "id": "integration-observability",
-      "description": "上游 SDK、协议与可观测集成",
+      "description": "AgentScope 协议、OpenAPI 与 OTel/Langfuse 可观测集成",
       "risk": "high"
     }
   ],
   "lanes": [
     {
       "id": "main-full",
-      "description": "提交前完整后端套件，排除依赖真实模型的 live 测试",
+      "description": "提交前完整后端套件",
       "enforcement": "blocking"
     },
     {
@@ -104,7 +104,7 @@
     },
     {
       "id": "container-live-acceptance",
-      "description": "人工执行的真实容器、模型、迁移、恢复与回滚验收",
+      "description": "人工执行的真实 AgentScope 容器、模型、恢复与回滚验收",
       "enforcement": "manual"
     }
   ],
@@ -115,40 +115,19 @@
         "selectors": [
           "tests/test_agent_*.py",
           "tests/test_agv_acceptance.py",
-          "tests/test_asset*.py",
           "tests/test_business_agent*.py",
           "tests/test_multi_business_agent_governance.py"
         ],
         "exclude_selectors": [
           "tests/test_agent_tests_frontend_contract.py",
-          "tests/test_agent_workspace_frontend_contract.py",
-          "tests/test_agent_workspace_package_operations.py",
-          "tests/test_agent_workspace_packages.py"
+          "tests/test_agent_workspace_frontend_contract.py"
         ],
         "classification": {
           "lifecycle": "KEEP",
           "level": "component",
-          "purpose": "compatibility-migration",
-          "owner": "agent-lifecycle",
-          "capabilities": ["agent-lifecycle"],
-          "lanes": ["main-full"],
-          "parallelism": "worker-safe",
-          "resources": ["db", "git"]
-        }
-      },
-      {
-        "id": "agent-workspace-package-suite",
-        "selectors": [
-          "tests/test_agentgov_testkit.py",
-          "tests/test_agent_workspace_package_operations.py",
-          "tests/test_agent_workspace_packages.py"
-        ],
-        "classification": {
-          "lifecycle": "KEEP",
-          "level": "integration",
           "purpose": "requirement-acceptance",
           "owner": "agent-lifecycle",
-          "capabilities": ["agent-lifecycle", "security-boundaries"],
+          "capabilities": ["agent-lifecycle"],
           "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["db", "git", "process"]
@@ -157,23 +136,21 @@
       {
         "id": "runtime-platform-suite",
         "selectors": [
-          "tests/test_claude*.py",
+          "tests/test_agentscope*.py",
           "tests/test_config_mapping.py",
+          "tests/test_container_acceptance*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
+          "tests/test_harness_conversion.py",
           "tests/test_health*.py",
-          "tests/test_import.py",
           "tests/test_logging_config.py",
-          "tests/test_model_provider*.py",
+          "tests/test_main_agentscope_cutover.py",
           "tests/test_runtime*.py",
-          "tests/test_schema_self_heal.py",
-          "tests/test_sdk*.py",
-          "tests/test_session*.py",
           "tests/test_settings.py"
         ],
         "classification": {
           "lifecycle": "KEEP",
           "level": "integration",
-          "purpose": "defect-regression",
+          "purpose": "architecture-contract",
           "owner": "runtime-platform",
           "capabilities": ["runtime-deployment"],
           "lanes": ["main-full"],
@@ -182,29 +159,14 @@
         }
       },
       {
-        "id": "speech-summary-contract-suite",
-        "selectors": [
-          "tests/test_speech_summary*.py"
-        ],
-        "classification": {
-          "lifecycle": "KEEP",
-          "level": "contract",
-          "purpose": "requirement-acceptance",
-          "owner": "integrations",
-          "capabilities": ["integration-observability", "runtime-deployment"],
-          "lanes": ["main-full"],
-          "parallelism": "worker-safe",
-          "resources": ["hermetic", "process"]
-        }
-      },
-      {
         "id": "improvement-governance-suite",
         "selectors": [
           "tests/test_execution_content_guards.py",
           "tests/test_feedback*.py",
-          "tests/test_governor*.py",
+          "tests/test_generated_agent_tests.py",
           "tests/test_improvement*.py",
-          "tests/test_normalized_feedback_generation.py"
+          "tests/test_normalized_feedback_generation.py",
+          "docker/runtime-bootstrap/governor-workspace/tests/test_*.py"
         ],
         "classification": {
           "lifecycle": "KEEP",
@@ -220,12 +182,10 @@
       {
         "id": "security-response-suite",
         "selectors": [
+          "tests/test_api_mode_gate.py",
           "tests/test_bootstrap_business_agent_protection.py",
           "tests/test_managed_agent_policy.py",
-          "tests/test_mcp_config.py",
-          "tests/test_pre_tool_guard.py",
-          "tests/test_repository_env_policy.py",
-          "tests/test_workspace_hooks.py"
+          "tests/test_repository_env_policy.py"
         ],
         "classification": {
           "lifecycle": "KEEP",
@@ -236,22 +196,6 @@
           "lanes": ["main-full"],
           "parallelism": "worker-safe",
           "resources": ["hermetic", "process"]
-        }
-      },
-      {
-        "id": "governor-workspace-suite",
-        "selectors": [
-          "docker/runtime-bootstrap/governor-workspace/tests/test_*.py"
-        ],
-        "classification": {
-          "lifecycle": "KEEP",
-          "level": "security",
-          "purpose": "architecture-contract",
-          "owner": "improvement-governance",
-          "capabilities": ["feedback-improvement-loop", "security-boundaries"],
-          "lanes": ["main-full"],
-          "parallelism": "worker-safe",
-          "resources": ["hermetic"]
         }
       },
       {
@@ -275,14 +219,8 @@
       {
         "id": "integration-contract-suite",
         "selectors": [
-          "tests/test_chat*.py",
-          "tests/test_conversations*.py",
           "tests/test_langfuse*.py",
-          "tests/test_openai*.py",
-          "tests/test_openapi*.py",
-          "tests/test_responses*.py",
-          "tests/test_trace_*.py",
-          "tests/test_upstream_contracts.py"
+          "tests/test_openapi*.py"
         ],
         "classification": {
           "lifecycle": "KEEP",
@@ -300,46 +238,31 @@
         "selectors": ["tests/test_*.py"],
         "exclude_selectors": [
           "tests/test_agent_*.py",
+          "tests/test_api_mode_gate.py",
+          "tests/test_agentscope*.py",
           "tests/test_agv_acceptance.py",
-          "tests/test_asset*.py",
           "tests/test_bootstrap_business_agent_protection.py",
           "tests/test_business_agent*.py",
-          "tests/test_chat*.py",
-          "tests/test_claude*.py",
           "tests/test_config_mapping.py",
-          "tests/test_conversations*.py",
+          "tests/test_container_acceptance*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
           "tests/test_execution_content_guards.py",
           "tests/test_feedback*.py",
-          "tests/test_governor*.py",
+          "tests/test_generated_agent_tests.py",
+          "tests/test_harness_conversion.py",
           "tests/test_health*.py",
-          "tests/test_import.py",
           "tests/test_improvement*.py",
           "tests/test_langfuse*.py",
-          "tests/test_live_runtime_acceptance.py",
           "tests/test_logging_config.py",
+          "tests/test_main_agentscope_cutover.py",
           "tests/test_managed_agent_policy.py",
-          "tests/test_mcp_config.py",
-          "tests/test_model_provider*.py",
           "tests/test_multi_business_agent_governance.py",
           "tests/test_normalized_feedback_generation.py",
-          "tests/test_openai*.py",
           "tests/test_openapi*.py",
-          "tests/test_pre_tool_guard.py",
           "tests/test_release_workbench_contract.py",
           "tests/test_repository_env_policy.py",
-          "tests/test_responses*.py",
           "tests/test_runtime*.py",
-          "tests/test_schema_self_heal.py",
-          "tests/test_sdk*.py",
-          "tests/test_session*.py",
-          "tests/test_settings.py",
-          "tests/test_speech_summary*.py",
-          "tests/test_agent_tests_frontend_contract.py",
-          "tests/test_agentgov_testkit.py",
-          "tests/test_trace_*.py",
-          "tests/test_upstream_contracts.py",
-          "tests/test_workspace_hooks.py"
+          "tests/test_settings.py"
         ],
         "classification": {
           "lifecycle": "KEEP",
@@ -351,20 +274,6 @@
           "parallelism": "worker-safe",
           "resources": ["git", "process"]
         }
-      },
-      {
-        "id": "live-runtime-acceptance",
-        "selectors": ["tests/test_live_runtime_acceptance.py"],
-        "classification": {
-          "lifecycle": "KEEP",
-          "level": "e2e",
-          "purpose": "requirement-acceptance",
-          "owner": "runtime-platform",
-          "capabilities": ["runtime-deployment"],
-          "lanes": ["container-live-acceptance"],
-          "parallelism": "exclusive",
-          "resources": ["docker", "browser", "live-provider", "serial"]
-        }
       }
     ]
   },
@@ -372,16 +281,19 @@
   "delete_candidates": [],
   "gaps": [
     {
-      "id": "langfuse-otlp-live-contract",
-      "capability": "integration-observability",
-      "owner": "integrations",
-      "risk": "medium",
-      "description": "真实 Langfuse OTLP traces/logs 接收端兼容性尚无可执行在线断言",
+      "id": "agentscope-live-cutover-evidence",
+      "capability": "runtime-deployment",
+      "owner": "runtime-platform",
+      "risk": "critical",
+      "description": "当前仅有隔离 core smoke 和可执行的显式 opt-in live provider 入口；尚未取得 50 个实质不同 run、10 并发、3 次真实浏览器、2 小时 soak 以及带真实 OTLP secret 的 trace completeness 证据。",
       "target_lane": "container-live-acceptance",
-      "issue": "#58",
+      "issue": "follow-up:agentscope-live-acceptance",
       "acceptance": [
-        "在受保护 live 环境使用真实鉴权探测 traces 与 logs 端点",
-        "断言结果不泄露鉴权信息并保存同次运行证据"
+        "准备至少 50 条质量复核后实质不同且不可循环复制的场景，执行 50 个真实 AgentScope run 并验证 session、SSE、canonical message、run、reply、trace 与反馈关联",
+        "在隔离临时 Compose project 中以 10 并发执行真实 provider 验收，保存零错配、零丢事件和终态证据",
+        "真实浏览器主链连续执行至少 3 次，验证运行、停止、消息、轨迹和反馈交互且不直连 Runtime 管理面",
+        "连续运行 2 小时 soak，记录成功率、延迟、资源增长、恢复和清理证据",
+        "使用受保护 OTLP secret 验证 agentgov.run 根 span、AgentScope 子 span、必要关联属性、脱敏与 terminal trace_status=complete"
       ]
     }
   ],
@@ -398,209 +310,99 @@
     "rules": [
       {
         "id": "runtime-state",
-        "changed_paths": ["app/runtime/state_machines.py", "app/runtime/stores/**"],
-        "test_selectors": ["tests/test_state_machines.py", "tests/test_runtime_db*.py"]
+        "changed_paths": [
+          "app/runtime/state_machines.py",
+          "app/runtime/stores/**"
+        ],
+        "test_selectors": [
+          "tests/test_state_machines.py",
+          "tests/test_runtime_db*.py"
+        ]
       },
       {
-        "id": "runtime-session-lifecycle",
-        "changed_paths": ["app/runtime/session_store.py", "app/runtime/session_turn_*.py"],
+        "id": "agentscope-runtime-gateway",
+        "changed_paths": [
+          "agentscope_runtime/**",
+          "app/runtime_gateway/**"
+        ],
         "test_selectors": [
-          "tests/test_session_turn_persistence.py",
-          "tests/test_session_turn_recovery.py",
-          "tests/test_claude_runtime_session_resume.py"
+          "tests/test_agentscope_runtime_service.py",
+          "tests/test_runtime_gateway_*.py",
+          "tests/test_health_endpoints.py"
+        ]
+      },
+      {
+        "id": "agentscope-harness",
+        "changed_paths": [
+          "docker/runtime-bootstrap/**",
+          "scripts/bootstrap_runtime_volume.py",
+          "scripts/check_agentscope_cutover.py",
+          "scripts/convert_claude_harness.py"
+        ],
+        "test_selectors": [
+          "tests/test_harness_conversion.py",
+          "tests/test_main_agentscope_cutover.py",
+          "tests/test_runtime_bootstrap_tools.py",
+          "docker/runtime-bootstrap/governor-workspace/tests/test_*.py"
         ]
       },
       {
         "id": "improvement-loop",
-        "changed_paths": ["app/services/improvement_*.py", "app/routers/improvements*.py"],
-        "test_selectors": ["tests/test_improvement*.py", "tests/test_feedback*.py"]
-      },
-      {
-        "id": "runtime-execution",
-        "changed_paths": ["app/runtime/claude_*.py", "app/runtime/model_provider*.py"],
-        "test_selectors": ["tests/test_claude*.py", "tests/test_model_provider*.py"]
-      },
-      {
-        "id": "runtime-run-cancellation",
         "changed_paths": [
-          "app/routers/agent_run_control.py",
-          "app/routers/chat.py",
-          "app/routers/claude_sdk_events.py",
-          "app/routers/openai.py",
-          "app/routers/responses.py",
-          "app/routers/runtime_raw_events.py",
-          "app/runtime/active_run_coordinator.py",
-          "app/runtime/claude_runtime_session_persistence.py",
-          "app/runtime/http_disconnect.py",
-          "app/runtime/managed_runtime_execution.py",
-          "app/runtime/managed_streaming_response.py",
-          "app/runtime/prepared_managed_stream.py",
-          "app/runtime/run_control.py",
-          "frontend/src/App.tsx",
-          "frontend/src/api/claudeSdkStream.ts",
-          "frontend/src/hooks/usePlaygroundRun.ts",
-          "frontend/src/playgroundRunState.ts",
-          "scripts/verify_message_actions_browser.mjs",
-          "scripts/verify_playground_cancel.mjs"
+          "app/services/improvement_*.py",
+          "app/routers/improvement*.py",
+          "app/runtime/stores/feedback*.py",
+          "app/runtime/stores/improvement*.py"
         ],
         "test_selectors": [
-          "tests/test_runtime_run_cancellation.py",
-          "tests/test_claude_sdk_native_stream.py",
-          "tests/test_chat_stream_agent_id.py",
-          "tests/test_responses_stream.py",
-          "tests/test_runtime_raw_events.py",
-          "tests/test_openapi_export.py"
-        ]
-      },
-      {
-        "id": "speech-summary-runtime",
-        "changed_paths": [
-          "app/runtime/speech_summary.py",
-          "app/runtime/stream_request_schemas.py",
-          "app/runtime/settings.py",
-          "app/runtime/claude_runtime_stream.py",
-          "app/routers/chat.py",
-          "app/routers/claude_sdk_events.py",
-          "app/routers/responses.py"
-        ],
-        "test_selectors": [
-          "tests/test_speech_summary*.py",
-          "tests/test_responses_speech_summary.py",
-          "tests/test_responses_terminal_contract.py",
-          "tests/test_settings.py",
-          "tests/test_openapi_export.py"
-        ]
-      },
-      {
-        "id": "runtime-raw-events",
-        "changed_paths": [
-          "app/routers/runtime_raw_events.py",
-          "app/runtime/runtime_raw_events.py",
-          "app/runtime/claude_cli*.py",
-          "app/runtime/claude_runtime_raw_events.py"
-        ],
-        "test_selectors": [
-          "tests/test_claude_cli_raw_capture.py",
-          "tests/test_health_endpoints.py",
-          "tests/test_runtime_raw_events.py",
-          "tests/test_openapi*.py",
-          "tests/test_settings.py",
-          "tests/test_repository_env_policy.py"
-        ]
-      },
-      {
-        "id": "openai-contract",
-        "changed_paths": [
-          "app/openapi_*.py",
-          "app/sse_contracts.py",
-          "app/runtime/openai_*.py",
-          "app/runtime/schemas.py",
-          "app/runtime/stream_request_schemas.py",
-          "app/routers/chat.py",
-          "app/routers/claude_sdk_events.py",
-          "app/routers/claude_user_input.py",
-          "app/routers/conversations.py",
-          "app/routers/openai.py",
-          "app/routers/responses.py",
-          "app/routers/runtime_raw_events.py",
-          "app/routers/sessions.py",
-          "scripts/*openapi*.py",
-          "README.md",
-          "docs/README.md",
-          "docs/AgentGov集成指南.md",
-          "docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md",
-          "integrations/README.md",
-          "integrations/agentgov-integration/SKILL.md"
-        ],
-        "test_selectors": [
-          "tests/test_chat_stream_agent_id.py",
-          "tests/test_claude_sdk_native_stream.py",
-          "tests/test_claude_user_input.py",
-          "tests/test_conversations*.py",
-          "tests/test_documentation_contracts.py",
-          "tests/test_legacy_chat_contract.py",
-          "tests/test_openapi*.py",
-          "tests/test_responses*.py",
-          "tests/test_runtime_raw_events.py"
+          "tests/test_improvement*.py",
+          "tests/test_feedback*.py"
         ]
       },
       {
         "id": "agent-workspace-package",
         "changed_paths": [
           "app/routers/agent_workspace_packages.py",
-          "app/runtime/agent_admission.py",
-          "app/runtime/agent_git_store.py",
-          "app/runtime/agent_git_raw_storage.py",
-          "app/runtime/agent_workspace_package_schemas.py",
-          "app/runtime/session_store.py",
-          "app/services/agent_change_set_queries.py",
-          "app/services/agent_version_maintenance.py",
-          "app/services/agent_workspace_package*.py"
+          "app/runtime/agent_*.py",
+          "app/services/agent_workspace*.py"
         ],
         "test_selectors": [
           "tests/test_agent_git_store.py",
-          "tests/test_agent_version_maintenance.py",
-          "tests/test_agent_workspace_package_operations.py",
-          "tests/test_agent_workspace_packages.py"
-        ]
-      },
-      {
-        "id": "business-agent-workspace-provisioning",
-        "changed_paths": [
-          "app/routers/agents.py",
-          "app/runtime/agent_governance_schemas.py",
-          "app/runtime/agent_profiles.py",
-          "app/runtime/business_agent_workspace.py",
-          "app/runtime/managed_agent_policy.py",
-          "app/runtime/runtime_bootstrap.py",
-          "app/runtime/runtime_coordination.py",
-          "app/runtime/runtime_initialization.py",
-          "app/services/business_agent_provisioning.py",
-          "docker/runtime-bootstrap/**",
-          "scripts/bootstrap_runtime_volume.py",
-          "scripts/runtime_bootstrap_safety*.py"
-        ],
-        "test_selectors": [
-          "tests/test_agent_profiles_category.py",
-          "tests/test_agent_provisioning_saga.py",
-          "tests/test_agent_workspace_manifest_identity.py::test_create_accepts_exact_manifest_identity_without_rewriting_package",
-          "tests/test_bootstrap_business_agent_protection.py",
-          "tests/test_managed_agent_policy.py",
-          "tests/test_runtime_coordination.py",
-          "tests/test_runtime_bootstrap_tools.py",
-          "tests/test_workspace_hooks.py",
-          "docker/runtime-bootstrap/governor-workspace/tests/test_*.py"
-        ]
-      },
-      {
-        "id": "agent-workspace-frontend",
-        "changed_paths": [
-          "frontend/package.json",
-          "frontend/src/api/request.ts",
-          "frontend/src/api/runtime.ts",
-          "frontend/src/components/AgentActionMenu.tsx",
-          "frontend/src/components/AgentCreate*.tsx",
-          "frontend/src/components/AgentWorkspaceImportDrawer.tsx",
-          "frontend/src/components/BusinessAgentManagementPanel.*",
-          "frontend/src/components/BusinessAgentTable.tsx",
-          "frontend/src/components/DrawerShell.tsx",
-          "frontend/src/components/SettingsModal.css",
-          "frontend/src/components/SettingsModal.tsx",
-          "frontend/src/components/agentSettingsValidation.ts",
-          "frontend/src/types/api.ts",
-          "frontend/src/types/runtime.ts",
-          "scripts/verify_agent_workspace_settings.mjs"
-        ],
-        "test_selectors": [
-          "tests/test_agent_workspace_frontend_contract.py",
-          "tests/test_agent_workspace_packages.py::test_workspace_package_openapi_documents_binary_multipart_and_export_receipt_headers",
-          "tests/test_openapi_export.py"
+          "tests/test_agent_workspace*.py",
+          "tests/test_agent_version_maintenance.py"
         ]
       },
       {
         "id": "frontend-contract",
-        "changed_paths": ["frontend/**", "app/openapi_contract.py"],
-        "test_selectors": ["tests/test_openapi_export.py", "tests/test_documentation_contracts.py"]
+        "changed_paths": [
+          "frontend/**",
+          "app/openapi_contract.py"
+        ],
+        "test_selectors": [
+          "tests/test_agent_tests_frontend_contract.py",
+          "tests/test_agent_workspace_frontend_contract.py",
+          "tests/test_openapi_export.py",
+          "tests/test_release_workbench_contract.py"
+        ]
+      },
+      {
+        "id": "observability",
+        "changed_paths": [
+          "agentscope_runtime/observability.py",
+          "agentscope_runtime/otel_config.py",
+          "agentscope_runtime/trace_context_middleware.py",
+          "app/runtime/integrations/runtime_langfuse.py",
+          "app/routers/langfuse_traces.py",
+          "scripts/langfuse_smoke.py",
+          "scripts/initialize_langfuse_env.py",
+          "docker/docker-compose.langfuse.yml"
+        ],
+        "test_selectors": [
+          "tests/test_langfuse*.py",
+          "tests/test_runtime_otel_config.py",
+          "tests/test_repository_env_policy.py",
+          "tests/test_runtime_gateway*.py"
+        ]
       }
     ],
     "promotion_gate": {
@@ -642,720 +444,93 @@
   },
   "main_flows": [
     {
-      "id": "improvement_item_governance",
-      "description": "四阶段改进治理：ImprovementItem 作为单一事项级治理实体，承载反馈整理、归因、优化方案、执行、回归测试和发布前证据。",
+      "id": "agentscope_runtime_cutover",
+      "description": "AgentScope 是唯一运行时，AgentGov 保留治理 run 映射、取消和轨迹查询。",
       "scenarios": [
         {
-          "id": "improvement_item_single_source_lifecycle",
-          "description": "创建改进事项、按业务 Agent scoping 列表、读取详情；列表和详情用同一后端投影声明五类产物是否存在，空产物不改变严格子资源 404；业务产物成功后推进阶段，通用 lifecycle 只允许返工并拒绝前推。",
+          "id": "runtime_gateway_and_identifiers",
+          "description": "会话、聊天、事件流、run/reply/trace 映射和重启恢复遵循 AgentScope 契约。",
           "pytest": [
-            "tests/test_improvement_api.py::test_improvement_item_single_source_lifecycle",
-            "tests/test_improvement_api.py::test_artifact_presence_false_keeps_strict_subresource_404",
-            "tests/test_improvement_store.py::test_list_projects_sparse_artifact_presence_with_one_select",
-            "tests/test_openapi_export.py::test_openapi_requires_typed_improvement_artifact_presence",
-            "tests/test_improvement_content.py::test_failed_business_artifact_does_not_advance_stage",
-            "tests/test_improvement_content.py::test_business_artifact_prerequisites_fail_closed",
-            "tests/test_improvement_content.py::test_unapplied_execution_record_does_not_advance_or_unlock_regression",
-            "tests/test_improvement_content.py::test_artifact_and_stage_roll_back_together_when_stage_write_fails",
-            "tests/test_improvement_content.py::test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_advance",
-            "tests/test_improvement_content.py::test_advanced_item_rejects_upstream_artifact_and_source_scope_mutation",
-            "tests/test_improvement_content.py::test_structural_artifacts_reject_whitespace_only_business_fields",
-            "tests/test_runtime_db.py::test_runtime_db_drops_obsolete_improvement_automation_policy",
-            "tests/test_runtime_db.py::test_runtime_db_repairs_stage_shell_even_when_0028_was_already_applied"
+            "tests/test_runtime_provisioning_safety.py",
+            "tests/test_agentscope_runtime_service.py",
+            "tests/test_agentscope_team_coordination.py",
+            "tests/test_runtime_gateway_router.py",
+            "tests/test_runtime_gateway_recovery.py",
+            "tests/test_runtime_gateway_store.py",
+            "tests/test_runtime_fresh_schema.py"
           ]
         },
         {
-          "id": "feedback_case_attachment_is_agent_scoped",
-          "description": "来源 FeedbackCase 只出现在同一业务 Agent 的可选池中，且挂接端点再次校验归属；跨 Agent 请求失败且不产生反馈或 source ref 副作用，反馈/SOC ingest 请求也拒绝客户端污染 backend-owned agent_id。",
+          "id": "harness_and_container_boundary",
+          "description": "活动 Harness 只有 AgentScope 资产，三服务 Compose 和 secret 边界保持 fail-closed。",
           "pytest": [
-            "tests/test_improvement_content.py::test_attach_feedback_case_accepts_same_business_agent",
-            "tests/test_improvement_content.py::test_attach_feedback_case_rejects_cross_business_agent_without_side_effects",
-            "tests/test_improvement_content.py::test_generic_feedback_api_rejects_feedback_case_semantics_without_side_effects",
-            "tests/test_improvement_content.py::test_generic_feedback_store_rejects_feedback_case_semantics_without_side_effects",
-            "tests/test_improvement_content.py::test_feedback_case_assignment_is_unique_and_reassign_moves_authoritative_ref",
-            "tests/test_improvement_content.py::test_merge_and_split_keep_feedback_case_assignment_and_feedback_row_colocated",
-            "tests/test_feedback_case_agent_ownership.py::test_feedback_case_create_contract_rejects_legacy_untyped_source_ids",
-            "tests/test_feedback_case_agent_ownership.py::test_feedback_case_rejects_sources_owned_by_different_agents_without_writes",
-            "tests/test_feedback_case_agent_ownership.py::test_unmatched_signal_stays_unassigned_and_cannot_create_case",
-            "tests/test_feedback_case_agent_ownership.py::test_session_locator_and_soc_event_persist_business_agent_owner",
-            "tests/test_feedback_case_agent_ownership.py::test_resolved_pending_updates_event_owner_before_case_creation",
-            "tests/test_feedback_case_agent_ownership.py::test_case_creation_and_reassignment_are_serialized_without_owner_split",
-            "tests/test_feedback_case_agent_ownership.py::test_feedback_source_can_belong_to_only_one_case",
-            "tests/test_feedback_case_agent_ownership.py::test_concurrent_ensure_case_for_source_is_idempotent",
-            "tests/test_feedback_case_agent_ownership.py::test_case_rejects_source_owned_by_unregistered_agent",
-            "tests/test_feedback_case_agent_ownership.py::test_feedback_signal_create_is_idempotent_only_for_identical_content",
-            "tests/test_feedback_case_agent_ownership.py::test_feedback_signal_create_cannot_overwrite_case_owned_identity",
-            "tests/test_feedback_case_agent_ownership.py::test_concurrent_feedback_signal_id_collision_has_one_immutable_winner",
-            "tests/test_feedback_case_agent_ownership.py::test_case_source_kind_prevents_cross_table_id_collision",
-            "tests/test_feedback_case_agent_ownership.py::test_feedback_ingest_requests_forbid_backend_owned_agent_id",
-            "tests/test_runtime_db.py::test_feedback_case_assignment_migration_downgrades_duplicate_legacy_binding",
-            "tests/test_runtime_db.py::test_runtime_db_repairs_feedback_case_conflicts_when_0031_was_already_applied"
+            "tests/test_agentscope_policy_bash.py",
+            "tests/test_harness_conversion.py",
+            "tests/test_main_agentscope_cutover.py",
+            "tests/test_repository_env_policy.py",
+            "tests/test_container_acceptance_cleanup.py",
+            "tests/test_container_acceptance_ports.py",
+            "tests/test_container_acceptance_startup.py",
+            "tests/test_runtime_published_harness_preparation.py",
+            "tests/test_runtime_offline_gateway.py",
+            "tests/test_runtime_acceptance_fixture.py",
+            "tests/test_agentscope_live_acceptance_contract.py",
+            "tests/test_langfuse_env.py",
+            "docker/runtime-bootstrap/governor-workspace/tests/test_governor_agentscope_harness.py"
           ]
         },
         {
-          "id": "historical_agent_job_queue_is_retired",
-          "description": "已退役的持久化 Agent job 队列不再暴露写路径；迁移把未完成记录稳定关闭，同时保留历史输入、输出与错误证据供只读查询。",
+          "id": "health_trace_and_cancel",
+          "description": "API readiness 反映 Runtime 状态，AgentScope semantic trace 可查询且浏览器可取消精确 run。",
           "pytest": [
-            "tests/test_runtime_db_0042.py::test_0042_retires_non_terminal_queue_rows_without_losing_evidence",
-            "tests/test_agent_job_history.py::test_historical_agent_jobs_remain_read_only_and_queryable"
-          ]
-        },
-        {
-          "id": "feedback_case_claim_reconciliation_is_fail_closed",
-          "description": "0036 在单事务中从 typed source 图建立唯一 FeedbackCase claim，按运行时 claim 顺序规范化数组，安全修复尚无下游的 event-only owner 并排除无 claim loser；owner 未注册、已删除、不明、mixed owner、pending-event claim group 拆分或 loser 已有 Evidence 时整体回滚。运行态 Case、source lookup 与 Evidence 只从 claim 投影，不再消费重复或跨 Agent 的旧数组。",
-          "pytest": [
-            "tests/test_feedback_case_agent_ownership.py::test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser",
-            "tests/test_runtime_db_0036.py::test_0036_backfills_soc_event_owner_and_audits_duplicate_case_claims_idempotently",
-            "tests/test_runtime_db_0036.py::test_0036_rejects_unassigned_source_owner_without_partial_claim_writes",
-            "tests/test_runtime_db_0036.py::test_0036_rejects_case_with_multiple_source_owners",
-            "tests/test_runtime_db_0036.py::test_0036_rejects_non_public_registered_source_owner",
-            "tests/test_runtime_db_0036.py::test_0036_normalizes_typed_arrays_to_runtime_claim_order",
-            "tests/test_runtime_db_0036.py::test_0036_rejects_duplicate_loser_with_existing_evidence_and_rolls_back",
-            "tests/test_runtime_db_0036.py::test_0036_pending_claim_keeps_direct_source_and_implicit_event_roles",
-            "tests/test_runtime_db_0036.py::test_0036_rejects_pending_event_claim_group_split",
-            "tests/test_runtime_db_0036.py::test_0036_ddl_rolls_back_as_one_sqlite_transaction"
-          ]
-        },
-        {
-          "id": "governor_generation_trace_and_fail_closed_regression_tests",
-          "description": "治理 Agent 为归因、优化方案、执行和回归生成内容并保存生成 Trace；回归阶段只接受可执行 pytest 代码、测试意图和断言依据，代码路径由后端确定，生成失败时不得伪造测试。",
-          "pytest": [
-            "tests/test_improvement_governor_service.py::test_attribution_governor_path_maps_agent_owned_fields",
-            "tests/test_improvement_governor_service.py::test_attribution_governor_persists_generation_trace",
-            "tests/test_improvement_governor_service.py::test_attribution_job_input_contains_target_agent_locator",
-            "tests/test_improvement_governor_service.py::test_attribution_rejects_governor_workspace_as_business_agent_evidence",
-            "tests/test_improvement_governor_service.py::test_attribution_accepts_target_business_agent_config_evidence",
-            "tests/test_improvement_governor_service.py::test_attribution_falls_back_to_heuristic_on_governor_failure",
-            "tests/test_improvement_governor_service.py::test_hostile_formatter_output_does_not_crash_or_pollute",
-            "tests/test_improvement_governor_service.py::test_optimization_plan_governor_maps_tasks_to_changes",
-            "tests/test_improvement_governor_service.py::test_optimization_plan_rejects_governor_workspace_target",
-            "tests/test_improvement_governor_service.py::test_regression_governor_maps_executable_test_code_and_owns_path",
-            "tests/test_improvement_governor_service.py::test_regression_governor_failure_does_not_fabricate_tests",
-            "tests/test_improvement_governor_service.py::test_regression_rejects_static_only_assertion_from_governor",
-            "tests/test_generated_agent_tests.py::test_validate_generated_test_code_tracks_a_business_output_alias",
-            "tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version",
-            "tests/test_improvement_execution_target_scope.py::test_execution_recommendations_only_reference_current_editable_targets",
-            "tests/test_improvement_execution_service.py::test_apply_failure_abandons_change_set_and_falls_back",
-            "tests/test_improvement_execution_service.py::test_idempotent_when_already_applied",
-            "tests/test_langfuse_tool_projection.py::test_projects_tool_and_generation_children",
-            "tests/test_langfuse_tool_projection.py::test_governor_runner_glue_projects_children",
-            "tests/test_upstream_contracts.py::test_real_sdk_messages_project_to_child_observations",
-            "tests/test_upstream_contracts.py::test_langfuse_start_observation_signature_contract",
-            "tests/test_execution_content_guards.py::test_adding_dangerous_allow_rejected",
-            "tests/test_execution_content_guards.py::test_removing_deny_rejected",
-            "tests/test_execution_content_guards.py::test_applier_rejects_settings_escalation_without_writing",
-            "tests/test_execution_content_guards.py::test_allowlist_rejects_offlist_targets",
-            "tests/test_execution_content_guards.py::test_settings_hooks_injection_rejected",
-            "tests/test_execution_content_guards.py::test_mcp_command_and_stdio_server_rejected",
-            "tests/test_improvement_execution_service.py::test_real_guard_blocks_settings_escalation_and_falls_back",
-            "tests/test_improvement_execution_service.py::test_real_allowlist_blocks_settings_local_and_falls_back",
-            "tests/test_normalized_feedback_generation.py::test_llm_organizes_title_problem_and_backfills",
-            "tests/test_normalized_feedback_generation.py::test_hostile_formatter_missing_problem_falls_back",
-            "tests/test_normalized_feedback_generation.py::test_backfill_does_not_overwrite_user_edited_title",
-            "docker/runtime-bootstrap/governor-workspace/tests/test_governor_native_config.py::test_governor_is_read_only_and_cannot_bypass_permissions",
-            "tests/test_agent_profiles_category.py::test_governor_build_options_uses_project_discovery_without_policy_injection",
-            "tests/test_managed_agent_policy.py::test_builtin_business_agent_workspaces_match_managed_policy",
-            "tests/test_managed_agent_policy.py::test_symlinked_hook_parent_is_rejected_without_reading_external_content",
-            "tests/test_agent_governance_publish.py::test_publish_rejects_candidate_with_missing_referenced_hook",
-            "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_not_rewritten_or_recommitted",
-            "tests/test_improvement_governor_service.py::test_attribution_accepts_relative_claude_md_evidence",
-            "tests/test_improvement_governor_service.py::test_attribution_rejects_path_traversal_evidence",
-            "tests/test_improvement_governor_service.py::test_guard_rejection_is_logged_not_silent",
-            "tests/test_improvement_execution_service.py::test_existing_unapplied_change_set_resumes_instead_of_false_idempotence",
-            "tests/test_improvement_execution_service.py::test_reapply_when_change_set_invalidated",
-            "tests/test_improvement_execution_service.py::test_runtime_unavailable_surfaces_not_heuristic"
-          ]
-        },
-        {
-          "id": "improvement_execution_saga_is_recoverable",
-          "description": "执行优化在 Git 副作用前持久化稳定 intent 与 confirmed plan/attribution revision；并发申请、来源编辑、stale takeover、commit/mark/finalize/link 断点均通过 fencing 与同一待发布变更对账，请求内恢复失败会释放 applying，进程崩溃后的过期 claim 由后台对账器自愈；no-action 不推进阶段且 abandoned worktree 被补偿清理。",
-          "pytest": [
-            "tests/test_improvement_execution_service.py::test_draft_plan_blocks_execution_until_separately_confirmed",
-            "tests/test_improvement_execution_service.py::test_draft_attribution_blocks_execution_before_change_set_creation",
-            "tests/test_improvement_execution_service.py::test_applied_execution_is_not_reused_for_a_new_plan_revision",
-            "tests/test_improvement_execution_service.py::test_git_infrastructure_failure_surfaces_after_safe_compensation",
-            "tests/test_improvement_execution_service.py::test_execution_claim_rejects_parallel_request_and_fences_stale_owner",
-            "tests/test_improvement_execution_service.py::test_archive_and_delete_reject_active_execution_claim",
-            "tests/test_improvement_execution_service.py::test_parallel_apply_creates_only_one_change_set",
-            "tests/test_improvement_execution_service.py::test_plan_and_attribution_cannot_change_while_execution_is_applying",
-            "tests/test_improvement_execution_service.py::test_source_revision_fences_finalize_and_same_change_set_takeover",
-            "tests/test_improvement_execution_service.py::test_candidate_reconciles_in_same_request_after_execution_finalize_failure",
-            "tests/test_improvement_execution_service.py::test_unmarked_worktree_commit_is_reconciled_in_same_request",
-            "tests/test_improvement_execution_service.py::test_deterministic_candidate_reconciliation_failure_releases_applying_claim",
-            "tests/test_improvement_execution_service.py::test_background_reconciler_recovers_expired_candidate_after_process_crash",
-            "tests/test_improvement_execution_service.py::test_missing_link_is_reconciled_in_same_request_after_finalize",
-            "tests/test_improvement_store.py::test_add_link_is_idempotent_by_business_identity",
-            "tests/test_improvement_store.py::test_refine_archive_and_delete_require_explicit_abandonment[rejected]",
-            "tests/test_improvement_store.py::test_refine_archive_and_delete_require_explicit_abandonment[failed]",
-            "tests/test_agent_governance_publish.py::test_stable_change_set_intent_is_idempotent_and_candidate_can_advance_before_publish",
-            "tests/test_agent_governance_publish.py::test_publish_cleans_candidate_worktree_and_retry_remains_idempotent",
-            "tests/test_agent_governance_publish.py::test_abandon_cleans_worktree_but_keeps_unpublished_candidate_branch_for_audit",
-            "tests/test_api_error_handlers.py::test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim",
-            "tests/test_agent_git_store.py::test_git_store_resets_and_removes_abandoned_worktree",
-            "tests/test_runtime_db.py::test_runtime_db_migrates_execution_intents_and_deduplicates_links",
-            "tests/test_runtime_db.py::test_runtime_db_adds_source_revisions_after_execution_intent_migration"
-          ]
-        },
-        {
-          "id": "workspace_pytest_assets_and_exact_commit_release_gate",
-          "description": "所有注册业务 Agent 的 tests/ 是版本化测试资产唯一真相；资产复利中心只读投影源码、运行历史与每 Agent 唯一定时策略，不复制测试代码。资产页刷新统一由 Topbar 驱动当前页签，源码符号轨道按后端 AST 纲要定位顶层符号和测试类方法。平台只执行固定 pytest 命令，不接受客户端 command/result。省略 commit 时创建请求只钉住一次当前版本；定时触发也只读取触发时当前有效 commit、不得绑定或推进待发布变更，错过多个窗口合并为一次且同 Agent/commit 活跃运行复用。待发布变更测试必须精确绑定待发布 commit、Agent、suite digest 与不可变运行记录；同一目标只允许一个活跃运行，运行支持超时、取消，服务重启把 running 标为 interrupted 并重新排队 queued。反馈优化确认回归测试设计后仅在同一待发布变更中新增扁平 tests/test_*.py、推进待发布 commit 且不覆盖既有测试。平台每次运行完整 tests/，已有失败和新增失败都必须修复；反馈闭环待发布版本只接受当前待发布 commit 的 passed 记录且不能强制绕过。未关联反馈的手工变更集强制发布仍必须给出原因并持久化警告和审计。导入包缺少 tests/ 只告警；根目录 agent.yaml.agent.id 必须有效，并与 URL agent_id 逐字一致。",
-          "pytest": [
-            "tests/test_agentgov_testkit.py::test_invoke_agent_uses_explicit_session_and_preserves_typed_response",
-            "tests/test_agentgov_testkit.py::test_invoke_agent_rejects_missing_context_and_wraps_http_errors",
-            "tests/test_agentgov_testkit.py::test_pytest_fixture_isolates_each_test_and_pins_one_commit",
-            "tests/test_agentgov_testkit.py::test_pytest_plugin_writes_machine_readable_call_and_setup_failures",
-            "tests/test_agent_testing.py::test_suite_inspection_treats_workspace_tests_as_versioned_source_of_truth",
-            "tests/test_agent_testing.py::test_suite_inspection_rejects_non_flat_or_unparseable_python",
-            "tests/test_agent_testing.py::test_test_run_store_uses_independent_lifecycle_and_exact_commit_gate",
-            "tests/test_agent_testing.py::test_test_run_cancel_and_restart_recovery_are_explicit",
-            "tests/test_agent_testing.py::test_runner_persists_error_when_agent_repository_resolution_fails",
-            "tests/test_agent_testing.py::test_service_pins_omitted_commit_once_and_invokes_that_checkout",
-            "tests/test_agent_testing.py::test_service_rejects_missing_suite_and_mismatched_change_set",
-            "tests/test_agent_testing.py::test_test_run_store_rejects_duplicate_active_exact_target",
-            "tests/test_agent_testing.py::test_runner_terminates_pytest_process_group_at_platform_timeout",
-            "tests/test_agent_testing.py::test_public_run_routes_keep_target_identity_backend_owned",
-            "tests/test_agent_testing.py::test_failed_workspace_import_is_persisted_as_audit_record",
-            "tests/test_agent_test_scheduling.py::test_schedule_validation_requires_five_fields_iana_timezone_and_fifteen_minutes",
-            "tests/test_agent_test_scheduling.py::test_schedule_crud_keeps_one_strategy_per_agent",
-            "tests/test_agent_test_scheduling.py::test_due_schedule_pins_current_commit_and_coalesces_missed_windows",
-            "tests/test_agent_test_scheduling.py::test_schedule_coalesces_active_agent_commit_and_skips_inactive_agent",
-            "tests/test_agent_test_scheduling.py::test_scheduler_tick_drains_a_durable_pending_event_without_a_new_occurrence",
-            "tests/test_agent_test_scheduling.py::test_missing_and_archived_agents_disable_future_schedule_windows",
-            "tests/test_agent_test_scheduling.py::test_test_asset_file_and_paginated_history_are_read_only_projections",
-            "tests/test_agent_test_scheduling.py::test_schedule_event_state_machine_rejects_terminal_reopen",
-            "tests/test_agent_test_scheduling.py::test_history_and_schedule_routes_keep_backend_owned_fields_out_of_requests",
-            "tests/test_runtime_db_0050.py::test_0050_interrupts_duplicate_active_runs_and_adds_exact_target_index",
-            "tests/test_runtime_db_0050.py::test_0050_allows_new_run_after_prior_target_is_terminal",
-            "tests/test_runtime_db_0052.py::test_0052_adds_schedule_tables_run_provenance_and_occurrence_idempotency",
-            "tests/test_migrate_workspace_test_assets.py::test_workspace_test_asset_migration_archives_evals_and_commits_builtin_tests",
-            "tests/test_migrate_workspace_test_assets.py::test_workspace_test_asset_migration_refuses_dirty_workspace",
-            "tests/test_migrate_workspace_test_assets.py::test_workspace_test_asset_migration_preflights_all_write_permissions",
-            "tests/test_migrate_workspace_test_assets.py::test_workspace_test_asset_migration_archives_only_legacy_generated_weak_tests",
-            "tests/test_improvement_execution_service.py::test_generated_feedback_tests_are_flat_immutable_and_idempotent",
-            "tests/test_improvement_execution_service.py::test_materialized_feedback_test_rebinds_same_unpublished_change_set",
-            "tests/test_agent_governance_publish.py::test_candidate_committed_change_set_can_publish_directly",
-            "tests/test_agent_governance_publish.py::test_publish_requires_passed_platform_test_for_exact_candidate_commit",
-            "tests/test_agent_governance_publish.py::test_force_publish_requires_reason_and_persists_warning_audit",
-            "tests/test_agent_governance_publish.py::test_feedback_publication_cannot_force_bypass_complete_agent_test_suite",
-            "tests/test_agent_tests_frontend_contract.py::test_workspace_tests_are_the_only_active_business_agent_test_asset",
-            "tests/test_agent_tests_frontend_contract.py::test_asset_center_projects_workspace_tests_runs_and_per_agent_schedule",
-            "tests/test_agent_tests_frontend_contract.py::test_asset_center_keeps_many_agents_in_a_scrollable_master_detail_layout",
-            "tests/test_agent_tests_frontend_contract.py::test_release_workbench_runs_fixed_commit_bound_platform_tests",
-            "tests/test_agent_tests_frontend_contract.py::test_feedback_release_hides_force_publish_and_keeps_historical_audit",
-            "tests/test_release_workbench_contract.py::test_release_workbench_uses_exact_commit_test_gate_and_separate_publish_actions",
-            "tests/test_release_workbench_contract.py::test_feedback_workbench_displays_historical_force_warning_without_force_action"
+            "tests/test_runtime_signature_security.py",
+            "tests/test_runtime_access_boundary.py",
+            "tests/test_health_endpoints.py",
+            "tests/test_runtime_health_diagnose.py",
+            "tests/test_langfuse_smoke_contract.py",
+            "tests/test_runtime_otel_config.py",
+            "tests/test_langfuse_query_client.py"
           ],
-          "ui_scripts": [
-            "verify:design-parity",
-            "verify:improvement-decision",
-            "verify:asset-registry"
-          ],
-          "real_container_ui_target": "ui-feedback-smoke"
-        },
+          "ui_scripts": ["test:browser-audit-unit", "verify:playground-cancel"]
+        }
+      ]
+    },
+    {
+      "id": "improvement_item_governance",
+      "description": "反馈、归因、受控候选修改、回归测试和发布保持同一治理闭环。",
+      "scenarios": [
         {
-          "id": "legacy_evaluation_chain_is_archived_and_removed",
-          "description": "0040 归档并删除更早的全局用例、场景包和通用 regression 链；0048 继续归档并删除过渡期 TestDataset/EvalRun 表，建立 Workspace pytest 运行表并清理待发布变更上的旧评测字段；0049 将活跃四阶段产物迁移为 RegressionTestDesign 命名。每次迁移均可幂等、失败可回滚，fresh schema、OpenAPI 与前端只保留 tests/、平台测试运行和回归测试设计。",
+          "id": "improvement_lifecycle_and_execution",
           "pytest": [
-            "tests/test_runtime_db_0040.py::test_0040_archives_complete_raw_rows_then_removes_legacy_chain",
-            "tests/test_runtime_db_0040.py::test_0040_is_idempotent_after_source_tables_are_removed",
-            "tests/test_runtime_db_0040.py::test_0040_archive_and_destructive_changes_roll_back_together",
-            "tests/test_runtime_db_0040.py::test_fresh_schema_has_only_workspace_pytest_tables",
-            "tests/test_runtime_db_0048.py::test_0048_archives_old_test_rows_drops_tables_and_normalizes_change_sets",
-            "tests/test_runtime_db_0048.py::test_0048_is_idempotent_after_old_tables_are_removed",
-            "tests/test_runtime_db_0048.py::test_0048_archive_drop_and_status_update_roll_back_together",
-            "tests/test_runtime_db_0049.py::test_0049_moves_test_design_rows_and_removes_old_payload_fields",
-            "tests/test_runtime_db_0049.py::test_0049_rejects_ambiguous_dual_table_data_and_rolls_back",
-            "tests/test_runtime_db_0049.py::test_fresh_runtime_schema_exposes_only_regression_test_design",
-            "tests/test_runtime_db_0050.py::test_0050_interrupts_duplicate_active_runs_and_adds_exact_target_index",
-            "tests/test_runtime_db_0050.py::test_0050_allows_new_run_after_prior_target_is_terminal",
-            "tests/test_agent_job_history.py::test_removed_eval_case_generation_job_type_is_rejected",
-            "tests/test_openapi_export.py::test_export_openapi_script_writes_current_schema"
+            "tests/test_improvement_api.py",
+            "tests/test_improvement_content.py",
+            "tests/test_improvement_execution_service.py",
+            "tests/test_improvement_governor_service.py"
           ]
         },
         {
-          "id": "legacy_batch_optimization_chain_removed",
-          "description": "旧 batch/task/proposal/regression-impact 链路不再出现在 OpenAPI 和新库 schema，旧表由迁移删除。",
+          "id": "decision_ui",
           "pytest": [
-            "tests/test_openapi_export.py::test_export_openapi_script_writes_current_schema",
-            "tests/test_openapi_export.py::test_openapi_contract_audit_passes_current_schema",
-            "tests/test_openapi_export.py::test_openapi_documents_auth_error_for_secured_operations",
-            "tests/test_openapi_export.py::test_openapi_documents_streaming_media_types",
-            "tests/test_openapi_export.py::test_openapi_documents_expected_domain_error_statuses",
-            "tests/test_openapi_export.py::test_openapi_success_responses_do_not_have_empty_json_schema",
-            "tests/test_runtime_db.py::test_runtime_db_migrates_trace_columns_and_drops_legacy_optimization_chain",
-            "tests/test_runtime_db.py::test_runtime_db_migrates_normalized_feedback_provenance_columns",
-            "tests/test_documentation_contracts.py::test_openapi_exposes_current_improvement_trace_routes_and_hides_legacy_optimization_chain"
-          ]
-        },
-        {
-          "id": "agent_change_set_publication_is_recoverable",
-          "description": "待发布变更的发布先持久化 intent 与来源改进事项唯一声明，Git merge/tag/archive 任一断点及 release/change-set/source improvement DB finalize 失败均可重试对账；第二个待发布变更在 Git 副作用前被拒绝，重复请求只返回同一 release；发布工作台动作绑定选中待发布版本，来源发布条件只认后端执行/方案/归因 revision 投影。",
-          "pytest": [
-            "tests/test_agent_governance_publish.py::test_publish_retries_after_archive_failure_without_duplicate_release",
-            "tests/test_agent_governance_publish.py::test_publish_db_finalize_failure_rolls_back_metadata_and_retry_reconciles",
-            "tests/test_agent_governance_publish.py::test_publish_retry_finalizes_older_tag_after_newer_release_advances_head",
-            "tests/test_agent_governance_publish.py::test_divergent_candidate_publish_failure_cancels_intent_and_tag_claim",
-            "tests/test_agent_governance_publish.py::test_source_claim_blocks_second_publication_before_git_side_effect",
-            "tests/test_agent_governance_publish.py::test_repeated_publish_returns_same_release_and_rejects_conflicting_tag",
-            "tests/test_agent_governance_publish.py::test_release_tag_is_owned_by_one_change_set_per_agent",
-            "tests/test_agent_governance_publish.py::test_concurrent_publish_reserves_one_intent_and_one_audit_event",
-            "tests/test_agent_governance_publish.py::test_concurrent_publish_with_different_tags_is_fenced_before_db_reservation",
-            "tests/test_agent_governance_publish.py::test_invalid_explicit_tag_is_rejected_before_intent_is_reserved",
-            "tests/test_agent_governance_publish.py::test_publish_reconciles_legacy_release_row_without_duplicate",
-            "tests/test_agent_governance_publish.py::test_manual_change_set_has_no_fabricated_improvement_attribution",
-            "tests/test_runtime_db_0044.py::test_0044_backfills_one_durable_claim_for_historical_duplicate_releases",
-            "tests/test_agent_governance_publish.py::test_improvement_publication_rejects_unconfirmed_or_revised_provenance_even_with_force",
-            "tests/test_agent_governance_publish.py::test_publish_requires_passed_platform_test_for_exact_candidate_commit",
-            "tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version",
-            "tests/test_api_error_handlers.py::test_agent_change_set_publish_conflict_returns_structured_error",
-            "tests/test_release_workbench_contract.py::test_change_set_response_hides_publication_intent_and_types_error",
-            "tests/test_release_workbench_contract.py::test_release_workbench_uses_exact_commit_test_gate_and_separate_publish_actions"
-          ],
-          "ui_scripts": [
-            "verify:design-parity"
-          ]
-        },
-        {
-          "id": "agent_version_maintenance_is_durable_and_recoverable",
-          "description": "同一 Agent 的 runtime turn 与发布、回滚、恢复、配置更新和 worktree 清理通过 SQLite lease/token/generation 原子互斥；跨 Agent 不互阻，Git 预期当前提交版本校验拒绝旧 owner，崩溃后依据 durable operation/task 幂等补写。",
-          "pytest": [
-            "tests/test_agent_version_maintenance.py::test_durable_maintenance_blocks_runtime_for_only_its_agent",
-            "tests/test_agent_version_maintenance.py::test_active_runtime_turn_blocks_maintenance_but_not_another_agent",
-            "tests/test_agent_version_maintenance.py::test_expired_maintenance_takeover_fences_stale_heartbeat_and_release",
-            "tests/test_agent_version_maintenance.py::test_expired_runtime_with_running_intent_fails_closed_until_reconciled",
-            "tests/test_agent_version_maintenance.py::test_sqlite_write_barrier_serializes_runtime_claim_before_maintenance",
-            "tests/test_agent_maintenance_recovery.py::test_restore_reconciles_crash_after_git_before_operation_persistence",
-            "tests/test_agent_maintenance_recovery.py::test_reconciler_applies_expired_reserved_rollback_before_git",
-            "tests/test_agent_maintenance_recovery.py::test_reconciler_completes_expired_git_applied_without_repeating_reset",
-            "tests/test_agent_maintenance_recovery.py::test_reconciler_completes_expired_restore_after_git_without_repeating_reset",
-            "tests/test_agent_maintenance_recovery.py::test_release_reconciler_isolates_unexpected_operation_failure",
-            "tests/test_agent_maintenance_recovery.py::test_restore_expected_head_rejects_intervening_git_change",
-            "tests/test_agent_maintenance_recovery.py::test_worktree_cleanup_reconciles_crash_after_idempotent_git_delete",
-            "tests/test_agent_maintenance_recovery.py::test_rollback_rejects_non_current_release_without_resetting_newer_head",
-            "tests/test_agent_maintenance_recovery.py::test_completed_rollback_cache_cannot_report_success_after_restore",
-            "tests/test_agent_maintenance_recovery.py::test_publish_revalidates_durable_claim_before_git_side_effect",
-            "tests/test_agent_config_maintenance.py::test_config_update_is_fenced_by_same_agent_runtime_but_allows_other_agent"
-          ]
-        },
-        {
-          "id": "improvement_design_parity_and_message_actions",
-          "description": "Playground 从 SDK transcript 恢复所属 Agent 历史、切换业务 Agent 后进入结构化 Welcome Card 新会话、Runtime 版本展示、Prompt Suggestion 填入但不自动发送、单轮长回复与多轮会话滚动导航、Trace、HITL、四阶段改进事项工作台标题栏新建抽屉与范围对齐、按 artifact_presence 稀疏读取和切换取消、GET/写请求重试矩阵、零非预期浏览器错误、非法返回动作清零、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
-          "pytest": [
-            "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
-            "tests/test_claude_runtime_hitl.py::test_stream_hitl_consumes_prompt_eof_then_resumes_sdk_after_allow",
-            "tests/test_claude_runtime_hitl.py::test_stream_finishes_when_completion_step_raises",
-            "tests/test_claude_runtime_hitl.py::test_stream_fail_loud_when_hitl_required_but_disabled",
-            "tests/test_claude_runtime_hitl.py::test_run_fail_loud_when_hitl_required",
-            "tests/test_prompt_suggestions.py::test_runtime_emits_backend_owned_suggestion_without_persisting_it",
-            "tests/test_agent_presentation.py::test_presentation_projects_only_whitelisted_manifest_fields_and_registry_identity",
-            "tests/test_agent_presentation.py::test_presentation_missing_or_invalid_manifest_returns_registry_fallback",
-            "tests/test_claude_user_input.py::test_tool_permission_allow_for_run_is_scoped_to_current_low_risk_category",
-            "tests/test_claude_user_input.py::test_mutating_or_private_bash_cannot_receive_run_allow",
-            "tests/test_claude_user_input.py::test_decision_api_rejects_unknown_request_and_wrong_token",
-            "tests/test_claude_user_input.py::test_requested_carries_token_resolved_does_not",
-            "tests/test_claude_user_input.py::test_answer_cannot_overwrite_raw_input_structural_keys"
+            "tests/test_release_workbench_contract.py"
           ],
           "ui_scripts": [
             "test:unit",
-            "test:browser-audit-unit",
             "verify:design-parity",
-            "verify:improvement-decision",
-            "verify:asset-registry",
-            "verify:claude-user-input",
-            "verify:remote-api-base",
-            "verify:playground-agent-scope",
-            "verify:message-actions-browser"
-          ],
-          "real_container_ui_target": "ui-feedback-smoke"
-        }
-      ]
-    },
-    {
-      "id": "model_provider_route_and_capability_gate",
-      "description": "Runtime、Agent job 和 formatter 模型访问统一使用 MODEL_PROVIDER_BACKEND 路由，vLLM/LiteLLM sidecar 能力检查失败时硬阻断。",
-      "scenarios": [
-        {
-          "id": "vllm_route_and_sidecar_gate",
-          "description": "vLLM route 从不带 /v1 的服务基地址派生 /version 与 /v1/models，错误 base URL 在网络前 fail-closed；启动 warmup 与首请求共享 single-flight 和成功缓存，sidecar 不可用时报告能力错误。",
-          "pytest": [
-            "tests/test_model_provider_router.py::test_vllm_route_probes_version_and_derives_litellm_sidecar",
-            "tests/test_model_provider_router.py::test_vllm_capability_gate_checks_sidecar_and_models",
-            "tests/test_model_provider_router.py::test_vllm_capability_gate_reports_sidecar_unavailable",
-            "tests/test_model_provider_router.py::test_vllm_base_url_with_v1_suffix_fails_before_network",
-            "tests/test_model_provider_router.py::test_provider_warmup_and_first_requests_share_single_flight",
-            "tests/test_claude_runtime.py::test_vllm_feedback_job_options_use_derived_litellm_sidecar"
-          ]
-        },
-        {
-          "id": "provider_failure_does_not_block_control_plane_liveness",
-          "description": "外部 vLLM 探测超时只降级模型 readiness；API/UI liveness 保持快速可用，诊断快照和模型动作向 UI 投影脱敏的稳定 code、reason、probe 与 action。真实容器 Playwright 入口为 make container-health-e2e。",
-          "pytest": [
-            "tests/test_health_endpoints.py::test_health_endpoints_remain_fast_while_external_vllm_probe_is_stuck",
-            "tests/test_health_endpoints.py::test_readiness_reports_sanitized_vllm_timeout_and_recovers",
-            "tests/test_runtime_health_diagnose.py::test_diagnose_prints_specific_degraded_provider_reason",
-            "tests/test_repository_env_policy.py::test_compose_healthcheck_uses_local_liveness_without_provider_dependency"
-          ],
-          "real_container_ui_target": "container-health-e2e"
-        }
-      ]
-    },
-    {
-      "id": "business_agent_registry_and_playground_routing",
-      "description": "内置和导入的业务 Agent 经 runtime-bootstrap、registry sync 与 chat/Playground agent_id 路由形成可用闭环。",
-      "scenarios": [
-        {
-          "id": "security_operations_flagship_native_hitl",
-          "description": "security-operations-expert 是可按字节导出的内置网络安全业务 Agent；其 Workspace 可作为新 Agent 的人工修改起点，但重新打包前必须把 agent.yaml.agent.id 明确设置为新目标 ID；精确 create/manual 由 Claude 原生权限逐次确认。",
-          "pytest": [
-            "tests/test_agent_workspace_manifest_identity.py::test_create_accepts_exact_manifest_identity_without_rewriting_package",
-            "tests/test_managed_agent_policy.py::test_security_operations_workspace_uses_generic_structural_managed_policy",
-            "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_not_rewritten_or_recommitted",
-            "tests/test_runtime_coordination.py::test_dirty_workspace_does_not_block_receipt_refresh_or_get_committed",
-            "tests/test_runtime_coordination.py::test_open_change_set_does_not_trigger_workspace_migration",
-            "tests/test_claude_runtime_hitl.py::test_stream_registered_business_agent_uses_native_hitl_without_id_gate_or_input_rewrite",
-            "tests/test_claude_runtime_hitl.py::test_stream_registered_business_agent_fails_closed_when_native_hitl_is_disabled",
-            "tests/test_claude_runtime_hitl.py::test_run_registered_business_agent_denies_native_ask_without_stream_hitl",
-            "tests/test_claude_user_input.py::test_high_risk_mcp_uses_generic_one_shot_confirmation_for_any_agent_id"
-          ]
-        },
-        {
-          "id": "workspace_package_business_agent_provisioning_saga",
-          "description": "Workspace 包创建 Agent 时先持久化不可见 reservation，再以 no-follow 原子文件日志落盘并 finalize；失败、重启和同 ID 并发均不会暴露半成品。",
-          "pytest": [
-            "tests/test_agent_provisioning_saga.py::test_reservation_is_hidden_from_list_get_and_chat_resolution",
-            "tests/test_agent_provisioning_saga.py::test_success_finalizes_after_workspace_and_derives_hitl_from_settings",
-            "tests/test_agent_provisioning_saga.py::test_workspace_symlink_fails_closed_without_touching_target",
-            "tests/test_agent_provisioning_saga.py::test_finalize_failure_rolls_back_new_workspace_and_deletes_new_row",
-            "tests/test_agent_provisioning_saga.py::test_rollback_preserves_file_replaced_by_external_writer_and_keeps_tombstone",
-            "tests/test_agent_provisioning_saga.py::test_apply_failure_preserves_preexisting_workspace_and_tombstones_new_row",
-            "tests/test_agent_provisioning_saga.py::test_concurrent_same_agent_id_has_exactly_one_winner",
-            "tests/test_agent_provisioning_saga.py::test_startup_recovery_restores_tombstone_and_hides_new_orphan",
-            "tests/test_agent_provisioning_saga.py::test_crash_recovery_blocks_partial_workspace_reuse_until_verified_cleanup"
-          ]
-        },
-        {
-          "id": "runtime_bootstrap_and_workspace_package_creation",
-          "description": "运行卷初始化源只提供唯一内置业务 Agent；普通 Agent 通过完整 Workspace 包创建，初始化与导入均保留文件字节和权限配置。",
-          "pytest": [
-            "tests/test_agent_workspace_manifest_identity.py::test_create_accepts_exact_manifest_identity_without_rewriting_package",
-            "tests/test_runtime_bootstrap_tools.py::test_bootstrap_initializes_only_governor_and_declared_builtin_agent",
-            "tests/test_runtime_bootstrap_tools.py::test_runtime_bootstrap_safety_scan_is_read_only",
-            "tests/test_bootstrap_business_agent_protection.py::test_bootstrap_preserves_existing_workspace_and_initializes_missing_builtin",
-            "tests/test_agent_registry_store.py::test_lifespan_auto_registers_live_business_agent_workspaces",
-            "tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent"
-          ]
-        },
-        {
-          "id": "business_agent_workspace_package_round_trip",
-          "description": "live 业务 Agent workspace 可按当前 Git tree 原样导出、在包内 ID 与目标 ID 完全一致时导入、携带预期当前提交版本覆盖，并以新 commit 恢复；二进制、真实 endpoint 与 workspace 自有 .env 不被改写，身份缺失、无效、冲突、危险 tar member 和并发维护被明确拒绝。",
-          "pytest": [
-            "tests/test_agent_workspace_packages.py::test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env",
-            "tests/test_agent_workspace_packages.py::test_workspace_export_restores_exec_tracking_when_existing_git_disabled_filemode",
-            "tests/test_agent_workspace_packages.py::test_workspace_commit_reader_scales_to_ten_thousand_paths_with_one_batch_process",
-            "tests/test_agent_workspace_packages.py::test_workspace_batch_reader_spools_stderr_without_exposing_repository_path",
-            "tests/test_agent_workspace_packages.py::test_workspace_commit_reader_rejects_empty_raw_tree_path_before_blob_read",
-            "tests/test_agent_workspace_packages.py::test_workspace_overwrite_requires_expected_commit_and_restore_creates_new_commit",
-            "tests/test_agent_workspace_manifest_identity.py::test_create_rejects_missing_or_invalid_manifest_identity_before_mutation",
-            "tests/test_agent_workspace_manifest_identity.py::test_create_rejects_source_identity_mismatch_with_actionable_error_and_audit",
-            "tests/test_agent_workspace_manifest_identity.py::test_create_rejects_case_only_manifest_identity_mismatch",
-            "tests/test_agent_workspace_manifest_identity.py::test_create_rejects_url_agent_id_with_surrounding_whitespace_before_package_processing",
-            "tests/test_agent_workspace_manifest_identity.py::test_overwrite_rejects_manifest_mismatch_before_workspace_or_session_changes",
-            "tests/test_agent_workspace_packages.py::test_workspace_import_invalidates_sdk_resume_and_next_turn_reads_applied_commit",
-            "tests/test_agent_workspace_packages.py::test_workspace_import_rejects_active_first_turn_without_changing_head",
-            "tests/test_agent_workspace_packages.py::test_workspace_restore_rejects_historical_non_regular_tree_without_changing_head",
-            "tests/test_agent_workspace_packages.py::test_workspace_restore_projects_size_and_session_invalidation_failures_without_changing_head",
-            "tests/test_agent_workspace_packages.py::test_workspace_import_rejects_unsafe_tar_members_without_registering_agent",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_import_rejects_missing_or_invalid_http_multipart_contract",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_package_operation_conflicts_with_active_agent_maintenance",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_package_checks_all_open_change_sets_without_list_window",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_git_bootstrap_failure_is_structured",
-            "tests/test_agent_workspace_package_operations.py::test_new_agent_import_compensates_git_and_registry_when_finalize_fails",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_import_rejects_invalid_configs_and_size_limits_before_mutation",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_export_rejects_symlink_and_oversized_tree_without_advancing_head",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_import_rechecks_lease_immediately_before_activation",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_import_reports_success_after_merge_even_if_lease_release_is_lost",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_import_does_not_activate_when_sdk_session_invalidation_fails",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_import_rejects_file_created_during_session_invalidation",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_import_does_not_overwrite_ignored_file_created_at_merge",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_import_compensates_git_and_session_mapping_when_activation_commit_fails",
-            "tests/test_agent_version_maintenance.py::test_activation_guard_serializes_runtime_admission_until_side_effect_finishes",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_export_unstages_original_dirty_state_when_snapshot_commit_fails",
-            "tests/test_agent_workspace_package_operations.py::test_workspace_export_cleans_artifact_and_restores_dirty_state_when_release_is_lost",
-            "tests/test_agent_workspace_packages.py::test_workspace_package_openapi_documents_binary_multipart_and_export_receipt_headers",
-            "tests/test_agent_git_store.py::test_git_store_snapshots_raw_bytes_and_exec_bit_despite_repository_attributes",
-            "tests/test_agent_workspace_frontend_contract.py::test_settings_workspace_flow_uses_package_only_creation_and_exposes_receipts"
-          ],
-          "ui_scripts": [
-            "verify:agent-workspace-settings"
+            "verify:improvement-decision"
           ]
         }
       ]
     },
     {
-      "id": "runtime_raw_event_debug_surface",
-      "description": "Runtime 中立的特权原始事件接口复用 managed Agent 生命周期，并对 Claude Code CLI stdout 做 byte-exact、无 SSE/JSON 重写的流式或缓冲透传。",
+      "id": "agent_harness_lifecycle",
+      "description": "业务 Agent Harness 的导入、测试、版本发布和恢复均绑定精确版本。",
       "scenarios": [
         {
-          "id": "byte_exact_cli_tee_and_runtime_neutral_http_contract",
-          "description": "透明 CLI tee 的 version probe 不入捕获通道，未知 JSON、重复 key、非 JSON、控制字节和非 UTF-8 原样复制给 SDK 与 HTTP；公开路径不绑定 Claude，stream 两种模式同源，来源 header 后端所有，功能默认关闭且要求 API_KEY。",
+          "id": "workspace_import_test_and_publish",
           "pytest": [
-            "tests/test_claude_cli_raw_capture.py::test_cli_tee_preserves_stdout_bytes_and_bypasses_version_probe",
-            "tests/test_runtime_raw_events.py::test_runtime_neutral_raw_endpoint_streams_and_buffers_exact_bytes",
-            "tests/test_runtime_raw_events.py::test_raw_endpoint_is_feature_gated_authenticated_and_agent_scoped",
-            "tests/test_runtime_raw_events.py::test_enabling_raw_endpoint_without_api_key_fails_application_startup",
-            "tests/test_runtime_raw_events.py::test_prepared_raw_events_collects_one_exact_source_and_enforces_limit",
-            "tests/test_runtime_raw_events.py::test_prepared_raw_events_returns_structured_error_before_first_byte",
-            "tests/test_runtime_raw_events.py::test_stream_closes_without_platform_frames_after_first_raw_byte_failure",
-            "tests/test_runtime_raw_events.py::test_stream_limit_cancels_blocked_managed_runtime",
-            "tests/test_runtime_raw_events.py::test_claude_backend_uses_execution_local_cli_override_and_managed_stream",
-            "tests/test_runtime_raw_events.py::test_claude_backend_reports_unsupported_host_before_starting_runtime",
-            "tests/test_claude_runtime_session_resume.py::test_build_options_applies_raw_cli_path_only_to_the_requested_execution",
-            "tests/test_settings.py::test_raw_events_are_disabled_by_default_and_require_api_auth_when_enabled",
-            "tests/test_openapi_export.py::test_openapi_documents_streaming_media_types",
-            "tests/test_repository_env_policy.py::test_official_env_examples_keep_privileged_raw_events_disabled",
-            "tests/test_repository_env_policy.py::test_api_compose_propagates_raw_event_security_settings",
-            "tests/test_documentation_contracts.py::test_runtime_raw_event_docs_distinguish_byte_stream_from_legacy_sdk_projection"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "openai_responses_first_surface",
-      "description": "过渡性的 Responses-shaped 接口与原生 SDK 上游契约：POST /v1/responses（strict/control 双模式）和 retrieve/conversations 准确公开当前能力与已知差异；/api/agent-runtime/sdk-events 作为后续外部标准转换服务的原生输入。",
-      "scenarios": [
-        {
-          "id": "public_openapi_contract_and_hitl_surface",
-          "description": "公开 request required/非空白/有限值/conditional/const、全部 request body/component/property/path/query 的描述与具体示例、全部请求体的具名可执行示例、逐 surface SSE 目录、状态码、description/deprecated、非 200 成功码和完整 live/local OpenAPI 语义由无 baseline 硬门约束；Responses 在 Swagger 展开 22 个嵌套字段并解释 No parameters，明确是过渡投影；HITL 只保留唯一查询与 decision，冗余 alias 返回 404。",
-          "pytest": [
-            "tests/test_openapi_export.py::test_every_request_body_has_named_runtime_valid_examples",
-            "tests/test_openapi_export.py::test_responses_named_examples_explain_strict_and_control_modes",
-            "tests/test_openapi_request_documentation.py::test_all_live_request_inputs_have_descriptions_and_examples",
-            "tests/test_openapi_request_documentation.py::test_responses_swagger_guide_covers_every_nested_request_field",
-            "tests/test_openapi_request_documentation.py::test_request_documentation_audit_reaches_arrays_unions_refs_and_multipart",
-            "tests/test_openapi_request_documentation.py::test_request_documentation_audit_rejects_regressions",
-            "tests/test_openapi_export.py::test_agent_governance_response_status_domains_are_not_cross_wired",
-            "tests/test_openapi_export.py::test_openapi_public_request_models_express_runtime_validation",
-            "tests/test_openapi_export.py::test_openapi_documents_complete_per_surface_sse_contracts",
-            "tests/test_openapi_export.py::test_openapi_reviewed_operations_have_descriptions_deprecation_and_statuses",
-            "tests/test_openapi_export.py::test_openapi_non_200_success_operations_do_not_gain_fake_200",
-            "tests/test_openapi_export.py::test_openapi_audit_rejects_semantic_contract_mutations",
-            "tests/test_openapi_export.py::test_openapi_audit_rejects_placeholder_examples_and_open_finite_values",
-            "tests/test_openapi_export.py::test_openapi_audit_rejects_stale_example_registration",
-            "tests/test_openapi_export.py::test_live_local_audit_deep_compares_components_and_operation_metadata",
-            "tests/test_openapi_export.py::test_sse_registry_rejects_unregistered_events_and_accepts_sdk_family",
-            "tests/test_api_error_handlers.py::test_public_finite_value_inputs_reject_unknown_values_at_validation_boundary",
-            "tests/test_claude_user_input.py::test_redundant_hitl_aliases_are_removed"
-          ]
-        },
-        {
-          "id": "responses_create_strict_and_control",
-          "description": "非流式 /v1/responses：control 映射 agentgov 字段并要求 agent_id（缺失 422、未知 404）、strict 用运营者出口 Agent 并拒绝 instructions（append-only 非 replace）、失效 503、previous_response_id 409/404、agentgov extra=forbid、保留 metadata key 剥离；当前接口明确为过渡子集，不承诺与 stream/retrieve 字段完全等价。",
-          "pytest": [
-            "tests/test_responses_api.py::test_control_runs_business_agent_and_maps_fields",
-            "tests/test_responses_api.py::test_control_response_projection_shape",
-            "tests/test_responses_api.py::test_control_response_projects_reasoning_before_message_with_stable_ids",
-            "tests/test_responses_api.py::test_control_input_items_store_false_and_reserved_metadata",
-            "tests/test_responses_api.py::test_control_missing_agent_id_422",
-            "tests/test_responses_api.py::test_control_unknown_agent_404",
-            "tests/test_responses_api.py::test_strict_uses_operator_agent",
-            "tests/test_responses_api.py::test_strict_explicit_main_is_configured_but_runs_main",
-            "tests/test_responses_api.py::test_strict_rejects_instructions_422",
-            "tests/test_responses_api.py::test_strict_fail_loud_503_when_operator_agent_deleted",
-            "tests/test_responses_api.py::test_previous_response_id_conflict_409",
-            "tests/test_responses_api.py::test_previous_response_id_not_found_404",
-            "tests/test_responses_api.py::test_agentgov_unknown_field_rejected_422",
-            "tests/test_responses_api.py::test_client_cannot_inject_reserved_store_marker",
-            "tests/test_responses_api.py::test_strict_unconfigured_runs_platform_default",
-            "tests/test_responses_api.py::test_previous_response_id_continues_session",
-            "tests/test_responses_api.py::test_conversation_continues_session"
-          ]
-        },
-        {
-          "id": "responses_retrieve_reconstruction",
-          "description": "GET /v1/responses/{id}：从持久化 run 重建 output（来自 messages 非截断 answer_summary），保留 reasoning/message 的稳定 ID 与顺序；status 由 errors 派生、store=false 公开 404、not-found 404、保留 metadata key 回显剥离。",
-          "pytest": [
-            "tests/test_responses_retrieve.py::test_retrieve_reconstructs_output_from_messages",
-            "tests/test_responses_retrieve.py::test_retrieve_preserves_reasoning_item_ids_and_order",
-            "tests/test_responses_retrieve.py::test_retrieve_status_failed_from_errors",
-            "tests/test_responses_retrieve.py::test_retrieve_store_false_public_404",
-            "tests/test_responses_retrieve.py::test_retrieve_not_found_404",
-            "tests/test_responses_retrieve.py::test_retrieve_strips_reserved_metadata_on_echo"
-          ]
-        },
-        {
-          "id": "responses_session_owner_and_cas",
-          "description": "previous_response/conversation 只能由原业务 Agent 续接；session owner 首次原子认领后不可变；SDK opaque transcript 先按 run staging，Result 后与 session/run/intent 原子发布；active turn 由 run_id+generation fencing 的 lease 与 heartbeat 保护，过期 intent 可幂等对账；孤立 turn 的运维恢复默认只读，并以显式目标、状态摘要和 operation id 做事务 fencing。",
-          "pytest": [
-            "tests/test_responses_api.py::test_previous_response_id_rejects_cross_agent_owner_409",
-            "tests/test_responses_api.py::test_previous_response_id_without_session_fails_closed_409",
-            "tests/test_responses_api.py::test_previous_response_id_with_deleted_session_mapping_fails_closed_409",
-            "tests/test_responses_api.py::test_conversation_rejects_cross_agent_session_owner_409",
-            "tests/test_responses_api.py::test_conversation_rejects_historical_session_without_owner_409",
-            "tests/test_claude_runtime_session_resume.py::test_session_owner_is_claimed_once_and_cannot_change",
-            "tests/test_claude_runtime_session_resume.py::test_historical_session_without_owner_cannot_be_claimed",
-            "tests/test_claude_runtime_session_resume.py::test_active_turn_blocks_delete_until_claim_is_released",
-            "tests/test_claude_runtime_session_resume.py::test_turn_lease_renewal_extends_persisted_turn_expiry",
-            "tests/test_claude_runtime_session_resume.py::test_turn_lease_renewal_rejects_wrong_run_id",
-            "tests/test_claude_runtime_session_resume.py::test_non_stream_turn_renews_lease_while_sdk_query_runs",
-            "tests/test_claude_runtime_session_resume.py::test_stream_turn_fails_closed_when_lease_renewal_loses_ownership",
-            "tests/test_claude_runtime_session_resume.py::test_client_cancel_closes_sdk_task_and_discards_unfinished_turn[runtime]",
-            "tests/test_claude_runtime_session_resume.py::test_client_cancel_closes_sdk_task_and_discards_unfinished_turn[responses-sse]",
-            "tests/test_claude_runtime_session_resume.py::test_client_cancel_closes_sdk_task_when_hitl_cleanup_fails",
-            "tests/test_claude_runtime_hitl.py::test_interactive_stream_client_cancel_closes_sdk_and_aborts_turn",
-            "tests/test_claude_runtime_hitl.py::test_interactive_stream_lease_loss_cancels_sdk_and_aborts_turn",
-            "tests/test_claude_runtime_session_resume.py::test_blocking_sdk_stream_cannot_lose_session_mapping_to_concurrent_delete",
-            "tests/test_sdk_session_store.py::test_turn_store_hides_staged_entries_until_atomic_promotion",
-            "tests/test_sdk_session_store.py::test_late_append_is_rejected_after_turn_ownership_is_lost[intent]",
-            "tests/test_sdk_transcript_mirror_terminal.py::test_stream_keeps_turn_running_until_post_result_transcript_flush",
-            "tests/test_session_turn_persistence.py::test_complete_publishes_transcript_session_run_and_intent_atomically",
-            "tests/test_session_turn_persistence.py::test_complete_rejects_result_without_staged_sdk_transcript",
-            "tests/test_session_turn_persistence.py::test_finalize_exception_rolls_back_every_projection",
-            "tests/test_session_turn_persistence.py::test_expired_reconcile_is_idempotent_and_fences_late_completion",
-            "tests/test_session_turn_recovery.py::test_cli_dry_run_is_read_only_and_exposes_only_fenced_inputs",
-            "tests/test_session_turn_recovery.py::test_cli_apply_interrupts_expired_turn_and_exact_retry_is_idempotent",
-            "tests/test_session_turn_recovery.py::test_unexpired_turn_requires_explicit_force",
-            "tests/test_session_turn_recovery.py::test_state_digest_fences_concurrent_lease_renewal",
-            "tests/test_session_turn_recovery.py::test_state_digest_is_independent_of_preview_candidate_order",
-            "tests/test_session_turn_recovery.py::test_recovery_refuses_existing_terminal_or_hitl_facts",
-            "tests/test_session_turn_recovery.py::test_multi_target_recovery_preflight_is_all_or_nothing",
-            "tests/test_session_turn_recovery.py::test_explicit_run_id_cannot_cross_agent_owner_boundary",
-            "tests/test_session_turn_recovery.py::test_different_operation_cannot_reapply_recovered_turn",
-            "tests/test_sdk_session_migration.py::test_legacy_import_promotes_official_sdk_transcript_once",
-            "tests/test_sdk_session_migration.py::test_import_claim_is_cross_connection_fenced_and_expired_owner_cannot_finalize",
-            "tests/test_sdk_session_migration.py::test_mapping_invalidation_discards_inflight_import_staging[clear]",
-            "tests/test_sdk_session_migration.py::test_mapping_invalidation_discards_inflight_import_staging[delete]",
-            "tests/test_runtime_db.py::test_runtime_db_adds_session_active_run_lease_without_rewriting_rows"
-          ]
-        },
-        {
-          "id": "retired_response_disposition_contract_removed",
-          "description": "退役后端 response-disposition 锁：公开字段和专用凭据不再存在，历史响应投影忽略旧载荷，迁移直接删除旧 claim 表且保留通用 HITL 审计；所有 API 使用单一 API_KEY。",
-          "pytest": [
-            "tests/test_responses_api.py::test_retired_response_disposition_fields_are_rejected_and_absent_from_openapi",
-            "tests/test_responses_retrieve.py::test_retrieve_ignores_retired_response_disposition_payload",
-            "tests/test_runtime_db.py::test_runtime_db_drops_response_disposition_claims_without_touching_generic_hitl_audit",
-            "tests/test_settings.py::test_settings_exposes_only_the_general_api_key",
-            "tests/test_repository_env_policy.py::test_official_env_examples_expose_only_the_general_debug_api_key",
-            "tests/test_claude_runtime.py::test_profile_env_never_forwards_backend_control_credentials_to_agent_process"
-          ]
-        },
-        {
-          "id": "responses_streaming_sse",
-          "description": "stream=true 的独立过渡 Responses projector 直接消费 managed SDK source；逐 surface typed registry 完整声明真实事件、payload/条件与 transport comment。text/thinking delta 与最终 AssistantMessage 快照偏差 fail-closed；reasoning item 按标准 output_item/content_part/reasoning_text 生命周期输出，response.* 两模式都发、agentgov.* 仅 control；服务端工具只输出观察事件，不伪装客户端 function_call；thinking_tokens 仅作指标，派生事件在终态前有界排空。受管流在 headers 前完成 admission 并暴露 backend-owned run/session 句柄；成功、失败、取消分别以 response.completed/failed/incomplete 恰好一次收口且最后，取消保留部分 output，不伪装 response.failed；前置 identity 失败作为 known deviation 明确公开，不宣称完整 OpenAI conformant。",
-          "pytest": [
-            "tests/test_responses_stream.py::test_control_stream_maps_core_events",
-            "tests/test_responses_stream.py::test_cancelled_stream_preserves_partial_output_and_emits_incomplete_terminal",
-            "tests/test_responses_sdk_projector.py::test_responses_projects_reasoning_lifecycle_and_stable_output_items",
-            "tests/test_responses_sdk_projector.py::test_responses_emits_server_tool_observations_without_function_call_items",
-            "tests/test_responses_sdk_projector.py::test_strict_responses_keeps_agentgov_tool_observations_out",
-            "tests/test_claude_runtime.py::test_stream_enriches_langfuse_input_output",
-            "tests/test_responses_stream.py::test_strict_stream_emits_no_agentgov",
-            "tests/test_responses_stream.py::test_prompt_suggestion_control_uses_session_context_ids_and_precedes_done",
-            "tests/test_chat_stream_agent_id.py::test_chat_stream_projects_prompt_suggestion_event",
-            "tests/test_responses_stream.py::test_heartbeat_becomes_sse_comment",
-            "tests/test_responses_stream.py::test_error_maps_to_failed",
-            "tests/test_responses_stream.py::test_result_errors_map_to_one_failed_terminal_and_control_error",
-            "tests/test_responses_stream.py::test_done_without_result_emits_one_failed_terminal",
-            "tests/test_responses_stream.py::test_frames_after_done_are_ignored",
-            "tests/test_responses_stream.py::test_frames_after_failed_terminal_are_ignored_until_done",
-            "tests/test_responses_stream.py::test_source_eof_without_done_or_result_still_emits_failed_terminal",
-            "tests/test_responses_stream.py::test_source_exception_before_session_emits_one_standard_failed_terminal",
-            "tests/test_responses_stream.py::test_projection_closes_upstream_when_client_stops_consuming",
-            "tests/test_responses_stream.py::test_projection_accepts_async_iterator_without_aclose",
-            "tests/test_responses_stream.py::test_tool_step_from_raw",
-            "tests/test_trace_stream_contract.py::test_trace_opt_in_emits_complete_thinking_and_every_tool_block",
-            "tests/test_trace_stream_contract.py::test_trace_is_opt_in_and_sdk_raw_keeps_assistant_snapshot",
-            "tests/test_trace_projection.py::test_projector_suppresses_thinking_token_counters_but_keeps_complete_sdk_facts",
-            "tests/test_trace_projection.py::test_projector_event_ids_are_stable_and_backend_owned",
-            "tests/test_trace_projection.py::test_incremental_projector_counts_suppressed_messages_for_refresh_parity",
-            "tests/test_trace_projection.py::test_native_semantic_projection_keeps_text_and_replaces_raw_noise_with_trace",
-            "tests/test_agent_runs_api.py::test_agent_run_trace_is_refresh_safe_and_semantic",
-            "tests/test_agent_runs_api.py::test_agent_run_trace_reports_unavailable_for_legacy_run_without_messages",
-            "tests/test_chat_stream_agent_id.py::test_chat_stream_semantic_mode_suppresses_thinking_counter_and_keeps_tools",
-            "tests/test_responses_stream.py::test_confirmation_projection_keeps_token_and_renames",
-            "tests/test_responses_stream.py::test_endpoint_stream_control",
-            "tests/test_responses_stream.py::test_delta_and_created_carry_openai_conformant_fields",
-            "tests/test_responses_stream.py::test_tool_step_from_raw_tool_result",
-            "tests/test_responses_stream.py::test_sdk_raw_envelope_only_when_debug_enabled",
-            "tests/test_responses_stream.py::test_endpoint_stream_control_maps_request_fields",
-            "tests/test_responses_stream.py::test_endpoint_stream_strict_uses_configured_agent_without_agentgov_events",
-            "tests/test_responses_stream.py::test_endpoint_stream_projects_hitl_confirmation",
-            "tests/test_responses_stream.py::test_endpoint_stream_fails_closed_for_unmigratable_previous_response_session",
-            "tests/test_responses_stream.py::test_stream_persists_session_and_run_before_done_terminal",
-            "tests/test_responses_stream.py::test_stream_run_write_failure_rolls_back_session_completion",
-            "tests/test_responses_stream.py::test_stream_persists_exactly_once",
-            "tests/test_responses_stream.py::test_stream_error_path_persists_once_in_finally",
-            "tests/test_responses_stream.py::test_endpoint_sdk_result_error_is_failed_terminal_for_control_client",
-            "tests/test_stream_text_projection.py::test_stream_event_text_delta_preserves_whitespace_and_rejects_other_events",
-            "tests/test_stream_text_projection.py::test_delta_and_matching_snapshot_emit_exact_text_without_duplicate",
-            "tests/test_stream_text_projection.py::test_snapshot_suffix_is_emitted_when_last_delta_was_not_observed",
-            "tests/test_stream_text_projection.py::test_divergent_snapshot_fails_closed_with_stable_error_code",
-            "tests/test_stream_text_projection.py::test_runtime_partial_events_are_transport_only_and_timings_reach_trace",
-            "tests/test_stream_text_projection.py::test_runtime_divergence_never_emits_result_or_completes_turn"
-          ]
-        },
-        {
-          "id": "speech_summary_and_runtime_boundary_contract",
-          "description": "SDK SSE、Chat Stream 与 Responses control streaming 可显式开启 Speech Summary；完成态 thinking/assistant 由统一 coordinator 触发，DSPy 只生成 10–50 字 text，backend 注入 provenance 并执行安全过滤。子 Agent、工具和空内容跳过，raw/strict/非流式不暴露该能力；Prompt/Speech 在终态前有界排空，Responses 标准终态保持连接最后。",
-          "pytest": [
-            "tests/test_speech_summary_service.py::test_typed_output_is_trimmed_and_contains_only_agent_owned_text",
-            "tests/test_speech_summary_service.py::test_contract_failure_gets_exactly_one_repair_without_truncation",
-            "tests/test_speech_summary_service.py::test_hostile_backend_owned_fields_cannot_enter_output",
-            "tests/test_speech_summary_stream.py::test_coordinator_uses_native_thinking_stop_and_complete_assistant_boundaries",
-            "tests/test_speech_summary_stream.py::test_coordinator_skips_disabled_empty_tool_only_and_subagent_content",
-            "tests/test_speech_summary_stream.py::test_final_assistant_cancels_stale_thinking_summary",
-            "tests/test_speech_summary_stream.py::test_tool_only_assistant_does_not_cancel_pending_thinking_summary",
-            "tests/test_speech_summary_stream.py::test_sdk_sse_projects_canonical_summary_and_keeps_done_last",
-            "tests/test_responses_speech_summary.py::test_responses_route_accepts_speech_only_for_control_streaming",
-            "tests/test_responses_scope_contract.py::test_stream_standard_output_is_main_only_while_control_trace_retains_subagent",
-            "tests/test_responses_terminal_contract.py::test_success_terminal_is_exactly_once_and_last_after_derived_events",
-            "tests/test_legacy_chat_contract.py::test_hitl_incompatible_surfaces_fail_before_starting_runtime",
-            "tests/test_claude_user_input.py::test_waiting_token_is_exposed_only_to_exact_authenticated_run_poll",
-            "tests/test_openapi_export.py::test_openapi_documents_complete_per_surface_sse_contracts"
-          ]
-        },
-        {
-          "id": "playground_native_sdk_stream",
-          "description": "Playground live turn 只调用 /api/agent-runtime/sdk-events：每个官方 SDK yield 原序一帧、dataclass 机械 JSON 且未知值 fail-loud；AgentGov control 独立命名。浏览器按 parent_tool_use_id + message id/epoch + block index 归并 thinking/tool evidence，thinking_tokens 只作指标，顶层 text 才进入回答，Prompt/Speech 派生事件在 done 前有界排空且 done 为最后业务帧。所有 managed stream 在响应头先暴露 backend-owned run/session 句柄；停止按钮调用精确 run 取消并等待持久化终态，在等待句柄、取消中或终态待核对期间禁止第二次发送和会话切换；取消保留部分输出但不渲染为运行失败。ASGI 断连显式关闭嵌套 source，流式与非流式 owner 共用取消协调器，重启即时中断前一进程 running intent；trace 不完整时保留 live evidence，异步更新固定到本轮 message/run token，且不回退 /v1/responses 或 /api/chat/stream。",
-          "pytest": [
-            "tests/test_runtime_run_cancellation.py::test_cancel_waits_for_durable_terminal_and_allows_immediate_same_session_retry",
-            "tests/test_runtime_run_cancellation.py::test_non_stream_owner_is_cancellable_through_the_same_run_coordinator",
-            "tests/test_runtime_run_cancellation.py::test_non_stream_owner_failure_aborts_turn_and_releases_session_fence",
-            "tests/test_runtime_run_cancellation.py::test_cancellation_during_threaded_turn_admission_cannot_leave_a_session_fence",
-            "tests/test_runtime_run_cancellation.py::test_cancel_api_is_idempotent_and_running_without_owner_fails_closed",
-            "tests/test_runtime_run_cancellation.py::test_cancel_times_out_when_owner_does_not_reach_durable_terminal",
-            "tests/test_runtime_run_cancellation.py::test_startup_reconciliation_interrupts_previous_process_turn_immediately",
-            "tests/test_runtime_run_cancellation.py::test_managed_streaming_response_closes_nested_source_on_asgi_23_send_disconnect",
-            "tests/test_runtime_run_cancellation.py::test_non_stream_http_disconnect_cancels_and_drains_owned_operation",
-            "tests/test_claude_sdk_native_stream.py::test_native_sdk_route_preserves_one_frame_per_sdk_yield",
-            "tests/test_claude_sdk_native_stream.py::test_native_sdk_route_requires_agent_id",
-            "tests/test_claude_sdk_native_stream.py::test_native_sdk_codec_fails_instead_of_stringifying_unknown_values",
-            "tests/test_claude_sdk_native_stream.py::test_chat_projector_streams_real_thinking_and_marks_token_counter_as_metric",
-            "tests/test_responses_stream.py::test_cancelled_stream_preserves_partial_output_and_emits_incomplete_terminal",
-            "tests/test_openapi_export.py::test_openapi_documents_exact_run_cancellation_contract",
-            "tests/test_documentation_contracts.py::test_docs_separate_playground_sdk_native_from_chat_and_responses_projection"
-          ],
-          "ui_scripts": ["verify:message-actions-browser", "verify:playground-cancel"]
-        },
-        {
-          "id": "conversations_surface",
-          "description": "/v1/conversations：create/list/get/delete（会话对象投影自 SDK session，conv_<sid>）+ items（投影自 SDK transcript blocks、owning-agent 解析无静默 fallback、cursor after->offset、not-found 404、保留 metadata 剥离）。",
-          "pytest": [
-            "tests/test_conversations_api.py::test_create_get_list_delete",
-            "tests/test_conversations_api.py::test_active_turn_blocks_both_session_delete_surfaces",
-            "tests/test_conversations_api.py::test_create_strips_reserved_metadata",
-            "tests/test_conversations_api.py::test_create_rejects_unknown_agent_selection_and_extra_fields",
-            "tests/test_conversations_api.py::test_single_api_key_authorizes_all_conversation_operations",
-            "tests/test_conversations_api.py::test_get_unknown_conversation_404",
-            "tests/test_conversations_api.py::test_items_empty_when_no_transcript",
-            "tests/test_conversations_api.py::test_items_ownerless_transcript_is_session_conflict_409",
-            "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
-            "tests/test_conversations_api.py::test_items_project_run_and_trace_context_by_transcript_uuid",
-            "tests/test_conversations_api.py::test_items_cursor_maps_to_offset",
-            "tests/test_conversations_api.py::test_items_missing_owning_agent_404",
-            "tests/test_conversations_api.py::test_items_has_more_when_page_full",
-            "tests/test_session_history.py::test_endpoint_missing_owning_agent_is_session_conflict_409",
-            "tests/test_session_history.py::test_frontend_history_loader_does_not_restart_for_equivalent_session_refreshes"
+            "tests/test_agent_workspace_packages.py",
+            "tests/test_agent_testing.py",
+            "tests/test_agent_governance_publish.py"
           ]
         }
       ]

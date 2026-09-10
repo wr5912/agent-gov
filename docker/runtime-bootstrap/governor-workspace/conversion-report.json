@@ -1,0 +1,106 @@
+{
+  "converter": "agentgov-claude-to-agentscope/v1",
+  "entries": [
+    {
+      "human_confirmation": "not_required",
+      "rule": "permissions_and_hooks_to_platform_policy",
+      "source_path": ".claude/settings.json",
+      "source_sha256": "e153f074abb665871f1cd218580a8ba74224d00ad7110e52c82677bb6436464b",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "agent.yaml",
+          "sha256": "f057ed46a9cf4e908d313b15e10f5c7a36db78ca93a312e9c195e85dd2df2ab1"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "skill_directory_move",
+      "source_path": ".claude/skills/read-business-agent-config/SKILL.md",
+      "source_sha256": "c74200952ef5260583ebc9e3e230d0026ec4bb4883abb83cd5852e4e8c31fcd7",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "skills/read-business-agent-config/SKILL.md",
+          "sha256": "c301749bf4367d58c766616f888596d33ac465e1ea2f27c6a8af34e402268bc3"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "mcp_servers_to_agentscope_configs",
+      "source_path": ".mcp.json",
+      "source_sha256": "d8e397af03b5b032f21d0aa967086f0c78b33c87b76f2e9898ae0a144df7de02",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "agent.yaml",
+          "sha256": "f057ed46a9cf4e908d313b15e10f5c7a36db78ca93a312e9c195e85dd2df2ab1"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "system_prompt_to_agent_md",
+      "source_path": "CLAUDE.md",
+      "source_sha256": "6d6a59e0733ae5363d9b36d15d30d7d5fcd320b6c5a39e4207ba6c9220a122f0",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "AGENT.md",
+          "sha256": "735fceb79759691f25b412d38584e85b8a30cdd45cfc79a9ae7fd98ef71d2f70"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "manifest_v1_to_agentscope_v1",
+      "source_path": "agent.yaml",
+      "source_sha256": "3cab98964f0aa9f839b6c67d07c55926ee24c6fa49aee6520af0ddcc9dace7b4",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "agent.yaml",
+          "sha256": "f057ed46a9cf4e908d313b15e10f5c7a36db78ca93a312e9c195e85dd2df2ab1"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "test_documentation_rewrite",
+      "source_path": "tests/README.md",
+      "source_sha256": "a6b4e7626f7c5cd839981b87e9dcef03e8761668cff82adc80fd5b3e2c7681da",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "tests/README.md",
+          "sha256": "8a0f7782589f8b4834533e3c22314cbe26180576b52471a8b720580623c06f1b"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "legacy_contract_tests_to_agentscope_contract",
+      "source_path": "tests/test_governor_native_config.py",
+      "source_sha256": "dd03327aa645304b6ff13901ed711884d8309e803e78a7514d6c4683f3841465",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "tests/test_governor_agentscope_harness.py",
+          "sha256": "fe099dca5c628fcb78585fb0eb37f77707e42a506c9b6d84b183d66c1337c881"
+        }
+      ]
+    }
+  ],
+  "harness_digest": "5f67670eaa8c6daa9612fc20bd213e29285c71eba4adb035109b5a7ad075cf04",
+  "mapped_count": 7,
+  "output_tree_sha256": "5f5288c1af7af15d6e8a97b62a6f673ac81c3c6a975ea597eb9d057d9ba91ce8",
+  "rejected_count": 0,
+  "retired_count": 0,
+  "schema_version": 1,
+  "source_coverage_percent": 100.0,
+  "source_file_count": 7,
+  "source_root": ".",
+  "source_tree_sha256": "4331f0e7655e3562d0c0981b67b52999171623675e3bcfa61fd36d332bae111b"
+}

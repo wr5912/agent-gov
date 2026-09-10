@@ -16,7 +16,7 @@ from app.runtime.prompts.feedback_prompts import (
 from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 
 
-def test_improvement_optimization_prompt_delegates_wire_format_to_dspy():
+def test_improvement_optimization_prompt_requires_agentscope_json_contract():
     prompt = improvement_optimization_plan_prompt(
         prompt_context={
             "improvement": {"title": "OCSF 时间窗口误判"},
@@ -25,8 +25,8 @@ def test_improvement_optimization_prompt_delegates_wire_format_to_dspy():
     )
 
     assert "improvement_optimization_plan_prompt_context" in prompt
-    assert "不要输出 JSON 代码块" in prompt
-    assert "formatter 会转换为结构化模型" in prompt
+    assert "不要输出 Markdown 或自然语言前后缀" in prompt
+    assert "JSON Schema" in prompt
     assert "summary" in prompt
     assert "changes" in prompt
     assert "risk_level" in prompt
@@ -61,13 +61,13 @@ def test_prompt_context_builders_prune_backend_and_boundary_fields():
             "execution_job_id": "exec-hidden",
             "proposal": {
                 "title": "补充配置读取要求",
-                "recommendation": "修改 CLAUDE.md。",
-                "target_path": "CLAUDE.md",
+                "recommendation": "修改 AGENT.md。",
+                "target_path": "AGENT.md",
                 "actionability": "direct_workspace_change",
             },
-            "target_paths": ["CLAUDE.md"],
+            "target_paths": ["AGENT.md"],
             "target_policy": {"type": "managed", "workspace_root": "/main-workspace"},
-            "target_file_contexts": [{"path": "CLAUDE.md", "exists": True, "content_text": "A" * 30_000}],
+            "target_file_contexts": [{"path": "AGENT.md", "exists": True, "content_text": "A" * 30_000}],
         }
     )
     regression_context = build_regression_test_design_prompt_context(
@@ -97,23 +97,23 @@ def test_prompt_context_builders_prune_backend_and_boundary_fields():
     assert "scope_kind" not in serialized
     assert "scope_id" not in serialized
     assert "tool_misuse" in serialized
-    assert "CLAUDE.md" in serialized
+    assert "AGENT.md" in serialized
     assert "truncated" in serialized
 
 
 def test_target_agent_context_is_preserved_as_locator_not_config_snapshot():
-    workspace_dir = f"/data/business-agents/{ORDINARY_TEST_AGENT_ID}/workspace"
+    workspace_dir = f"/business-agents/{ORDINARY_TEST_AGENT_ID}/workspace"
     target_context = {
         "agent_id": ORDINARY_TEST_AGENT_ID,
         "workspace_dir": workspace_dir,
-        "claude_path": f"{workspace_dir}/CLAUDE.md",
-        "settings_path": f"{workspace_dir}/.claude/settings.json",
-        "mcp_path": f"{workspace_dir}/.mcp.json",
-        "skills_glob": f"{workspace_dir}/.claude/skills/*/SKILL.md",
-        "agents_glob": f"{workspace_dir}/.claude/agents/*.md",
+        "instructions_path": f"{workspace_dir}/AGENT.md",
+        "manifest_path": f"{workspace_dir}/agent.yaml",
+        "mcp_glob": f"{workspace_dir}/mcp/*.json",
+        "skills_glob": f"{workspace_dir}/skills/*/SKILL.md",
+        "subagents_glob": f"{workspace_dir}/subagents/*/agent.yaml",
         "allowed_evidence_roots": [workspace_dir],
-        "forbidden_evidence_roots": ["/governor-workspace"],
-        "CLAUDE.md": "SHOULD_NOT_INLINE_FULL_PROMPT",
+        "forbidden_evidence_roots": ["/runtime-workspaces/"],
+        "AGENT.md": "SHOULD_NOT_INLINE_FULL_PROMPT",
     }
 
     attribution_context = build_attribution_prompt_context(
@@ -130,8 +130,8 @@ def test_target_agent_context_is_preserved_as_locator_not_config_snapshot():
     )
     serialized = json.dumps([attribution_context, optimization_context], ensure_ascii=False)
 
-    assert f"{workspace_dir}/.claude/settings.json" in serialized
-    assert "/governor-workspace" in serialized
+    assert f"{workspace_dir}/agent.yaml" in serialized
+    assert "/runtime-workspaces/" in serialized
     assert "SHOULD_NOT_INLINE_FULL_PROMPT" not in serialized
 
 
@@ -169,7 +169,7 @@ def test_execution_prompt_requires_exact_backend_allowed_target_path():
 def test_only_grounding_stages_invite_workspace_tool_reads():
     attribution = attribution_prompt(prompt_context={"target_agent_context": {"agent_id": ORDINARY_TEST_AGENT_ID}})
     optimization = improvement_optimization_plan_prompt(prompt_context={"target_agent_context": {"agent_id": ORDINARY_TEST_AGENT_ID}})
-    execution = execution_plan_prompt(prompt_context={"target_paths": ["CLAUDE.md"]})
+    execution = execution_plan_prompt(prompt_context={"target_paths": ["AGENT.md"]})
     regression = regression_test_design_prompt(prompt_context={"feedback": {"problem": "冲突证据"}})
 
     assert "read-business-agent-config skill" in attribution
@@ -259,6 +259,6 @@ def test_attribution_and_optimization_prompts_forbid_governor_workspace_as_busin
     optimization = improvement_optimization_plan_prompt()
 
     assert "target_agent_context.workspace_dir" in attribution
-    assert "/governor-workspace 只代表治理 Agent 自身配置" in attribution
+    assert "/runtime-workspaces/ 下的物化目录" in attribution
     assert "target_agent_context.workspace_dir" in optimization
-    assert "/governor-workspace 只代表治理 Agent 自身配置" in optimization
+    assert "/runtime-workspaces/ 下的物化目录" in optimization

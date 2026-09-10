@@ -1,53 +1,3 @@
-x-langfuse-env: &langfuse-env
-  NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:53000}
-  DATABASE_URL: postgresql://${LANGFUSE_POSTGRES_USER:-postgres}:${LANGFUSE_POSTGRES_PASSWORD:-langfuse-postgres}@langfuse-postgres:5432/${LANGFUSE_POSTGRES_DB:-postgres}
-  SALT: ${LANGFUSE_SALT:-change-me-langfuse-salt}
-  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
-  TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-false}
-  LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
-  CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
-  CLICKHOUSE_URL: http://langfuse-clickhouse:8123
-  CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
-  CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse-clickhouse}
-  CLICKHOUSE_CLUSTER_ENABLED: ${LANGFUSE_CLICKHOUSE_CLUSTER_ENABLED:-false}
-  LANGFUSE_USE_AZURE_BLOB: ${LANGFUSE_USE_AZURE_BLOB:-false}
-  LANGFUSE_USE_OCI_NATIVE_OBJECT_STORAGE: ${LANGFUSE_USE_OCI_NATIVE_OBJECT_STORAGE:-false}
-  LANGFUSE_OCI_AUTH_TYPE: ${LANGFUSE_OCI_AUTH_TYPE:-workload_identity}
-  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_BUCKET:-langfuse}
-  LANGFUSE_S3_EVENT_UPLOAD_REGION: ${LANGFUSE_S3_REGION:-auto}
-  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
-  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-langfuse-minio}
-  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
-  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
-  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: ${LANGFUSE_S3_EVENT_UPLOAD_PREFIX:-events/}
-  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_BUCKET:-langfuse}
-  LANGFUSE_S3_MEDIA_UPLOAD_REGION: ${LANGFUSE_S3_REGION:-auto}
-  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
-  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-langfuse-minio}
-  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-http://localhost:59000}
-  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
-  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: ${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-media/}
-  LANGFUSE_S3_BATCH_EXPORT_ENABLED: ${LANGFUSE_S3_BATCH_EXPORT_ENABLED:-false}
-  LANGFUSE_S3_BATCH_EXPORT_BUCKET: ${LANGFUSE_S3_BUCKET:-langfuse}
-  LANGFUSE_S3_BATCH_EXPORT_PREFIX: ${LANGFUSE_S3_BATCH_EXPORT_PREFIX:-exports/}
-  LANGFUSE_S3_BATCH_EXPORT_REGION: ${LANGFUSE_S3_REGION:-auto}
-  LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://langfuse-minio:9000
-  LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT: ${LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT:-http://localhost:59000}
-  LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
-  LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-langfuse-minio}
-  LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
-  LANGFUSE_INGESTION_QUEUE_DELAY_MS: ${LANGFUSE_INGESTION_QUEUE_DELAY_MS:-}
-  LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: ${LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS:-}
-  REDIS_HOST: langfuse-redis
-  REDIS_PORT: 6379
-  REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-langfuse-redis}
-  REDIS_TLS_ENABLED: ${LANGFUSE_REDIS_TLS_ENABLED:-false}
-  REDIS_TLS_CA: ${LANGFUSE_REDIS_TLS_CA:-/certs/ca.crt}
-  REDIS_TLS_CERT: ${LANGFUSE_REDIS_TLS_CERT:-/certs/redis.crt}
-  REDIS_TLS_KEY: ${LANGFUSE_REDIS_TLS_KEY:-/certs/redis.key}
-  EMAIL_FROM_ADDRESS: ${LANGFUSE_EMAIL_FROM_ADDRESS:-}
-  SMTP_CONNECTION_URL: ${LANGFUSE_SMTP_CONNECTION_URL:-}
-
 # 默认日志轮转：每容器日志上限 max-file × max-size，防止任一服务（尤其 Langfuse）日志撑满磁盘；
 # 显式写在 compose 内，不依赖宿主机 /etc/docker/daemon.json，保证 agent-gov 部署自洽可移植。
 x-logging: &default-logging
@@ -68,31 +18,99 @@ x-runtime-bootstrap: &runtime-bootstrap
     create_host_path: false
 
 services:
-  agent-gov-litellm-sidecar:
+  agentscope-runtime:
     build:
       context: ..
-      dockerfile: docker/litellm-sidecar.Dockerfile
+      dockerfile: docker/agentscope-runtime.Dockerfile
       args:
+        AGENT_GOV_RUNTIME_UID: ${AGENT_GOV_RUNTIME_UID:-1000}
+        AGENT_GOV_RUNTIME_GID: ${AGENT_GOV_RUNTIME_GID:-1000}
         AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
-    image: agent-gov-litellm-sidecar:${APP_VERSION:-dev}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-litellm-sidecar
+    image: agent-gov-agentscope-runtime:${APP_VERSION:-dev}
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-agentscope-runtime
+    init: true
+    user: "${AGENT_GOV_RUNTIME_UID:-1000}:${AGENT_GOV_RUNTIME_GID:-1000}"
     labels: *acceptance-labels
+    expose:
+      - "8090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      MODEL_PROVIDER_BACKEND: ${MODEL_PROVIDER_BACKEND:-vllm}
-      MODEL_PROVIDER_API_KEY: ${MODEL_PROVIDER_API_KEY:-}
+      AGENTGOV_INTERNAL_API_BASE_URL: http://agent-gov-api:8080
+      AGENTGOV_RUNTIME_SHARED_SECRET: ${AGENTGOV_RUNTIME_SHARED_SECRET:?runtime shared secret required}
+      MODEL_PROVIDER_API_KEY: ${MODEL_PROVIDER_API_KEY:?runtime model provider api key required}
       MODEL_PROVIDER_API_URL: ${MODEL_PROVIDER_API_URL:-}
-      AGENT_MODEL: ${AGENT_MODEL:-agent-gov-model}
-      LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
-      # sidecar 只承担 Compose 内网推理协议转换，不开放 LiteLLM 管理面，也不要求用户维护代理 master key。
-      DISABLE_ADMIN_UI: "True"
-      NO_DOCS: "True"
-      NO_REDOC: "True"
+      AGENTSCOPE_MODEL_TYPE: ${AGENTSCOPE_MODEL_TYPE:-openai_credential}
+      AGENTSCOPE_CREDENTIAL_TYPE: ${AGENTSCOPE_CREDENTIAL_TYPE:-openai_credential}
+      AGENTSCOPE_CREDENTIAL_ID: ${AGENTSCOPE_CREDENTIAL_ID:-agentgov-runtime-provider}
+      AGENTGOV_RUNTIME_VERSION: ${APP_VERSION:-dev}
+      AGENTSCOPE_MODEL_NAME: ${AGENTSCOPE_MODEL_NAME:-agent-gov-model}
+      AGENTSCOPE_MODEL_PARAMETERS: '${AGENTSCOPE_MODEL_PARAMETERS_JSON:-{}}'
+      AGENTSCOPE_RUNTIME_HOST: 0.0.0.0
+      AGENTSCOPE_RUNTIME_PORT: "8090"
+      AGENTSCOPE_RUNTIME_DATA_DIR: /runtime-data
+      AGENTSCOPE_RUNTIME_BUSINESS_AGENTS_ROOT: /business-agents
+      AGENTSCOPE_RUNTIME_CANDIDATES_ROOT: /candidate-workspaces
+      AGENTSCOPE_RUNTIME_WORKSPACES_ROOT: /runtime-workspaces
+      AGENTSCOPE_RUNTIME_DATABASE_URL: sqlite+aiosqlite:////runtime-data/agentscope.db
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      AGENTGOV_OTEL_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      AGENTGOV_OTEL_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      AGENTGOV_OTEL_BASE_URL: ${LANGFUSE_BASE_URL:-http://langfuse-web:3000}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-agent-gov-agentscope-runtime}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://host.docker.internal:58001/mcp}
+      SEC_OPS_MCP_URL: ${SEC_OPS_MCP_URL:-http://host.docker.internal:58001/mcp}
+      # MCP 凭据按所绑定 Harness 的 credential_refs 校验，不能阻断不使用该 MCP 的 Agent。
+      SEC_OPS_MCP_TOKEN: ${SEC_OPS_MCP_TOKEN:-}
+    volumes:
+      - type: bind
+        source: ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}/business-agents
+        target: /business-agents
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_AGENTSCOPE_RUNTIME_CANDIDATES_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/agentscope-runtime/candidates}
+        target: /candidate-workspaces
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_AGENTSCOPE_RUNTIME_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/agentscope-runtime/data}
+        target: /runtime-data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_AGENTSCOPE_RUNTIME_WORKSPACES_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/agentscope-runtime/workspaces}
+        target: /runtime-workspaces
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python", "-m", "agentscope_runtime.healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    cap_drop: ["ALL"]
+    # Bubblewrap 在非特权容器中需要解除 Docker 默认 seccomp/AppArmor/system-path
+    # 限制；仍保持 UID 1000、cap_drop ALL、no-new-privileges，禁止 privileged/SYS_ADMIN。
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=unconfined
+      - apparmor=unconfined
+      - systempaths=unconfined
+    deploy:
+      replicas: 1
     restart: unless-stopped
     logging: *default-logging
 
-  claude-agent-api:
+  agent-gov-api:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -102,20 +120,35 @@ services:
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-api
     labels: *acceptance-labels
     ports:
-      - "${HOST_PORT:-58080}:${API_PORT:-8080}"
+      # 单租户 operator 控制面默认仅绑定 loopback；远程部署入口会对显式外部绑定做独立 opt-in 校验。
+      - "${API_BIND_IP:-127.0.0.1}:${HOST_PORT:-50400}:${API_PORT:-8080}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    env_file:
-      - ${AGENT_GOV_COMPOSE_ENV_FILE:-.env}
     environment:
       API_HOST: ${API_HOST:-0.0.0.0}
       API_PORT: ${API_PORT:-8080}
-      HOST_PORT: ${HOST_PORT:-58080}
+      API_KEY: ${API_KEY:?API key required}
+      AGENTGOV_API_MODE: ${AGENTGOV_API_MODE:-open}
+      AGENTGOV_ACCEPTANCE_IDENTITY: ${AGENTGOV_ACCEPTANCE_IDENTITY:-}
+      AGENTGOV_ACCEPTANCE_API_KEY: ${AGENTGOV_ACCEPTANCE_API_KEY:-}
+      AGENTGOV_API_GATE_STATE_FILE: ${AGENTGOV_API_GATE_STATE_FILE:-}
+      HOST_PORT: ${HOST_PORT:-50400}
       RUNTIME_CONTAINER: "1"
       HOST_RUNTIME_VOLUME_ROOT: ${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}
       HOST_DATA_MOUNT: ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}
       HOST_GOVERNOR_WORKSPACE_MOUNT: ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}
-      HOST_GOVERNOR_CLAUDE_ROOT_MOUNT: ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}
+      AGENTSCOPE_RUNTIME_URL: http://agentscope-runtime:8090
+      AGENTGOV_RUNTIME_SHARED_SECRET: ${AGENTGOV_RUNTIME_SHARED_SECRET:?runtime shared secret required}
+      AGENTSCOPE_MODEL_TYPE: ${AGENTSCOPE_MODEL_TYPE:-openai_credential}
+      AGENTSCOPE_CREDENTIAL_TYPE: ${AGENTSCOPE_CREDENTIAL_TYPE:-openai_credential}
+      AGENTSCOPE_CREDENTIAL_ID: ${AGENTSCOPE_CREDENTIAL_ID:-agentgov-runtime-provider}
+      AGENTSCOPE_MODEL_NAME: ${AGENTSCOPE_MODEL_NAME:-agent-gov-model}
+      AGENTSCOPE_MODEL_PARAMETERS_JSON: '${AGENTSCOPE_MODEL_PARAMETERS_JSON:-{}}'
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-http://langfuse-web:3000}
+      RUNTIME_CANDIDATES_DIR: /candidate-workspaces
       AGENT_GIT_SERVICE_PROVIDER: ${AGENT_GIT_SERVICE_PROVIDER:-local}
       AGENT_GIT_SERVICE_URL: ${AGENT_GIT_SERVICE_URL:-}
       AGENT_GIT_SERVICE_PUBLIC_URL: ${AGENT_GIT_SERVICE_PUBLIC_URL:-}
@@ -124,35 +157,29 @@ services:
       AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/business-agents/security-operations-expert/version/releases}
       GOVERNOR_WORKSPACE_DIR: ${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       DATA_DIR: ${DATA_DIR:-/data}
-      GOVERNOR_CLAUDE_ROOT: ${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
-      MODEL_PROVIDER_BACKEND: ${MODEL_PROVIDER_BACKEND:-anthropic_compatible}
-      MODEL_PROVIDER_API_KEY: ${MODEL_PROVIDER_API_KEY:-}
-      MODEL_PROVIDER_API_URL: ${MODEL_PROVIDER_API_URL:-}
-      MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD: ${MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD:-0.23.0}
-      MODEL_PROVIDER_VLLM_ALLOW_DIRECT: ${MODEL_PROVIDER_VLLM_ALLOW_DIRECT:-false}
-      MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS: ${MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS:-30}
-      MODEL_PROVIDER_WARNING_TTL_SECONDS: ${MODEL_PROVIDER_WARNING_TTL_SECONDS:-300}
       GOVERNANCE_AGENT_TIMEOUT_SECONDS: ${GOVERNANCE_AGENT_TIMEOUT_SECONDS:-300}
       AGENT_TEST_RUN_TIMEOUT_SECONDS: ${AGENT_TEST_RUN_TIMEOUT_SECONDS:-1800}
-      HITL_TIMEOUT_SECONDS: ${HITL_TIMEOUT_SECONDS:-300}
-      ENABLE_AGENT_RUNTIME_RAW_EVENTS: ${ENABLE_AGENT_RUNTIME_RAW_EVENTS:-false}
-      AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES: ${AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES:-67108864}
-      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://host.docker.internal:58001/mcp}
-      SEC_OPS_MCP_URL: ${SEC_OPS_MCP_URL:-http://host.docker.internal:58001/mcp}
-      CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
       NO_PROXY: ${NO_PROXY:-}
       no_proxy: ${no_proxy:-}
-      LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
       PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
       PIP_TRUSTED_HOST: mirrors.aliyun.com
       UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
       UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
-      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
       - *runtime-bootstrap
       - ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}:${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
-      - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
+      - type: bind
+        source: ${HOST_AGENTSCOPE_RUNTIME_CANDIDATES_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/agentscope-runtime/candidates}
+        target: /candidate-workspaces
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AGENTGOV_API_GATE_STATE_DIR_HOST:-./api-gate}
+        target: /run/agentgov/api-gate
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "http://127.0.0.1:${API_PORT:-8080}/health/live"]
       interval: 5s
@@ -160,11 +187,12 @@ services:
       retries: 12
       start_period: 20s
     depends_on:
-      - agent-gov-litellm-sidecar
+      agentscope-runtime:
+        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
 
-  claude-agent-ui:
+  agent-gov-ui:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
@@ -174,188 +202,20 @@ services:
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-ui
     labels: *acceptance-labels
     ports:
-      - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-55173}:${FRONTEND_PORT:-5173}"
-    env_file:
-      - ${AGENT_GOV_COMPOSE_ENV_FILE:-.env}
+      # UI 内含 operator API token，不是多用户认证边界；默认仅允许宿主机访问。
+      - "${FRONTEND_BIND_IP:-127.0.0.1}:${FRONTEND_HOST_PORT:-50401}:${FRONTEND_PORT:-5173}"
     environment:
       FRONTEND_PORT: ${FRONTEND_PORT:-5173}
-      VITE_RUNTIME_API_BASE: ${FRONTEND_RUNTIME_API_BASE:-http://localhost:58080}
+      VITE_RUNTIME_API_BASE: ${FRONTEND_RUNTIME_API_BASE:-http://localhost:${HOST_PORT:-50400}}
       VITE_RUNTIME_API_KEY: ${FRONTEND_RUNTIME_API_KEY:-${API_KEY:-}}
-      VITE_LANGFUSE_URL: ${FRONTEND_LANGFUSE_URL:-${LANGFUSE_NEXTAUTH_URL:-http://localhost:53000}}
+      VITE_LANGFUSE_URL: ${FRONTEND_LANGFUSE_URL:-${LANGFUSE_NEXTAUTH_URL:-http://localhost:${LANGFUSE_HOST_PORT:-50402}}}
+      VITE_LANGFUSE_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-agent-gov}
       VITE_GOVERNANCE_AGENT_TIMEOUT_SECONDS: ${GOVERNANCE_AGENT_TIMEOUT_SECONDS:-300}
-      VITE_DEV_PROXY_TARGET: http://claude-agent-api:${API_PORT:-8080}
+      VITE_DEV_PROXY_TARGET: http://agent-gov-api:${API_PORT:-8080}
       COREPACK_NPM_REGISTRY: https://registry.npmmirror.com
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     depends_on:
-      claude-agent-api:
+      agent-gov-api:
         condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
-
-  langfuse-volume-init:
-    profiles: ["langfuse-maintenance"]
-    image: ${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17}
-    user: "0:0"
-    network_mode: "none"
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        for path in \
-          /langfuse/postgres \
-          /langfuse/clickhouse-data \
-          /langfuse/clickhouse-logs \
-          /langfuse/redis \
-          /langfuse/minio
-        do
-          mkdir -p "$$path"
-          chmod -R a+rwX "$$path"
-        done
-    volumes:
-      - ${LANGFUSE_POSTGRES_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/postgres}:/langfuse/postgres
-      - ${LANGFUSE_CLICKHOUSE_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/clickhouse/data}:/langfuse/clickhouse-data
-      - ${LANGFUSE_CLICKHOUSE_LOGS_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/clickhouse/logs}:/langfuse/clickhouse-logs
-      - ${LANGFUSE_REDIS_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/redis}:/langfuse/redis
-      - ${LANGFUSE_MINIO_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/minio}:/langfuse/minio
-
-  langfuse-worker:
-    profiles: ["langfuse"]
-    image: ${LANGFUSE_WORKER_IMAGE:-docker.io/langfuse/langfuse-worker:3}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-worker
-    labels: *acceptance-labels
-    restart: unless-stopped
-    logging: *default-logging
-    depends_on:
-      langfuse-postgres:
-        condition: service_healthy
-      langfuse-minio:
-        condition: service_healthy
-      langfuse-redis:
-        condition: service_healthy
-      langfuse-clickhouse:
-        condition: service_healthy
-    environment:
-      <<: *langfuse-env
-
-  langfuse-web:
-    profiles: ["langfuse"]
-    image: ${LANGFUSE_WEB_IMAGE:-docker.io/langfuse/langfuse:3}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-web
-    labels: *acceptance-labels
-    restart: unless-stopped
-    logging: *default-logging
-    depends_on:
-      langfuse-postgres:
-        condition: service_healthy
-      langfuse-minio:
-        condition: service_healthy
-      langfuse-redis:
-        condition: service_healthy
-      langfuse-clickhouse:
-        condition: service_healthy
-    ports:
-      # 默认绑定 0.0.0.0，使远端用户可访问 Langfuse 监测界面；仅限本机时设 LANGFUSE_BIND_IP=127.0.0.1。
-      # 暴露到网络时务必在私有 docker/.env 设置强 LANGFUSE_SALT/凭据，并把 LANGFUSE_NEXTAUTH_URL 指向宿主机外部地址。
-      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_HOST_PORT:-53000}:3000"
-    environment:
-      <<: *langfuse-env
-      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-nextauth-secret}
-      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
-      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
-      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
-      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
-      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
-      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
-      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
-
-  langfuse-clickhouse:
-    profiles: ["langfuse"]
-    image: ${LANGFUSE_CLICKHOUSE_IMAGE:-docker.io/clickhouse/clickhouse-server:24.3}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-clickhouse
-    labels: *acceptance-labels
-    restart: unless-stopped
-    logging: *default-logging
-    user: "101:101"
-    environment:
-      CLICKHOUSE_DB: ${LANGFUSE_CLICKHOUSE_DB:-default}
-      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
-      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse-clickhouse}
-    volumes:
-      - ${LANGFUSE_CLICKHOUSE_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/clickhouse/data}:/var/lib/clickhouse
-      - ${LANGFUSE_CLICKHOUSE_LOGS_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/clickhouse/logs}:/var/log/clickhouse-server
-    healthcheck:
-      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 1s
-
-  langfuse-minio:
-    profiles: ["langfuse"]
-    image: ${LANGFUSE_MINIO_IMAGE:-cgr.dev/chainguard/minio}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-minio
-    labels: *acceptance-labels
-    restart: unless-stopped
-    logging: *default-logging
-    entrypoint: sh
-    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
-    environment:
-      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:-minio}
-      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:-langfuse-minio}
-      HOME: ${LANGFUSE_MINIO_HOME:-/data}
-    ports:
-      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_MINIO_HOST_PORT:-59000}:9000"
-      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_MINIO_CONSOLE_HOST_PORT:-59001}:9001"
-    volumes:
-      - ${LANGFUSE_MINIO_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/minio}:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 1s
-      timeout: 5s
-      retries: 5
-      start_period: 1s
-
-  langfuse-redis:
-    profiles: ["langfuse"]
-    image: ${LANGFUSE_REDIS_IMAGE:-docker.io/redis:7}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-redis
-    labels: *acceptance-labels
-    restart: unless-stopped
-    logging: *default-logging
-    command:
-      - redis-server
-      - --requirepass
-      - ${LANGFUSE_REDIS_AUTH:-langfuse-redis}
-      - --maxmemory-policy
-      - noeviction
-    environment:
-      REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-langfuse-redis}
-    volumes:
-      - ${LANGFUSE_REDIS_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/redis}:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_AUTH\" ping | grep PONG"]
-      interval: 3s
-      timeout: 10s
-      retries: 10
-
-  langfuse-postgres:
-    profiles: ["langfuse"]
-    image: ${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-postgres
-    labels: *acceptance-labels
-    restart: unless-stopped
-    logging: *default-logging
-    environment:
-      POSTGRES_USER: ${LANGFUSE_POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:-langfuse-postgres}
-      POSTGRES_DB: ${LANGFUSE_POSTGRES_DB:-postgres}
-      TZ: UTC
-      PGTZ: UTC
-    volumes:
-      - ${LANGFUSE_POSTGRES_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/postgres}:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
-      interval: 3s
-      timeout: 3s
-      retries: 10

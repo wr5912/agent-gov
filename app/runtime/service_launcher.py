@@ -1,88 +1,20 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import subprocess
-import sys
 from collections.abc import Sequence
-from pathlib import Path
 
 import uvicorn
-from scripts.bootstrap_runtime_volume import load_runtime_env
 
-from app.runtime.advisory_lock import AdvisoryLockBusy, AdvisoryLockError, advisory_lock
-from app.runtime.managed_agent_policy import ManagedAgentPolicyError, default_runtime_bootstrap_dir
-from app.runtime.runtime_coordination import (
-    RuntimeContractStatus,
-    RuntimeCoordinationError,
-    RuntimeCoordinationPaths,
-    prepare_runtime_contract,
-    runtime_contract_status,
-)
-from app.runtime.runtime_initialization import RuntimeInitializationError
 from app.runtime.settings import AppSettings, get_settings
-
-REQUIRED_FULL_STACK_RESTART_EXIT = 75
-API_SINGLETON_EXIT = 73
-
-
-def _selected_env(settings: AppSettings) -> dict[str, str]:
-    env_file = settings.settings_env_file
-    return dict(load_runtime_env(env_file)) if env_file is not None else dict(os.environ)
-
-
-def _status_payload(status: RuntimeContractStatus) -> dict[str, object]:
-    return {
-        "valid": status.valid,
-        "reason": status.reason,
-        "desired_digest": status.desired_digest,
-        "workspace_validation_digest": status.workspace_validation_digest,
-        "receipt_present": status.receipt is not None,
-    }
-
-
-def _check_status(settings: AppSettings, bootstrap_dir: Path, env: dict[str, str]) -> RuntimeContractStatus:
-    return runtime_contract_status(settings=settings, bootstrap_dir=bootstrap_dir, env=env)
-
-
-def _prepare_under_exclusive_lock(settings: AppSettings, bootstrap_dir: Path, env: dict[str, str]) -> None:
-    paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
-    try:
-        with advisory_lock(paths.phase_lock, mode="exclusive", blocking=False) as lease:
-            status = _check_status(settings, bootstrap_dir, env)
-            if not status.valid:
-                prepare_runtime_contract(
-                    settings=settings,
-                    bootstrap_dir=bootstrap_dir,
-                    env=env,
-                    lease=lease,
-                )
-    except AdvisoryLockBusy as exc:
-        raise RuntimeCoordinationError("REQUIRED_FULL_STACK_RESTART: active runtime lease holder") from exc
-
-
-def _run_api(settings: AppSettings, bootstrap_dir: Path, env: dict[str, str]) -> int:
-    paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
-    paths.root.mkdir(parents=True, exist_ok=True)
-    try:
-        with advisory_lock(paths.api_singleton_lock, mode="exclusive", blocking=False):
-            with advisory_lock(paths.phase_lock, mode="shared"):
-                status = _check_status(settings, bootstrap_dir, env)
-                if status.valid:
-                    return _serve_api(settings)
-            _prepare_under_exclusive_lock(settings, bootstrap_dir, env)
-            with advisory_lock(paths.phase_lock, mode="shared"):
-                status = _check_status(settings, bootstrap_dir, env)
-                if not status.valid:
-                    raise RuntimeCoordinationError(f"Runtime contract remains invalid after preparation: {status.reason}")
-                return _serve_api(settings)
-    except AdvisoryLockBusy:
-        print("API_SINGLETON_CONFLICT: another API process owns this runtime volume", file=sys.stderr, flush=True)
-        return API_SINGLETON_EXIT
 
 
 def _serve_api(settings: AppSettings) -> int:
+    """启动唯一的 AgentGov API 进程。
+
+    AgentScope Runtime 是独立容器，由 Compose 负责生命周期和 readiness；控制面
+    不再准备、校验或启动第二套 Agent Runtime。
+    """
+
     uvicorn.run(
         "app.main:app",
         host=settings.api_host,
@@ -92,69 +24,15 @@ def _serve_api(settings: AppSettings) -> int:
     return 0
 
 
-def _prepare(settings: AppSettings, bootstrap_dir: Path, env: dict[str, str]) -> int:
-    paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
-    paths.root.mkdir(parents=True, exist_ok=True)
-    with advisory_lock(paths.phase_lock, mode="shared"):
-        status = _check_status(settings, bootstrap_dir, env)
-    if status.valid:
-        print(json.dumps(_status_payload(status), ensure_ascii=False, indent=2, sort_keys=True))
-        return 0
-    _prepare_under_exclusive_lock(settings, bootstrap_dir, env)
-    status = _check_status(settings, bootstrap_dir, env)
-    print(json.dumps(_status_payload(status), ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if status.valid else 1
-
-
-def _validate(settings: AppSettings, bootstrap_dir: Path, env: dict[str, str]) -> int:
-    paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
-    if not paths.root.is_dir():
-        status = _check_status(settings, bootstrap_dir, env)
-    else:
-        with advisory_lock(paths.phase_lock, mode="shared"):
-            status = _check_status(settings, bootstrap_dir, env)
-    print(json.dumps(_status_payload(status), ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if status.valid else 1
-
-
-def _run_tool(settings: AppSettings, bootstrap_dir: Path, env: dict[str, str], command: Sequence[str]) -> int:
-    if not command:
-        raise RuntimeCoordinationError("run-tool requires a command")
-    paths = RuntimeCoordinationPaths.from_data_dir(settings.data_dir)
-    with advisory_lock(paths.phase_lock, mode="shared"):
-        status = _check_status(settings, bootstrap_dir, env)
-        if not status.valid:
-            raise RuntimeCoordinationError(f"run-tool runtime contract is invalid: {status.reason}")
-        return subprocess.run(list(command), check=False).returncode
-
-
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="AgentGov runtime service launcher and maintenance gate.")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("api")
-    subparsers.add_parser("prepare")
-    subparsers.add_parser("validate")
-    tool = subparsers.add_parser("run-tool")
-    tool.add_argument("tool_command", nargs=argparse.REMAINDER)
+    parser = argparse.ArgumentParser(description="Start the AgentGov control-plane API backed by AgentScope Runtime.")
+    parser.add_argument("command", choices=("api",), help="Only the AgentGov API is hosted by this image.")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    settings = get_settings()
-    bootstrap_dir = default_runtime_bootstrap_dir()
-    env = _selected_env(settings)
-    try:
-        if args.command == "api":
-            return _run_api(settings, bootstrap_dir, env)
-        if args.command == "prepare":
-            return _prepare(settings, bootstrap_dir, env)
-        if args.command == "validate":
-            return _validate(settings, bootstrap_dir, env)
-        return _run_tool(settings, bootstrap_dir, env, args.tool_command)
-    except (AdvisoryLockError, ManagedAgentPolicyError, RuntimeCoordinationError, RuntimeInitializationError) as exc:
-        print(str(exc), file=sys.stderr, flush=True)
-        return REQUIRED_FULL_STACK_RESTART_EXIT if "REQUIRED_FULL_STACK_RESTART" in str(exc) else 1
+    build_parser().parse_args(argv)
+    return _serve_api(get_settings())
 
 
 if __name__ == "__main__":

@@ -4,7 +4,11 @@
 
 ## agentgov-integration/
 
-面向用 Claude Code / Codex 或其他开发 Agent 开发的上层业务系统：把 `agentgov-integration/SKILL.md` 复制到你们项目的 `.claude/skills/agentgov-integration/SKILL.md`（或 Codex 对应 `.codex/skills/...`），集成方的开发 Agent 即可掌握 SDK-native 运行事实源、过渡 Responses 边界、Conversations、唯一 Web HITL 决策路径与治理硬边界。
+面向用 Claude Code、Codex 或其他开发 Agent 开发的上层业务系统：把
+`agentgov-integration/SKILL.md` 复制到你们项目的 `.claude/skills/agentgov-integration/SKILL.md`
+（或 Codex 对应 `.codex/skills/...`）。集成方的开发 Agent 将按 AgentScope 原生事件与 canonical
+messages 使用 `/api/runtime/*`，并用 AgentGov `run_id` 完成取消、反馈、审计和 OTel trace 查询；
+浏览器和外部系统不直连 Runtime 管理面。
 
 ## 单一真相源
 

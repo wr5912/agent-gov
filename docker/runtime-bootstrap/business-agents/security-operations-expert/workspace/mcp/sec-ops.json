@@ -1,0 +1,37 @@
+{
+  "credential_refs": [
+    {
+      "env": "SEC_OPS_MCP_URL",
+      "path": "mcp_config.url"
+    }
+  ],
+  "mcp_config": {
+    "timeout": 30.0,
+    "type": "http_mcp",
+    "url": "${SEC_OPS_MCP_URL}"
+  },
+  "enable_tools": [
+    "response_orchestration_agent_tools__get_case_revision_context_api_v1_agent_tools_cases_case_id_context_get",
+    "response_orchestration_agent_tools__request_case_revision_api_v1_agent_tools_cases_case_id_revisions_post",
+    "soc_api__dashboard_summary_api_v1_dashboard_summary_get",
+    "soc_api__get_resp_playbooks_recommend",
+    "soc_api__list_alerts_api_v1_alerts_get",
+    "soc_api__list_assets_api_v1_assets_get",
+    "soc_api__list_detection_findings_api_external_detection_findings_get",
+    "soc_api__list_events_api_v1_events_get",
+    "soc_api__list_incidents_api_v1_incidents_get",
+    "soc_api__list_indicators_api_v1_indicators_get",
+    "soc_api__list_vulnerabilities_api_v1_vulnerabilities_get"
+  ],
+  "enable_resources": [
+    "openapi://soc_api/resp/action-defs",
+    "openapi://soc_api/resp/playbooks",
+    "openapi://soc_api/resp/plugins"
+  ],
+  "enable_resource_templates": [
+    "openapi://soc_api/api/external/detection-findings/{finding_id}/analysis-result",
+    "openapi://soc_api/resp/playbooks/{playbook_id}"
+  ],
+  "name": "sec-ops",
+  "schema_version": 1
+}

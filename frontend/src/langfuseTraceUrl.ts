@@ -21,7 +21,8 @@ function tracePathFromUrl(value: string): string {
 }
 
 function tracePathFromId(traceId: string): string {
-  return traceId ? `/project/${DEFAULT_LANGFUSE_PROJECT}/traces/${encodeURIComponent(traceId)}` : "";
+  const projectId = clean(import.meta.env.VITE_LANGFUSE_PROJECT_ID) || DEFAULT_LANGFUSE_PROJECT;
+  return traceId ? `/project/${encodeURIComponent(projectId)}/traces/${encodeURIComponent(traceId)}` : "";
 }
 
 export function concreteLangfuseTraceUrl({

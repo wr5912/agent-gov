@@ -127,11 +127,11 @@ def _target_agent_context_summary(source: JsonObject) -> JsonObject:
         {
             "agent_id": _text(source.get("agent_id"), 200),
             "workspace_dir": _text(source.get("workspace_dir"), 500),
-            "claude_path": _text(source.get("claude_path"), 500),
-            "settings_path": _text(source.get("settings_path"), 500),
-            "mcp_path": _text(source.get("mcp_path"), 500),
+            "instructions_path": _text(source.get("instructions_path"), 500),
+            "manifest_path": _text(source.get("manifest_path"), 500),
+            "mcp_glob": _text(source.get("mcp_glob"), 500),
             "skills_glob": _text(source.get("skills_glob"), 500),
-            "agents_glob": _text(source.get("agents_glob"), 500),
+            "subagents_glob": _text(source.get("subagents_glob"), 500),
             "allowed_evidence_roots": _limited_text_list(source.get("allowed_evidence_roots"), MAX_PROMPT_LIST_ITEMS),
             "forbidden_evidence_roots": _limited_text_list(source.get("forbidden_evidence_roots"), MAX_PROMPT_LIST_ITEMS),
         }

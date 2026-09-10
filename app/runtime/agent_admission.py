@@ -6,25 +6,18 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TypeVar
 
-from sqlalchemy import exists, or_, select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.runtime.runtime_db import (
     AgentAdmissionStateModel,
-    SessionRecordModel,
-    SessionTurnIntentModel,
+    AgentRunModel,
     utc_now,
-)
-from app.runtime.sdk_session_store import (
-    clear_inactive_sdk_sessions_for_agent_in_transaction,
 )
 
 _T = TypeVar("_T")
-_WORKSPACE_MAPPING_INVALIDATION_KINDS = {
-    "workspace_import",
-    "workspace_restore",
-}
+_ACTIVE_RUN_STATUSES = ("queued", "running", "waiting_human", "waiting_external", "finalizing")
 
 
 class AgentAdmissionError(RuntimeError):
@@ -99,14 +92,13 @@ def acquire_maintenance(
             agent_id=agent_id,
             now=current,
         )
-        _clear_expired_runs(db, agent_id=agent_id, now=current)
         if state.maintenance_token:
             raise AgentMaintenanceActiveError(f"Agent {agent_id} maintenance {state.maintenance_kind or 'operation'} is already in progress")
         active_run = db.scalar(
-            select(SessionRecordModel.active_run_id)
+            select(AgentRunModel.run_id)
             .where(
-                SessionRecordModel.agent_id == agent_id,
-                SessionRecordModel.active_run_id.is_not(None),
+                AgentRunModel.agent_id == agent_id,
+                AgentRunModel.status.in_(_ACTIVE_RUN_STATUSES),
             )
             .limit(1)
         )
@@ -288,15 +280,6 @@ def _clear_expired_maintenance(
 ) -> None:
     if not state.maintenance_token or not state.maintenance_expires_at or state.maintenance_expires_at > now:
         return
-    if state.maintenance_kind in _WORKSPACE_MAPPING_INVALIDATION_KINDS:
-        # Expiry cannot reveal whether a crashed worker crossed the Git activation
-        # boundary. A fresh SDK session is the conservative recovery for both
-        # pre-merge and post-merge crashes.
-        clear_inactive_sdk_sessions_for_agent_in_transaction(
-            db,
-            agent_id=agent_id,
-            now=now,
-        )
     state.maintenance_token = None
     state.maintenance_kind = None
     state.maintenance_owner_id = None
@@ -318,29 +301,3 @@ def _require_active_maintenance_claim(
         or state.maintenance_expires_at <= now
     ):
         raise AgentMaintenanceClaimLost(f"Agent {claim.agent_id} maintenance claim was lost or expired before side effect")
-
-
-def _clear_expired_runs(db: Session, *, agent_id: str, now: str) -> None:
-    running_intent = exists(
-        select(SessionTurnIntentModel.run_id).where(
-            SessionTurnIntentModel.run_id == SessionRecordModel.active_run_id,
-            SessionTurnIntentModel.session_id == SessionRecordModel.session_id,
-            SessionTurnIntentModel.status == "running",
-        )
-    )
-    db.execute(
-        update(SessionRecordModel)
-        .where(
-            SessionRecordModel.agent_id == agent_id,
-            SessionRecordModel.active_run_id.is_not(None),
-            SessionRecordModel.active_run_expires_at.is_not(None),
-            SessionRecordModel.active_run_expires_at <= now,
-            ~running_intent,
-        )
-        .values(
-            active_run_id=None,
-            active_run_expires_at=None,
-            active_run_generation=0,
-            updated_at=now,
-        )
-    )

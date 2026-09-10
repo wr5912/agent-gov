@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from app.runtime.errors import RuntimeUnavailableError
+from app.runtime.errors import ConflictError, RuntimeUnavailableError
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.services.improvement_governor_service import ImprovementGovernorService
@@ -51,6 +51,45 @@ def _service(tmp_path: Path, run_profile_json, find_run_by_id=None) -> tuple[Imp
         find_run_by_id=find_run_by_id,
     )
     return svc, content
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        None,
+        {"run_id": "run-1", "status": "running", "trace_status": "pending", "trace_id": "1" * 32},
+        {"run_id": "run-1", "status": "succeeded", "trace_status": "pending", "trace_id": "1" * 32},
+        {"run_id": "run-1", "status": "succeeded", "trace_status": "complete", "trace_id": None},
+    ],
+)
+def test_automatic_improvement_rejects_missing_nonterminal_or_incomplete_run_evidence(tmp_path: Path, run) -> None:
+    async def should_not_run(**_kwargs):
+        raise AssertionError("governor must not run without complete source evidence")
+
+    svc, _ = _service(tmp_path, should_not_run, find_run_by_id=lambda _run_id: run)
+
+    with pytest.raises(ConflictError, match="Automatic improvement"):
+        asyncio.run(svc.generate_attribution("imp-1"))
+
+
+def test_automatic_improvement_accepts_terminal_run_with_complete_trace(tmp_path: Path) -> None:
+    async def fake_run(**_kwargs):
+        return {
+            "rationale": "完整 Trace 证明时间窗口不一致。",
+            "confidence": "high",
+            "responsibility_boundary": {"owner": "external_mcp_service", "reason": "数据质量"},
+            "evidence_refs": [{"type": "trace", "id": "run-1", "reason": "完整轨迹"}],
+        }
+
+    source_run = {
+        "run_id": "run-1",
+        "status": "succeeded",
+        "trace_status": "complete",
+        "trace_id": "1" * 32,
+    }
+    svc, _ = _service(tmp_path, fake_run, find_run_by_id=lambda _run_id: source_run)
+
+    assert asyncio.run(svc.generate_attribution("imp-1")).generated_by == "governor"
 
 
 def test_attribution_governor_path_maps_agent_owned_fields(tmp_path: Path) -> None:
@@ -111,16 +150,16 @@ def test_attribution_job_input_contains_target_agent_locator(tmp_path: Path) -> 
     target_context = seen["target_agent_context"]
     assert isinstance(target_context, dict)
     assert target_context["agent_id"] == "soc-ops"
-    assert target_context["workspace_dir"] == "/data/business-agents/soc-ops/workspace"
-    assert target_context["settings_path"] == "/data/business-agents/soc-ops/workspace/.claude/settings.json"
-    assert "/governor-workspace" in target_context["forbidden_evidence_roots"]
+    assert target_context["workspace_dir"] == "/business-agents/soc-ops/workspace"
+    assert target_context["manifest_path"] == "/business-agents/soc-ops/workspace/agent.yaml"
+    assert "/runtime-workspaces/" in target_context["forbidden_evidence_roots"]
 
 
 def test_attribution_rejects_governor_workspace_as_business_agent_evidence(tmp_path: Path) -> None:
     async def contaminated(**_kwargs):
         return {
             "problem_type": "tool_unavailable",
-            "optimization_object_type": "business_agent_claude_md",
+            "optimization_object_type": "business_agent_agent_md",
             "actionability": "workspace_config_change",
             "confidence": "high",
             "human_review_required": False,
@@ -129,7 +168,7 @@ def test_attribution_rejects_governor_workspace_as_business_agent_evidence(tmp_p
             "evidence_refs": [
                 {
                     "type": "file",
-                    "id": "file:/governor-workspace/.claude/settings.json",
+                    "id": "file:/runtime-workspaces/governor/agent.yaml",
                     "reason": "把 governor 权限误当成业务 Agent 权限。",
                 }
             ],
@@ -139,14 +178,14 @@ def test_attribution_rejects_governor_workspace_as_business_agent_evidence(tmp_p
     rec = asyncio.run(svc.generate_attribution("imp-1"))
 
     assert rec.generated_by == "heuristic"
-    assert all("/governor-workspace" not in evidence for evidence in rec.evidence)
+    assert all("/runtime-workspaces/" not in evidence for evidence in rec.evidence)
 
 
 def test_attribution_accepts_target_business_agent_config_evidence(tmp_path: Path) -> None:
     async def grounded(**_kwargs):
         return {
             "problem_type": "tool_unavailable",
-            "optimization_object_type": "business_agent_claude_md",
+            "optimization_object_type": "business_agent_agent_md",
             "actionability": "workspace_config_change",
             "confidence": "high",
             "human_review_required": False,
@@ -155,8 +194,8 @@ def test_attribution_accepts_target_business_agent_config_evidence(tmp_path: Pat
             "evidence_refs": [
                 {
                     "type": "file",
-                    "id": "file:/data/business-agents/soc-ops/workspace/.claude/settings.json",
-                    "reason": "目标业务 Agent settings 证据。",
+                    "id": "file:/business-agents/soc-ops/workspace/agent.yaml",
+                    "reason": "目标业务 Agent manifest 证据。",
                 }
             ],
         }
@@ -165,7 +204,7 @@ def test_attribution_accepts_target_business_agent_config_evidence(tmp_path: Pat
     rec = asyncio.run(svc.generate_attribution("imp-1"))
 
     assert rec.generated_by == "governor"
-    assert rec.evidence and "/data/business-agents/soc-ops/workspace/.claude/settings.json" in rec.evidence[0]
+    assert rec.evidence and "/business-agents/soc-ops/workspace/agent.yaml" in rec.evidence[0]
 
 
 def test_attribution_falls_back_to_heuristic_on_governor_failure(tmp_path: Path) -> None:
@@ -231,7 +270,7 @@ def test_optimization_plan_rejects_governor_workspace_target(tmp_path: Path) -> 
             "summary": "错误计划",
             "tasks": [
                 {
-                    "target_path": "/governor-workspace/.claude/settings.json",
+                    "target_path": "/runtime-workspaces/governor/agent.yaml",
                     "recommendation": "放开 governor Bash 权限。",
                 }
             ],
@@ -242,7 +281,7 @@ def test_optimization_plan_rejects_governor_workspace_target(tmp_path: Path) -> 
     rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
 
     assert rec.generated_by == "heuristic"
-    assert all("/governor-workspace" not in change["target"] for change in rec.changes)
+    assert all("/runtime-workspaces/" not in change["target"] for change in rec.changes)
 
 
 def test_optimization_plan_cannot_expand_explicit_normalized_feedback_path_scope(tmp_path: Path) -> None:
@@ -250,8 +289,8 @@ def test_optimization_plan_cannot_expand_explicit_normalized_feedback_path_scope
         return {
             "summary": "扩大到多个配置资产",
             "changes": [
-                {"target": "CLAUDE.md", "change": "补充冲突规则"},
-                {"target": ".claude/skills/alert-triage/SKILL.md", "change": "同步修改 skill"},
+                {"target": "AGENT.md", "change": "补充冲突规则"},
+                {"target": "skills/alert-triage/SKILL.md", "change": "同步修改 skill"},
             ],
         }
 
@@ -259,9 +298,9 @@ def test_optimization_plan_cannot_expand_explicit_normalized_feedback_path_scope
     content.upsert_normalized_feedback(
         "imp-1",
         problem="多源冲突",
-        possible_object="目标业务 Agent 根 CLAUDE.md",
+        possible_object="目标业务 Agent 根 AGENT.md",
         possible_reason="缺少约束",
-        suggestion="仅修改目标业务 Agent 根 CLAUDE.md，不涉及 skill、settings 或 MCP 配置",
+        suggestion="仅修改目标业务 Agent 根 AGENT.md，不涉及 skill、manifest 或 MCP 配置",
         user_quote="不要扩大范围",
     )
     svc = ImprovementGovernorService(
@@ -305,7 +344,14 @@ def test_regression_governor_maps_executable_test_code_and_owns_path(tmp_path: P
     svc, content = _service(
         tmp_path,
         fake_run,
-        find_run_by_id=lambda run_id: {"run_id": run_id, "message": '数据转换前原始数据:\n{"danger_tid":"14516"}', "answer_summary": "误报分析"},
+        find_run_by_id=lambda run_id: {
+            "run_id": run_id,
+            "message": '数据转换前原始数据:\n{"danger_tid":"14516"}',
+            "answer_summary": "误报分析",
+            "status": "succeeded",
+            "trace_status": "complete",
+            "trace_id": "1" * 32,
+        },
     )
     rec = asyncio.run(svc.generate_regression_test_design("imp-1"))
     assert rec.generated_by == "governor"
@@ -442,7 +488,7 @@ def test_execution_store_roundtrips_risk_and_rollback(tmp_path: Path) -> None:
 def _config_attribution(evidence_refs: list[dict], *, problem_type: str = "instruction_gap") -> dict:
     return {
         "problem_type": problem_type,
-        "optimization_object_type": "business_agent_claude_md",
+        "optimization_object_type": "business_agent_agent_md",
         "actionability": "workspace_config_change",
         "confidence": "high",
         "human_review_required": False,
@@ -452,11 +498,11 @@ def _config_attribution(evidence_refs: list[dict], *, problem_type: str = "instr
     }
 
 
-def test_attribution_accepts_relative_claude_md_evidence(tmp_path: Path) -> None:
-    """整改：governor 用相对路径 CLAUDE.md 引用目标 workspace 配置，应被采纳为 governor（不再误拒）。"""
+def test_attribution_accepts_relative_agent_md_evidence(tmp_path: Path) -> None:
+    """Governor 用相对 AGENT.md 引用目标 Workspace 配置时应被采纳。"""
 
     async def grounded(**_kwargs):
-        return _config_attribution([{"type": "file", "id": "CLAUDE.md", "reason": "目标业务 Agent 系统 prompt 缺时间校验。"}])
+        return _config_attribution([{"type": "file", "id": "AGENT.md", "reason": "目标业务 Agent 系统 prompt 缺时间校验。"}])
 
     svc, _ = _service(tmp_path, grounded)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
@@ -466,7 +512,7 @@ def test_attribution_accepts_relative_claude_md_evidence(tmp_path: Path) -> None
 def test_attribution_accepts_relative_skill_md_evidence(tmp_path: Path) -> None:
     async def grounded(**_kwargs):
         return _config_attribution(
-            [{"type": "file", "id": ".claude/skills/ocsf-stix-analysis/SKILL.md", "reason": "skill 描述不当。"}],
+            [{"type": "file", "id": "skills/ocsf-stix-analysis/SKILL.md", "reason": "skill 描述不当。"}],
             problem_type="skill_gap",
         )
 
@@ -477,7 +523,7 @@ def test_attribution_accepts_relative_skill_md_evidence(tmp_path: Path) -> None:
 
 def test_attribution_rejects_path_traversal_evidence(tmp_path: Path) -> None:
     async def evil(**_kwargs):
-        return _config_attribution([{"type": "file", "id": "../other-agent/CLAUDE.md", "reason": "越界。"}])
+        return _config_attribution([{"type": "file", "id": "../other-agent/AGENT.md", "reason": "越界。"}])
 
     svc, _ = _service(tmp_path, evil)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
@@ -486,7 +532,7 @@ def test_attribution_rejects_path_traversal_evidence(tmp_path: Path) -> None:
 
 def test_attribution_rejects_other_agent_absolute_evidence(tmp_path: Path) -> None:
     async def cross(**_kwargs):
-        return _config_attribution([{"type": "file", "id": "file:/data/business-agents/attacker/workspace/CLAUDE.md", "reason": "他 Agent。"}])
+        return _config_attribution([{"type": "file", "id": "file:/business-agents/attacker/workspace/AGENT.md", "reason": "他 Agent。"}])
 
     svc, _ = _service(tmp_path, cross)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
@@ -508,7 +554,7 @@ def test_guard_rejection_is_logged_not_silent(tmp_path: Path, caplog) -> None:
     """整改：guard 拒绝不再静默——回退时 WARNING 记录 reason + trace_id，区别于 governor 失败。"""
 
     async def forbidden(**_kwargs):
-        kwargs_trace = _config_attribution([{"type": "file", "id": "file:/governor-workspace/.claude/settings.json", "reason": "治理自身配置。"}])
+        kwargs_trace = _config_attribution([{"type": "file", "id": "file:/runtime-workspaces/governor/agent.yaml", "reason": "治理自身配置。"}])
         return kwargs_trace
 
     svc, _ = _service(tmp_path, forbidden)

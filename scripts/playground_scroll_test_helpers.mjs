@@ -22,6 +22,7 @@ export async function scrollNavigationMetrics(page) {
 }
 
 export async function seedPlaygroundMessages(page, turnCount) {
+  await page.waitForLoadState("networkidle");
   await page.evaluate((count) => {
     const sessionId = `density-check-${count}`;
     window.sessionStorage.setItem("parity-preserve-playground-session", "1");

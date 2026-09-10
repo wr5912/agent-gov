@@ -2,22 +2,30 @@ from __future__ import annotations
 
 import json
 
-from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+import yaml
 
-from feedback_store_test_utils import FeedbackSignalCreateRequest, FeedbackStore, _settings
+from feedback_store_test_utils import FeedbackSignalCreateRequest, FeedbackStore, _run_payload, _settings
 
 
 def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch) -> None:
     settings = _settings(tmp_path)
     monkeypatch.delenv("MCP_SERVER_URL", raising=False)
-    (settings.default_workspace_dir / ".mcp.json").write_text(
-        json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "${MCP_SERVER_URL}"}}}),
+    (settings.default_workspace_dir / "mcp" / "sec-ops.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "sec-ops-data",
+                "credential_refs": [{"env": "MCP_SERVER_URL", "path": "mcp_config.url"}],
+                "mcp_config": {"type": "http_mcp", "url": "${MCP_SERVER_URL}"},
+            }
+        ),
         encoding="utf-8",
     )
-    settings_dir = settings.default_workspace_dir / ".claude"
-    settings_dir.mkdir(parents=True, exist_ok=True)
-    (settings_dir / "settings.json").write_text(
-        json.dumps({"sandbox": {"network": {"allowedDomains": ["${SERVICE_HOST}"]}}}),
+    manifest_path = settings.default_workspace_dir / "agent.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["workspace_policy"]["allowed_network_domains"] = ["${SERVICE_HOST}"]
+    manifest_path.write_text(
+        yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
     sample_dir = settings.default_workspace_dir / "mcp_servers" / "soc_data_mcp"
@@ -33,25 +41,17 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
     )
     run_id = "run-mcp-config-failed"
     store.record_run(
-        {
-            "run_id": run_id,
-            "agent_id": DEFAULT_BUSINESS_AGENT_ID,
-            "session_id": "sess-mcp-config-failed",
-            "message": "生成一份日报",
-            "answer_summary": "",
-            "messages": [
-                {
-                    "event": "SystemMessage",
-                    "type": "system",
-                    "subtype": "init",
-                    "mcp_servers": [{"name": "sec-ops-data", "status": "failed"}],
-                }
-            ],
-            "agent_activity": {"tool_names": [], "tool_calls": [], "tool_results": [], "skill_calls": []},
-            "errors": ["Reached maximum number of turns (8)"],
-            "created_at": "2026-06-04T00:00:00+00:00",
-            "completed_at": "2026-06-04T00:00:01+00:00",
-        }
+        _run_payload(
+            run_id=run_id,
+            session_id="sess-mcp-config-failed",
+            status="failed",
+            terminal_reason="runtime_error",
+            error={"type": "MCP_CONNECTION_FAILED", "message": "MCP server unavailable"},
+            created_at="2026-06-04T00:00:00+00:00",
+            started_at="2026-06-04T00:00:00+00:00",
+            updated_at="2026-06-04T00:00:01+00:00",
+            completed_at="2026-06-04T00:00:01+00:00",
+        )
     )
     signal = store.create_signal(
         FeedbackSignalCreateRequest(
@@ -74,17 +74,21 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
     effective_mcp = store.get_evidence_package_file(manifest["evidence_package_id"], "effective_mcp_config.json")["content"]
     connection_summary = store.get_evidence_package_file(manifest["evidence_package_id"], "mcp_connection_summary.json")["content"]
     placeholder_summary = store.get_evidence_package_file(manifest["evidence_package_id"], "workspace_placeholder_summary.json")["content"]
-    assert runtime_summary["project_settings"]["source"] == "workspace_project_settings"
-    assert runtime_summary["project_settings"]["exists"] is True
-    assert len(runtime_summary["project_settings"]["sha256"]) == 64
+    assert runtime_summary["agent_manifest"]["source"] == "workspace_agent_manifest"
+    assert runtime_summary["agent_manifest"]["exists"] is True
+    assert runtime_summary["agent_manifest"]["runtime"] == "agentscope"
+    assert len(runtime_summary["agent_manifest"]["sha256"]) == 64
     assert "main_profile_writable_paths" not in runtime_summary
-    assert effective_mcp["source"] == "workspace_project"
-    assert effective_mcp["unresolved_placeholders"] == [{"path": "$.sec-ops-data.url", "placeholder": "MCP_SERVER_URL"}]
-    assert connection_summary["failed_server_names"] == ["sec-ops-data"]
+    assert effective_mcp["source"] == "workspace_mcp_directory"
+    assert effective_mcp["selected_servers"] == ["sec-ops"]
+    assert effective_mcp["server_summaries"][0]["unresolved_placeholders"] == ["MCP_SERVER_URL"]
+    # AgentGov run 仅保存引用与终态；逐消息 MCP 事件由 AgentScope/Langfuse 持有，
+    # 因而本地证据包不伪造连接状态。
+    assert connection_summary["failed_server_names"] == []
     categories = {item["path"]: item["category"] for item in placeholder_summary["items"]}
-    assert categories[".claude/settings.json"] == "claude_project_settings"
-    assert categories[".mcp.json"] == "mcp_config"
-    assert categories["mcp_servers/soc_data_mcp/sample_alerts.json"] == "mcp_sample_data"
+    assert categories["agent.yaml"] == "agent_manifest"
+    assert categories["mcp/sec-ops.json"] == "mcp_config"
+    assert categories["mcp_servers/soc_data_mcp/sample_alerts.json"] == "workspace_template_file"
     evidence_file_names = {item["path"] for item in manifest["included_files"]}
     assert {
         "runtime_config_summary.json",

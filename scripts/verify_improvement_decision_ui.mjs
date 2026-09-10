@@ -273,7 +273,7 @@ async function installMockRoutes(page, state) {
         generated_by: "governor",
         change_set_id: "agc-1",
         applied_agent_version_id: "ver-cand",
-        applied_diff: { modified: [{ path: "CLAUDE.md" }] },
+        applied_diff: { modified: [{ path: "AGENT.md" }] },
         created_at: ts,
         updated_at: ts,
       };
@@ -291,7 +291,7 @@ async function installMockRoutes(page, state) {
     }
     if (/^\/api\/improvements\/[^/]+\/execution$/.test(path)) return state.execution ? json(route, state.execution) : json(route, { detail: "not found" }, 404);
     if (/^\/api\/agent-change-sets\/[^/]+\/file-diff$/.test(path)) {
-      const filePath = url.searchParams.get("path") || "CLAUDE.md";
+      const filePath = url.searchParams.get("path") || "AGENT.md";
       return json(route, {
         from_version_id: "base-sha",
         to_version_id: "ver-cand",
@@ -336,7 +336,7 @@ async function installMockRoutes(page, state) {
       state.target.updated_at = ts;
       return json(route, state.target);
     }
-    if (["/api/agents", "/api/skills", "/api/sessions", "/api/agent-releases", "/api/agent-change-sets", "/api/agent-test-runs"].includes(path)) return json(route, []);
+    if (["/api/agents", "/api/skills", "/api/agent-releases", "/api/agent-change-sets", "/api/agent-test-runs"].includes(path)) return json(route, []);
     if (path === "/api/config") return json(route, { mappings: [] });
     if (path === "/api/agent-repository") return json(route, { status: "active", dirty: false, changed_files: [], file_diffs: [] });
     if (path === "/api/agent-repository/current") return json(route, { agent_version_id: "v0", commit_sha: "v0", created_at: ts, reason: "current" });

@@ -1,95 +1,237 @@
+schema_version: 1
 agent:
   id: security-operations-expert
   name: 网络安全运营专家智能体
-  english_name: Security Operations Expert Agent
   version: 0.1.0
   language: zh-CN
-  runtime: claude-code
+  runtime: agentscope
+  runtime_contract: agentscope-app/2.0.8
   profile: security-operations-expert
-  # 部署契约（被运行时读取+强制）：本 Agent 只连接 SOC 只读 MCP scope，
-  # 只负责筛选、生成或修订完整剧本。唯一整本确认、SOC 保存/manual 执行（内含预检）和实例监控
-  # 均由 response-orchestration lifecycle worker 负责，不使用 Agent 原生 Web HITL。
+  system_prompt: AGENT.md
   requires_web_hitl: false
-
+context_config: {}
+react_config: {}
+invite_config:
+  invitable: false
+session:
+  model_profile: default
+  permission_mode: default
+  cwd: .
+workspace_policy:
+  owner: agentgov
+  isolation: per_agent
+  immutable_harness: true
+  fail_closed: true
+  allow_for_run: false
+  allowed_tools:
+  - AgentCreate
+  - Bash(date *)
+  - Bash(date)
+  - Bash(jq *)
+  - Bash(mkdir -p /workspace/outputs/security-operations-expert/**)
+  - Bash(pwd)
+  - Edit(/workspace/outputs/security-operations-expert/**)
+  - Glob
+  - Grep
+  - Read(./**)
+  - Read(/workspace/data/**)
+  - Read(/workspace/outputs/security-operations-expert/**)
+  - Skill
+  - TeamCreate
+  - TeamDelete
+  - TeamSay
+  - Write(/workspace/outputs/security-operations-expert/**)
+  - mcp__sec-ops__resource_read
+  - mcp__sec-ops__resource_templates_list
+  - mcp__sec-ops__resources_list
+  - mcp__sec-ops__response_orchestration_agent_tools__get_case_revision_context_api_v1_agent_tools_cases_case_id_context_get
+  - mcp__sec-ops__response_orchestration_agent_tools__request_case_revision_api_v1_agent_tools_cases_case_id_revisions_post
+  - mcp__sec-ops__soc_api__dashboard_summary_api_v1_dashboard_summary_get
+  - mcp__sec-ops__soc_api__get_resp_playbooks_recommend
+  - mcp__sec-ops__soc_api__list_alerts_api_v1_alerts_get
+  - mcp__sec-ops__soc_api__list_assets_api_v1_assets_get
+  - mcp__sec-ops__soc_api__list_detection_findings_api_external_detection_findings_get
+  - mcp__sec-ops__soc_api__list_events_api_v1_events_get
+  - mcp__sec-ops__soc_api__list_incidents_api_v1_incidents_get
+  - mcp__sec-ops__soc_api__list_indicators_api_v1_indicators_get
+  - mcp__sec-ops__soc_api__list_vulnerabilities_api_v1_vulnerabilities_get
+  denied_tools:
+  - AskUserQuestion
+  - Bash(:(){ :|:& };:*)
+  - Bash(curl *)
+  - Bash(curl *|sh*)
+  - Bash(http *)
+  - Bash(httpie *)
+  - Bash(nc *)
+  - Bash(ncat *)
+  - Bash(rm -rf /)
+  - Bash(rm -rf /*)
+  - Bash(socat *)
+  - Bash(wget *)
+  - Bash(wget *|sh*)
+  - Edit(./AGENT.md)
+  - Edit(./agent.yaml)
+  - Edit(./mcp/*.json)
+  - Edit(./skills/**)
+  - Edit(./subagents/**)
+  - NotebookEdit(./AGENT.md)
+  - NotebookEdit(./agent.yaml)
+  - NotebookEdit(./mcp/*.json)
+  - NotebookEdit(./skills/**)
+  - NotebookEdit(./subagents/**)
+  - Read(./.env)
+  - Read(./.env.*)
+  - Read(./secrets/**)
+  - Write(./AGENT.md)
+  - Write(./agent.yaml)
+  - Write(./mcp/*.json)
+  - Write(./skills/**)
+  - Write(./subagents/**)
+  - mcp__sec-ops__soc_api__cancel*
+  - mcp__sec-ops__soc_api__create*
+  - mcp__sec-ops__soc_api__create_1
+  - mcp__sec-ops__soc_api__delete*
+  - mcp__sec-ops__soc_api__delete_*
+  - mcp__sec-ops__soc_api__execute
+  - mcp__sec-ops__soc_api__manual
+  - mcp__sec-ops__soc_api__patch_*
+  - mcp__sec-ops__soc_api__post_*
+  - mcp__sec-ops__soc_api__put_*
+  - mcp__sec-ops__soc_api__rollback
+  - mcp__sec-ops__soc_api__update*
+  - mcp__sec-ops__soc_api__upload*
+  immutable_paths:
+  - AGENT.md
+  - agent.yaml
+  - skills/**
+  - mcp/**
+  - subagents/**
+  writable_paths:
+  - /workspace/outputs/security-operations-expert
+  denied_read_paths:
+  - ./.env
+  - ./secrets
+  allowed_network_domains:
+  - ${SEC_OPS_MCP_URL}
+  sandbox:
+    enabled: true
+    fail_if_unavailable: true
+    allow_unsandboxed_commands: false
+  guard:
+    implementation: agentgov_runtime_middleware
+    mode: deny_only
+    denied_command_families:
+    - destructive_filesystem
+    - direct_production_mutation
+    - remote_installer_pipe
+    - network_scanning
+runtime_middlewares:
+- type: policy_guard
+  phase: before_tool_call
+  fail_closed: true
+- type: tool_audit
+  phase: after_tool_call
+  sink: /runtime-data/transcripts/agentscope-tool-audit.jsonl
+  async: true
+- type: system_prompt_context
+  source: AGENT.md
+paths:
+  workspace: /workspace
+  data_root: /workspace/data
+  sessions: /workspace/data/sessions
+  transcripts: /workspace/data/transcripts
+  uploads: /workspace/data
+  outputs: /workspace/outputs
+  agent_memory: /workspace/data/agent-memory
+harness:
+  digest_algorithm: sha256
+  system_prompt:
+    name: system_prompt
+    path: AGENT.md
+    sha256: 26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743
+  skills:
+  - name: dispose-threat
+    path: skills/dispose-threat
+    sha256: 9f23ade1e3a7bb4f94711f837ab9d1eda40387f6f5b0d1b30b4f7d26f84fd8d2
+  - name: playbook-dry-run
+    path: skills/playbook-dry-run
+    sha256: bafb08e9f040222bc18ddf097c8e8acfed8d3ec1639ba400ae1d88f0978d8dc7
+  - name: secops-investigate
+    path: skills/secops-investigate
+    sha256: e33ddeda1b74554a3bf0fee0937edcb97e92f2b5e13d105075647bf04fa1b54f
+  - name: security-operations-analysis
+    path: skills/security-operations-analysis
+    sha256: c06ba96746b02d09b1e04782581fc9d7c14fd7f543fedadecacbdf3dc54e405c
+  - name: threat-response-disposition
+    path: skills/threat-response-disposition
+    sha256: b99a40ea7119598844e3c323bbf474a17825e44e64ad745cf3de5e7a733e21d0
+  mcps:
+  - name: sec-ops
+    path: mcp/sec-ops.json
+    sha256: 856b47e949900b8ed00d85863bf1ce59effc46c0c5076d113669132b92ad703a
+  subagents:
+  - name: response-playbook-builder
+    path: subagents/response-playbook-builder
+    sha256: 061cfe1a0060598011043bb8d74312e065179d44c09742d9970c4c832980e1ed
+  - name: response-playbook-planning
+    path: subagents/response-playbook-planning
+    sha256: 758d835557ef8f1a5e358d3eb4ce05e7199ea1de50782c3659d952d59b016566
+  - name: response-playbook-summarizer
+    path: subagents/response-playbook-summarizer
+    sha256: cf99cdcf17e04ab6c21269ac8268ff40b6d7146ab9cd0ef3d5c83b6ca2242212
+  tests:
+    name: tests
+    path: tests
+    sha256: af96b40fc9e27bed5f9f6de5808e827cdd86027f2fb822035fb73045c5c292b2
+  content_digest: 57e02e36602b95f7effbbda4bd2a5966a64eefa46c854416e0a04e06f6fb7085
+extension_points:
+  add_skill: skills/<skill-name>/SKILL.md
+  add_mcp_server: mcp/<name>.json
+  add_subagent: subagents/<name>/
 capabilities:
-  - alert_triage
-  - incident_investigation
-  - threat_hunting
-  - asset_account_context_enrichment
-  - risk_prioritization
-  - investigation_timeline_summary
-  - containment_recommendation
-  - response_case_intake
-  - disposition_planning
-  - playbook_resolution
-  - playbook_dry_run
-
+- alert_triage
+- incident_investigation
+- threat_hunting
+- asset_account_context_enrichment
+- risk_prioritization
+- investigation_timeline_summary
+- containment_recommendation
+- response_case_intake
+- disposition_planning
+- playbook_resolution
+- playbook_dry_run
 presentation:
   summary: 聚焦安全运营事实分析、事件调查、威胁狩猎和响应剧本建议。
-  welcome_message: |
-    我可以基于告警、事件、资产、账号和现有响应剧本开展只读分析，并给出调查结论或处置建议。
+  welcome_message: '我可以基于告警、事件、资产、账号和现有响应剧本开展只读分析，并给出调查结论或处置建议。
+
 
     请提供需要分析的对象、时间范围和期望产出；涉及保存或执行的动作仍由平台确认流程负责。
+
+    '
   composer_placeholder: 输入告警、事件、资产或响应剧本相关任务
   starter_prompts:
-    - label: 分析当前告警
-      prompt: 请分析我接下来提供的告警，区分已知事实、合理推断和建议动作，并说明还需要哪些证据。
-    - label: 调查安全事件
-      prompt: 请基于我接下来提供的事件信息建立调查时间线，识别受影响对象、关键证据和优先处置建议。
-    - label: 审查响应剧本
-      prompt: 请审查我接下来提供的响应剧本，说明适用条件、缺失步骤、风险和建议修改。
-    - label: 说明能力边界
-      prompt: 请说明你的主要能力、需要的输入、输出形式，以及不会直接执行的操作。
-
-paths:
-  workspace: /data/business-agents/security-operations-expert/workspace
-  claude_home: /data/business-agents/security-operations-expert/claude-root/.claude
-  data_root: /data
-  sessions: /data/sessions
-  transcripts: /data/transcripts
-  uploads: /data/uploads
-  outputs: /data/outputs
-  agent_memory: /data/agent-memory
-
-mcp:
-  default_transport: http
-  # .mcp.json 的 sec-ops server 只挂载 security-operations-expert 只读分组。
-  servers:
-    sec-ops:
-      purpose: SOC 已有剧本、原子动作、资产和拓扑只读事实
-      risk: read-only
-      tool_families:
-        - name: mcp__sec-ops__soc_api__*
-          purpose: 只读剧本与原子动作目录；写操作不注册且由权限层拒绝
-          risk: read-only
-        - name: mcp__sec-ops__threat_analysis__*
-          purpose: 研判数据只读
-          risk: read-only
-
-skills:
-  security_operations_analysis: security-operations-analysis
-  response_disposition: threat-response-disposition
-  response_dry_run: playbook-dry-run
-
-subagents:
-  disposition_planning: response-playbook-planning
-  playbook_build: response-playbook-builder
-
+  - label: 分析当前告警
+    prompt: 请分析我接下来提供的告警，区分已知事实、合理推断和建议动作，并说明还需要哪些证据。
+  - label: 调查安全事件
+    prompt: 请基于我接下来提供的事件信息建立调查时间线，识别受影响对象、关键证据和优先处置建议。
+  - label: 审查响应剧本
+    prompt: 请审查我接下来提供的响应剧本，说明适用条件、缺失步骤、风险和建议修改。
+  - label: 说明能力边界
+    prompt: 请说明你的主要能力、需要的输入、输出形式，以及不会直接执行的操作。
 operational_model:
   evidence_first: true
   distinguish_fact_inference_action: true
-  default_output_dir: /data/outputs/security-operations-expert
+  default_output_dir: /workspace/outputs/security-operations-expert
   investigation_scopes:
-    - alert
-    - incident
-    - asset
-    - account
-    - identity
-    - endpoint
-    - network
-    - cloud
-    - vulnerability
-
+  - alert
+  - incident
+  - asset
+  - account
+  - identity
+  - endpoint
+  - network
+  - cloud
+  - vulnerability
 approval_policy:
   owner: response-orchestration
   phase_field: phase
@@ -102,36 +244,23 @@ approval_policy:
   native_web_hitl_tools: []
   proposal_side_effects: deny
   forbidden_tools:
-    - mcp__sec-ops__soc_api__create*
-    - mcp__sec-ops__soc_api__manual
-    - mcp__sec-ops__soc_api__execute
-    - mcp__sec-ops__soc_api__post_*
-    - mcp__sec-ops__soc_api__put_*
-    - mcp__sec-ops__soc_api__delete_*
-    - mcp__sec-ops__soc_api__patch_*
-    - mcp__sec-ops__soc_api__create_1
-    - mcp__sec-ops__soc_api__update*
-    - mcp__sec-ops__soc_api__delete*
-    - mcp__sec-ops__soc_api__upload*
-    - mcp__sec-ops__soc_api__cancel*
-    - mcp__sec-ops__soc_api__rollback
+  - mcp__sec-ops__soc_api__create*
+  - mcp__sec-ops__soc_api__manual
+  - mcp__sec-ops__soc_api__execute
+  - mcp__sec-ops__soc_api__post_*
+  - mcp__sec-ops__soc_api__put_*
+  - mcp__sec-ops__soc_api__delete_*
+  - mcp__sec-ops__soc_api__patch_*
+  - mcp__sec-ops__soc_api__create_1
+  - mcp__sec-ops__soc_api__update*
+  - mcp__sec-ops__soc_api__delete*
+  - mcp__sec-ops__soc_api__upload*
+  - mcp__sec-ops__soc_api__cancel*
+  - mcp__sec-ops__soc_api__rollback
   lifecycle_worker_owns_save_and_execute: true
   poll_execution_result: false
   evaluate_effect: false
   close_response_case: false
-
-observability:
-  hook_audit_log: /data/transcripts/claude-hook-audit.jsonl
-  output_dir: /data/outputs/security-operations-expert
-  response_case_dir: /data/outputs/security-operations-expert/response
-
-extension_points:
-  add_mcp_server: .mcp.json
-  add_skill: .claude/skills/<skill-name>/SKILL.md
-  add_subagent: .claude/agents/<agent-name>.md
-  add_command: .claude/commands/<command-name>.md
-  add_rule: .claude/rules/<rule-name>.md
-
 conversation_revision_policy:
   owner: response-orchestration
   mode: same-agent-conversation
@@ -143,3 +272,7 @@ conversation_revision_policy:
   creates_new_whole_playbook_approval: true
   soc_preflight_mode: embedded-in-execution-api
   soc_execution_side_effects: deny
+observability:
+  output_dir: /workspace/outputs/security-operations-expert
+  response_case_dir: /workspace/outputs/security-operations-expert/response
+  tool_audit_log: /runtime-data/transcripts/agentscope-tool-audit.jsonl

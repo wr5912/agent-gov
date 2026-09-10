@@ -42,6 +42,10 @@ def test_agent_change_set_state_machine_allows_current_publish_lifecycle():
     validate_transition("agent_change_set", "publishing", "candidate_committed")
     with pytest.raises(StateTransitionError, match="candidate_committed -> published"):
         validate_transition("agent_change_set", "candidate_committed", "published")
+    with pytest.raises(StateTransitionError, match="candidate_committed -> approved"):
+        validate_transition("agent_change_set", "candidate_committed", "approved")
+    validate_transition("agent_change_set", "candidate_committed", "pending_approval")
+    validate_transition("agent_change_set", "pending_approval", "approved")
 
 
 def test_improvement_stage_state_machine_allows_four_stage_flow_with_refinement_edges():
@@ -59,13 +63,6 @@ def test_improvement_execution_claim_must_finish_before_confirmation():
     validate_transition("improvement_execution", "applying", "draft")
     with pytest.raises(StateTransitionError, match="applying -> confirmed"):
         validate_transition("improvement_execution", "applying", "confirmed")
-
-
-@pytest.mark.parametrize("terminal", ["succeeded", "failed", "cancelled", "interrupted"])
-def test_session_turn_intent_only_moves_from_running_to_terminal(terminal):
-    validate_transition("session_turn_intent", "running", terminal)
-    with pytest.raises(StateTransitionError, match=f"{terminal} -> running"):
-        validate_transition("session_turn_intent", terminal, "running")
 
 
 def test_agent_release_operation_transition_table_is_complete():

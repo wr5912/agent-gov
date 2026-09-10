@@ -105,7 +105,9 @@ export function playgroundRunReducer(
       ...state,
       phase: state.phase === "cancelling_pending_handle" || state.phase === "cancelling"
         ? "cancelling"
-        : "running",
+        : state.phase === "awaiting_input"
+          ? "awaiting_input"
+          : "running",
       sessionId: action.sessionId,
       runId: action.runId,
       controlError: undefined,

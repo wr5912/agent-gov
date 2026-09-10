@@ -19,9 +19,9 @@ Defaults:
   remote dir  ~/work/agent-gov (override with REMOTE_DIR)
 
 The script preserves the remote private docker/.env, stores image archives in
-remote images/, loads the images on the remote host, removes existing agent-gov
-containers, starts the full Compose stack including Langfuse, and validates
-API/UI/Langfuse endpoints.
+remote images/, loads the images on the remote host, replaces this Compose
+project, starts the core stack and locally configured Langfuse, and validates
+the selected endpoints. External Langfuse needs no local storage credentials.
 USAGE
 }
 
@@ -156,7 +156,18 @@ fi
 [[ -f "$LOCAL_COMPOSE_ENV_PATH" ]] || die "compose env file not found"
 
 log "Checking remote prerequisites on $REMOTE"
-remote_run "command -v python3 >/dev/null && command -v docker >/dev/null && docker compose version >/dev/null"
+remote_run "bash -s" <<'REMOTE_PREREQUISITES'
+set -euo pipefail
+command -v python3 >/dev/null || { echo "remote python3 is required" >&2; exit 1; }
+command -v docker >/dev/null || { echo "remote docker is required" >&2; exit 1; }
+docker compose version >/dev/null
+python3 - <<'PY'
+import sys
+
+if sys.version_info < (3, 11):
+    raise SystemExit(f"remote Python >=3.11 is required, found {sys.version.split()[0]}")
+PY
+REMOTE_PREREQUISITES
 
 REMOTE_PATH=$(remote_run "REMOTE_DIR=$(quote "$REMOTE_DIR") python3 - <<'PY'
 import os
@@ -169,16 +180,37 @@ PY
 log "Remote path: $REMOTE:$REMOTE_PATH"
 remote_run "mkdir -p $(quote "$REMOTE_PATH") $(quote "$REMOTE_PATH/images")"
 
+# 在 rsync 覆盖旧栈 Compose/脚本之前，只读检查远程 schema epoch。临时检查器放在
+# images/ 中（该目录不参与代码 rsync），无论成功还是失败都删除。
+log "Preflighting remote Runtime epoch before source sync"
+rsync -az \
+  -e "$(rsync_ssh_command)" \
+  "$TMP_DIR/scripts/agentscope_atomic_cutover.py" \
+  "${REMOTE}:${REMOTE_PATH}/images/.agentscope_atomic_cutover.preflight.py"
+remote_run "bash -s -- $(quote "$REMOTE_PATH")" <<'REMOTE_EPOCH_PREFLIGHT'
+set -euo pipefail
+remote_path=$1
+preflight_script="$remote_path/images/.agentscope_atomic_cutover.preflight.py"
+trap 'rm -f "$preflight_script"' EXIT
+if [ -f "$remote_path/docker/.env" ]; then
+  python3 "$preflight_script" inspect \
+    --env-file "$remote_path/docker/.env" \
+    --require-current-or-empty
+else
+  printf 'No remote docker/.env; treating this as a new installation.\n'
+fi
+REMOTE_EPOCH_PREFLIGHT
+
 log "Building project images for version $VERSION"
 APP_VERSION="$VERSION" docker compose --env-file "$LOCAL_COMPOSE_ENV_PATH" -f "$TMP_DIR/$COMPOSE_FILE" build \
-  agent-gov-litellm-sidecar \
-  claude-agent-api \
-  claude-agent-ui
+  agentscope-runtime \
+  agent-gov-api \
+  agent-gov-ui
 
 PROJECT_IMAGES=(
+  "agent-gov-agentscope-runtime:${VERSION}"
   "agent-gov-api:${VERSION}"
   "agent-gov-ui:${VERSION}"
-  "agent-gov-litellm-sidecar:${VERSION}"
 )
 for image in "${PROJECT_IMAGES[@]}"; do
   ensure_local_image "$image"
@@ -190,6 +222,7 @@ rsync -az --delete \
   --exclude='/.git/' \
   --exclude='/images/' \
   --exclude='/docker/.env' \
+  --exclude='/docker/.env.bak-*' \
   --exclude='/docker/.env.local-debug' \
   --exclude='/frontend/.env.local' \
   "$TMP_DIR"/ "${REMOTE}:${REMOTE_PATH}/"
@@ -204,7 +237,7 @@ printf 'remote VERSION=%s\n' "$(tr -d '[:space:]' < VERSION)"
 REMOTE_SYNC
 
 log "Resolving Langfuse dependency image names from remote docker/.env"
-mapfile -t DEPENDENCY_IMAGES < <(remote_run "bash -s -- $(quote "$REMOTE_PATH")" <<'REMOTE_IMAGES'
+dependency_images_output=$(remote_run "bash -s -- $(quote "$REMOTE_PATH")" <<'REMOTE_IMAGES'
 set -euo pipefail
 remote_path=$1
 cd "$remote_path"
@@ -214,16 +247,28 @@ env_value() {
   local default=$2
   local value
   value=$(awk -F= -v key="$key" '
-    $1 == key {
+    $1 ~ ("^[[:space:]]*(export[[:space:]]+)?" key "[[:space:]]*$") {
       sub(/^[^=]*=/, "")
       sub(/[[:space:]]+#.*$/, "")
-      gsub(/^"|"$/, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      gsub(/^["\047]|["\047]$/, "")
       print
       exit
     }
   ' docker/.env 2>/dev/null || true)
   printf '%s\n' "${value:-$default}"
 }
+
+langfuse_enabled=$(env_value LANGFUSE_ENABLED false)
+case "${langfuse_enabled,,}" in
+  true|1|yes|on|t|y) ;;
+  false|0|no|off|f|n) exit 0 ;;
+  *) echo "LANGFUSE_ENABLED must be a boolean" >&2; exit 1 ;;
+esac
+case "$(env_value LANGFUSE_BASE_URL http://langfuse-web:3000)" in
+  http://langfuse-web:3000|http://langfuse-web:3000/) ;;
+  *) exit 0 ;;
+esac
 
 env_value LANGFUSE_WORKER_IMAGE docker.io/langfuse/langfuse-worker:3
 env_value LANGFUSE_WEB_IMAGE docker.io/langfuse/langfuse:3
@@ -233,6 +278,7 @@ env_value LANGFUSE_REDIS_IMAGE docker.io/redis:7
 env_value LANGFUSE_MINIO_IMAGE cgr.dev/chainguard/minio
 REMOTE_IMAGES
 )
+mapfile -t DEPENDENCY_IMAGES <<< "$dependency_images_output"
 mapfile -t DEPENDENCY_IMAGES < <(dedupe_images "${DEPENDENCY_IMAGES[@]}")
 for image in "${DEPENDENCY_IMAGES[@]}"; do
   ensure_local_image "$image"
@@ -241,25 +287,30 @@ done
 PROJECT_ARCHIVE="agent-gov-${VERSION}-images.tar.gz"
 DEPENDENCY_ARCHIVE="agent-gov-${VERSION}-langfuse-deps-images.tar.gz"
 upload_image_archive "$PROJECT_ARCHIVE" "${PROJECT_IMAGES[@]}"
-upload_image_archive "$DEPENDENCY_ARCHIVE" "${DEPENDENCY_IMAGES[@]}"
+with_langfuse=0
+if (( ${#DEPENDENCY_IMAGES[@]} > 0 )); then
+  upload_image_archive "$DEPENDENCY_ARCHIVE" "${DEPENDENCY_IMAGES[@]}"
+  with_langfuse=1
+fi
 
 log "Loading images and restarting all agent-gov services on $REMOTE"
-remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$VERSION")" <<'REMOTE_DEPLOY'
+remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$VERSION") $with_langfuse" <<'REMOTE_DEPLOY'
 set -euo pipefail
 remote_path=$1
 version=$2
+with_langfuse=$3
 cd "$remote_path"
 
 project_archive="images/agent-gov-${version}-images.tar.gz"
 dependency_archive="images/agent-gov-${version}-langfuse-deps-images.tar.gz"
-for archive in "$project_archive" "$dependency_archive"; do
+archives=("$project_archive")
+[ "$with_langfuse" = 0 ] || archives+=("$dependency_archive")
+for archive in "${archives[@]}"; do
   [ -f "$archive" ] || { echo "missing archive: $archive" >&2; exit 1; }
   [ -f "$archive.sha256" ] || { echo "missing checksum: $archive.sha256" >&2; exit 1; }
   sha256sum -c "$archive.sha256"
+  gzip -dc "$archive" | docker load
 done
-
-gzip -dc "$project_archive" | docker load
-gzip -dc "$dependency_archive" | docker load
 
 read_env() {
   local key=$1
@@ -286,20 +337,123 @@ expand_remote_value() {
 }
 
 export APP_VERSION="$version"
-docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse down --remove-orphans || true
-leftover_containers=$(docker ps -aq --filter "name=agent-gov" || true)
-if [ -n "$leftover_containers" ]; then
-  docker rm -f $leftover_containers
+for required_key in API_KEY AGENTGOV_RUNTIME_SHARED_SECRET MODEL_PROVIDER_API_KEY; do
+  required_value=$(read_env "$required_key" "")
+  [ -n "$required_value" ] || { echo "missing required private env key: $required_key" >&2; exit 1; }
+  case "$required_value" in
+    change-me|replace-with-*)
+      echo "placeholder private env value is forbidden: $required_key" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ "$with_langfuse" = 1 ]; then
+  required_langfuse_keys=(
+    LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY \
+    LANGFUSE_SALT LANGFUSE_NEXTAUTH_SECRET LANGFUSE_POSTGRES_PASSWORD \
+    LANGFUSE_CLICKHOUSE_PASSWORD LANGFUSE_REDIS_AUTH \
+    LANGFUSE_MINIO_ROOT_PASSWORD
+  )
+  [ -z "$(read_env LANGFUSE_INIT_USER_EMAIL "")" ] || required_langfuse_keys+=(LANGFUSE_INIT_USER_PASSWORD)
+  for required_key in "${required_langfuse_keys[@]}"; do
+    required_value=$(read_env "$required_key" "")
+    [ ${#required_value} -ge 16 ] || { echo "Langfuse private env value is too short: $required_key" >&2; exit 1; }
+    case "$required_value" in
+      change-me*|replace-with-*|*agentgov-local*|langfuse-*|minio)
+        echo "placeholder Langfuse env value is forbidden: $required_key" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  encryption_key=$(read_env LANGFUSE_ENCRYPTION_KEY "")
+  case "$encryption_key" in
+    *[!0-9a-f]*|'')
+      echo "LANGFUSE_ENCRYPTION_KEY must be exactly 64 lowercase hex characters" >&2
+      exit 1
+      ;;
+  esac
+  [ ${#encryption_key} -eq 64 ] && [ "$encryption_key" != "$(printf '0%.0s' {1..64})" ] || {
+    echo "LANGFUSE_ENCRYPTION_KEY must be exactly 64 nonzero lowercase hex characters" >&2
+    exit 1
+  }
+
+  langfuse_bind_ip=$(read_env LANGFUSE_BIND_IP 127.0.0.1)
+  case "$langfuse_bind_ip" in
+    127.0.0.1|localhost|::1) ;;
+    *)
+      [ "$(read_env LANGFUSE_ALLOW_PUBLIC_BIND 0)" = "1" ] || {
+        echo "public Langfuse bind requires LANGFUSE_ALLOW_PUBLIC_BIND=1 and an operator-provided TLS reverse proxy" >&2
+        exit 1
+      }
+      ;;
+  esac
 fi
 
-COMPOSE_ENV_FILE=docker/.env \
-COMPOSE_UP_FLAGS="--no-build --pull never" \
-make --no-print-directory all-up
-docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse ps
+require_public_bind_opt_in() {
+  local label=$1
+  local bind_key=$2
+  local allow_key=$3
+  local bind_ip
+  bind_ip=$(read_env "$bind_key" 127.0.0.1)
+  case "$bind_ip" in
+    127.0.0.1|localhost|::1) ;;
+    *)
+      [ "$(read_env "$allow_key" 0)" = "1" ] || {
+        echo "public $label bind requires $allow_key=1; AgentGov is a single-tenant operator control plane without cross-user isolation" >&2
+        exit 1
+      }
+      ;;
+  esac
+}
 
-host_port=$(expand_remote_value "$(read_env HOST_PORT 48080)")
-frontend_port=$(expand_remote_value "$(read_env FRONTEND_HOST_PORT 45173)")
-langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 43000)")
+require_public_bind_opt_in "AgentGov API" API_BIND_IP API_ALLOW_PUBLIC_BIND
+require_public_bind_opt_in "AgentGov UI" FRONTEND_BIND_IP FRONTEND_ALLOW_PUBLIC_BIND
+compose=(docker compose --env-file docker/.env -f docker/docker-compose.yml)
+if [ "$with_langfuse" = 1 ]; then
+  compose+=(-f docker/docker-compose.langfuse.yml)
+  "${compose[@]}" --profile langfuse config >/dev/null
+else
+  "${compose[@]}" config >/dev/null
+fi
+actual_core_services=$(docker compose --env-file docker/.env -f docker/docker-compose.yml config --services | sort)
+expected_core_services=$(printf '%s\n' agent-gov-api agent-gov-ui agentscope-runtime | sort)
+[ "$actual_core_services" = "$expected_core_services" ] || {
+  echo "unexpected core service set before cutover" >&2
+  printf 'actual:\n%s\n' "$actual_core_services" >&2
+  exit 1
+}
+
+# 普通部署只能复用空卷或精确 AgentScope epoch。旧 Claude/未知 schema 必须在仍未停服时
+# fail closed，绝不能把一次版本部署偷换成 destructive cutover。
+python3 scripts/agentscope_atomic_cutover.py inspect \
+  --env-file docker/.env \
+  --require-current-or-empty
+
+export COMPOSE_ENV_FILE=docker/.env
+export COMPOSE_UP_FLAGS="--no-build --pull never"
+if [ "$with_langfuse" = 1 ]; then
+  "${compose[@]}" --profile langfuse down --remove-orphans || true
+  make --no-print-directory all-up
+  "${compose[@]}" --profile langfuse ps
+else
+  "${compose[@]}" down
+  make --no-print-directory up
+  "${compose[@]}" ps
+fi
+
+actual_core_services=$(docker compose --env-file docker/.env -f docker/docker-compose.yml config --services | sort)
+expected_core_services=$(printf '%s\n' agent-gov-api agent-gov-ui agentscope-runtime | sort)
+[ "$actual_core_services" = "$expected_core_services" ] || {
+  echo "unexpected core service set" >&2
+  printf 'actual:\n%s\n' "$actual_core_services" >&2
+  exit 1
+}
+
+host_port=$(expand_remote_value "$(read_env HOST_PORT 50400)")
+frontend_port=$(expand_remote_value "$(read_env FRONTEND_HOST_PORT 50401)")
+langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 50402)")
 
 python3 - <<PY
 from urllib.error import HTTPError
@@ -307,10 +461,11 @@ from urllib.request import Request, urlopen
 import time
 
 checks = [
-    ("API health", "http://127.0.0.1:${host_port}/health", 60, True),
+    ("API and AgentScope Runtime readiness", "http://127.0.0.1:${host_port}/health/ready", 60, True),
     ("UI", "http://127.0.0.1:${frontend_port}", 60, False),
-    ("Langfuse", "http://127.0.0.1:${langfuse_port}", 90, False),
 ]
+if ${with_langfuse}:
+    checks.append(("Langfuse", "http://127.0.0.1:${langfuse_port}", 90, False))
 
 for name, url, attempts, print_body in checks:
     last_error = None
@@ -324,8 +479,8 @@ for name, url, attempts, print_body in checks:
                     print(body.decode("utf-8", "replace"))
                 break
         except HTTPError as exc:
-            print(f"{name} OK: {url} status={exc.code}")
-            break
+            last_error = RuntimeError(f"HTTP {exc.code}: {exc.read(500).decode('utf-8', 'replace')}")
+            time.sleep(2)
         except Exception as exc:  # noqa: BLE001 - remote smoke reports final failure text.
             last_error = exc
             time.sleep(2)

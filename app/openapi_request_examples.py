@@ -11,47 +11,6 @@ _OPERATOR = "platform-operator"
 
 
 _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract] = {
-    (
-        "/v1/agentgov/confirmation-requests/{request_id}/decision",
-        "post",
-    ): RequestExampleContract(
-        media_type="application/json",
-        examples={
-            "deny": _example(
-                "Deny the pending tool request",
-                {
-                    "action": "deny",
-                    "decision_token": "token-from-exact-waiting-request",
-                    "message": "当前上下文不足，拒绝执行该工具。",
-                },
-                description=(
-                    "Use request_id and decision_token from the exact run_id + status=waiting query. The token is one-time and must never be persisted."
-                ),
-            ),
-            "allow_once": _example(
-                "Allow this tool request once",
-                {
-                    "action": "allow_once",
-                    "decision_token": "token-from-exact-waiting-request",
-                },
-            ),
-            "allow_for_run": _example(
-                "Allow the low-risk category for this run",
-                {
-                    "action": "allow_for_run",
-                    "decision_token": "token-from-exact-waiting-request",
-                },
-            ),
-            "answer_question": _example(
-                "Answer an AskUserQuestion request",
-                {
-                    "action": "answer_question",
-                    "decision_token": "token-from-exact-waiting-request",
-                    "answer": {"response": "只处理当前告警资产"},
-                },
-            ),
-        },
-    ),
     ("/api/agent-config-file", "put"): RequestExampleContract(
         media_type="application/json",
         operation_description="Replace the selected editable UTF-8 config file. Read the file first and pass its sha256 as expected_sha256 to reject stale concurrent edits; content is the complete replacement, not a patch.",
@@ -59,7 +18,7 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
             "replace_mcp_config": _example(
                 "Replace the current editable config",
                 {
-                    "content": '{\n  "mcpServers": {}\n}\n',
+                    "content": '{\n  "mcp_config": {"type": "http_mcp", "url": "${SEC_OPS_MCP_URL}"},\n  "credential_refs": []\n}\n',
                     "expected_sha256": "sha256-from-get-agent-config-file",
                 },
             )
@@ -71,7 +30,7 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
         examples={
             "discard_one_file": _example(
                 "Discard one confirmed workspace file",
-                {"paths": [".mcp.json"]},
+                {"paths": ["mcp/soc-readonly.json"]},
             )
         },
     ),
@@ -443,7 +402,7 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                     "summary": "在回答规则中增加证据不足处理并补回归测试。",
                     "changes": [
                         {
-                            "target": "CLAUDE.md",
+                            "target": "AGENT.md",
                             "change": "要求不充分证据只能输出假设并列出待补证据。",
                         },
                         {

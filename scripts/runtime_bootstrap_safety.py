@@ -397,7 +397,11 @@ def _scan_structured_secret_values(rel_path: str, text: str) -> list[Finding]:
             for key, item in value.items():
                 key_text = str(key)
                 item_path = (*path, key_text)
-                if JSON_SECRET_KEY_RE.search(key_text) and _json_secret_value_present(item):
+                # AgentScope Harness stores only the *names and target paths* of
+                # deployment credentials here.  The list is provenance, not a
+                # secret value; its children are still scanned normally.
+                is_reference_metadata = key_text in {"credential_refs", "credential_ref"}
+                if not is_reference_metadata and JSON_SECRET_KEY_RE.search(key_text) and _json_secret_value_present(item):
                     findings.append(
                         Finding(
                             rel_path,
@@ -586,7 +590,8 @@ def _scan_line_sensitive_values(
         findings.append(
             Finding(rel_path, line_number, "host_path", "high", "host-specific paths must not be stored in the initialization source", _redact_snippet(line))
         )
-    has_secret_assignment = any(
+    reference_metadata_line = bool(re.match(r"^\s*[\"']?credential_refs?[\"']?\s*:", line))
+    has_secret_assignment = not reference_metadata_line and any(
         not secret_assignment_value(match).startswith(("$", "<")) and not _is_placeholder(secret_assignment_value(match))
         for match in SECRET_ASSIGN_RE.finditer(line)
     )

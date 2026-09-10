@@ -242,7 +242,7 @@ def _register_governance_generation_routes(
     @router.post(
         "/improvements/{improvement_id}/normalized-feedback/generate",
         response_model=NormalizedFeedbackResponse,
-        summary="Organize feedback into title/problem via DSPy formatter (heuristic fallback)",
+        summary="Organize feedback into title/problem through the governed AgentScope runtime",
     )
     async def generate_nf(improvement_id: str) -> NormalizedFeedbackResponse:
         if improvement_store.get_improvement(improvement_id) is None:

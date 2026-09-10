@@ -15,9 +15,9 @@ from app.runtime.agent_workspace_package_schemas import (
     WorkspaceRestoreRequest,
     WorkspaceRestoreResponse,
 )
-from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
+from app.runtime_gateway.store import RuntimeRunStore
 from app.services import agent_workspace_package_codec as package_codec
 from app.services.agent_change_set_queries import has_open_change_sets
 from app.services.agent_governance import TERMINAL_CHANGE_SET_STATES, AgentGovernanceService
@@ -59,7 +59,7 @@ def create_agent_workspace_packages_router(
     settings: AppSettings,
     agent_registry_store: AgentRegistryStore,
     agent_governance: AgentGovernanceService,
-    session_store: LocalSessionStore,
+    run_store: RuntimeRunStore,
     agent_testing: AgentTestingService,
     require_api_key: Callable,
 ) -> APIRouter:
@@ -68,7 +68,7 @@ def create_agent_workspace_packages_router(
         settings=settings,
         agent_registry_store=agent_registry_store,
         agent_governance=agent_governance,
-        session_store=session_store,
+        run_store=run_store,
         agent_testing=agent_testing,
     )
     _register_export_route(router, service)
@@ -82,7 +82,7 @@ def _create_workspace_package_service(
     settings: AppSettings,
     agent_registry_store: AgentRegistryStore,
     agent_governance: AgentGovernanceService,
-    session_store: LocalSessionStore,
+    run_store: RuntimeRunStore,
     agent_testing: AgentTestingService,
 ) -> AgentWorkspacePackageService:
     return AgentWorkspacePackageService(
@@ -90,7 +90,7 @@ def _create_workspace_package_service(
         registry_store=agent_registry_store,
         store_for=agent_governance._store_for,
         version_maintenance=agent_governance.version_maintenance,
-        session_store=session_store,
+        run_store=run_store,
         agent_testing=agent_testing,
         has_open_change_sets=lambda agent_id: has_open_change_sets(
             agent_governance.feedback_store.Session,

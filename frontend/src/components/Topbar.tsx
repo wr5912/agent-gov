@@ -33,8 +33,8 @@ export function Topbar({
   onOpenAsset,
   onOpenSettings,
 }: TopbarProps) {
-  const providerReadiness = health?.model_provider_route?.readiness;
-  const providerStatus = providerReadiness?.status || "not_checked";
+  const runtimeReadiness = health?.runtime_service;
+  const runtimeStatus = runtimeReadiness?.status || "not_checked";
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -67,11 +67,11 @@ export function Topbar({
         <span className="topbar-sep" />
         <span className="muted">{health?.model || "model not loaded"}</span>
         <span
-          className={`topbar-provider-status ${providerStatus === "ready" ? "good" : "warn"}`}
-          data-testid="model-provider-status"
-          title={providerReadiness?.action || providerReadiness?.message || "Model provider has not been checked"}
+          className={`topbar-provider-status ${runtimeStatus === "ready" ? "good" : "warn"}`}
+          data-testid="runtime-service-status"
+          title={runtimeReadiness?.action || runtimeReadiness?.message || "AgentScope Runtime has not been checked"}
         >
-          Provider {providerStatus.replace("_", " ")}
+          Runtime {runtimeStatus.replace("_", " ")}
         </span>
       </div>
 

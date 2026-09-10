@@ -15,36 +15,51 @@ from app.runtime.agent_admission import (
     renew_maintenance,
     run_maintenance_activation_guard,
 )
-from app.runtime.runtime_db import (
-    AgentAdmissionStateModel,
-    SessionRecordModel,
-    SessionTurnIntentModel,
-    make_session_factory,
-)
-from app.runtime.session_store import LocalSession, LocalSessionStore
+from app.runtime.runtime_db import AgentAdmissionStateModel, AgentRunModel, make_session_factory
+from app.runtime.runtime_db_base import utc_now
+from app.runtime_gateway.store import RuntimeRunStore
 from app.services.agent_version_maintenance import (
     AgentVersionMaintenanceCoordinator,
     is_agent_version_maintenance_active,
 )
 
 
-def test_durable_maintenance_blocks_runtime_for_only_its_agent(tmp_path) -> None:
-    factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    coordinator = AgentVersionMaintenanceCoordinator(
-        factory,
-        lease_seconds=2,
-        heartbeat_seconds=0.1,
+def _active_run(*, agent_id: str, run_id: str = "run-a", session_id: str = "session-a") -> AgentRunModel:
+    return AgentRunModel(
+        run_id=run_id,
+        session_id=session_id,
+        agent_id=agent_id,
+        agent_version_id="version-a",
+        runtime_agent_id=f"runtime-{agent_id}",
+        harness_digest="a" * 64,
+        status="running",
+        reply_ids_json=[],
+        trace_id=("1" if agent_id == "agent-a" else "2") * 32,
+        trace_status="pending",
+        metadata_json={},
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
 
+
+def _bind_session(store: RuntimeRunStore, *, agent_id: str = "agent-a", session_id: str = "session-a") -> None:
+    store.bind_session(
+        session_id=session_id,
+        agent_id=agent_id,
+        agent_version_id="version-a",
+        runtime_agent_id=f"runtime-{agent_id}",
+        digest="a" * 64,
+        idempotency_key=None,
+    )
+
+
+def test_durable_maintenance_blocks_runtime_for_only_its_agent(tmp_path) -> None:
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    coordinator = AgentVersionMaintenanceCoordinator(factory, lease_seconds=2, heartbeat_seconds=0.1)
+
     with coordinator.lease(agent_id="agent-a", kind="publish", owner_id="test"):
-        assert is_agent_version_maintenance_active(
-            session_factory=factory,
-            agent_id="agent-a",
-        )
-        assert not is_agent_version_maintenance_active(
-            session_factory=factory,
-            agent_id="agent-b",
-        )
+        assert is_agent_version_maintenance_active(session_factory=factory, agent_id="agent-a")
+        assert not is_agent_version_maintenance_active(session_factory=factory, agent_id="agent-b")
         with factory.begin() as db:
             with pytest.raises(AgentMaintenanceActiveError):
                 claim_runtime_admission(db, agent_id="agent-a")
@@ -52,19 +67,10 @@ def test_durable_maintenance_blocks_runtime_for_only_its_agent(tmp_path) -> None
             assert claim_runtime_admission(db, agent_id="agent-b") > 0
 
 
-def test_active_runtime_turn_blocks_maintenance_but_not_another_agent(tmp_path) -> None:
+def test_active_agentscope_run_blocks_maintenance_but_not_another_agent(tmp_path) -> None:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     with factory.begin() as db:
-        db.add(
-            SessionRecordModel(
-                session_id="session-a",
-                agent_id="agent-a",
-                active_run_id="run-a",
-                active_run_generation=1,
-                active_run_expires_at="2099-01-01T00:00:00+00:00",
-                metadata_json={},
-            )
-        )
+        db.add(_active_run(agent_id="agent-a"))
 
     with pytest.raises(AgentRunsActiveError):
         acquire_maintenance(
@@ -105,23 +111,10 @@ def test_expired_maintenance_takeover_fences_stale_heartbeat_and_release(tmp_pat
 
     assert replacement.generation > stale.generation
     with pytest.raises(AgentMaintenanceClaimLost):
-        assert_maintenance_claim_active(
-            factory,
-            stale,
-            now="2026-07-13T00:00:02+00:00",
-        )
-    assert_maintenance_claim_active(
-        factory,
-        replacement,
-        now="2026-07-13T00:00:03+00:00",
-    )
+        assert_maintenance_claim_active(factory, stale, now="2026-07-13T00:00:02+00:00")
+    assert_maintenance_claim_active(factory, replacement, now="2026-07-13T00:00:03+00:00")
     with pytest.raises(AgentMaintenanceClaimLost):
-        renew_maintenance(
-            factory,
-            stale,
-            lease_seconds=60,
-            now="2026-07-13T00:00:03+00:00",
-        )
+        renew_maintenance(factory, stale, lease_seconds=60, now="2026-07-13T00:00:03+00:00")
     activated = False
 
     def activate(_db) -> None:
@@ -142,160 +135,70 @@ def test_expired_maintenance_takeover_fences_stale_heartbeat_and_release(tmp_pat
 
 
 @pytest.mark.parametrize("maintenance_kind", ["workspace_import", "workspace_restore"])
-def test_expired_workspace_activation_claim_invalidates_stale_sdk_mapping(
+def test_expired_workspace_maintenance_admits_a_version_pinned_run(
     tmp_path,
     maintenance_kind: str,
 ) -> None:
-    store = LocalSessionStore(tmp_path / "sessions")
-    store.save(
-        LocalSession(
-            session_id="session-a",
-            agent_id="agent-a",
-            sdk_session_id="stale-sdk-session",
-            turns=1,
-        )
-    )
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    store = RuntimeRunStore(factory)
+    _bind_session(store)
     acquire_maintenance(
-        store.Session,
+        factory,
         agent_id="agent-a",
         kind=maintenance_kind,
         owner_id="crashed-worker",
         lease_seconds=1,
         now="2026-07-13T00:00:00+00:00",
     )
-    stale_snapshot = store.get("session-a")
-    assert stale_snapshot is not None
 
-    admission = store.begin_persisted_turn(
-        stale_snapshot,
-        run_id="run-after-crash",
-        agent_id="agent-a",
-        new_sdk_session_id="fresh-sdk-session",
-        sdk_project_key="project-a",
-        resolve_agent_version_id=lambda: "version-after-crash",
-        request={"message": "resume safely"},
-        created_at="2026-07-13T00:00:02+00:00",
+    run = store.begin_run(
+        session_id="session-a",
+        runtime_agent_id="runtime-agent-a",
+        input_value={"type": "text", "text": "continue safely"},
+        alert_id=None,
+        case_id=None,
+        metadata={},
     )
 
-    with store.Session() as db:
+    assert run.status.value == "queued"
+    assert run.agent_version_id == "version-a"
+    assert run.harness_digest == "a" * 64
+    with factory() as db:
         state = db.get(AgentAdmissionStateModel, "agent-a")
-        intent = db.get(SessionTurnIntentModel, "run-after-crash")
-        assert state is not None
-        assert intent is not None
-        assert state.maintenance_token is None
-        assert intent.source_sdk_session_id is None
-        assert intent.attempted_sdk_session_id == "fresh-sdk-session"
-    assert admission.session.sdk_session_id is None
-    assert admission.attempted_sdk_session_id == "fresh-sdk-session"
-    assert admission.agent_version_id == "version-after-crash"
+        assert state is not None and state.maintenance_token is None
 
 
-def test_agent_version_resolver_failure_rolls_back_runtime_admission(
-    tmp_path,
-) -> None:
-    store = LocalSessionStore(tmp_path / "sessions")
-    session = store.get_or_create_owned("session-a", agent_id="agent-a")
-
-    def fail_version_resolution() -> str:
-        raise RuntimeError("injected version resolution failure")
-
-    with pytest.raises(RuntimeError, match="injected version resolution failure"):
-        store.begin_persisted_turn(
-            session,
-            run_id="run-a",
-            agent_id="agent-a",
-            new_sdk_session_id="new-sdk",
-            sdk_project_key="project-a",
-            resolve_agent_version_id=fail_version_resolution,
-            request={},
-            created_at="2026-07-13T00:00:00+00:00",
-        )
-
-    saved = store.get("session-a")
-    with store.Session() as db:
-        assert db.get(SessionTurnIntentModel, "run-a") is None
-    assert saved is not None
-    assert saved.active_run_id is None
-    claim = acquire_maintenance(
-        store.Session,
-        agent_id="agent-a",
-        kind="workspace_export",
-        owner_id="test",
-        lease_seconds=60,
-    )
-    assert release_maintenance(store.Session, claim)
-
-
-def test_expired_runtime_with_running_intent_fails_closed_until_reconciled(tmp_path) -> None:
+def test_restart_reconcile_keeps_runtime_fence_and_blocks_maintenance(tmp_path) -> None:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    with factory.begin() as db:
-        db.add(
-            SessionRecordModel(
-                session_id="session-a",
-                agent_id="agent-a",
-                active_run_id="run-a",
-                active_run_generation=1,
-                active_run_expires_at="2026-07-13T00:00:00+00:00",
-                metadata_json={},
-            )
-        )
-        db.add(
-            SessionTurnIntentModel(
-                run_id="run-a",
-                session_id="session-a",
-                agent_id="agent-a",
-                attempted_sdk_session_id="sdk-a",
-                sdk_project_key="project-a",
-                base_turns=0,
-                status="running",
-                request_json={},
-                error_json={},
-            )
-        )
+    store = RuntimeRunStore(factory)
+    _bind_session(store)
+    run = store.begin_run(
+        session_id="session-a",
+        runtime_agent_id="runtime-agent-a",
+        input_value="work",
+        alert_id=None,
+        case_id=None,
+        metadata={},
+    )
 
     with pytest.raises(AgentRunsActiveError):
-        acquire_maintenance(
-            factory,
-            agent_id="agent-a",
-            kind="publish",
-            owner_id="test",
-            lease_seconds=60,
-            now="2026-07-13T00:00:01+00:00",
-        )
-
-    with factory.begin() as db:
-        db.get(SessionTurnIntentModel, "run-a").status = "interrupted"
-    claim = acquire_maintenance(
-        factory,
-        agent_id="agent-a",
-        kind="publish",
-        owner_id="test",
-        lease_seconds=60,
-        now="2026-07-13T00:00:02+00:00",
-    )
-    with factory() as db:
-        session = db.get(SessionRecordModel, "session-a")
-        assert session is not None and session.active_run_id is None
-    assert release_maintenance(factory, claim)
+        acquire_maintenance(factory, agent_id="agent-a", kind="publish", owner_id="test", lease_seconds=60)
+    assert store.reconcile_after_restart() == [run.run_id]
+    assert store.get_run(run.run_id).status.value == "queued"
+    with pytest.raises(AgentRunsActiveError):
+        acquire_maintenance(factory, agent_id="agent-a", kind="publish", owner_id="test", lease_seconds=60)
 
 
 def test_sqlite_write_barrier_serializes_runtime_claim_before_maintenance(tmp_path) -> None:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    with factory.begin() as db:
-        db.add(SessionRecordModel(session_id="session-a", agent_id="agent-a", metadata_json={}))
-
     runtime_claimed = threading.Event()
     maintenance_started = threading.Event()
     commit_runtime = threading.Event()
 
     def claim_runtime_and_hold_transaction() -> None:
         with factory.begin() as db:
-            generation = claim_runtime_admission(db, agent_id="agent-a")
-            session = db.get(SessionRecordModel, "session-a")
-            assert session is not None
-            session.active_run_id = "run-a"
-            session.active_run_generation = generation
-            session.active_run_expires_at = "2099-01-01T00:00:00+00:00"
+            claim_runtime_admission(db, agent_id="agent-a")
+            db.add(_active_run(agent_id="agent-a"))
             runtime_claimed.set()
             assert commit_runtime.wait(timeout=5)
 

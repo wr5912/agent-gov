@@ -7,8 +7,6 @@ from pathlib import Path
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.managed_agent_policy import (
     ManagedAgentPolicyError,
-    managed_workspace_policy_paths,
-    referenced_workspace_hook_paths,
     require_runtime_workspace_policy,
 )
 
@@ -21,36 +19,23 @@ def build_ref_policy_validator(
     runtime_mode: str,
     runtime_env: Mapping[str, str],
 ) -> Callable[[str], None]:
-    managed_paths = managed_workspace_policy_paths(agent_id)
-
     def validate(ref: str) -> None:
         try:
             with tempfile.TemporaryDirectory(prefix=f"agentgov-policy-{agent_id}-") as temporary:
                 workspace = Path(temporary)
-                settings_content: str | None = None
-                for relative in managed_paths:
+                relevant = {
+                    path
+                    for path in store.list_paths_at_ref(ref)
+                    if path in {"agent.yaml", "AGENT.md"}
+                    or path.startswith(("skills/", "mcp/", "subagents/", "tests/"))
+                }
+                for relative in sorted(relevant):
                     content = store.read_text_at_ref(ref, relative)
                     if content is None:
                         continue
-                    if relative == ".claude/settings.json":
-                        settings_content = content
                     target = workspace / relative
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(content, encoding="utf-8")
-                if settings_content is not None:
-                    try:
-                        referenced_hooks = referenced_workspace_hook_paths(settings_content)
-                    except (TypeError, ValueError):
-                        referenced_hooks = ()
-                    for relative in referenced_hooks:
-                        if relative in managed_paths:
-                            continue
-                        content = store.read_text_at_ref(ref, relative)
-                        if content is None:
-                            continue
-                        target = workspace / relative
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        target.write_text(content, encoding="utf-8")
                 resolved_data_dir = data_dir.resolve()
                 runtime_root = Path("/") if resolved_data_dir == Path("/data") else resolved_data_dir.parent
                 require_runtime_workspace_policy(

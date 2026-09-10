@@ -7,8 +7,9 @@
 >
 > 证据上游与退出前置：[P1 网络安全测评纵向闭环实施方案](./AgentGov下一阶段P1网络安全测评纵向闭环实施方案.md)。
 > 账本、候选和隔离评估可提前开发，但 P2B 退出前必须取得 P1 真实闭环证据；Runtime
-> 接入与退出另以 [P2A Runtime 边界提取与 Claude Adapter 实施方案](./AgentGov下一阶段P2ARuntime边界提取与ClaudeAdapter实施方案.md)
-> 的 gateway 等价验收为前置。
+> 接入与退出以根 `README.md` 的 AgentScope Runtime Gateway、版本固定会话和 trace 契约为前置。
+> 已归档的 [旧 P2A 方案](../archive/obsolete/AgentGov下一阶段P2ARuntime边界提取与ClaudeAdapter实施方案.md)
+> 只用于历史审计，不再定义依赖。
 >
 > 需求依据：[Governor 自研究与受控自学习能力需求](../Governor自研究与受控自学习能力需求.md)。
 
@@ -370,8 +371,9 @@ P2B 不要求新增用户可见页面。
 
 ## 11. Runtime、env 与安全边界
 
-- P2B 的账本、候选、build 与隔离评估开发可与 P2A 并行；接入与阶段退出等待 P2A gateway 就绪；
-- P2B evaluation runner 通过 P2A `ManagedExecutionDriver`，按后端解析的当前部署默认 Runtime
+- P2B 的账本、候选、build 与隔离评估开发可独立推进；接入与阶段退出必须先通过当前
+  AgentScope Runtime Gateway 契约；
+- P2B evaluation runner 通过当前受治理执行入口，按后端解析的 AgentScope Runtime
   分别执行 current/candidate build；Runtime binding 与运行 provenance 位于 build 身份之外，
   候选和请求不得选择或覆盖 Runtime；
 - 不增加独立 Runtime selector、Vite env 或模型 key；

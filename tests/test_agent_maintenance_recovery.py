@@ -49,7 +49,7 @@ def _governance(tmp_path):
 def _publish(governance, git_store, content: str):
     change_set = governance.create_change_set(title="maintenance recovery", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
-    worktree.joinpath("CLAUDE.md").write_text(content, encoding="utf-8")
+    worktree.joinpath("AGENT.md").write_text(content, encoding="utf-8")
     candidate = git_store.commit_worktree(worktree, message="maintenance recovery candidate")
     governance.mark_candidate_committed(
         str(change_set["change_set_id"]),
@@ -212,7 +212,7 @@ def test_reconciler_fails_reserved_rollback_when_head_is_unrelated(monkeypatch, 
     with pytest.raises(KeyboardInterrupt):
         governance.rollback_release(str(release["release_id"]), operator="tester")
     operation = _expire_release_operation(governance)
-    Path(git_store.repository_dir, "CLAUDE.md").write_text("unrelated\n", encoding="utf-8")
+    Path(git_store.repository_dir, "AGENT.md").write_text("unrelated\n", encoding="utf-8")
     unrelated_head = git_store.create_snapshot(reason="unrelated")["agent_version_id"]
 
     monkeypatch.setattr(release_module, "_apply_or_reconcile_git", original)
@@ -371,7 +371,7 @@ def test_publish_revalidates_durable_claim_before_git_side_effect(monkeypatch, t
     governance, git_store = _governance(tmp_path)
     change_set = governance.create_change_set(title="fenced publication", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
-    worktree.joinpath("CLAUDE.md").write_text("candidate\n", encoding="utf-8")
+    worktree.joinpath("AGENT.md").write_text("candidate\n", encoding="utf-8")
     candidate = git_store.commit_worktree(worktree, message="fenced candidate")
     governance.mark_candidate_committed(
         str(change_set["change_set_id"]),

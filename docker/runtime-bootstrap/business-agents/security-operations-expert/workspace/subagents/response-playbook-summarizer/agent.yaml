@@ -1,0 +1,21 @@
+schema_version: 1
+agent:
+  id: response-playbook-summarizer
+  name: response-playbook-summarizer
+  description: RO 之外的离线响应复盘摘要。仅在人工显式提供真实执行结果和效果评估后使用；RO 在线处置流程禁止调用。
+  runtime: agentscope
+  runtime_contract: agentscope-app/2.0.8
+  system_prompt: AGENT.md
+context_config: {}
+react_config: {}
+invite_config:
+  invitable: false
+session:
+  permission_mode: dont_ask
+workspace_policy:
+  allowed_tools:
+  - Read
+  - Grep
+  - Glob
+  denied_tools: []
+  fail_closed: true

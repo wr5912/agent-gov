@@ -19,7 +19,7 @@ from typing import Any, TypedDict
 
 from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout
-from app.runtime.errors import RuntimeUnavailableError
+from app.runtime.errors import ConflictError, RuntimeUnavailableError
 from app.runtime.json_types import JsonObject
 from app.runtime.stores.improvement_content_store import (
     AttributionRecord,
@@ -34,7 +34,7 @@ from app.services.generated_agent_tests import build_generated_agent_test
 logger = logging.getLogger(__name__)
 
 RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
-# 反馈整理不需要 governor（无工具/无多轮）：直接一次 DSPy formatter 把原始反馈归纳成 title+problem。
+# 反馈整理同样通过独立 AgentScope governor，保证 API 控制面不持有 provider 凭据。
 FormatNormalizedFeedback = Callable[[str], Awaitable[FormatterOutputModel]]
 FindRunById = Callable[[str], JsonObject | None]
 
@@ -81,7 +81,7 @@ def _contains_any_root(text: str, roots: list[str]) -> bool:
 
 _EXCLUSIVE_SCOPE_MARKERS = ("仅修改", "只修改", "仅更新", "只更新", "only modify", "only update")
 _EXPLICIT_WORKSPACE_PATH = re.compile(
-    r"(?:CLAUDE\.md|\.mcp\.json|\.claude/settings\.json|\.claude/skills/[^\s，。；:]+/SKILL\.md|\.claude/agents/[^\s，。；:]+\.md)",
+    r"(?:AGENT\.md|agent\.yaml|mcp/[^\s，。；:]+\.json|skills/[^\s，。；:]+/SKILL\.md|subagents/[^\s，。；:]+/(?:agent\.yaml|AGENT\.md))",
     re.IGNORECASE,
 )
 
@@ -97,7 +97,7 @@ def _exclusive_feedback_targets(job_input: JsonObject) -> set[str]:
 def _plan_target_allowed_by_exclusive_scope(target: str, allowed: set[str]) -> bool:
     normalized = Path(target.strip().replace("\\", "/")).as_posix().casefold()
     if normalized in {"prompt", "system_prompt"}:
-        normalized = "claude.md"
+        normalized = "agent.md"
     return any(path == normalized or path in normalized for path in allowed)
 
 
@@ -107,7 +107,7 @@ def _requires_target_config_evidence(data: JsonObject) -> bool:
     actionability = _text(data.get("actionability"))
     return (
         problem_type in {"tool_misuse", "tool_unavailable", "instruction_gap", "skill_gap", "mcp_description_gap"}
-        or optimization_object_type in {"business_agent_claude_md", "skill", "subagent", "mcp_config", "mcp_description"}
+        or optimization_object_type in {"business_agent_agent_md", "skill", "subagent", "mcp_config", "mcp_description"}
         or actionability in {"direct_workspace_change", "workspace_config_change"}
     )
 
@@ -135,7 +135,7 @@ def _has_traversal(token: str) -> bool:
 def _classify_evidence_path(token: str, allowed_roots: list[str], forbidden_roots: list[str]) -> str:
     """把单个证据 token 归为 target（目标业务 workspace 内文件）/ forbidden（越界·governor·穿越）/ neutral（trace/log 等非文件证据）。
 
-    相对路径（CLAUDE.md、.claude/skills/x/SKILL.md、mcp_servers/x/sample.json）按约定属于目标业务 Agent workspace → target；
+    相对路径（AGENT.md、skills/x/SKILL.md、mcp/x.json）按约定属于目标业务 Agent workspace → target；
     绝对路径必须落在 allowed_evidence_roots 内，否则越界 forbidden；forbidden_evidence_roots（/governor-workspace）与 `..` 穿越 forbidden。
     """
     token = _clean_token(token)
@@ -183,7 +183,7 @@ class ImprovementGovernorService:
         self._format_normalized_feedback = format_normalized_feedback
         self._find_run_by_id = find_run_by_id
 
-    # ---- 系统理解 NormalizedFeedback（只整理反馈：一次 DSPy formatter，无 governor）----
+    # ---- 系统理解 NormalizedFeedback（AgentScope governor；失败则确定性兜底）----
     async def generate_normalized_feedback(
         self,
         improvement_id: str,
@@ -192,6 +192,7 @@ class ImprovementGovernorService:
     ) -> NormalizedFeedbackRecord:
         item = self._improvements.get_improvement(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
+        self._require_automatic_feedback_evidence(feedbacks)
         existing = self._content.get_normalized_feedback(improvement_id)
         raw = self._feedback_text(feedbacks)
         title, problem, generated_by = self._heuristic_normalized_feedback(item, feedbacks)
@@ -258,6 +259,7 @@ class ImprovementGovernorService:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
+        self._require_automatic_feedback_evidence(feedbacks)
         summary, boundary, evidence, counter, uncertainty, verification, generated_by = self._heuristic_attribution(item, nf)
         trace_ref: dict[str, str] = {}
         job_input = self._build_attribution_input(item, nf, feedbacks)
@@ -318,6 +320,7 @@ class ImprovementGovernorService:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         attr = self._content.get_attribution(improvement_id)
+        self._require_automatic_feedback_evidence(self._content.list_feedbacks(improvement_id))
         summary, changes, risk_level, generated_by = self._heuristic_plan(item, nf, attr)
         trace_ref: dict[str, str] = {}
         job_input = self._build_plan_input(item, nf, attr)
@@ -366,6 +369,7 @@ class ImprovementGovernorService:
     ) -> RegressionTestDesignRecord:
         item = self._improvements.get_improvement(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
+        self._require_automatic_feedback_evidence(feedbacks)
         attr = self._content.get_attribution(improvement_id)
         plan = self._content.get_optimization_plan(improvement_id)
         source_cases = self._regression_source_cases(feedbacks)
@@ -437,6 +441,32 @@ class ImprovementGovernorService:
         except Exception as exc:  # noqa: BLE001 — run 证据缺失不应阻断启发式回归候选生成
             logger.warning("failed to resolve regression source run run_id=%s error=%s", run_id, exc.__class__.__name__)
             return {}
+
+    def _require_automatic_feedback_evidence(self, feedbacks: list[Any]) -> None:
+        """阻止不完整 Runtime/Trace 证据进入自动改进分析。
+
+        手工记录和提交反馈不受此门限制；只有配置了生产 run 查询器的自动
+        governor 路径执行该检查，便于纯领域单元测试继续使用最小 fake。
+        """
+
+        if self._find_run_by_id is None:
+            return
+        if not feedbacks:
+            raise ConflictError("Automatic improvement analysis requires source feedback bound to a completed run")
+        for feedback in feedbacks:
+            run_id = _text(getattr(feedback, "run_id", ""))
+            if not run_id:
+                raise ConflictError("Automatic improvement analysis requires every feedback item to carry run_id")
+            try:
+                run = self._find_run_by_id(run_id)
+            except Exception as exc:  # noqa: BLE001 - evidence lookup failures must fail closed
+                raise ConflictError(f"Automatic improvement run evidence is unavailable: {run_id}") from exc
+            if not run:
+                raise ConflictError(f"Automatic improvement run evidence was not found: {run_id}")
+            if _text(run.get("status")) not in {"succeeded", "failed", "cancelled", "interrupted"}:
+                raise ConflictError(f"Automatic improvement requires a terminal run: {run_id}")
+            if _text(run.get("trace_status")) != "complete" or not _text(run.get("trace_id")):
+                raise ConflictError(f"Automatic improvement requires a complete Langfuse trace: {run_id}")
 
     def _build_regression_input(
         self,
@@ -596,20 +626,22 @@ class ImprovementGovernorService:
     def _target_agent_context(self, agent_id: str) -> JsonObject:
         """后端权威定位信封：只给路径边界，不内联业务 Agent 配置正文。"""
         try:
-            layout = business_agent_layout(self._data_dir, agent_id)
+            business_agent_layout(self._data_dir, agent_id)
         except InvalidAgentId:
             return {}
-        workspace = layout.workspace.as_posix()
+        # Governor 在独立 AgentScope 容器内只读访问这个固定挂载点；不要把
+        # AgentGov API 容器的 /data 路径泄漏进模型上下文。
+        workspace = f"/business-agents/{agent_id}/workspace"
         return {
             "agent_id": agent_id,
             "workspace_dir": workspace,
-            "claude_path": (layout.workspace / "CLAUDE.md").as_posix(),
-            "settings_path": (layout.workspace / ".claude" / "settings.json").as_posix(),
-            "mcp_path": (layout.workspace / ".mcp.json").as_posix(),
-            "skills_glob": f"{workspace}/.claude/skills/*/SKILL.md",
-            "agents_glob": f"{workspace}/.claude/agents/*.md",
+            "instructions_path": f"{workspace}/AGENT.md",
+            "manifest_path": f"{workspace}/agent.yaml",
+            "mcp_glob": f"{workspace}/mcp/*.json",
+            "skills_glob": f"{workspace}/skills/*/SKILL.md",
+            "subagents_glob": f"{workspace}/subagents/*/agent.yaml",
             "allowed_evidence_roots": [workspace],
-            "forbidden_evidence_roots": ["/governor-workspace"],
+            "forbidden_evidence_roots": ["/runtime-workspaces/"],
         }
 
     # ---- formatter 输出映射（agent-owned）----
@@ -627,7 +659,7 @@ class ImprovementGovernorService:
         if "forbidden" in statuses:
             raise _GuardRejection("attribution 引用了越界/governor-workspace/路径穿越证据（非目标业务 Agent workspace）")
         if _requires_target_config_evidence(data) and "target" not in statuses:
-            raise _GuardRejection("config 类归因缺少目标业务 Agent workspace 配置证据（需引用其 CLAUDE.md/.claude/skills/settings/.mcp.json，相对路径亦可）")
+            raise _GuardRejection("config 类归因缺少目标业务 Agent workspace 配置证据（需引用 AGENT.md/agent.yaml/skills/mcp，相对路径亦可）")
 
     @staticmethod
     def _guard_plan_output(output: FormatterOutputModel, job_input: JsonObject) -> None:

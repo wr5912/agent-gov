@@ -39,7 +39,23 @@ class AgentSummaryResponse(BaseModel):
     )
     requires_web_hitl: bool = Field(
         default=False,
-        description="从 workspace project settings 的 permissions.ask 派生；为 true 时交互审批依赖 ENABLE_CLAUDE_WEB_HITL。",
+        description="从 agent.yaml 的会话权限策略派生；为 true 时前端必须处理 AgentScope 原生逐次确认事件。",
+    )
+    agent_version_id: Optional[str] = Field(
+        default=None,
+        description="当前治理 Git HEAD；未形成可发布版本时为 null。",
+    )
+    harness_digest: Optional[str] = Field(
+        default=None,
+        description="当前发布 Harness 的 canonical digest；禁止从历史 Session 反推。",
+    )
+    runtime_agent_id: Optional[str] = Field(
+        default=None,
+        description="当前版本绑定的 AgentScope Agent ID；Runtime 数据面只接受此 ID。",
+    )
+    provisioned: bool = Field(
+        default=False,
+        description="当前 Git 版本是否已经显式供给为 AgentScope Agent。",
     )
 
 
@@ -106,7 +122,13 @@ class AgentDeletionImpact(BaseModel):
     releases: int = Field(default=0, description="该 Agent 归属的版本 release 数（影响面提示，按 limit 截顶）。")
 
 
-def agent_summary_response(record: AgentRegistryRecord) -> AgentSummaryResponse:
+def agent_summary_response(
+    record: AgentRegistryRecord,
+    *,
+    agent_version_id: str | None = None,
+    harness_digest: str | None = None,
+    runtime_agent_id: str | None = None,
+) -> AgentSummaryResponse:
     """把注册表记录投影为 API 摘要。
 
     单一实现：`protected` 是 backend-owned 派生字段，两处各投影一次必然漂移——此前路由层与
@@ -124,11 +146,15 @@ def agent_summary_response(record: AgentRegistryRecord) -> AgentSummaryResponse:
         default=is_default_business_agent(record.agent_id),
         protected=is_protected_business_agent(record.agent_id),
         requires_web_hitl=record.requires_web_hitl,
+        agent_version_id=agent_version_id,
+        harness_digest=harness_digest,
+        runtime_agent_id=runtime_agent_id,
+        provisioned=runtime_agent_id is not None,
     )
 
 
 class AgentDeleteResponse(BaseModel):
     deleted: AgentSummaryResponse
     impact: AgentDeletionImpact = Field(description="删除前的治理影响面提示，避免无声删除治理对象。")
-    workspace_removed: bool = Field(default=True, description="该 Agent 的运行态目录（workspace/claude-root/version）是否已确认删除。")
+    workspace_removed: bool = Field(default=True, description="该 Agent 的运行态 Workspace、Session 与版本绑定是否已确认删除。")
     cleanup_complete: bool = Field(default=True, description="磁盘清理是否完整。为 false 时注册表已删除但存在磁盘残留，同 id 重建会被安全供给流程拦住。")

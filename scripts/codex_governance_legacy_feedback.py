@@ -3,10 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-
 SOURCE_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx"}
 ACTIVE_PREFIXES = ("app/", "frontend/src/")
-LEGACY_MIGRATION_PATHS = {"app/runtime/runtime_db_migrations.py"}
 ACTIVE_PATTERN_SPECS = (
     ("legacy feedback optimization reference", "/optimization-proposals"),
     ("legacy feedback optimization reference", "optimization-proposals/"),
@@ -30,7 +28,7 @@ ACTIVE_PATTERN_SPECS = (
     ("legacy feedback optimization reference", 'job_type == "proposal"'),
     ("legacy feedback optimization reference", "job_type == 'proposal'"),
     ("legacy feedback optimization reference", '"job_type": "proposal"'),
-    ("legacy feedback optimization reference", '"job_type": \'proposal\''),
+    ("legacy feedback optimization reference", "\"job_type\": 'proposal'"),
     ("legacy feedback optimization reference", "'job_type': \"proposal\""),
     ("legacy feedback optimization reference", "'job_type': 'proposal'"),
     ("legacy feedback optimization reference", 'job_type: "proposal"'),
@@ -51,9 +49,7 @@ DOC_PATTERN_SPECS = (
     ("agent output schema version document reference", "regression-impact-analysis-output/v1"),
 )
 STATIC_OPENAPI_SNAPSHOT_PATH = "docs/开放接口规范.json"
-STATIC_OPENAPI_SNAPSHOT_REF = (
-    f"{STATIC_OPENAPI_SNAPSHOT_PATH}:static OpenAPI snapshot:tracked OpenAPI JSON:tracked file"
-)
+STATIC_OPENAPI_SNAPSHOT_REF = f"{STATIC_OPENAPI_SNAPSHOT_PATH}:static OpenAPI snapshot:tracked OpenAPI JSON:tracked file"
 
 
 def legacy_feedback_active_refs(rel_path: str, text: str) -> set[str]:
@@ -65,8 +61,6 @@ def legacy_feedback_active_refs(rel_path: str, text: str) -> set[str]:
         if not stripped:
             continue
         for kind, pattern in ACTIVE_PATTERN_SPECS:
-            if rel_path in LEGACY_MIGRATION_PATHS and pattern == "output_schema_version":
-                continue
             if pattern in stripped:
                 refs.add(f"{rel_path}:{kind}:{pattern}:{stripped}")
     return refs
@@ -121,11 +115,7 @@ def _legacy_feedback_doc_refs(rel_path: str, text: str) -> set[str]:
 
 def _iter_doc_texts(root: Path, base_ref: str | None) -> list[tuple[str, str]]:
     if base_ref:
-        return [
-            (rel_path, text)
-            for rel_path in _git_list_docs(root, base_ref)
-            if (text := _git_show(root, base_ref, rel_path)) is not None
-        ]
+        return [(rel_path, text) for rel_path in _git_list_docs(root, base_ref) if (text := _git_show(root, base_ref, rel_path)) is not None]
     docs = []
     readme = root / "README.md"
     if readme.exists():
@@ -148,11 +138,7 @@ def _git_list_docs(root: Path, base_ref: str) -> list[str]:
     )
     if result.returncode != 0:
         return []
-    return [
-        line
-        for line in result.stdout.splitlines()
-        if line == "README.md" or (line.startswith("docs/") and Path(line).suffix == ".md")
-    ]
+    return [line for line in result.stdout.splitlines() if line == "README.md" or (line.startswith("docs/") and Path(line).suffix == ".md")]
 
 
 def _git_show(root: Path, base_ref: str, rel_path: str) -> str | None:

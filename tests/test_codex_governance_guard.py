@@ -446,7 +446,7 @@ def test_new_map_any_type_boundary_fails(
             "new typed-output stage erasure: format:return:OutputFormatterResult[BaseModel]",
         ),
         (
-            "app/runtime/agent_job_runner.py",
+            "app/runtime_gateway/execution.py",
             _runner_basemodel_return_source(),
             "new typed-output stage erasure: run_profile_json:return:BaseModel",
         ),

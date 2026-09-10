@@ -398,7 +398,7 @@ Checklist 形式展示：
 ### 9.5 执行范围与内容保真
 
 - 已确认的优化方案目标是本次执行可写范围，执行任务不得读取全 Workspace 后自行扩大修改面；
-- 规范化反馈明确“仅修改 `CLAUDE.md`”时，Skill、settings、MCP 和其他文件都不得进入执行 Diff；
+- 规范化反馈明确“仅修改 `AGENT.md`”时，Skill、`agent.yaml`、MCP 和其他文件都不得进入执行 Diff；
 - 已有 Markdown 的整文件替换若保留不足一半原有非空行，后端必须拒绝，防止完整规则被短片段覆盖；
 - 上述检查是确定性后端硬门，完整 Diff 仍由开发者在执行与发布前审查。
 
@@ -619,9 +619,11 @@ AI 友好层与人类友好层必须同源：
 
 ```text
 workspace/
-├── CLAUDE.md
-├── .claude/
-├── .mcp.json
+├── AGENT.md
+├── agent.yaml
+├── mcp/
+├── skills/
+├── subagents/
 └── tests/
     ├── README.md
     ├── conftest.py       # 可选

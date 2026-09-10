@@ -31,7 +31,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "app/runtime/agent_job_types.py" = ["E402", "I001"]
-"app/runtime/output_formatter.py" = ["E402", "I001"]
 
 [tool.coverage.run]
 branch = true

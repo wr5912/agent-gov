@@ -32,7 +32,7 @@ agent:
   name: Hostile Agent Name
   version: 2.3.4
   language: zh-CN
-  runtime: claude-code
+  runtime: agentscope
 capabilities:
   - analysis
   - report_generation
@@ -64,7 +64,7 @@ mcp:
         "name": record.name,
         "version": "2.3.4",
         "language": "zh-CN",
-        "runtime": "claude-code",
+        "runtime": "agentscope",
         "capabilities": ["analysis", "report_generation"],
         "summary": "结构化展示摘要",
         "welcome_message": "**静态开场内容**\n\n请提供任务背景。",
@@ -85,6 +85,7 @@ def test_presentation_missing_or_invalid_manifest_returns_registry_fallback(
     caplog,
 ) -> None:
     module, record, workspace = _load_agent(monkeypatch, tmp_path)
+    workspace.joinpath("agent.yaml").unlink()
 
     with caplog.at_level(logging.WARNING, logger="app.services.business_agent_presentation"):
         with TestClient(module.app) as client:
@@ -120,6 +121,7 @@ def test_presentation_symlink_and_oversized_manifest_fail_closed(
     manifest = workspace / "agent.yaml"
     outside = tmp_path / "outside-agent.yaml"
     outside.write_text("presentation:\n  summary: must not be read\n", encoding="utf-8")
+    manifest.unlink()
     manifest.symlink_to(outside)
 
     with caplog.at_level(logging.WARNING, logger="app.services.business_agent_presentation"):

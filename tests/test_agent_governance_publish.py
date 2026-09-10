@@ -29,7 +29,7 @@ from app.services.agent_governance import AgentGovernanceError, AgentGovernanceS
 from sqlalchemy.exc import OperationalError
 
 from business_agent_test_utils import LEGACY_MAIN_AGENT_ID, ORDINARY_TEST_AGENT_ID, create_test_business_agent_workspace
-from feedback_store_test_utils import _settings
+from feedback_store_test_utils import _run_payload, _settings
 
 
 def _governance(tmp_path):
@@ -49,7 +49,7 @@ def _governance(tmp_path):
         feedback_store=store,
         agent_version_store=agent_store,
         runtime_mode=settings.runtime_volume_mode,
-        runtime_env={"MCP_SERVER_URL": "http://localhost:58001/mcp"},
+        runtime_env={"SEC_OPS_MCP_URL": "http://localhost:58001/mcp"},
     )
     governance.latest_passed_test_run = lambda agent_id, commit_sha: {
         "test_run_id": f"atr-{commit_sha[:12]}",
@@ -76,7 +76,7 @@ def _candidate_change_set(
             create_test_business_agent_workspace(workspace, agent_id=agent_id, name=agent_id)
     change_set = governance.create_change_set(title="候选发布测试", operator="tester", agent_id=agent_id)
     worktree_path = Path(str(change_set["worktree_path"]))
-    worktree_path.joinpath("CLAUDE.md").write_text(content, encoding="utf-8")
+    worktree_path.joinpath("AGENT.md").write_text(content, encoding="utf-8")
     # 候选提交必须落在该 change set 归属 Agent 自己的版本 store（per-agent 隔离）。
     commit_store = governance._store_for(change_set.get("agent_id"))
     candidate_commit = commit_store.commit_worktree(worktree_path, message="Commit candidate change")
@@ -142,7 +142,7 @@ def _feedback_candidate_change_set(
         source=ChangeSetSource("imp-publish", "attr-publish", "confirmed"),
     )
     worktree = Path(str(change_set["worktree_path"]))
-    worktree.joinpath("CLAUDE.md").write_text("provenance candidate\n", encoding="utf-8")
+    worktree.joinpath("AGENT.md").write_text("provenance candidate\n", encoding="utf-8")
     candidate = agent_store.commit_worktree(worktree, message="provenance candidate")
     committed = governance.mark_candidate_committed(
         change_set_id,
@@ -172,10 +172,10 @@ def test_stable_change_set_intent_is_idempotent_and_candidate_can_advance_before
     assert [event["action"] for event in governance.list_change_set_events(stable_id)] == ["created"]
 
     worktree = Path(str(first["worktree_path"]))
-    worktree.joinpath("CLAUDE.md").write_text("first candidate\n", encoding="utf-8")
+    worktree.joinpath("AGENT.md").write_text("first candidate\n", encoding="utf-8")
     first_candidate = agent_store.commit_worktree(worktree, message="first candidate")
     governance.mark_candidate_committed(stable_id, candidate_commit_sha=first_candidate, execution_job_id="exec-stable")
-    worktree.joinpath("CLAUDE.md").write_text("stale second candidate\n", encoding="utf-8")
+    worktree.joinpath("AGENT.md").write_text("stale second candidate\n", encoding="utf-8")
     stale_candidate = agent_store.commit_worktree(worktree, message="stale candidate")
 
     updated = governance.mark_candidate_committed(
@@ -256,14 +256,14 @@ def test_change_set_and_release_carry_agent_id_and_filter(tmp_path):
     assert governance.list_releases(agent_id="biz-other") == []
 
 
-def test_publish_accepts_candidate_with_real_mcp_endpoint(tmp_path):
+def test_publish_rejects_literal_mcp_endpoint_even_after_manual_approval(tmp_path):
     governance, store = _governance(tmp_path)
     original_head = store.current_commit_sha()
     change_set = governance.create_change_set(title="real MCP endpoint", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
-    mcp_path = worktree / ".mcp.json"
+    mcp_path = worktree / "mcp" / "sec-ops.json"
     mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
-    mcp["mcpServers"]["sec-ops-data"]["url"] = "http://unapproved.example/mcp"
+    mcp["mcp_config"]["url"] = "http://unapproved.example/mcp"
     mcp_path.write_text(json.dumps(mcp), encoding="utf-8")
     candidate = store.commit_worktree(worktree, message="drift managed MCP")
     committed = governance.mark_candidate_committed(
@@ -271,42 +271,54 @@ def test_publish_accepts_candidate_with_real_mcp_endpoint(tmp_path):
         candidate_commit_sha=candidate,
         execution_job_id="job-invalid-policy",
     )
+    assert committed["status"] == "pending_approval"
+    assert "mcp/sec-ops.json" in committed["approval_reason"]
 
-    published = governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
+    with pytest.raises(AgentGovernanceError, match="manual approval"):
+        governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
+    governance.approve_change_set(str(committed["change_set_id"]), operator="reviewer")
+    with pytest.raises(AgentGovernanceError, match="Managed Agent policy rejected"):
+        governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
 
-    assert published is not None
-    assert store.current_commit_sha() != original_head
-    assert json.loads((store.repository_dir / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["sec-ops-data"]["url"] == (
-        "http://unapproved.example/mcp"
-    )
+    assert store.current_commit_sha() == original_head
 
 
-def test_publish_rejects_candidate_with_missing_referenced_hook(tmp_path):
+def test_publish_requires_manual_approval_for_valid_mcp_capability_change(tmp_path):
     governance, store = _governance(tmp_path)
-    original_head = store.current_commit_sha()
-    change_set = governance.create_change_set(title="invalid managed hook", operator="tester")
+    change_set = governance.create_change_set(title="approved MCP capability", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
-    settings_path = worktree / ".claude" / "settings.json"
-    settings = json.loads(settings_path.read_text(encoding="utf-8"))
-    settings["hooks"] = {
-        "PreToolUse": [
-            {
-                "matcher": "Bash",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": 'python "$CLAUDE_PROJECT_DIR/hooks/missing_guard.py"',
-                    }
-                ],
-            }
-        ]
-    }
-    settings_path.write_text(json.dumps(settings), encoding="utf-8")
-    candidate = store.commit_worktree(worktree, message="remove referenced hook")
+    mcp_path = worktree / "mcp" / "sec-ops.json"
+    mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
+    mcp["enable_tools"] = ["soc_api__list_alerts"]
+    mcp_path.write_text(json.dumps(mcp), encoding="utf-8")
+    candidate = store.commit_worktree(worktree, message="approve exact MCP capability")
     committed = governance.mark_candidate_committed(
         str(change_set["change_set_id"]),
         candidate_commit_sha=candidate,
-        execution_job_id="job-invalid-hook-policy",
+        execution_job_id="job-approved-mcp",
+    )
+    assert committed["status"] == "pending_approval"
+
+    with pytest.raises(AgentGovernanceError, match="manual approval"):
+        governance.publish_change_set(str(committed["change_set_id"]), operator="tester", force=True, note="cannot bypass")
+    governance.approve_change_set(str(committed["change_set_id"]), operator="reviewer")
+
+    published = governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
+
+    assert published["commit_sha"] == candidate
+
+
+def test_publish_rejects_candidate_missing_required_agentscope_prompt(tmp_path):
+    governance, store = _governance(tmp_path)
+    original_head = store.current_commit_sha()
+    change_set = governance.create_change_set(title="missing AgentScope prompt", operator="tester")
+    worktree = Path(str(change_set["worktree_path"]))
+    (worktree / "AGENT.md").unlink()
+    candidate = store.commit_worktree(worktree, message="remove required AgentScope prompt")
+    committed = governance.mark_candidate_committed(
+        str(change_set["change_set_id"]),
+        candidate_commit_sha=candidate,
+        execution_job_id="job-invalid-agentscope-policy",
     )
 
     with pytest.raises(AgentGovernanceError, match="Managed Agent policy rejected"):
@@ -315,38 +327,27 @@ def test_publish_rejects_candidate_with_missing_referenced_hook(tmp_path):
     assert store.current_commit_sha() == original_head
 
 
-def test_publish_accepts_candidate_with_custom_referenced_hook(tmp_path):
+def test_publish_accepts_candidate_with_custom_skill(tmp_path):
     governance, store = _governance(tmp_path)
-    change_set = governance.create_change_set(title="custom managed hook", operator="tester")
+    change_set = governance.create_change_set(title="custom AgentScope skill", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
-    settings_path = worktree / ".claude" / "settings.json"
-    settings = json.loads(settings_path.read_text(encoding="utf-8"))
-    settings.setdefault("hooks", {}).setdefault("PostToolUse", []).append(
-        {
-            "matcher": "Write",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": 'python "$CLAUDE_PROJECT_DIR/hooks/custom_audit.py"',
-                }
-            ],
-        }
+    custom_skill = worktree / "skills" / "custom-audit" / "SKILL.md"
+    custom_skill.parent.mkdir(parents=True, exist_ok=True)
+    custom_skill.write_text(
+        "---\nname: custom-audit\ndescription: 审计智能体输出。\n---\n\n# Custom Audit\n",
+        encoding="utf-8",
     )
-    settings_path.write_text(json.dumps(settings), encoding="utf-8")
-    custom_hook = worktree / "hooks" / "custom_audit.py"
-    custom_hook.parent.mkdir(parents=True, exist_ok=True)
-    custom_hook.write_text("# custom managed hook\n", encoding="utf-8")
-    candidate = store.commit_worktree(worktree, message="add custom referenced hook")
+    candidate = store.commit_worktree(worktree, message="add custom AgentScope skill")
     committed = governance.mark_candidate_committed(
         str(change_set["change_set_id"]),
         candidate_commit_sha=candidate,
-        execution_job_id="job-custom-hook-policy",
+        execution_job_id="job-custom-skill-policy",
     )
 
     published = governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
 
     assert published is not None
-    assert (store.repository_dir / "hooks" / "custom_audit.py").is_file()
+    assert (store.repository_dir / "skills" / "custom-audit" / "SKILL.md").is_file()
 
 
 def test_business_agent_version_chain_is_isolated_from_platform_default(tmp_path):
@@ -397,7 +398,16 @@ def test_governance_serves_multiple_business_agents_with_isolated_closed_loops(t
     records: dict[str, dict] = {}
     for agent_id in agents:
         # 每个业务 Agent 一条独立闭环记录：run -> signal -> case + change set/release。
-        store.record_run({"run_id": f"run-{agent_id}", "agent_id": agent_id, "created_at": "2026-06-12T00:00:00Z"})
+        store.record_run(
+            _run_payload(
+                run_id=f"run-{agent_id}",
+                agent_id=agent_id,
+                created_at="2026-06-12T00:00:00Z",
+                started_at="2026-06-12T00:00:00Z",
+                updated_at="2026-06-12T00:00:00Z",
+                completed_at="2026-06-12T00:00:00Z",
+            )
+        )
         signal = store.create_signal(FeedbackSignalCreateRequest(run_id=f"run-{agent_id}", labels=["tool_data_incomplete"]))
         case = store.create_case(source_refs=[("signal", signal["signal_id"])], title=f"{agent_id} 反馈")
         change_set = _candidate_change_set(governance, default_store, content=f"# {agent_id}\n\n候选\n", agent_id=agent_id)
@@ -1132,6 +1142,9 @@ def test_high_risk_change_set_requires_approval_before_publish(tmp_path):
     governance, agent_store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, agent_store)
     change_set_id = str(change_set["change_set_id"])
+
+    with pytest.raises(AgentGovernanceError, match="recorded approval request"):
+        governance.approve_change_set(change_set_id, operator="reviewer")
 
     pending = governance.request_change_set_approval(
         change_set_id,

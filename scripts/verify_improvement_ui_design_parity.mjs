@@ -182,7 +182,8 @@ async function openImprovementById(page, improvementId) {
   await target.waitFor({ timeout: 8000 }).catch(() => {});
   if ((await target.count()) === 0) return false;
   await target.click();
-  await page.getByTestId("improvement-detail").waitFor({ timeout: 8000 }).catch(() => {});
+  const detail = page.locator(`[data-testid="improvement-detail"][data-item-id="${improvementId}"]`);
+  await detail.getByTestId("current-decision-card").waitFor({ state: "visible", timeout: 8000 });
   return true;
 }
 

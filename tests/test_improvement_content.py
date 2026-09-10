@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app as _load_app
 from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
-from feedback_store_test_utils import _seed_execution_record
+from feedback_store_test_utils import _run_payload, _seed_execution_record
 
 
 def _store(tmp_path: Path) -> ImprovementContentStore:
@@ -48,7 +48,16 @@ def _create_feedback_case(module, *, agent_id: str) -> dict:
             workspace_dir=str(workspace_dir),
         )
     run_id = f"run-{agent_id}"
-    module.feedback_store.record_run({"run_id": run_id, "agent_id": agent_id, "created_at": "2026-07-10T00:00:00Z"})
+    module.feedback_store.record_run(
+        _run_payload(
+            run_id=run_id,
+            agent_id=agent_id,
+            created_at="2026-07-10T00:00:00Z",
+            started_at="2026-07-10T00:00:00Z",
+            updated_at="2026-07-10T00:00:00Z",
+            completed_at="2026-07-10T00:00:00Z",
+        )
+    )
     signal = module.feedback_store.create_signal(FeedbackSignalCreateRequest(run_id=run_id, labels=["tool_data_incomplete"]))
     feedback_case = module.feedback_store.create_case(
         source_refs=[("signal", signal["signal_id"])],
@@ -643,7 +652,7 @@ def test_optimization_plan_and_execution(monkeypatch, tmp_path: Path) -> None:
             generated_by="governor",
             change_set_id="agc-test",
             applied_agent_version_id="v1.2.0",
-            applied_diff={"changed_files": ["CLAUDE.md"]},
+            applied_diff={"changed_files": ["AGENT.md"]},
             advance_to_stage="execution",
         )
 
@@ -684,8 +693,14 @@ def test_optimization_plan_and_execution(monkeypatch, tmp_path: Path) -> None:
 def test_backend_generates_initial_attribution_and_plan(monkeypatch, tmp_path: Path) -> None:
     """P2：归因/方案生成走后端治理端点，不由浏览器拼接后直接 upsert。"""
     module = _load_app(monkeypatch, tmp_path)
+    feedback_case = _create_feedback_case(module, agent_id="soc-ops")
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警误报治理"}).json()["improvement_id"]
+        attached = client.post(
+            f"/api/improvements/{iid}/attach-feedback-case",
+            json={"feedback_case_id": feedback_case["feedback_case_id"]},
+        )
+        assert attached.status_code == 201
         client.put(
             f"/api/improvements/{iid}/normalized-feedback",
             json={
@@ -810,7 +825,7 @@ def test_regression_test_design_generate_get_confirm(monkeypatch, tmp_path: Path
             generated_by="governor",
             change_set_id="agc-regression",
             applied_agent_version_id="v-test",
-            applied_diff={"changed_files": ["CLAUDE.md"]},
+            applied_diff={"changed_files": ["AGENT.md"]},
             advance_to_stage="execution",
         )
 
@@ -820,7 +835,7 @@ def test_regression_test_design_generate_get_confirm(monkeypatch, tmp_path: Path
             change_set_id="agc-regression",
             previous_commit_sha="v-test",
             candidate_commit_sha="a" * 40,
-            applied_diff={"changed_files": ["CLAUDE.md", "tests/test_feedback_regression.py"]},
+            applied_diff={"changed_files": ["AGENT.md", "tests/test_feedback_regression.py"]},
             generated_test_files=["tests/test_feedback_regression.py"],
         )
         return {

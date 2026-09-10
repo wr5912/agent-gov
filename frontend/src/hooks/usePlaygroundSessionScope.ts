@@ -7,6 +7,11 @@ interface PlaygroundSessionScopeOptions {
   messagesBySession: Record<string, ChatMessage[]>;
 }
 
+interface LocalSessionOwner {
+  businessAgentId: string;
+  runtimeAgentId: string;
+}
+
 export function usePlaygroundSessionScope({
   sessions,
   messagesBySession,
@@ -19,7 +24,7 @@ export function usePlaygroundSessionScope({
     "playground-active-session",
     undefined,
   );
-  const [localSessionOwners, setLocalSessionOwners] = useState<Record<string, string>>({});
+  const [localSessionOwners, setLocalSessionOwners] = useState<Record<string, LocalSessionOwner>>({});
 
   const selectedAgentRef = useRef(selectedBusinessAgentId);
   const activeSessionRef = useRef(activeSessionId);
@@ -40,12 +45,19 @@ export function usePlaygroundSessionScope({
 
   const reconcile = useCallback((agents: AgentSummary[], nextSessions: SessionInfo[]) => {
     const availableAgentIds = new Set(agents.map((agent) => agent.agent_id));
+    const runtimeOwners = new Map(
+      agents
+        .filter((agent) => agent.runtime_agent_id)
+        .map((agent) => [agent.runtime_agent_id, agent.agent_id]),
+    );
     let nextSelectedAgentId = selectedAgentRef.current;
     let nextActiveSessionId = activeSessionRef.current;
 
     if (nextActiveSessionId) {
       const canonical = nextSessions.find((session) => session.session_id === nextActiveSessionId);
-      const owner = canonical?.agent_id || localOwnersRef.current[nextActiveSessionId];
+      const owner = canonical?.business_agent_id
+        || (canonical?.agent_id ? runtimeOwners.get(canonical.agent_id) : undefined)
+        || localOwnersRef.current[nextActiveSessionId]?.businessAgentId;
       if (owner && availableAgentIds.has(owner)) {
         nextSelectedAgentId = owner;
       } else {
@@ -81,7 +93,7 @@ export function usePlaygroundSessionScope({
 
   const selectSession = useCallback((sessionId: string) => {
     const canonical = sessions.find((session) => session.session_id === sessionId);
-    const owner = canonical?.agent_id || localOwnersRef.current[sessionId];
+    const owner = canonical?.business_agent_id || localOwnersRef.current[sessionId]?.businessAgentId;
     if (!owner || owner !== selectedAgentRef.current || sessionId === activeSessionRef.current) {
       return false;
     }
@@ -89,9 +101,12 @@ export function usePlaygroundSessionScope({
     return true;
   }, [sessions, storeActiveSession]);
 
-  const claimLocalSession = useCallback((sessionId: string, agentId: string) => {
-    if (!sessionId || !agentId) return;
-    const nextOwners = { ...localOwnersRef.current, [sessionId]: agentId };
+  const claimLocalSession = useCallback((sessionId: string, businessAgentId: string, runtimeAgentId: string) => {
+    if (!sessionId || !businessAgentId || !runtimeAgentId) return;
+    const nextOwners = {
+      ...localOwnersRef.current,
+      [sessionId]: { businessAgentId, runtimeAgentId },
+    };
     localOwnersRef.current = nextOwners;
     setLocalSessionOwners(nextOwners);
     storeActiveSession(sessionId);
@@ -112,18 +127,21 @@ export function usePlaygroundSessionScope({
     const canonicalIds = new Set(sessions.map((session) => session.session_id));
     const localOnly = Object.entries(messagesBySession)
       .filter(([sessionId]) => !canonicalIds.has(sessionId))
-      .filter(([sessionId]) => localSessionOwners[sessionId] === selectedBusinessAgentId)
+      .filter(([sessionId]) => localSessionOwners[sessionId]?.businessAgentId === selectedBusinessAgentId)
       .map<SessionInfo>(([sessionId, messages]) => ({
         session_id: sessionId,
-        agent_id: selectedBusinessAgentId,
+        agent_id: localSessionOwners[sessionId].runtimeAgentId,
+        business_agent_id: selectedBusinessAgentId,
         created_at: messages[0]?.createdAt || new Date().toISOString(),
         updated_at: messages.at(-1)?.createdAt || new Date().toISOString(),
         title: messages.find((message) => message.role === "user")?.content.slice(0, 80) || "本地新会话",
         turns: Math.max(0, Math.floor(messages.length / 2)),
         metadata: { localOnly: true },
+        is_running: false,
+        status: "idle",
       }));
     return [
-      ...sessions.filter((session) => session.agent_id === selectedBusinessAgentId),
+      ...sessions.filter((session) => session.business_agent_id === selectedBusinessAgentId),
       ...localOnly,
     ];
   }, [localSessionOwners, messagesBySession, selectedBusinessAgentId, sessions]);

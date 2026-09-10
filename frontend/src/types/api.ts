@@ -630,6 +630,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-runs/by-client-operation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resolve one exact AgentGov run from a durable client operation identity */
+        get: operations["get_run_by_client_operation_api_agent_runs_by_client_operation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one AgentGov run and its reply/trace links */
+        get: operations["get_run_api_agent_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-runs/{run_id}/cancel": {
         parameters: {
             query?: never;
@@ -639,11 +673,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Cancel one exact managed Agent run and wait for durable termination
-         * @description Returns only after the target run is terminal and no longer owns its session fence. Repeated cancellation is idempotent.
-         */
-        post: operations["cancel_agent_run_api_agent_runs__run_id__cancel_post"];
+        /** Cancel one exact AgentGov run */
+        post: operations["cancel_api_agent_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-runs/{run_id}/pending-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the still-pending HITL actions for one authorized run */
+        get: operations["get_pending_actions_api_agent_runs__run_id__pending_actions_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -657,30 +705,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the refresh-safe semantic Trace for one Agent run */
-        get: operations["get_agent_run_trace_api_agent_runs__run_id__trace_get"];
+        /** Resolve an OTel trace from a run */
+        get: operations["get_trace_api_agent_runs__run_id__trace_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-runtime/sdk-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run a managed Claude Agent SDK turn and stream native SDK messages
-         * @description Each official Claude Agent SDK yield is emitted once as claude.sdk.<ClassName> with a mechanical dataclass-to-JSON payload. AgentGov-owned lifecycle events use agentgov.*. This contract follows the pinned Claude Agent SDK; it is not a UI-shaped or byte-exact CLI stream.
-         */
-        post: operations["sdk_events_api_agent_runtime_sdk_events_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -840,7 +868,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List configured Claude subagents */
+        /** List configured AgentScope subagents */
         get: operations["list_agents_api_agents_get"];
         put?: never;
         post?: never;
@@ -925,68 +953,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/chat": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run a Claude Agent task and return the full result
-         * @deprecated
-         * @description Runs one Claude Agent SDK query. Requires a registered business agent_id.
-         */
-        post: operations["chat_api_chat_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/chat/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run a Claude Agent task as server-sent events
-         * @deprecated
-         * @description Streams session, message, prompt_suggestion, result, error, and done events as text/event-stream. Requires a registered business agent_id.
-         */
-        post: operations["chat_stream_api_chat_stream_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/claude-user-input-requests": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Claude SDK HITL requests for Playground Web confirmation
-         * @description Lists HITL requests visible to the authenticated Playground client. A waiting request includes its one-time decision_token only when queried by the exact run_id with status=waiting; broad queries never return the token. Bearer API-key authentication is always required.
-         */
-        get: operations["list_requests_api_claude_user_input_requests_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/config": {
         parameters: {
             query?: never;
@@ -995,32 +961,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Inspect Claude Code configuration mapping
+         * Inspect AgentScope Harness mapping
          * @description Returns path, mount, scope, load, and git-policy metadata without exposing sensitive file contents.
          */
         get: operations["config_mapping_api_config_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/debug/agent-runtime/raw-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run a managed Agent and return byte-exact native Runtime events
-         * @description Starts a normal managed Agent turn, but returns the selected Runtime's native stdout bytes without JSON parsing, re-serialization, SSE framing, redaction, or AgentGov control events. HTTP chunk boundaries are not native event boundaries; concatenate response bytes for the exact stream. Profile and admission failures before headers use HTTP errors, including 400 for a non-runnable Agent. After streaming headers are sent, a late Runtime failure terminates the byte stream and cannot be reframed as an AgentGov JSON/SSE terminal event. This privileged debug surface is disabled by default and requires API_KEY when enabled.
-         */
-        post: operations["runtime_raw_events_api_debug_agent_runtime_raw_events_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1573,7 +1519,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Organize feedback into title/problem via DSPy formatter (heuristic fallback) */
+        /** Organize feedback into title/problem through the governed AgentScope runtime */
         post: operations["generate_nf_api_improvements__improvement_id__normalized_feedback_generate_post"];
         delete?: never;
         options?: never;
@@ -1731,7 +1677,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Fetch one Langfuse trace through backend credentials */
+        /** Fetch one Langfuse trace by OTel trace_id */
         get: operations["get_langfuse_trace_api_langfuse_traces__trace_id__get"];
         put?: never;
         post?: never;
@@ -1778,19 +1724,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sessions": {
+    "/api/runtime/agents/{governance_agent_id}/current": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * List API session mappings
-         * @deprecated
-         * @description Deprecated compatibility view of AgentGov sessions. Migrate to GET /v1/conversations.
-         */
-        get: operations["list_sessions_api_sessions_get"];
+        /** Read the exact current governed-to-Runtime version tuple */
+        get: operations["current_runtime_version_api_runtime_agents__governance_agent_id__current_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1799,7 +1741,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sessions/{session_id}": {
+    "/api/runtime/agents/{governance_agent_id}/provision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Provision the exact current governed version before Session admission */
+        post: operations["provision_runtime_version_api_runtime_agents__governance_agent_id__provision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runtime/chat/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger one governed AgentScope run
+         * @description Start a governed AgentScope turn, or resume the same waiting run with a native HITL result. A normal turn creates one AgentGov run; USER_CONFIRM_RESULT and EXTERNAL_EXECUTION_RESULT must carry the waiting reply_id and resume that existing run.
+         */
+        post: operations["chat_api_runtime_chat__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runtime/sessions/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List sessions across all versions of one governed Agent */
+        get: operations["list_sessions_api_runtime_sessions__get"];
+        put?: never;
+        /**
+         * Create a version-pinned AgentScope session
+         * @description Create an AgentScope session pinned to the currently published immutable Harness version. Send a stable Idempotency-Key header so a transport retry cannot create a second session.
+         */
+        post: operations["create_session_api_runtime_sessions__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runtime/sessions/{session_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1809,30 +1809,39 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /**
-         * Delete one API session mapping
-         * @deprecated
-         * @description Deprecated session deletion surface. Migrate to DELETE /v1/conversations/{conversation_id}; an active turn returns 409.
-         */
-        delete: operations["delete_session_api_sessions__session_id__delete"];
+        /** Delete an AgentScope session */
+        delete: operations["delete_session_api_runtime_sessions__session_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/sessions/{session_id}/messages": {
+    "/api/runtime/sessions/{session_id}/interrupt": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Read a session's conversation history (projected from the SDK session transcript)
-         * @deprecated
-         * @description Deprecated offset-based history projection. Migrate to GET /v1/conversations/{conversation_id}/items. The owning Agent is resolved from persisted session facts; ambiguous ownership returns 409.
-         */
-        get: operations["get_session_messages_api_sessions__session_id__messages_get"];
+        get?: never;
+        put?: never;
+        /** Interrupt an AgentScope run */
+        post: operations["interrupt_api_runtime_sessions__session_id__interrupt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runtime/sessions/{session_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read canonical AgentScope messages */
+        get: operations["messages_api_runtime_sessions__session_id__messages_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1841,23 +1850,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/openai-compat-agent": {
+    "/api/runtime/sessions/{session_id}/status": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get the /v1 出口业务 Agent (configured=False means use the default business Agent) */
-        get: operations["get_openai_compat_agent_api_settings_openai_compat_agent_get"];
-        /**
-         * Set the /v1 出口业务 Agent (validated: unknown 404, non-business 400)
-         * @description Select the registered business Agent used by strict /v1 Responses and the deprecated Chat Completions shim. Obtain agent_id from GET /api/agent-registry.
-         */
-        put: operations["set_openai_compat_agent_api_settings_openai_compat_agent_put"];
+        /** Read canonical AgentScope session status */
+        get: operations["session_status_api_runtime_sessions__session_id__status_get"];
+        put?: never;
         post?: never;
-        /** Reset the /v1 出口业务 Agent to the default business Agent */
-        delete: operations["reset_openai_compat_agent_api_settings_openai_compat_agent_delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runtime/sessions/{session_id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Raw-byte proxy of AgentScope AgentEvent SSE */
+        get: operations["stream_api_runtime_sessions__session_id__stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1870,7 +1891,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List configured Claude skills */
+        /** List configured AgentScope skills */
         get: operations["list_skills_api_skills_get"];
         put?: never;
         post?: never;
@@ -1925,7 +1946,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Check service health and discover API documentation URLs */
+        /** Health */
         get: operations["health_health_get"];
         put?: never;
         post?: never;
@@ -1942,7 +1963,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Check API process liveness without external dependencies */
+        /** Liveness */
         get: operations["liveness_health_live_get"];
         put?: never;
         post?: never;
@@ -1959,186 +1980,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read cached model provider readiness without starting a probe */
+        /** Readiness */
         get: operations["readiness_health_ready_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/agentgov/confirmation-requests/{request_id}/decision": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Resolve one active HITL confirmation
-         * @description Requires Bearer API-key authentication plus the request-specific one-time decision_token. The request_id selects the pending confirmation; the token authorizes that single decision and is not a substitute for endpoint authentication. Replays or an invalid token return a conflict.
-         */
-        post: operations["decide_v1_agentgov_confirmation_requests__request_id__decision_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/chat/completions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run the deprecated minimal text-only chat-completion shim
-         * @deprecated
-         * @description Maps string chat messages into one non-streaming Claude Agent task. This is not full OpenAI Chat Completions compatibility: stream=true, tools, multimodal content, and streaming chunks are unsupported. Requests carry no agent_id; the target is operator-configured via /api/settings/openai-compat-agent, falling back to the platform default business Agent when unset.
-         */
-        post: operations["openai_chat_completions_v1_chat_completions_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/conversations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List conversations (AgentGov extension for the session sidebar)
-         * @description Lists conversation projections derived from AgentGov SDK session mappings; no parallel message store is created.
-         */
-        get: operations["list_conversations_v1_conversations_get"];
-        put?: never;
-        /**
-         * Create a conversation
-         * @description Creates an AgentGov session mapping and returns its conv_<session_id> projection. Unknown request fields are rejected; metadata is observational and backend-reserved keys are removed.
-         */
-        post: operations["create_conversation_v1_conversations_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/conversations/{conversation_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Retrieve a conversation
-         * @description Retrieves one conv_<session_id> projection. Returns 404 when the underlying AgentGov session does not exist.
-         */
-        get: operations["get_conversation_v1_conversations__conversation_id__get"];
-        put?: never;
-        post?: never;
-        /**
-         * Delete a conversation mapping
-         * @description Deletes the underlying AgentGov session mapping. An active turn is protected and returns 409; deletion does not invent a separate Conversations persistence layer.
-         */
-        delete: operations["delete_conversation_v1_conversations__conversation_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/conversations/{conversation_id}/items": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List conversation items (projected from the SDK transcript; cursor-style after/limit/order/include)
-         * @description Projects messages from the owning Agent's committed Claude SDK transcript. Ownership is resolved from the persisted session; missing owners or an active/migrating transcript return explicit errors rather than falling back to another Agent.
-         */
-        get: operations["list_conversation_items_v1_conversations__conversation_id__items_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/responses": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run an AgentGov business agent through a transitional Responses-shaped projection
-         * @description Transitional projection over the SDK-native managed runtime; it is not full OpenAI Responses compatibility and is not AgentGov's runtime source of truth. No `agentgov` = strict (operator-configured agent, OpenAI-shaped response). `agentgov` present = control (requires `agentgov.agent_id`). `stream=true` returns Responses-style SSE (`response.*`; plus `agentgov.*` control events, including optional `agentgov.prompt_suggestion`, in control mode).
-         *
-         *     ### Request-body field guide
-         *
-         *     Swagger UI's **Parameters → No parameters** means this operation has no path, query, header, or cookie parameters. The JSON inputs below are under **Request body**. Supply the Bearer API key through **Authorize**.
-         *
-         *     | JSON path | Required | Type | Default | Example | Description |
-         *     | --- | --- | --- | --- | --- | --- |
-         *     | `model` | no | string \| null | — | "claude-sonnet-4-5" | Per-request LLM override only; never a business Agent handle. Omit to use the Agent profile. |
-         *     | `input` | yes | string \| array | — | "请核查当前告警并给出处置建议" | Non-empty prompt string, or typed text message items containing a current user message. |
-         *     | `input[].type` | no | literal message | "message" | "message" | Discriminator for an input message item. |
-         *     | `input[].role` | yes | enum | — | "user" | Message role. At least one user message with non-blank text is required in the complete input array; only user-message text is mapped to the current Agent prompt. |
-         *     | `input[].content` | yes | string \| array | — | "请复核该告警的处置结论" | Non-blank message text or a non-empty array of typed input_text blocks. |
-         *     | `input[].content[].type` | no | literal input_text | "input_text" | "input_text" | Discriminator for a text input content block. |
-         *     | `input[].content[].text` | yes | string | — | "请复核该告警的处置结论" | Non-blank text carried by this input content block. |
-         *     | `instructions` | no | string \| null | — | "补充说明证据不足的判断，不替换业务 Agent 的受治理指令。" | OpenAI standard field NAME. In AgentGov this is APPEND-ONLY (mapped to system_append, appended to the Claude Code preset + workspace CLAUDE.md), which differs from OpenAI replace/swap semantics. Rejected (422) on the strict surface. |
-         *     | `stream` | no | boolean | false | true | false returns one JSON ResponseObject; true returns Responses-style SSE. agentgov.with_speech_summary=true is valid only when this field is true. |
-         *     | `store` | no | boolean | true | false | Whether the response remains retrievable through GET /v1/responses/{response_id}. false disables public retrieval but does not remove internal audit evidence. |
-         *     | `conversation` | no | string \| null | — | "conv_sess-20260729" | AgentGov conversation projection (normally conv_<session_id>) used to continue that server session. Prefer this or previous_response_id alone. If both are supplied, AgentGov currently accepts them only when they resolve to the same conversation; this is a documented OpenAI compatibility deviation. |
-         *     | `previous_response_id` | no | string \| null | — | "resp_run-20260729-001" | Previous AgentGov response id (resp_<run_id>) whose owning conversation should be continued. Returns 404 when the response is unknown and 409 when its conversation is unavailable or conflicts with an explicit conversation. Prefer this or conversation alone. |
-         *     | `metadata` | no | object | — | {"source":"soc-console","tenant":"north-region"} | AgentGov transitional metadata object. Values may be nested JSON; backend-reserved keys are removed before public echo and the backend does not route on remaining entries. |
-         *     | `agentgov` | no | AgentGovRequestExtension \| null | — | {"agent_id":"security-operations-expert","debug":{"sdk_raw":true},"include_trace":true,"with_speech_summary":true} | AgentGov control-plane extension. Omit it for strict mode; when present, agent_id is required and control-only trace, debug, feedback routing, and speech-summary switches become available. |
-         *     | `agentgov.agent_id` | yes | string | — | "security-operations-expert" | Business agent to run in control mode. Must contain at least one non-whitespace character. |
-         *     | `agentgov.alert_id` | no | string \| null | — | "alert-20260729-001" | Optional SOC alert id used as backend-owned feedback-loop routing input. |
-         *     | `agentgov.case_id` | no | string \| null | — | "case-20260729-001" | Optional SOC case id used as backend-owned feedback-loop routing input. |
-         *     | `agentgov.max_turns` | no | integer \| null | — | 8 | Claude Code turn cap for this request; omit to use the operator-configured default. |
-         *     | `agentgov.include_trace` | no | boolean | false | true | Emit complete semantic SDK facts as agentgov.trace_event envelopes. |
-         *     | `agentgov.with_speech_summary` | no | boolean | false | true | Control streaming only; defaults to false. true requires the top-level stream=true or the API returns 422. When enabled, eligible top-level thinking/assistant boundaries may emit best-effort agentgov.speech_summary SSE events; generation failure is silent and no event is guaranteed. |
-         *     | `agentgov.debug` | no | AgentGovDebug \| null | — | {"sdk_raw":true} | Optional control-stream debugging switches; omit for normal business traffic. |
-         *     | `agentgov.debug.sdk_raw` | no | boolean | false | true | Control streaming only. When true, emit AgentGov-wrapped SDK raw facts for debugging; the value does not change the model request or the standard response.* projection. |
-         */
-        post: operations["create_response_v1_responses_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/responses/{response_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Retrieve a stored response (reconstructed from the agent run)
-         * @description Rebuilds the response from the persisted agent run (resp_<run_id>). Minimal retrieve: completed runs only; status derived from errors/stop_reason; output_text from the message timeline. store=false -> 404 (internal audit stays).
-         */
-        get: operations["retrieve_response_v1_responses__response_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2364,7 +2207,8 @@ export interface components {
              * Content
              * @description New UTF-8 file content.
              * @example {
-             *       "mcpServers": {}
+             *       "mcp_config": {"type": "http_mcp", "url": "${SEC_OPS_MCP_URL}"},
+             *       "credential_refs": []
              *     }
              */
             content: string;
@@ -2374,12 +2218,6 @@ export interface components {
              * @example 7f83b1657ff1fc53b92dc18148a1d65dfa13514e
              */
             expected_sha256?: string | null;
-            /**
-             * Session Id
-             * @description Optional API session to detach from its Claude SDK resume id after applying this config.
-             * @example sess-20260729
-             */
-            session_id?: string | null;
         };
         /** AgentConfigFileUpdateResponse */
         AgentConfigFileUpdateResponse: {
@@ -2397,15 +2235,15 @@ export interface components {
              * @default application/json
              */
             content_type: string;
+            /**
+             * Existing Sessions Unchanged
+             * @default true
+             */
+            existing_sessions_unchanged: boolean;
             /** Exists */
             exists: boolean;
             /** Path */
             path: string;
-            /**
-             * Sdk Session Invalidated
-             * @default false
-             */
-            sdk_session_invalidated: boolean;
             /** Sha256 */
             sha256?: string | null;
             /**
@@ -2427,7 +2265,7 @@ export interface components {
             impact: components["schemas"]["AgentDeletionImpact"];
             /**
              * Workspace Removed
-             * @description 该 Agent 的运行态目录（workspace/claude-root/version）是否已确认删除。
+             * @description 该 Agent 的运行态 Workspace、Session 与版本绑定是否已确认删除。
              * @default true
              */
             workspace_removed: boolean;
@@ -2566,175 +2404,6 @@ export interface components {
             reason: string;
         } & {
             [key: string]: unknown;
-        };
-        /**
-         * AgentGovConversationExtension
-         * @description 会话对象上的 AgentGov 扩展（session 专属、非 OpenAI 标准字段；OpenAI 客户端忽略）。
-         */
-        AgentGovConversationExtension: {
-            /** Active Run Expires At */
-            active_run_expires_at?: string | null;
-            /** Active Run Id */
-            active_run_id?: string | null;
-            /** Agent Id */
-            agent_id?: string | null;
-            /** Sdk Session Id */
-            sdk_session_id?: string | null;
-            /** Turns */
-            turns?: number | null;
-            /** Updated At */
-            updated_at?: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * AgentGovConversationItemExtension
-         * @description AgentGov-owned run context associated with one SDK transcript message.
-         */
-        AgentGovConversationItemExtension: {
-            /** Agent Version Id */
-            agent_version_id?: string | null;
-            /** Langfuse Trace Id */
-            langfuse_trace_id?: string | null;
-            /** Langfuse Trace Url */
-            langfuse_trace_url?: string | null;
-            /** Run Id */
-            run_id: string;
-            /** Sdk Session Id */
-            sdk_session_id?: string | null;
-        };
-        /**
-         * AgentGovDebug
-         * @description Control-mode debug switches. These fields are never accepted in strict mode.
-         */
-        AgentGovDebug: {
-            /**
-             * Sdk Raw
-             * @description Control streaming only. When true, emit AgentGov-wrapped SDK raw facts for debugging; the value does not change the model request or the standard response.* projection.
-             * @default false
-             * @example true
-             */
-            sdk_raw: boolean;
-        };
-        /**
-         * AgentGovRequestExtension
-         * @description control 模式的 AgentGov 控制面扩展。存在即选中 control 模式。
-         */
-        AgentGovRequestExtension: {
-            /**
-             * Agent Id
-             * @description Business agent to run in control mode. Must contain at least one non-whitespace character.
-             * @example security-operations-expert
-             */
-            agent_id: string;
-            /**
-             * Alert Id
-             * @description Optional SOC alert id used as backend-owned feedback-loop routing input.
-             * @example alert-20260729-001
-             */
-            alert_id?: string | null;
-            /**
-             * Case Id
-             * @description Optional SOC case id used as backend-owned feedback-loop routing input.
-             * @example case-20260729-001
-             */
-            case_id?: string | null;
-            /**
-             * @description Optional control-stream debugging switches; omit for normal business traffic.
-             * @example {
-             *       "sdk_raw": true
-             *     }
-             */
-            debug?: components["schemas"]["AgentGovDebug"] | null;
-            /**
-             * Include Trace
-             * @description Emit complete semantic SDK facts as agentgov.trace_event envelopes.
-             * @default false
-             * @example true
-             */
-            include_trace: boolean;
-            /**
-             * Max Turns
-             * @description Claude Code turn cap for this request; omit to use the operator-configured default.
-             * @example 8
-             */
-            max_turns?: number | null;
-            /**
-             * With Speech Summary
-             * @description Control streaming only; defaults to false. true requires the top-level stream=true or the API returns 422. When enabled, eligible top-level thinking/assistant boundaries may emit best-effort agentgov.speech_summary SSE events; generation failure is silent and no event is guaranteed.
-             * @default false
-             * @example true
-             */
-            with_speech_summary: boolean;
-        };
-        /**
-         * AgentGovResponseExtension
-         * @description 响应侧 AgentGov 扩展（对称于请求侧顶层 agentgov）。
-         */
-        AgentGovResponseExtension: {
-            /** Agent Activity */
-            agent_activity?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Agent Id */
-            agent_id?: string | null;
-            /** Agent Version Id */
-            agent_version_id?: string | null;
-            /** Case Id */
-            case_id?: string | null;
-            /** Conversation Id */
-            conversation_id?: string | null;
-            /** Errors */
-            errors?: string[];
-            /**
-             * Output Text
-             * @description Convenience aggregate of output[] text; AgentGov projection, not an OpenAI wire-standard field.
-             */
-            output_text?: string | null;
-            /** Run Id */
-            run_id?: string | null;
-            /** Sdk Session Id */
-            sdk_session_id?: string | null;
-            /** Session Id */
-            session_id?: string | null;
-            /** Stop Reason */
-            stop_reason?: string | null;
-            /** Total Cost Usd */
-            total_cost_usd?: number | null;
-            /** Trace Id */
-            trace_id?: string | null;
-            /** Usage */
-            usage?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * AgentGovSpeechSummaryEnvelope
-         * @description Public SSE data contract shared by all Speech Summary surfaces.
-         */
-        AgentGovSpeechSummaryEnvelope: {
-            /** Payload */
-            payload: components["schemas"]["ThinkingSpeechSummaryPayload"] | components["schemas"]["AssistantResponseSpeechSummaryPayload"];
-            /** Run Id */
-            run_id: string;
-            /** Seq */
-            seq: number;
-            /** Ts */
-            ts: number;
-            /**
-             * Type
-             * @default agentgov.speech_summary
-             * @constant
-             */
-            type: "agentgov.speech_summary";
-            /**
-             * V
-             * @default 1
-             * @constant
-             */
-            v: 1;
         };
         /** AgentInfo */
         AgentInfo: {
@@ -3017,9 +2686,9 @@ export interface components {
         AgentRepositoryDiscardChangesRequest: {
             /**
              * Paths
-             * @description Repository-relative paths whose uncommitted changes should be discarded.
+             * @description Repository-relative Harness paths whose uncommitted changes should be discarded.
              * @example [
-             *       ".mcp.json"
+             *       "mcp/soc-readonly.json"
              *     ]
              */
             paths?: string[];
@@ -3101,120 +2770,91 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** AgentRunCancelResponse */
-        AgentRunCancelResponse: {
-            /** Cancelled */
-            cancelled: boolean;
-            /** Completed At */
-            completed_at?: string | null;
-            /** Run Id */
-            run_id: string;
-            /** Session Active Run Id */
-            session_active_run_id?: string | null;
-            /** Session Id */
-            session_id: string;
-            /**
-             * Turn Status
-             * @enum {string}
-             */
-            turn_status: "succeeded" | "failed" | "cancelled" | "interrupted";
-        };
         /** AgentRunResponse */
         AgentRunResponse: {
-            /** Agent Activity */
-            agent_activity?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
+            /** Agent Id */
+            agent_id: string;
             /** Agent Version Id */
-            agent_version_id?: string | null;
+            agent_version_id: string;
             /** Alert Id */
             alert_id?: string | null;
-            /** Answer */
-            answer?: string | null;
-            /** Answer Summary */
-            answer_summary?: string | null;
             /** Case Id */
             case_id?: string | null;
+            /** Client Operation Id */
+            client_operation_id?: string | null;
             /** Completed At */
             completed_at?: string | null;
             /** Created At */
-            created_at?: string | null;
-            /** Errors */
-            errors?: string[];
-            /** Langfuse Trace Id */
-            langfuse_trace_id?: string | null;
-            /** Langfuse Trace Url */
-            langfuse_trace_url?: string | null;
-            /** Message */
-            message?: string | null;
-            /**
-             * Messages
-             * @description Full SDK message timeline, returned only when include_messages=true.
-             */
-            messages?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            }[];
-            /** Run Id */
-            run_id: string;
-            /** Sdk Session Id */
-            sdk_session_id?: string | null;
-            /** Session Id */
-            session_id?: string | null;
-            /** Turn Error */
-            turn_error?: {
+            created_at: string;
+            /** Error */
+            error?: {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
-            /** Turn Index */
-            turn_index?: number | null;
-            /** Turn Status */
-            turn_status?: ("running" | "succeeded" | "failed" | "cancelled" | "interrupted") | null;
-        };
-        /**
-         * AgentRunTraceResponse
-         * @description Refresh-safe Trace projection backed by the persisted AgentRun timeline.
-         */
-        AgentRunTraceResponse: {
-            /** Agent Activity */
-            agent_activity?: {
+            /** Harness Digest */
+            harness_digest: string;
+            /** Metadata */
+            metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
-            /** Agent Version Id */
-            agent_version_id?: string | null;
-            /** Alert Id */
-            alert_id?: string | null;
-            /** Case Id */
-            case_id?: string | null;
-            /** Completed At */
-            completed_at?: string | null;
+            /** Pending Child Session Ids */
+            pending_child_session_ids?: string[];
+            /** Persisted Reply Ids */
+            persisted_reply_ids?: string[];
+            /** Persistence Batch Reply Ids */
+            persistence_batch_reply_ids?: string[];
+            /** Reply Ids */
+            reply_ids?: string[];
             /**
-             * Completeness
+             * Root Persisted Team Generation
+             * @default 0
+             */
+            root_persisted_team_generation: number;
+            /** Run Id */
+            run_id: string;
+            /** Runtime Agent Id */
+            runtime_agent_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Started At */
+            started_at?: string | null;
+            status: components["schemas"]["RunStatus"];
+            /**
+             * Team Generation
+             * @default 0
+             */
+            team_generation: number;
+            /** Terminal Reason */
+            terminal_reason?: string | null;
+            /** Trace Id */
+            trace_id?: string | null;
+            /**
+             * Trace Status
+             * @default pending
              * @enum {string}
              */
-            completeness: "complete" | "unavailable";
-            /** Created At */
-            created_at?: string | null;
-            /** Errors */
-            errors?: string[];
-            /** Events */
-            events?: components["schemas"]["AgentTraceEvent"][];
-            /** Langfuse Trace Id */
-            langfuse_trace_id?: string | null;
-            /** Langfuse Trace Url */
-            langfuse_trace_url?: string | null;
+            trace_status: "pending" | "complete" | "incomplete";
+            /** Trace Url */
+            trace_url?: string | null;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** AgentRunTraceResponse */
+        AgentRunTraceResponse: {
             /** Run Id */
             run_id: string;
-            /** Sdk Session Id */
-            sdk_session_id?: string | null;
-            /** Session Id */
-            session_id?: string | null;
-            /** Turn Error */
-            turn_error?: {
+            /** Trace */
+            trace?: {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
-            /** Turn Index */
-            turn_index?: number | null;
-            /** Turn Status */
-            turn_status?: ("running" | "succeeded" | "failed" | "cancelled" | "interrupted") | null;
+            /** Trace Id */
+            trace_id: string | null;
+            /**
+             * Trace Status
+             * @enum {string}
+             */
+            trace_status: "pending" | "complete" | "incomplete";
+            /** Trace Url */
+            trace_url: string | null;
         };
         /** AgentStarterPromptResponse */
         AgentStarterPromptResponse: {
@@ -3234,6 +2874,11 @@ export interface components {
             /** Agent Id */
             agent_id: string;
             /**
+             * Agent Version Id
+             * @description 当前治理 Git HEAD；未形成可发布版本时为 null。
+             */
+            agent_version_id?: string | null;
+            /**
              * Builtin
              * @description 是否由运行卷初始化源随产品提供。
              * @default false
@@ -3249,6 +2894,11 @@ export interface components {
              * @default false
              */
             default: boolean;
+            /**
+             * Harness Digest
+             * @description 当前发布 Harness 的 canonical digest；禁止从历史 Session 反推。
+             */
+            harness_digest?: string | null;
             /** Name */
             name: string;
             /**
@@ -3258,11 +2908,22 @@ export interface components {
              */
             protected: boolean;
             /**
+             * Provisioned
+             * @description 当前 Git 版本是否已经显式供给为 AgentScope Agent。
+             * @default false
+             */
+            provisioned: boolean;
+            /**
              * Requires Web Hitl
-             * @description 从 workspace project settings 的 permissions.ask 派生；为 true 时交互审批依赖 ENABLE_CLAUDE_WEB_HITL。
+             * @description 从 agent.yaml 的会话权限策略派生；为 true 时前端必须处理 AgentScope 原生逐次确认事件。
              * @default false
              */
             requires_web_hitl: boolean;
+            /**
+             * Runtime Agent Id
+             * @description 当前版本绑定的 AgentScope Agent ID；Runtime 数据面只接受此 ID。
+             */
+            runtime_agent_id?: string | null;
             /**
              * Status
              * @description 生命周期状态：draft/active/evaluating/deprecated/archived。
@@ -3272,71 +2933,6 @@ export interface components {
             status: "draft" | "active" | "evaluating" | "deprecated" | "archived";
             /** Workspace Dir */
             workspace_dir: string;
-        };
-        /**
-         * AgentTargetedChatRequest
-         * @description Public native Chat request that always names the business Agent.
-         */
-        AgentTargetedChatRequest: {
-            /**
-             * Agent Id
-             * @description Registered business agent to run. Must contain at least one non-whitespace character.
-             * @example security-operations-expert
-             */
-            agent_id: string;
-            /**
-             * Alert Id
-             * @description Optional SOC alert id used by the feedback loop.
-             * @example alert-20260729-001
-             */
-            alert_id?: string | null;
-            /**
-             * Case Id
-             * @description Optional SOC case id used by the feedback loop.
-             * @example case-20260729-001
-             */
-            case_id?: string | null;
-            /**
-             * Max Turns
-             * @description Per-request turn cap. Defaults to MAX_TURNS.
-             * @example 8
-             */
-            max_turns?: number | null;
-            /**
-             * Message
-             * @description User message or task prompt. Must contain at least one non-whitespace character.
-             * @example 请核查当前告警并给出处置建议
-             */
-            message: string;
-            /**
-             * Metadata
-             * @description Caller-provided JSON metadata retained with the managed run for observability.
-             * @example {
-             *       "source": "soc-console",
-             *       "tenant": "north-region"
-             *     }
-             */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /**
-             * Model
-             * @description Per-request model override. Defaults to AGENT_MODEL.
-             * @example claude-sonnet-4-5
-             */
-            model?: string | null;
-            /**
-             * Session Id
-             * @description Client-visible session id. If omitted, the API creates one.
-             * @example sess-20260729
-             */
-            session_id?: string | null;
-            /**
-             * System Append
-             * @description Extra instruction appended to the Claude Code preset prompt.
-             * @example 输出结论时同时列出关键证据。
-             */
-            system_append?: string | null;
         };
         /** AgentTestAssetSummaryResponse */
         AgentTestAssetSummaryResponse: {
@@ -3412,27 +3008,22 @@ export interface components {
             answer: string;
             /** Errors */
             errors?: string[];
-            /** Langfuse Trace Id */
-            langfuse_trace_id?: string | null;
-            /** Langfuse Trace Url */
-            langfuse_trace_url?: string | null;
             /** Messages */
             messages?: {
                 [key: string]: components["schemas"]["JsonValue"];
             }[];
             /** Run Id */
             run_id: string;
-            /**
-             * Sdk Session Id
-             * @description Internal Claude SDK resume id. May differ from session_id (history sess_*, SDK rebuild, resume failure); it is not the product conversation id — use session_id.
-             */
-            sdk_session_id?: string | null;
             /** Session Id */
             session_id: string;
             /** Stop Reason */
             stop_reason?: string | null;
             /** Total Cost Usd */
             total_cost_usd?: number | null;
+            /** Trace Id */
+            trace_id?: string | null;
+            /** Trace Url */
+            trace_url?: string | null;
             /** Usage */
             usage?: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -3722,42 +3313,6 @@ export interface components {
             tests_directory_present: boolean;
         };
         /**
-         * AgentTraceEvent
-         * @description One stable semantic event derived from a complete Claude SDK message.
-         */
-        AgentTraceEvent: {
-            /** Block Index */
-            block_index?: number | null;
-            /** Event Id */
-            event_id: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "thinking" | "text" | "tool_use" | "tool_result" | "hook" | "task" | "system" | "result" | "sdk_message" | "content_block";
-            /** Message Index */
-            message_index: number;
-            /** Parent Tool Use Id */
-            parent_tool_use_id?: string | null;
-            /** Payload */
-            payload?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Run Id */
-            run_id: string;
-            /**
-             * Scope
-             * @enum {string}
-             */
-            scope: "main" | "subagent";
-            /** Sequence */
-            sequence: number;
-            /** Source Event */
-            source_event: string;
-            /** Subagent Id */
-            subagent_id?: string | null;
-        };
-        /**
          * AssetCreateRequest
          * @description Create one governed reusable asset owned by a business Agent.
          */
@@ -3877,28 +3432,6 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
-        /** AssistantResponseSpeechSummaryPayload */
-        AssistantResponseSpeechSummaryPayload: {
-            /** Char Count */
-            char_count: number;
-            /** Message Id */
-            message_id: string;
-            /**
-             * Scope
-             * @default main
-             * @constant
-             */
-            scope: "main";
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            source_kind: "assistant_response";
-            /** Summary Id */
-            summary_id: string;
-            /** Text */
-            text: string;
-        };
         /**
          * AttachFeedbackCaseRequest
          * @description Attach an existing first-class feedback case to the current improvement.
@@ -4012,310 +3545,6 @@ export interface components {
              */
             summary: string;
         };
-        /** ChatResponse */
-        ChatResponse: {
-            /** Agent Activity */
-            agent_activity?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Agent Version Id */
-            agent_version_id?: string | null;
-            /** Answer */
-            answer: string;
-            /** Errors */
-            errors?: string[];
-            /** Langfuse Trace Id */
-            langfuse_trace_id?: string | null;
-            /** Langfuse Trace Url */
-            langfuse_trace_url?: string | null;
-            /** Messages */
-            messages?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            }[];
-            /** Run Id */
-            run_id: string;
-            /**
-             * Sdk Session Id
-             * @description Internal Claude SDK resume id. May differ from session_id (history sess_*, SDK rebuild, resume failure); it is not the product conversation id — use session_id.
-             */
-            sdk_session_id?: string | null;
-            /** Session Id */
-            session_id: string;
-            /** Stop Reason */
-            stop_reason?: string | null;
-            /** Total Cost Usd */
-            total_cost_usd?: number | null;
-            /** Usage */
-            usage?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-        };
-        /**
-         * ChatStreamRequest
-         * @description Legacy Chat SSE request with a stream-only derived-event opt-in.
-         */
-        ChatStreamRequest: {
-            /**
-             * Agent Id
-             * @description Registered business agent to run. Must contain at least one non-whitespace character.
-             * @example security-operations-expert
-             */
-            agent_id: string;
-            /**
-             * Alert Id
-             * @description Optional SOC alert id used by the feedback loop.
-             * @example alert-20260729-001
-             */
-            alert_id?: string | null;
-            /**
-             * Case Id
-             * @description Optional SOC case id used by the feedback loop.
-             * @example case-20260729-001
-             */
-            case_id?: string | null;
-            /**
-             * Max Turns
-             * @description Per-request turn cap. Defaults to MAX_TURNS.
-             * @example 8
-             */
-            max_turns?: number | null;
-            /**
-             * Message
-             * @description User message or task prompt. Must contain at least one non-whitespace character.
-             * @example 请核查当前告警并给出处置建议
-             */
-            message: string;
-            /**
-             * Metadata
-             * @description Caller-provided JSON metadata retained with the managed run for observability.
-             * @example {
-             *       "source": "soc-console",
-             *       "tenant": "north-region"
-             *     }
-             */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /**
-             * Model
-             * @description Per-request model override. Defaults to AGENT_MODEL.
-             * @example claude-sonnet-4-5
-             */
-            model?: string | null;
-            /**
-             * Session Id
-             * @description Client-visible session id. If omitted, the API creates one.
-             * @example sess-20260729
-             */
-            session_id?: string | null;
-            /**
-             * System Append
-             * @description Extra instruction appended to the Claude Code preset prompt.
-             * @example 输出结论时同时列出关键证据。
-             */
-            system_append?: string | null;
-            /**
-             * With Speech Summary
-             * @description Defaults to false. When true, eligible top-level thinking/assistant boundaries may emit best-effort agentgov.speech_summary SSE events before done in either event_mode; generation failure is silent.
-             * @default false
-             * @example true
-             */
-            with_speech_summary: boolean;
-        };
-        /**
-         * ClaudeSdkEventsRequest
-         * @description SDK-native SSE request; kept separate from shared Chat/raw schemas.
-         */
-        ClaudeSdkEventsRequest: {
-            /**
-             * Agent Id
-             * @description Registered business agent to run. Must contain at least one non-whitespace character.
-             * @example security-operations-expert
-             */
-            agent_id: string;
-            /**
-             * Alert Id
-             * @description Optional SOC alert id used by the feedback loop.
-             * @example alert-20260729-001
-             */
-            alert_id?: string | null;
-            /**
-             * Case Id
-             * @description Optional SOC case id used by the feedback loop.
-             * @example case-20260729-001
-             */
-            case_id?: string | null;
-            /**
-             * Max Turns
-             * @description Per-request turn cap. Defaults to MAX_TURNS.
-             * @example 8
-             */
-            max_turns?: number | null;
-            /**
-             * Message
-             * @description User message or task prompt. Must contain at least one non-whitespace character.
-             * @example 请核查当前告警并给出处置建议
-             */
-            message: string;
-            /**
-             * Metadata
-             * @description Caller-provided JSON metadata retained with the managed run for observability.
-             * @example {
-             *       "source": "soc-console",
-             *       "tenant": "north-region"
-             *     }
-             */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /**
-             * Model
-             * @description Per-request model override. Defaults to AGENT_MODEL.
-             * @example claude-sonnet-4-5
-             */
-            model?: string | null;
-            /**
-             * Session Id
-             * @description Client-visible session id. If omitted, the API creates one.
-             * @example sess-20260729
-             */
-            session_id?: string | null;
-            /**
-             * System Append
-             * @description Extra instruction appended to the Claude Code preset prompt.
-             * @example 输出结论时同时列出关键证据。
-             */
-            system_append?: string | null;
-            /**
-             * With Speech Summary
-             * @description Defaults to false. When true, eligible top-level thinking/assistant boundaries may emit best-effort agentgov.speech_summary SSE events alongside native SDK messages; generation failure is silent.
-             * @default false
-             * @example true
-             */
-            with_speech_summary: boolean;
-        };
-        /**
-         * ClaudeUserInputDecisionRequest
-         * @description HITL 决策请求（目标契约）。
-         *
-         *     授权仅凭 ``request_id``(URL) 定位 + ``decision_token``(per-request、hmac constant-time)；不再回传
-         *     ``run_id``/``session_id``/``business_agent_id`` 三元组（冗余、GET list 公开可读、不构成第二因子）。
-         *     ``answer_question`` 应答收敛为单一 ``answer``（对象，其键只在 SDK AskUserQuestion 边界并入原输入）。
-         *     工具权限确认只允许原样批准或拒绝，公开契约不接受输入改写。
-         *     ``extra="forbid"`` 堵未设计字段（如 ``allow_modified``）。
-         */
-        ClaudeUserInputDecisionRequest: {
-            /**
-             * Action
-             * @description Decision action allowed for the exact waiting request.
-             * @example deny
-             * @enum {string}
-             */
-            action: "allow_once" | "allow_for_run" | "deny" | "answer_question";
-            /**
-             * Answer
-             * @description Structured answers for an AskUserQuestion decision.
-             * @example {
-             *       "response": "只处理当前告警资产"
-             *     }
-             */
-            answer?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-            /**
-             * Decision Token
-             * @description One-time token returned for this exact authenticated waiting request.
-             * @example token-from-exact-waiting-request
-             */
-            decision_token: string;
-            /**
-             * Message
-             * @description Non-blank user message or operator note for this action.
-             * @example 请核查当前告警并给出处置建议
-             */
-            message?: string | null;
-        };
-        /** ClaudeUserInputDecisionResponse */
-        ClaudeUserInputDecisionResponse: {
-            /** Decision */
-            decision: string;
-            /** Request Id */
-            request_id: string;
-            /** Resolved At */
-            resolved_at?: string | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "resolved" | "cancelled";
-        };
-        /** ClaudeUserInputRequestListResponse */
-        ClaudeUserInputRequestListResponse: {
-            /** Requests */
-            requests: components["schemas"]["ClaudeUserInputRequestResponse"][];
-        };
-        /** ClaudeUserInputRequestResponse */
-        ClaudeUserInputRequestResponse: {
-            /** Api Session Id */
-            api_session_id: string;
-            /** Business Agent Id */
-            business_agent_id: string;
-            /** Context */
-            context?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Created At */
-            created_at: string;
-            /** Decided By */
-            decided_by?: string | null;
-            /** Decision */
-            decision?: string | null;
-            /** Decision Payload */
-            decision_payload?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /**
-             * Decision Token
-             * @description Only returned for an authenticated exact run_id + status=waiting polling query while the API process is still waiting.
-             */
-            decision_token?: string | null;
-            /** Expires At */
-            expires_at: string;
-            /** Input */
-            input?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Request Id */
-            request_id: string;
-            /**
-             * Request Type
-             * @enum {string}
-             */
-            request_type: "tool_permission" | "ask_user_question";
-            /** Resolved At */
-            resolved_at?: string | null;
-            /** Risk */
-            risk?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Run Id */
-            run_id: string;
-            /** Sdk Session Id */
-            sdk_session_id?: string | null;
-            /** Sdk Subagent Id */
-            sdk_subagent_id?: string | null;
-            /** Session Id */
-            session_id: string;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "waiting" | "resolved" | "cancelled";
-            /** Tool Name */
-            tool_name: string;
-            /** Tool Use Id */
-            tool_use_id?: string | null;
-        };
         /** ConfigMappingItem */
         ConfigMappingItem: {
             /** Container Path */
@@ -4325,7 +3554,7 @@ export interface components {
              * @default hidden_debug
              * @enum {string}
              */
-            display_group: "agent_project_config" | "agent_user_state" | "versioning_runtime" | "hidden_debug";
+            display_group: "harness" | "runtime" | "versioning" | "hidden_debug";
             /** Exists */
             exists: boolean;
             /** Git Policy */
@@ -4339,7 +3568,7 @@ export interface components {
              * @default not_applicable
              * @enum {string}
              */
-            load_semantics: "claude_loaded" | "claude_optional" | "runtime_used" | "not_applicable";
+            load_semantics: "runtime_loaded" | "runtime_materialized" | "governance_only" | "not_applicable";
             /** Loaded By Default */
             loaded_by_default: boolean;
             /** Notes */
@@ -4359,143 +3588,40 @@ export interface components {
              * @default security-operations-expert
              */
             agent_id: string;
-            /** Claude Config Dir */
-            claude_config_dir?: string | null;
-            /** Claude Config Mode */
-            claude_config_mode: string;
-            /** Claude Global Config File */
-            claude_global_config_file: string;
-            /** Claude Home */
-            claude_home: string;
-            /** Claude Root */
-            claude_root: string;
             /** Mappings */
             mappings: components["schemas"]["ConfigMappingItem"][];
-            /** Setting Sources Effective */
-            setting_sources_effective: string[];
-        };
-        /** Conversation */
-        Conversation: {
-            agentgov?: components["schemas"]["AgentGovConversationExtension"];
-            /** Created At */
-            created_at?: number | null;
-            /** Id */
-            id: string;
-            /** Metadata */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
             /**
-             * Object
-             * @default conversation
+             * Runtime
+             * @default agentscope
              * @constant
              */
-            object: "conversation";
-            /** Title */
-            title?: string | null;
+            runtime: "agentscope";
+            /** Runtime Contract */
+            runtime_contract: string;
+            /** Runtime Url */
+            runtime_url: string;
+            /** Workspace */
+            workspace: string;
         };
         /**
-         * ConversationCreateRequest
-         * @description Create an empty AgentGov conversation projection with optional client metadata.
+         * ConfirmationScope
+         * @description Permission scope for one native AgentScope user-confirmation result.
+         * @enum {string}
          */
-        ConversationCreateRequest: {
-            /**
-             * Metadata
-             * @description Observability metadata; backend-reserved keys are removed and the backend does not route on remaining entries.
-             * @example {
-             *       "source": "soc-console"
-             *     }
-             */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-        };
-        /** ConversationDeleted */
-        ConversationDeleted: {
-            /** Deleted */
-            deleted: boolean;
-            /** Id */
-            id: string;
-            /**
-             * Object
-             * @default conversation.deleted
-             * @constant
-             */
-            object: "conversation.deleted";
-        };
-        /**
-         * ConversationItem
-         * @description 会话 item：投影自 SDK transcript 的一条 message（blocks 原样透传：thinking/text/tool_use/tool_result）。
-         */
-        ConversationItem: {
-            agentgov?: components["schemas"]["AgentGovConversationItemExtension"] | null;
-            /** Content */
-            content?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            }[];
-            /** Id */
-            id: string;
-            /**
-             * Object
-             * @default conversation.item
-             * @constant
-             */
-            object: "conversation.item";
-            /** Parent Tool Use Id */
-            parent_tool_use_id?: string | null;
-            /** Role */
-            role?: string | null;
-            /**
-             * Type
-             * @default message
-             * @constant
-             */
-            type: "message";
-        };
-        /** ConversationItemList */
-        ConversationItemList: {
-            /** Data */
-            data?: components["schemas"]["ConversationItem"][];
-            /** First Id */
-            first_id?: string | null;
-            /**
-             * Has More
-             * @default false
-             */
-            has_more: boolean;
-            /** Last Id */
-            last_id?: string | null;
-            /**
-             * Object
-             * @default list
-             * @constant
-             */
-            object: "list";
-        };
-        /** ConversationList */
-        ConversationList: {
-            /** Data */
-            data?: components["schemas"]["Conversation"][];
-            /**
-             * Object
-             * @default list
-             * @constant
-             */
-            object: "list";
-        };
+        ConfirmationScope: "once" | "run";
         /**
          * DomainErrorResponse
-         * @description AgentGov domain error envelope. Extra top-level fields carry route-specific diagnostics.
+         * @description AgentGov domain error; extra fields may carry non-sensitive diagnostics.
          */
         DomainErrorResponse: {
             /**
              * Detail
-             * @description Human-readable error detail. FastAPI validation errors keep their native detail list.
+             * @description Human-readable error detail; validation errors may use FastAPI's structured list.
              */
             detail: unknown;
             /**
              * Error Code
-             * @description Stable application error code returned by the app error handler.
+             * @description Stable AgentGov error code.
              */
             error_code: string;
         } & {
@@ -4846,8 +3972,8 @@ export interface components {
             run_id?: string | null;
             /**
              * Session Id
-             * @description AgentGov session identifier used for continuation or correlation.
-             * @example sess-20260729
+             * @description AgentScope session identifier used for continuation or correlation.
+             * @example session-20260909-001
              */
             session_id?: string | null;
             /**
@@ -5094,12 +4220,12 @@ export interface components {
         HttpErrorResponse: {
             /**
              * Detail
-             * @description Human-readable error detail. FastAPI validation errors keep their native detail list.
+             * @description Human-readable error detail; validation errors may use FastAPI's structured list.
              */
             detail: unknown;
             /**
              * Error Code
-             * @description Stable application error code returned by the app error handler.
+             * @description Stable AgentGov error code.
              */
             error_code: string;
         };
@@ -5242,7 +4368,7 @@ export interface components {
              * Session Id
              * @description 关联 Session。
              * @default
-             * @example sess-20260729
+             * @example session-20260909-001
              */
             session_id: string;
             /**
@@ -5406,79 +4532,6 @@ export interface components {
         };
         /** @description Recursive JSON value accepted inside caller-provided metadata objects. */
         JsonValue: unknown;
-        /** ModelProviderReadiness */
-        ModelProviderReadiness: {
-            /** Action */
-            action?: string | null;
-            /** Checked At */
-            checked_at?: string | null;
-            /** Duration Ms */
-            duration_ms?: number | null;
-            /** Error Code */
-            error_code?: string | null;
-            /** Message */
-            message?: string | null;
-            /** Probe */
-            probe?: string | null;
-            /** Reason */
-            reason?: string | null;
-            /** Retryable */
-            retryable?: boolean | null;
-            /** Route */
-            route?: string | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "not_checked" | "checking" | "ready" | "degraded";
-            /** Status Code */
-            status_code?: number | null;
-        };
-        /** ModelProviderRouteHealth */
-        ModelProviderRouteHealth: {
-            /** Backend */
-            backend: string;
-            /** Claude Base Url */
-            claude_base_url?: string | null;
-            /** Formatter Api Base */
-            formatter_api_base?: string | null;
-            /** Formatter Model Prefix */
-            formatter_model_prefix?: string | null;
-            /** Provider Api Key Required */
-            provider_api_key_required: boolean;
-            /** Provider Endpoint */
-            provider_endpoint?: string | null;
-            /** Provider Endpoint Configured */
-            provider_endpoint_configured: boolean;
-            readiness: components["schemas"]["ModelProviderReadiness"];
-            /** Route */
-            route?: string | null;
-            /** Sidecar Base Url */
-            sidecar_base_url?: string | null;
-            /** Sidecar Required */
-            sidecar_required?: boolean | null;
-            version_probe?: components["schemas"]["ModelProviderVersionProbe"] | null;
-        };
-        /** ModelProviderVersionProbe */
-        ModelProviderVersionProbe: {
-            /** Duration Ms */
-            duration_ms?: number | null;
-            /** Endpoint */
-            endpoint?: string | null;
-            /** Error Code */
-            error_code?: string | null;
-            /** Reason */
-            reason?: string | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "skipped" | "succeeded" | "failed";
-            /** Status Code */
-            status_code?: number | null;
-            /** Version */
-            version?: string | null;
-        };
         /** NormalizedFeedbackResponse */
         NormalizedFeedbackResponse: {
             /** Created At */
@@ -5565,145 +4618,6 @@ export interface components {
              * @example 停止后再发消息就报会话冲突。
              */
             user_quote: string;
-        };
-        /** OpenAIChatCompletionChoice */
-        OpenAIChatCompletionChoice: {
-            /**
-             * Finish Reason
-             * @default stop
-             */
-            finish_reason: string | null;
-            /**
-             * Index
-             * @default 0
-             */
-            index: number;
-            message: components["schemas"]["OpenAIChatMessage"];
-        };
-        /**
-         * OpenAIChatCompletionRequest
-         * @description Text-only, non-streaming request accepted by the deprecated compatibility shim.
-         */
-        OpenAIChatCompletionRequest: {
-            /**
-             * Max Turns
-             * @description Claude Agent turn cap for this request.
-             * @example 8
-             */
-            max_turns?: number | null;
-            /**
-             * Messages
-             * @description OpenAI-compatible text chat messages. At least one non-empty user message is required.
-             * @example [
-             *       {
-             *         "content": "请总结这起告警的关键风险",
-             *         "role": "user"
-             *       }
-             *     ]
-             */
-            messages: components["schemas"]["OpenAIChatMessage"][];
-            /**
-             * Metadata
-             * @description Caller-provided JSON metadata retained with the managed run for observability.
-             * @example {
-             *       "source": "openai-compat-client"
-             *     }
-             */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /**
-             * Model
-             * @description Model override. Defaults to AGENT_MODEL.
-             * @example claude-sonnet-4-5
-             */
-            model?: string | null;
-            /**
-             * Stream
-             * @description This minimal compatibility endpoint is non-streaming; only false is accepted.
-             * @default false
-             * @example false
-             * @constant
-             */
-            stream: false;
-        };
-        /** OpenAIChatCompletionResponse */
-        OpenAIChatCompletionResponse: {
-            /** Choices */
-            choices: components["schemas"]["OpenAIChatCompletionChoice"][];
-            /** Id */
-            id: string;
-            /** Model */
-            model?: string | null;
-            /**
-             * Object
-             * @default chat.completion
-             */
-            object: string;
-            /** Usage */
-            usage?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-        };
-        /**
-         * OpenAIChatMessage
-         * @description One text-only message accepted by the deprecated Chat Completions shim.
-         */
-        OpenAIChatMessage: {
-            /**
-             * Content
-             * @description Non-blank text content for this message.
-             * @example 请总结这起告警的关键风险
-             */
-            content: string;
-            /**
-             * Role
-             * @description OpenAI-style role for this text message.
-             * @example user
-             * @enum {string}
-             */
-            role: "developer" | "system" | "user" | "assistant";
-        };
-        /**
-         * OpenAICompatAgentConfig
-         * @description /v1/chat/completions 的出口 Agent 配置。
-         *
-         *     显式区分两个状态：从未配置（``configured=False``，走默认业务 Agent）与运营者显式配置。
-         *     ``effective_agent_id`` 是 /v1 实际运行的业务 Agent。
-         */
-        OpenAICompatAgentConfig: {
-            /** Agent Id */
-            agent_id?: string | null;
-            /**
-             * Configured
-             * @default false
-             */
-            configured: boolean;
-            /**
-             * Effective Agent Id
-             * @default security-operations-expert
-             */
-            effective_agent_id: string;
-        };
-        /**
-         * OpenAICompatAgentUpdate
-         * @description Select the registered business Agent used by strict OpenAI-compatible surfaces.
-         */
-        OpenAICompatAgentUpdate: {
-            /**
-             * Agent Id
-             * @description Registered business Agent identifier.
-             * @example security-operations-expert
-             */
-            agent_id: string;
-        };
-        /** OpenAIErrorResponse */
-        OpenAIErrorResponse: {
-            error: {
-                code: string;
-                message: string;
-                type: string;
-            };
         };
         /**
          * OptimizationChange
@@ -5815,8 +4729,8 @@ export interface components {
             run_id?: string | null;
             /**
              * Session Id
-             * @description AgentGov session identifier used for continuation or correlation.
-             * @example sess-20260729
+             * @description AgentScope session identifier used for continuation or correlation.
+             * @example session-20260909-001
              */
             session_id?: string | null;
         };
@@ -5923,268 +4837,108 @@ export interface components {
             updated_at: string;
         };
         /**
-         * ResponseObject
-         * @description OpenAI Responses ``response`` 对象 + 顶层 ``agentgov`` 扩展。
-         *
-         *     权威输出在 ``output[]``（``message`` -> ``content[].output_text.text``）；便利聚合在
-         *     ``agentgov.output_text``（不在顶层放 output_text 冒充 OpenAI 标准字段）。
+         * RunStatus
+         * @enum {string}
          */
-        ResponseObject: {
-            agentgov?: components["schemas"]["AgentGovResponseExtension"] | null;
-            /** Created At */
-            created_at?: number | null;
-            /** Id */
-            id: string;
-            /** Metadata */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Model */
-            model?: string | null;
-            /**
-             * Object
-             * @default response
-             * @constant
-             */
-            object: "response";
-            /** Output */
-            output?: (components["schemas"]["ResponseReasoningItem"] | components["schemas"]["ResponseOutputMessage"])[];
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "completed" | "failed" | "incomplete";
-            /** Usage */
-            usage?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-        };
-        /** ResponseOutputMessage */
-        ResponseOutputMessage: {
-            /** Content */
-            content?: components["schemas"]["ResponseOutputText"][];
-            /** Id */
-            id: string;
-            /**
-             * Role
-             * @default assistant
-             * @constant
-             */
-            role: "assistant";
-            /**
-             * Status
-             * @default completed
-             * @enum {string}
-             */
-            status: "completed" | "in_progress";
-            /**
-             * Type
-             * @default message
-             * @constant
-             */
-            type: "message";
-        };
-        /** ResponseOutputText */
-        ResponseOutputText: {
-            /** Text */
-            text: string;
-            /**
-             * Type
-             * @default output_text
-             * @constant
-             */
-            type: "output_text";
-        };
-        /** ResponseReasoningItem */
-        ResponseReasoningItem: {
-            /** Content */
-            content?: components["schemas"]["ResponseReasoningText"][];
-            /** Id */
-            id: string;
-            /**
-             * Status
-             * @default completed
-             * @enum {string}
-             */
-            status: "completed" | "in_progress";
-            /** Summary */
-            summary?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            }[];
-            /**
-             * Type
-             * @default reasoning
-             * @constant
-             */
-            type: "reasoning";
-        };
-        /** ResponseReasoningText */
-        ResponseReasoningText: {
-            /** Text */
-            text: string;
-            /**
-             * Type
-             * @default reasoning_text
-             * @constant
-             */
-            type: "reasoning_text";
-        };
+        RunStatus: "queued" | "running" | "waiting_human" | "waiting_external" | "finalizing" | "succeeded" | "failed" | "cancelled" | "interrupted";
         /**
-         * ResponsesInputMessage
-         * @description Typed message item accepted by the transitional Responses input array.
+         * RuntimeChatRequest
+         * @description Start an AgentScope turn or resume the exact run waiting for a native HITL result.
          */
-        ResponsesInputMessage: {
+        RuntimeChatRequest: {
             /**
-             * Content
-             * @description Non-blank message text or a non-empty array of typed input_text blocks.
-             * @example 请复核该告警的处置结论
-             * @example [
-             *       {
-             *         "text": "请复核该告警的处置结论",
-             *         "type": "input_text"
-             *       }
-             *     ]
+             * Agent Id
+             * @description AgentScope runtime_agent_id pinned by the target Session
+             * @example runtime-agent-version-20260909-001
              */
-            content: string | components["schemas"]["ResponsesInputText"][];
+            agent_id: string;
             /**
-             * Role
-             * @description Message role. At least one user message with non-blank text is required in the complete input array; only user-message text is mapped to the current Agent prompt.
-             * @example user
-             * @enum {string}
+             * Alert Id
+             * @description SOC alert identifier used for correlation or feedback routing.
+             * @example alert-20260729-001
              */
-            role: "developer" | "system" | "user" | "assistant";
+            alert_id?: string | null;
             /**
-             * Type
-             * @description Discriminator for an input message item.
-             * @default message
-             * @example message
-             * @constant
+             * Case Id
+             * @description SOC business-case identifier used for correlation or feedback routing.
+             * @example case-20260729-001
              */
-            type: "message";
-        };
-        /**
-         * ResponsesInputText
-         * @description One typed text content block inside a Responses input message.
-         */
-        ResponsesInputText: {
+            case_id?: string | null;
             /**
-             * Text
-             * @description Non-blank text carried by this input content block.
-             * @example 请复核该告警的处置结论
+             * Client Operation Id
+             * @description Stable client-side idempotency identity for this logical turn
+             * @example soc-console-turn-20260909-001
              */
-            text: string;
+            client_operation_id: string;
             /**
-             * Type
-             * @description Discriminator for a text input content block.
-             * @default input_text
-             * @example input_text
-             * @constant
+             * @description Permission scope for a native USER_CONFIRM_RESULT: once or the current run only.
+             * @default once
+             * @example once
              */
-            type: "input_text";
-        };
-        /**
-         * ResponsesRequest
-         * @description ``POST /v1/responses`` 请求。无 ``agentgov`` = strict 模式；有 = control 模式。
-         */
-        ResponsesRequest: ({
+            confirmation_scope: components["schemas"]["ConfirmationScope"];
             /**
-             * @description AgentGov control-plane extension. Omit it for strict mode; when present, agent_id is required and control-only trace, debug, feedback routing, and speech-summary switches become available.
-             * @example {
-             *       "agent_id": "security-operations-expert",
-             *       "debug": {
-             *         "sdk_raw": true
-             *       },
-             *       "include_trace": true,
-             *       "with_speech_summary": true
-             *     }
+             * Expected Run Id
+             * @description Existing AgentGov run that must own the pending native HITL action.
+             * @example run-20260909-001
              */
-            agentgov?: components["schemas"]["AgentGovRequestExtension"] | null;
-            /**
-             * Conversation
-             * @description AgentGov conversation projection (normally conv_<session_id>) used to continue that server session. Prefer this or previous_response_id alone. If both are supplied, AgentGov currently accepts them only when they resolve to the same conversation; this is a documented OpenAI compatibility deviation.
-             * @example conv_sess-20260729
-             */
-            conversation?: string | null;
+            expected_run_id?: string | null;
             /**
              * Input
-             * @description Non-empty prompt string, or typed text message items containing a current user message.
-             * @example 请核查当前告警并给出处置建议
-             * @example [
-             *       {
-             *         "content": "请核查当前告警并给出处置建议",
-             *         "role": "user",
-             *         "type": "message"
-             *       }
-             *     ]
+             * @description Native AgentScope input: a user Message, USER_CONFIRM_RESULT, or EXTERNAL_EXECUTION_RESULT.
+             * @example {
+             *       "content": [
+             *         {
+             *           "text": "请核查当前告警并给出处置建议",
+             *           "type": "text"
+             *         }
+             *       ],
+             *       "name": "user",
+             *       "role": "user"
+             *     }
              */
-            input: string | components["schemas"]["ResponsesInputMessage"][];
-            /**
-             * Instructions
-             * @description OpenAI standard field NAME. In AgentGov this is APPEND-ONLY (mapped to system_append, appended to the Claude Code preset + workspace CLAUDE.md), which differs from OpenAI replace/swap semantics. Rejected (422) on the strict surface.
-             * @example 补充说明证据不足的判断，不替换业务 Agent 的受治理指令。
-             */
-            instructions?: string | null;
+            input: unknown;
             /**
              * Metadata
-             * @description AgentGov transitional metadata object. Values may be nested JSON; backend-reserved keys are removed before public echo and the backend does not route on remaining entries.
+             * @description Caller-provided JSON metadata retained for correlation or observability.
              * @example {
-             *       "source": "soc-console",
-             *       "tenant": "north-region"
+             *       "source": "soc-console"
              *     }
              */
             metadata?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
             /**
-             * Model
-             * @description Per-request LLM override only; never a business Agent handle. Omit to use the Agent profile.
-             * @example claude-sonnet-4-5
+             * Session Id
+             * @description AgentScope session identifier used for continuation or correlation.
+             * @example session-20260909-001
              */
-            model?: string | null;
-            /**
-             * Previous Response Id
-             * @description Previous AgentGov response id (resp_<run_id>) whose owning conversation should be continued. Returns 404 when the response is unknown and 409 when its conversation is unavailable or conflicts with an explicit conversation. Prefer this or conversation alone.
-             * @example resp_run-20260729-001
-             */
-            previous_response_id?: string | null;
-            /**
-             * Store
-             * @description Whether the response remains retrievable through GET /v1/responses/{response_id}. false disables public retrieval but does not remove internal audit evidence.
-             * @default true
-             * @example false
-             */
-            store: boolean;
-            /**
-             * Stream
-             * @description false returns one JSON ResponseObject; true returns Responses-style SSE. agentgov.with_speech_summary=true is valid only when this field is true.
-             * @default false
-             * @example true
-             */
-            stream: boolean;
-        } & unknown) & ({
-            agentgov?: null;
-            instructions?: null;
-        } | {
-            agentgov: Record<string, never>;
-        });
+            session_id: string;
+        };
+        /** RuntimeCurrentVersionResponse */
+        RuntimeCurrentVersionResponse: {
+            /** Agent Version Id */
+            agent_version_id: string;
+            /** Governance Agent Id */
+            governance_agent_id: string;
+            /** Harness Digest */
+            harness_digest: string;
+            /** Provisioned */
+            provisioned: boolean;
+            /** Runtime Agent Id */
+            runtime_agent_id: string | null;
+        };
         /** RuntimeDependencyVersions */
         RuntimeDependencyVersions: {
-            /** Bundled Claude Code Cli */
-            bundled_claude_code_cli?: string | null;
-            /** Claude Agent Sdk */
-            claude_agent_sdk?: string | null;
+            /** Agentscope */
+            agentscope?: string | null;
             /** Httpx */
             httpx?: string | null;
             /** Langfuse */
             langfuse?: string | null;
-            /** Litellm */
-            litellm?: string | null;
             /** Opentelemetry Exporter Otlp Proto Http */
             opentelemetry_exporter_otlp_proto_http?: string | null;
             /** Opentelemetry Sdk */
             opentelemetry_sdk?: string | null;
-            /** Path Claude Code Cli */
-            path_claude_code_cli?: string | null;
             /** Starlette */
             starlette?: string | null;
         };
@@ -6205,21 +4959,6 @@ export interface components {
             api_host: string;
             /** Api Port */
             api_port: number;
-            /** Claude Config Dir */
-            claude_config_dir?: string | null;
-            /** Claude Config Mode */
-            claude_config_mode: string;
-            /** Claude Global Config File */
-            claude_global_config_file: string;
-            /** Claude Home */
-            claude_home: string;
-            /** Claude Root */
-            claude_root: string;
-            /**
-             * Claude Web Hitl Enabled
-             * @default false
-             */
-            claude_web_hitl_enabled: boolean;
             /** Data Dir */
             data_dir: string;
             docs: components["schemas"]["RuntimeDocsResponse"];
@@ -6231,30 +4970,28 @@ export interface components {
             langfuse_base_url?: string | null;
             /** Langfuse Enabled */
             langfuse_enabled: boolean;
-            /** Langfuse Otel Endpoint Configured */
-            langfuse_otel_endpoint_configured: boolean;
-            /** Langfuse Otel Signals */
-            langfuse_otel_signals?: string[];
             /** Langfuse Public Key Configured */
             langfuse_public_key_configured: boolean;
             /** Langfuse Secret Key Configured */
             langfuse_secret_key_configured: boolean;
             /** Model */
-            model?: string | null;
-            model_provider_route: components["schemas"]["ModelProviderRouteHealth"];
-            /** Provider Api Key Configured */
-            provider_api_key_configured: boolean;
-            /** Provider Api Url Configured */
-            provider_api_url_configured: boolean;
+            model: string;
             /** Runtime Db Backend */
             runtime_db_backend: string;
             /** Runtime Db Path */
             runtime_db_path: string;
             runtime_dependency_versions?: components["schemas"]["RuntimeDependencyVersions"];
+            /**
+             * Runtime Kind
+             * @default agentscope
+             * @constant
+             */
+            runtime_kind: "agentscope";
+            runtime_service: components["schemas"]["RuntimeServiceReadiness"];
+            /** Runtime Url */
+            runtime_url: string;
             /** Runtime Version */
             runtime_version: string;
-            /** Setting Sources Effective */
-            setting_sources_effective: string[];
             /** Status */
             status: string;
             /** Workspace Dir */
@@ -6274,80 +5011,38 @@ export interface components {
             status: "ok";
         };
         /**
-         * RuntimeRawEventsRequest
-         * @description Managed Agent turn whose response boundary exposes byte-exact Runtime stdout.
+         * RuntimePendingActionResponse
+         * @description 供授权调用方恢复 HITL UI 的最小未决 action 投影。
          */
-        RuntimeRawEventsRequest: {
+        RuntimePendingActionResponse: {
+            /** Action Id */
+            action_id: string;
+            /** Created At */
+            created_at: string;
             /**
-             * Agent Id
-             * @description Registered business agent to run. The Runtime implementation is selected by the server.
-             * @example security-operations-expert
+             * Kind
+             * @enum {string}
              */
-            agent_id: string;
+            kind: "human" | "external";
+            /** Reply Id */
+            reply_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Session Id */
+            session_id: string;
             /**
-             * Alert Id
-             * @description Optional SOC alert id used by the feedback loop.
-             * @example alert-20260729-001
+             * Status
+             * @constant
              */
-            alert_id?: string | null;
-            /**
-             * Case Id
-             * @description Optional SOC case id used by the feedback loop.
-             * @example case-20260729-001
-             */
-            case_id?: string | null;
-            /**
-             * Max Turns
-             * @description Per-request turn cap. Defaults to MAX_TURNS.
-             * @example 8
-             */
-            max_turns?: number | null;
-            /**
-             * Message
-             * @description User message or task prompt. Must contain at least one non-whitespace character.
-             * @example 请核查当前告警并给出处置建议
-             */
-            message: string;
-            /**
-             * Metadata
-             * @description Caller-provided JSON metadata retained with the managed run for observability.
-             * @example {
-             *       "source": "soc-console",
-             *       "tenant": "north-region"
-             *     }
-             */
-            metadata?: {
+            status: "pending";
+            /** Tool Call */
+            tool_call: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
-            /**
-             * Model
-             * @description Per-request model override. Defaults to AGENT_MODEL.
-             * @example claude-sonnet-4-5
-             */
-            model?: string | null;
-            /**
-             * Session Id
-             * @description Client-visible session id. If omitted, the API creates one.
-             * @example sess-20260729
-             */
-            session_id?: string | null;
-            /**
-             * Stream
-             * @description When true, flush raw Runtime stdout bytes as they arrive; otherwise buffer the same bytes into one response.
-             * @default false
-             * @example true
-             */
-            stream: boolean;
-            /**
-             * System Append
-             * @description Extra instruction appended to the Claude Code preset prompt.
-             * @example 输出结论时同时列出关键证据。
-             */
-            system_append?: string | null;
         };
         /** RuntimeReadinessResponse */
         RuntimeReadinessResponse: {
-            model_provider: components["schemas"]["ModelProviderReadiness"];
+            runtime_service: components["schemas"]["RuntimeServiceReadiness"];
             /** Runtime Version */
             runtime_version: string;
             /**
@@ -6356,65 +5051,51 @@ export interface components {
              */
             status: "ready" | "not_ready";
         };
-        /** SessionDeleteResponse */
-        SessionDeleteResponse: {
-            /** Deleted */
-            deleted: boolean;
-            /** Session Id */
-            session_id: string;
-        };
-        /** SessionInfo */
-        SessionInfo: {
-            /** Active Run Expires At */
-            active_run_expires_at?: string | null;
-            /** Active Run Id */
-            active_run_id?: string | null;
-            /** Agent Id */
-            agent_id?: string | null;
-            /** Created At */
-            created_at: string;
-            /** Metadata */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Sdk Session Id */
-            sdk_session_id?: string | null;
-            /** Session Id */
-            session_id: string;
-            /** Title */
-            title?: string | null;
+        /** RuntimeServiceReadiness */
+        RuntimeServiceReadiness: {
+            /** Action */
+            action?: string | null;
+            /** Checked At */
+            checked_at?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Probe */
+            probe?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Retryable */
+            retryable?: boolean | null;
+            /** Route */
+            route?: string | null;
             /**
-             * Turns
-             * @default 0
+             * Status
+             * @enum {string}
              */
-            turns: number;
-            /** Updated At */
-            updated_at: string;
+            status: "ready" | "not_ready";
+            /** Status Code */
+            status_code?: number | null;
         };
         /**
-         * SessionMessagesResponse
-         * @description A session's conversation history, projected from the SDK session transcript.
-         *
-         *     ``messages`` are SDK ``SessionMessage`` projections in transcript order: each has
-         *     ``uuid`` / ``role`` (user|assistant) / ``parent_tool_use_id`` / ``blocks`` (Anthropic block
-         *     list: thinking/text/tool_use/tool_result). ``subagents`` carries each subagent's messages,
-         *     linkable to a main-session ``tool_use`` via ``parent_tool_use_id``.
+         * RuntimeSessionCreateRequest
+         * @description Create an AgentScope session pinned to the published immutable Harness version.
          */
-        SessionMessagesResponse: {
-            /** Messages */
-            messages?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            }[];
-            /** Sdk Session Id */
-            sdk_session_id?: string | null;
-            /** Session Id */
-            session_id: string;
-            /** Subagents */
-            subagents?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            }[];
-            /** Title */
-            title?: string | null;
+        RuntimeSessionCreateRequest: {
+            /**
+             * Agent Id
+             * @description AgentScope runtime_agent_id of the exact current published version
+             * @example runtime-agent-version-20260909-001
+             */
+            agent_id: string;
+            /**
+             * Name
+             * @description Optional human-readable AgentScope session name.
+             * @example SOC console investigation
+             */
+            name?: string | null;
         };
         /** SkillInfo */
         SkillInfo: {
@@ -6541,8 +5222,8 @@ export interface components {
             run_id?: string | null;
             /**
              * Session Id
-             * @description AgentGov session identifier used for continuation or correlation.
-             * @example sess-20260729
+             * @description AgentScope session identifier used for continuation or correlation.
+             * @example session-20260909-001
              */
             session_id?: string | null;
             /**
@@ -6631,30 +5312,6 @@ export interface components {
             timestamp: string;
         } & {
             [key: string]: unknown;
-        };
-        /** ThinkingSpeechSummaryPayload */
-        ThinkingSpeechSummaryPayload: {
-            /** Block Index */
-            block_index: number;
-            /** Char Count */
-            char_count: number;
-            /** Message Id */
-            message_id: string;
-            /**
-             * Scope
-             * @default main
-             * @constant
-             */
-            scope: "main";
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            source_kind: "thinking";
-            /** Summary Id */
-            summary_id: string;
-            /** Text */
-            text: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -6796,13 +5453,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -6857,13 +5514,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -6901,7 +5558,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6910,13 +5567,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -6968,7 +5625,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6986,13 +5643,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7044,7 +5701,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7062,13 +5719,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7106,7 +5763,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7115,13 +5772,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7159,7 +5816,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7168,13 +5825,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7184,7 +5841,7 @@ export interface operations {
             query: {
                 /**
                  * @description Repository-relative changed file whose unified diff should be returned.
-                 * @example .mcp.json
+                 * @example mcp/soc-readonly.json
                  */
                 path: string;
             };
@@ -7218,7 +5875,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7227,13 +5884,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7285,7 +5942,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7303,22 +5960,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7370,7 +6018,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7388,13 +6036,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7441,7 +6089,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7459,22 +6107,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7526,7 +6165,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7544,13 +6183,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7564,8 +6203,8 @@ export interface operations {
                  */
                 agent_id?: string;
                 /**
-                 * @description Editable project config path. Currently only .mcp.json is supported.
-                 * @example .mcp.json
+                 * @description Editable Harness path: agent.yaml, AGENT.md, or mcp/<name>.json.
+                 * @example mcp/soc-readonly.json
                  */
                 path: string;
             };
@@ -7593,58 +6232,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Authenticated client is not allowed to access the requested resource. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Requested editable payload is too large. */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested editable payload uses an unsupported media or text encoding. */
-            415: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7658,8 +6252,8 @@ export interface operations {
                  */
                 agent_id?: string;
                 /**
-                 * @description Editable project config path. Currently only .mcp.json is supported.
-                 * @example .mcp.json
+                 * @description Editable Harness path: agent.yaml, AGENT.md, or mcp/<name>.json.
+                 * @example mcp/soc-readonly.json
                  */
                 path: string;
             };
@@ -7692,58 +6286,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Authenticated client is not allowed to access the requested resource. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Requested editable payload is too large. */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested editable payload uses an unsupported media or text encoding. */
-            415: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7801,13 +6350,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7845,7 +6394,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7854,13 +6403,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7936,7 +6485,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7954,13 +6503,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8012,7 +6561,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8030,13 +6579,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8074,7 +6623,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8083,13 +6632,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8127,7 +6676,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8136,13 +6685,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8194,7 +6743,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8212,13 +6761,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8262,7 +6811,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8271,13 +6820,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8321,7 +6870,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8330,13 +6879,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8385,7 +6934,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8394,31 +6943,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Requested editable payload is too large. */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8473,7 +7004,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8491,22 +7022,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Requested editable payload is too large. */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8580,7 +7102,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8598,49 +7120,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Length Required */
-            411: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Requested editable payload is too large. */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested editable payload uses an unsupported media or text encoding. */
-            415: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8692,7 +7178,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8710,31 +7196,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Requested editable payload is too large. */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8777,13 +7245,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8821,7 +7289,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8830,13 +7298,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8888,7 +7356,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8906,22 +7374,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8973,7 +7432,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8991,22 +7450,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9044,13 +7494,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9088,13 +7538,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9128,15 +7578,6 @@ export interface operations {
                     "application/json": components["schemas"]["AgentRepositoryStatusResponse"];
                 };
             };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
             /** @description Invalid or missing Bearer API key. */
             401: {
                 headers: {
@@ -9146,22 +7587,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9195,15 +7627,6 @@ export interface operations {
                     "application/json": components["schemas"]["AgentGitRefResponse"];
                 };
             };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
             /** @description Invalid or missing Bearer API key. */
             401: {
                 headers: {
@@ -9213,22 +7636,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9242,8 +7656,8 @@ export interface operations {
                  */
                 run_id?: string | null;
                 /**
-                 * @description Filter records by AgentGov session identifier.
-                 * @example sess-20260729
+                 * @description Filter records by AgentScope session identifier.
+                 * @example session-20260909-001
                  */
                 session_id?: string | null;
                 /**
@@ -9267,8 +7681,9 @@ export interface operations {
                  */
                 limit?: number;
                 /**
-                 * @description Include full SDK messages and reconstructed answer for explicit debug or audit inspection.
-                 * @example true
+                 * @deprecated
+                 * @description Ignored; messages are owned by AgentScope.
+                 * @example false
                  */
                 include_messages?: boolean;
             };
@@ -9296,18 +7711,85 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
     };
-    cancel_agent_run_api_agent_runs__run_id__cancel_post: {
+    get_run_by_client_operation_api_agent_runs_by_client_operation_get: {
+        parameters: {
+            query: {
+                /**
+                 * @description Filter records by AgentScope session identifier.
+                 * @example session-20260909-001
+                 */
+                session_id: string;
+                /**
+                 * @description Resolve the exact AgentGov run admitted for this caller-stable operation identifier.
+                 * @example soc-console-turn-20260909-001
+                 */
+                client_operation_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_api_agent_runs__run_id__get: {
         parameters: {
             query?: never;
             header?: never;
@@ -9328,7 +7810,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AgentRunCancelResponse"];
+                    "application/json": components["schemas"]["AgentRunResponse"];
                 };
             };
             /** @description Invalid or missing Bearer API key. */
@@ -9340,39 +7822,157 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description The persisted Agent run does not exist. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
-            };
-            /** @description The running turn has no owner in this API process or its fence is inconsistent. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
-                content?: never;
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
-            };
-            /** @description Cancellation continues, but durable termination was not confirmed before the timeout. */
-            504: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };
-    get_agent_run_trace_api_agent_runs__run_id__trace_get: {
+    cancel_api_agent_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Managed Agent run identifier addressed by this operation.
+                 * @example run-20260729-001
+                 */
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    /** @description AgentGov-owned correlation identifier. */
+                    "X-AgentGov-Run-Id"?: string;
+                    /** @description AgentGov-owned correlation identifier. */
+                    "X-AgentGov-Session-Id"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    get_pending_actions_api_agent_runs__run_id__pending_actions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Managed Agent run identifier addressed by this operation.
+                 * @example run-20260729-001
+                 */
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimePendingActionResponse"][];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trace_api_agent_runs__run_id__trace_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -9405,7 +8005,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -9414,87 +8014,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    sdk_events_api_agent_runtime_sdk_events_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Run a managed Claude Agent SDK turn and stream native SDK messages payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClaudeSdkEventsRequest"];
-            };
-        };
-        responses: {
-            /** @description Server-sent event stream. */
-            200: {
-                headers: {
-                    /** @description Backend-owned run id used by the exact-run cancellation endpoint. */
-                    "X-AgentGov-Run-Id"?: string;
-                    /** @description Backend-owned AgentGov session id that owns the run. */
-                    "X-AgentGov-Session-Id"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": string;
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9524,15 +8050,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
         };
@@ -9580,13 +8097,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9632,15 +8149,6 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
             /** @description Request conflicts with the current resource state. */
             409: {
                 headers: {
@@ -9650,13 +8158,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9719,22 +8227,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9772,7 +8271,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -9781,13 +8280,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9834,7 +8333,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -9852,13 +8351,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9913,13 +8412,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9964,7 +8463,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -9982,13 +8481,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10040,7 +8539,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -10058,13 +8557,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10102,22 +8601,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10155,22 +8645,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10218,13 +8699,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10279,13 +8760,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10323,7 +8804,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -10332,13 +8813,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10390,7 +8871,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -10408,236 +8889,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    chat_api_chat_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Run a Claude Agent task and return the full result payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentTargetedChatRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ChatResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-        };
-    };
-    chat_stream_api_chat_stream_post: {
-        parameters: {
-            query?: {
-                /**
-                 * @description raw preserves the legacy AgentGov SSE projection of parsed SDK messages; it is not byte-exact Runtime stdout. semantic adds complete trace_event facts and suppresses transport noise.
-                 * @example semantic
-                 */
-                event_mode?: "raw" | "semantic";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Run a Claude Agent task as server-sent events payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ChatStreamRequest"];
-            };
-        };
-        responses: {
-            /** @description Server-sent event stream. */
-            200: {
-                headers: {
-                    /** @description Backend-owned run id used by the exact-run cancellation endpoint. */
-                    "X-AgentGov-Run-Id"?: string;
-                    /** @description Backend-owned AgentGov session id that owns the run. */
-                    "X-AgentGov-Session-Id"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": string;
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-        };
-    };
-    list_requests_api_claude_user_input_requests_get: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Filter records by AgentGov session identifier.
-                 * @example sess-20260729
-                 */
-                session_id?: string | null;
-                /**
-                 * @description Filter records by managed Agent run identifier.
-                 * @example run-20260729-001
-                 */
-                run_id?: string | null;
-                /**
-                 * @description Filter Claude user-input requests by waiting, resolved, or cancelled state.
-                 * @example waiting
-                 */
-                status?: ("waiting" | "resolved" | "cancelled") | null;
-                /**
-                 * @description Filter waiting input requests by registered business Agent.
-                 * @example security-operations-expert
-                 */
-                business_agent_id?: string | null;
-                /**
-                 * @description Maximum number of records returned by this operation, within its documented bounds.
-                 * @example 100
-                 */
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClaudeUserInputRequestListResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10680,144 +8938,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    runtime_raw_events_api_debug_agent_runtime_raw_events_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Run a managed Agent and return byte-exact native Runtime events payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RuntimeRawEventsRequest"];
-            };
-        };
-        responses: {
-            /** @description Byte-exact native Runtime stdout. stream=false buffers the body; stream=true flushes the same byte sequence incrementally. */
-            200: {
-                headers: {
-                    /** @description Backend-resolved registered business Agent id. */
-                    "X-AgentGov-Agent-Id"?: string;
-                    /** @description Execution origin; managed means the normal AgentGov lifecycle ran. */
-                    "X-AgentGov-Execution-Origin"?: string;
-                    /** @description Native stdout protocol carried by the response body. */
-                    "X-AgentGov-Native-Protocol"?: string;
-                    /** @description Raw fidelity guarantee; byte-exact means no decode or re-serialization occurred. */
-                    "X-AgentGov-Raw-Fidelity"?: string;
-                    /** @description Backend-owned managed run id. */
-                    "X-AgentGov-Run-Id"?: string;
-                    /** @description Native Runtime implementation that produced the body. */
-                    "X-AgentGov-Runtime-Kind"?: string;
-                    /** @description Native Runtime executable version, or unknown when unavailable. */
-                    "X-AgentGov-Runtime-Version"?: string;
-                    /** @description Backend-owned AgentGov session id. */
-                    "X-AgentGov-Session-Id"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/octet-stream": string;
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Authenticated client is not allowed to access the requested resource. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Requested editable payload is too large. */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description The host platform cannot provide byte-exact native Runtime capture. */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10855,22 +8982,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10913,22 +9031,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10981,13 +9090,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11033,15 +9142,6 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
             /** @description Request conflicts with the current resource state. */
             409: {
                 headers: {
@@ -11051,13 +9151,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11095,7 +9195,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11104,13 +9204,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11157,7 +9257,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11175,13 +9275,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11195,8 +9295,8 @@ export interface operations {
                  */
                 run_id?: string | null;
                 /**
-                 * @description Filter records by AgentGov session identifier.
-                 * @example sess-20260729
+                 * @description Filter records by AgentScope session identifier.
+                 * @example session-20260909-001
                  */
                 session_id?: string | null;
                 /**
@@ -11249,13 +9349,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11310,13 +9410,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11354,7 +9454,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11363,13 +9463,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11421,7 +9521,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11439,13 +9539,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11483,13 +9583,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11532,7 +9632,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11541,13 +9641,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11604,7 +9704,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11622,13 +9722,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11666,13 +9766,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11727,13 +9827,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11771,7 +9871,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11780,13 +9880,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11831,7 +9931,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11849,13 +9949,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11902,7 +10002,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11920,13 +10020,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11978,7 +10078,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11996,13 +10096,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12040,7 +10140,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12049,13 +10149,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12093,7 +10193,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12102,13 +10202,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12160,7 +10260,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12178,13 +10278,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12231,7 +10331,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12249,13 +10349,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12302,7 +10402,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12320,22 +10420,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12373,7 +10464,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12382,13 +10473,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12426,7 +10517,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12435,13 +10526,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12488,7 +10579,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12506,22 +10597,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12568,7 +10650,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12586,13 +10668,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12630,7 +10712,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12639,13 +10721,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12697,7 +10779,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12715,13 +10797,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12778,7 +10860,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12796,13 +10878,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12854,7 +10936,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12872,13 +10954,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12916,7 +10998,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12925,13 +11007,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12983,7 +11065,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13001,13 +11083,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13045,7 +11127,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13054,13 +11136,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13112,7 +11194,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13130,13 +11212,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13183,7 +11265,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13201,13 +11283,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13254,7 +11336,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13272,22 +11354,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13325,7 +11398,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13334,13 +11407,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13392,7 +11465,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13410,13 +11483,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13463,7 +11536,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13481,13 +11554,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13534,7 +11607,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13552,22 +11625,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13605,7 +11669,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13614,13 +11678,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13667,7 +11731,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13685,13 +11749,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13738,7 +11802,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13756,22 +11820,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13809,7 +11864,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13818,13 +11873,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13876,7 +11931,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13894,13 +11949,13 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13940,22 +11995,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13998,13 +12044,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -14038,13 +12084,48 @@ export interface operations {
                     "application/json": components["schemas"]["PendingCorrelationResponse"];
                 };
             };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
+            /** @description Invalid or missing Bearer API key. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    current_runtime_version_api_runtime_agents__governance_agent_id__current_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Registered business Agent whose current published Runtime version is addressed.
+                 * @example security-operations-expert
+                 */
+                governance_agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeCurrentVersionResponse"];
                 };
             };
             /** @description Invalid or missing Bearer API key. */
@@ -14056,7 +12137,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -14074,20 +12155,191 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
     };
-    list_sessions_api_sessions_get: {
+    provision_runtime_version_api_runtime_agents__governance_agent_id__provision_post: {
         parameters: {
             query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Registered business Agent whose current published Runtime version is addressed.
+                 * @example security-operations-expert
+                 */
+                governance_agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeCurrentVersionResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    chat_api_runtime_chat__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Trigger one governed AgentScope run payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description AgentGov-owned correlation identifier. */
+                    "X-AgentGov-Run-Id"?: string;
+                    /** @description AgentGov-owned correlation identifier. */
+                    "X-AgentGov-Session-Id"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    list_sessions_api_runtime_sessions__get: {
+        parameters: {
+            query: {
+                /**
+                 * @description List Sessions across every retained Runtime version of this registered business Agent.
+                 * @example security-operations-expert
+                 */
+                governance_agent_id: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -14100,7 +12352,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionInfo"][];
+                    "application/json": {
+                        sessions: {
+                            [key: string]: unknown;
+                        }[];
+                        total: number;
+                    };
                 };
             };
             /** @description Invalid or missing Bearer API key. */
@@ -14112,30 +12369,68 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-        };
-    };
-    delete_session_api_sessions__session_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description AgentGov session identifier addressed by this deprecated native route.
-                 * @example sess-20260729
-                 */
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
+            /** @description Request validation or semantic validation failed. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionDeleteResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    create_session_api_runtime_sessions__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Caller-stable key that makes AgentScope session creation safe to retry.
+                 * @example session-create-20260909-001
+                 */
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Create a version-pinned AgentScope session payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeSessionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    /** @description AgentGov-owned correlation identifier. */
+                    "X-AgentGov-Session-Id"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        session_id: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Invalid or missing Bearer API key. */
@@ -14156,36 +12451,233 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
         };
     };
-    get_session_messages_api_sessions__session_id__messages_get: {
+    delete_session_api_runtime_sessions__session_id__delete: {
         parameters: {
-            query?: {
+            query: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
+                agent_id: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description AgentScope session identifier addressed by this operation.
+                 * @example session-20260909-001
+                 */
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    interrupt_api_runtime_sessions__session_id__interrupt_post: {
+        parameters: {
+            query: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
+                agent_id: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description AgentScope session identifier addressed by this operation.
+                 * @example session-20260909-001
+                 */
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    /** @description AgentGov-owned correlation identifier. */
+                    "X-AgentGov-Session-Id"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    messages_api_runtime_sessions__session_id__messages_get: {
+        parameters: {
+            query: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
+                agent_id: string;
+                /**
+                 * @description Opaque AgentScope message cursor returned by the previous page.
+                 * @example message-cursor-from-previous-page
+                 */
+                before?: string | null;
                 /**
                  * @description Maximum number of records returned by this operation, within its documented bounds.
                  * @example 100
                  */
-                limit?: number | null;
-                /**
-                 * @description Zero-based message offset used by the deprecated session route.
-                 * @example 0
-                 */
-                offset?: number;
+                limit?: number;
             };
             header?: never;
             path: {
                 /**
-                 * @description AgentGov session identifier addressed by this deprecated native route.
-                 * @example sess-20260729
+                 * @description AgentScope session identifier addressed by this operation.
+                 * @example session-20260909-001
                  */
                 session_id: string;
             };
@@ -14199,7 +12691,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionMessagesResponse"];
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Invalid or missing Bearer API key. */
@@ -14211,7 +12705,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -14229,22 +12723,52 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
         };
     };
-    get_openai_compat_agent_api_settings_openai_compat_agent_get: {
+    session_status_api_runtime_sessions__session_id__status_get: {
         parameters: {
-            query?: never;
+            query: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
+                agent_id: string;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /**
+                 * @description AgentScope session identifier addressed by this operation.
+                 * @example session-20260909-001
+                 */
+                session_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -14255,7 +12779,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OpenAICompatAgentConfig"];
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Invalid or missing Bearer API key. */
@@ -14267,50 +12793,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-        };
-    };
-    set_openai_compat_agent_api_settings_openai_compat_agent_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Set the /v1 出口业务 Agent (validated: unknown 404, non-business 400) payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OpenAICompatAgentUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OpenAICompatAgentConfig"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
+            /** @description Requested resource was not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -14319,33 +12802,72 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
         };
     };
-    reset_openai_compat_agent_api_settings_openai_compat_agent_delete: {
+    stream_api_runtime_sessions__session_id__stream_get: {
         parameters: {
-            query?: never;
+            query: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
+                agent_id: string;
+            };
             header?: never;
-            path?: never;
+            path: {
+                /**
+                 * @description AgentScope session identifier addressed by this operation.
+                 * @example session-20260909-001
+                 */
+                session_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Byte-for-byte proxy of the AgentScope AgentEvent stream. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OpenAICompatAgentConfig"];
+                    "text/event-stream": string;
                 };
             };
             /** @description Invalid or missing Bearer API key. */
@@ -14355,6 +12877,51 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
         };
@@ -14392,22 +12959,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -14421,8 +12979,8 @@ export interface operations {
                  */
                 run_id?: string | null;
                 /**
-                 * @description Filter records by AgentGov session identifier.
-                 * @example sess-20260729
+                 * @description Filter records by AgentScope session identifier.
+                 * @example session-20260909-001
                  */
                 session_id?: string | null;
                 /**
@@ -14470,13 +13028,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -14504,15 +13062,6 @@ export interface operations {
                     "application/json": components["schemas"]["SocEventIngestResponse"];
                 };
             };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
             /** @description Invalid or missing Bearer API key. */
             401: {
                 headers: {
@@ -14522,22 +13071,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -14575,22 +13115,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
+            /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -14651,559 +13182,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuntimeReadinessResponse"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuntimeReadinessResponse"];
-                };
-            };
-        };
-    };
-    decide_v1_agentgov_confirmation_requests__request_id__decision_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description Exact waiting Claude user-input request identifier.
-                 * @example uir-20260729-001
-                 */
-                request_id: string;
-            };
-            cookie?: never;
-        };
-        /** @description Resolve one active HITL confirmation payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClaudeUserInputDecisionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClaudeUserInputDecisionResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    openai_chat_completions_v1_chat_completions_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Run the deprecated minimal text-only chat-completion shim payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OpenAIChatCompletionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OpenAIChatCompletionResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description The selected Agent runtime failed to produce a compatible response. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OpenAIErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-        };
-    };
-    list_conversations_v1_conversations_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConversationList"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    create_conversation_v1_conversations_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Create a conversation payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["ConversationCreateRequest"] | null;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Conversation"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    get_conversation_v1_conversations__conversation_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description AgentGov conversation projection identifier (conv_<session_id>).
-                 * @example conv_sess-20260729
-                 */
-                conversation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Conversation"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    delete_conversation_v1_conversations__conversation_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description AgentGov conversation projection identifier (conv_<session_id>).
-                 * @example conv_sess-20260729
-                 */
-                conversation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConversationDeleted"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    list_conversation_items_v1_conversations__conversation_id__items_get: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Return conversation items after this msg_<index> cursor.
-                 * @example msg_0
-                 */
-                after?: string | null;
-                /**
-                 * @description Maximum number of chronological conversation items to return (1–100).
-                 * @example 20
-                 */
-                limit?: number;
-                /**
-                 * @description Chronological order.
-                 * @example asc
-                 */
-                order?: "asc";
-                /**
-                 * @description OpenAI-shape passthrough; currently a no-op.
-                 * @example items
-                 */
-                include?: string | null;
-            };
-            header?: never;
-            path: {
-                /**
-                 * @description AgentGov conversation projection identifier (conv_<session_id>).
-                 * @example conv_sess-20260729
-                 */
-                conversation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConversationItemList"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    create_response_v1_responses_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Run an AgentGov business agent through a transitional Responses-shaped projection payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResponsesRequest"];
-            };
-        };
-        responses: {
-            /** @description JSON response when stream=false; server-sent events when stream=true. */
-            200: {
-                headers: {
-                    /** @description Backend-owned run id used by the exact-run cancellation endpoint. */
-                    "X-AgentGov-Run-Id"?: string;
-                    /** @description Backend-owned AgentGov session id that owns the run. */
-                    "X-AgentGov-Session-Id"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResponseObject"];
-                    "text/event-stream": string;
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Configured runtime or model/agent target is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-        };
-    };
-    retrieve_response_v1_responses__response_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description AgentGov response projection identifier (resp_<run_id>).
-                 * @example resp_run-20260729-001
-                 */
-                response_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResponseObject"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
                 };
             };
         };

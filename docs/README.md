@@ -40,37 +40,21 @@
 - [Governor 自研究与受控自学习能力需求](./Governor自研究与受控自学习能力需求.md)：
   `docs/Governor自研究与受控自学习能力需求.md`，定义 Governor 以内生证据为主、联网研究为辅，
   通过独立评估和人工启用持续提升反馈分析优化闭环能力的产品需求、治理边界、成功指标和验收场景
-- [多 Runtime 适配、外部 CLI 旁路与 Multica 协作边界方案](./engineering/多Runtime适配与外部CLI旁路及Multica协作边界方案.md)：
-  `docs/engineering/多Runtime适配与外部CLI旁路及Multica协作边界方案.md`，定义当前 Claude 原生受管实现、
-  未来多 Runtime 小端口适配、外部 CLI 只读观测、配置改进闭环以及 Multica 上层协作边界
 
 ## 下一阶段实施方案
 
-这些文档是 2026-07-30 基于当前实现证据形成、并于 2026-08-05 完成长远平台边界复核的工程
-评审稿，按“P0 准入收口 → P1/P2A 受限并行 → P2B shadow → P3 平台基础与独立扩展准入”
-组织。它们定义当前建议的实施顺序、长期 seam、契约边界和退出门，不表示目标能力已经实现；
-当前运行态仍以“当前实现基线”为准。
+这些文档是 2026-07-30 基于当时实现证据形成、并于 2026-08-05 完成长远平台边界复核的工程
+评审稿。旧 P0/P0-MCP 与 P2A Claude Runtime 路线已被 AgentScope 原子切换取代并移入归档；
+其余方案只描述各自尚未落地的治理能力，不得用旧阶段依赖解释当前 Runtime。当前运行态以根
+`README.md` 的 AgentScope 公共契约为准。
 
 - [AgentGov 下一阶段实施方案索引](./AgentGov下一阶段实施方案索引.md)：
   `docs/AgentGov下一阶段实施方案索引.md`，统一说明阶段结论、权威关系、准入证据、治理对象、
   依赖顺序、全局裁决和评审清单
-- [P0 准入收口实施方案](./engineering/AgentGov下一阶段P0准入收口实施方案.md)：
-  `docs/engineering/AgentGov下一阶段P0准入收口实施方案.md`，先分别收口内置安全 Agent
-  精确 commit 全量测试、模拟 MCP capability slice 回执、per-Agent 质量策略 lane 和 Runtime
-  生命周期裁决；当前 29 个 leaf 只是基线快照，不进入平台长期契约
-- [P0 模拟 MCP 平台验收实施方案](./engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md)：
-  `docs/engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md`，固定原始
-  `openapi-mcp-server` 与 `mock_service` 提交，以隔离、只读、合成夹具验证 AgentGov 的真实
-  `Claude / Streamable HTTP / tools / read-only / no-auth` capability slice；不作为其他 transport、
-  生产 MCP、认证或业务 Agent 能力证据
 - [P1 网络安全测评纵向闭环实施方案](./engineering/AgentGov下一阶段P1网络安全测评纵向闭环实施方案.md)：
   `docs/engineering/AgentGov下一阶段P1网络安全测评纵向闭环实施方案.md`，以 8 个静态 L2 案例
   建立 Agent 自有可见回归包与 evaluator-owned 发布基准分权、typed 评分、安全否决、版本比较和
   精确发布闭环；本阶段只称协议化回归/发布准入，不以通过结果宣称整体能力提升
-- [P2A Runtime 边界提取与 Claude Adapter 实施方案](./engineering/AgentGov下一阶段P2ARuntime边界提取与ClaudeAdapter实施方案.md)：
-  `docs/engineering/AgentGov下一阶段P2ARuntime边界提取与ClaudeAdapter实施方案.md`，提取
-  中立内部事实、小端口、registry/gateway 和 Claude 委托 adapter，并用第二类真实协议 spike
-  证伪 Claude-shaped abstraction；本阶段不迁移公开会话字段或接第二生产 Runtime
 - [P2B Governor 受控学习基础实施方案](./engineering/AgentGov下一阶段P2BGovernor受控学习基础实施方案.md)：
   `docs/engineering/AgentGov下一阶段P2BGovernor受控学习基础实施方案.md`，建立不可变证据、
   方法候选、不可变 capability build、ApplicabilityScope 和盲化隔离评估，候选保持 shadow
@@ -84,6 +68,12 @@
 这些文档解释当前代码、API、数据库、测试和用户可见运行态。当前反馈闭环主对象是 `ImprovementItem`；文档中若出现 `优化批次`、`proposal` 等历史术语，只能作为迁移来源或归档证据阅读，不作为当前 API 或 UI 主流程依据。四阶段改进治理用户主流程术语以 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md) 为准；与旧设计冲突时，以 [AgentGov 四阶段改进治理工作台 UI 整改方案](./AgentGov_四阶段改进治理工作台UI整改方案.md) 和四张效果图为准。
 
 - [反馈闭环当前实现基线](./反馈闭环当前实现基线.md)：`docs/反馈闭环当前实现基线.md`
+- [AgentGov AgentScope Runtime 替换实施基线与验收](./engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md)：
+  `docs/engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md`，吸收替换方案中的事实源、
+  Harness、切换恢复和验收要求，标明当前实现与 50-run、浏览器、soak 等完整验收的边界
+- [AgentScope 与 Langfuse 观测契约及验收](./engineering/AgentScope与Langfuse观测契约及验收.md)：
+  `docs/engineering/AgentScope与Langfuse观测契约及验收.md`，说明 run/Trace 关联、安全出口、
+  完整性对账及验收，并区分 AgentScope 示例应用原始需求与 AgentGov 当前实现
 - [业务 Agent Workspace 原生 pytest 测试资产实现方案](./engineering/业务AgentWorkspace原生pytest测试资产实现方案.md)：
   `docs/engineering/业务AgentWorkspace原生pytest测试资产实现方案.md`，定义测试资产唯一真相、
   `agentgov_testkit`、精确提交运行、服务重启恢复和发布条件
@@ -114,11 +104,11 @@
   晋级和 mutation 的权威工程契约
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`
 - [GSD长程重构阶段清单](./engineering/GSD长程重构阶段清单.md)：`docs/engineering/GSD长程重构阶段清单.md`
-- [Agent 运行时语义事件与 Speech Summary 整改方案](./engineering/Agent运行时语义事件与SpeechSummary整改方案.md)：
-  `docs/engineering/Agent运行时语义事件与SpeechSummary整改方案.md`，定义 3.0.3 的主 Agent
-  作用域、Speech Summary typed output、派生事件终态、Responses/兼容接口/raw/HITL 契约和真实容器验收
-- [vLLM 模型网关与 Sidecar 整改方案](./engineering/vLLM模型网关与Sidecar整改优化方案.md)：`docs/engineering/vLLM模型网关与Sidecar整改优化方案.md`
-- [OpenAI 兼容接口能否替代原生 Chat 端点评估](./engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)：`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`，Responses-first 目标、仓内过渡投影的已知偏差、SDK-native 事实源与未来外置 adapter 边界；`/v1/conversations` 承载会话恢复
+- [AgentScope Runtime 当前架构与公共契约](../README.md#agentscope-runtime-公共契约)：以仓库
+  `README.md` 的三服务架构、Runtime 公共契约、标识映射、Harness、验收和 OTel/Langfuse
+  章节为当前权威入口；它已取代 Claude/LiteLLM Sidecar、Speech Summary 和旧 Responses
+  执行链路设计。实施决策和验收门槛见“当前实现基线”中的 Runtime 替换与观测专项文档；
+  被取代的方案仅保留在 [归档入口](./archive/README.md) 供审计追溯
 
 ## 评审与复盘
 

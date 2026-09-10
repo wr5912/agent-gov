@@ -7,7 +7,7 @@
 
 ## 1. 裁决
 
-业务 Agent 的测试必须与其 Claude 原生 Workspace 一起开发、评审、版本化、导入、导出和发布。
+业务 Agent 的测试必须与其 AgentScope Harness Workspace 一起开发、评审、版本化、导入、导出和发布。
 `workspace/tests/` 是测试资产唯一真相源，平台不再维护数据库测试集、全局用例池或第二套测试内容副本。
 
 平台负责确定性执行和证据投影，不解释或重写 pytest：
@@ -55,9 +55,11 @@
 
 ```text
 workspace/
-├── CLAUDE.md
-├── .claude/
-├── .mcp.json
+├── agent.yaml
+├── AGENT.md
+├── skills/
+├── subagents/
+├── mcp/
 └── tests/
     ├── README.md
     ├── conftest.py       # 可选
@@ -181,7 +183,7 @@ queued -> running -> passed | failed | error | cancelled
 running --服务关闭/重启--> interrupted
 ```
 
-状态是平台执行记录，不映射 Claude Agent SDK 的权限生命周期。服务重启时：
+状态是平台执行记录，不映射 AgentScope 会话、原生暂停或逐次确认的生命周期。服务重启时：
 
 - 已经 `running` 的进程不能被假定继续存在，记录明确转为 `interrupted`；
 - 尚未领取的 `queued` 记录由启动恢复器重新入队；
@@ -203,10 +205,11 @@ running --服务关闭/重启--> interrupted
    `agent.run(...)` 调用以及面向 `result.text` / `result.raw` 的业务断言，并确定
    `tests/test_feedback_<id>_<digest>.py` 路径。生成结果以完整新增文件 Diff 展示，不写入 Workspace、
    不提交 Git、也不运行测试。一次生成只形成一个不超过 60 行、仅含一个同步 `test_*` 的单焦点 pytest
-   模块；平台提供 `agent` fixture，生成代码不得定义或覆盖任何 fixture。该任务直接使用 Claude Agent SDK
-   原生 `output_format/json_schema` 和 `ResultMessage.structured_output`，避免第二个模型改写代码；后端再用
-   Pydantic 与 AST 做确定性校验。governor Trace 由后端投影完整 `sdk.tool.*` / `sdk.llm.*` I/O；其子进程
-   不再重复上报 I/O 为空且会产生误导性 `tool.blocked_on_user` 计时事件的 Claude Code 原生 OTEL span。
+   模块；平台提供 `agent` fixture，生成代码不得定义或覆盖任何 fixture。该任务在独立 AgentScope
+   governor Session 中运行；后端把精确 JSON Schema 附加到输入，只接受单个 schema-valid JSON object，
+   再用 Pydantic 与 AST 做确定性校验，不使用第二个模型改写代码。governor Trace 由 AgentScope OTel
+   middleware 记录，并通过 `run_id`、`session_id`、`reply_id` 与 `trace_id` 关联；安全出口只保留规范化
+   span 名和必要关联属性，不复制 prompt、模型、Agent 或工具正文。
    生成失败时返回结构化错误，不用启发式逻辑伪造测试。测试必须使用类型无关的
    `assert not result.errors` 断言运行无错误；`errors` 是 tuple，不接受 `result.errors == []`。
    自然语言回答中的标签可能因 Markdown 排版出现空格或换行，固定业务词先用

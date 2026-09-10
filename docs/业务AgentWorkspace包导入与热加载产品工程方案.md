@@ -9,7 +9,7 @@
 
 | 裁决 | 事实依据 | 删除的旧设计 | 验收 |
 | --- | --- | --- | --- |
-| 普通新 Agent 只通过 Workspace 包创建 | Agent 的可运行前提是完整 Claude 原生项目目录；仅填 name/ID 无法证明行为配置完整 | `POST /api/agent-registry`、`GET /api/agent-registry/templates`、`template_id`、`source_seed_id` | OpenAPI 不含旧路由/字段；新 ID 导入成功后进入注册表 |
+| 普通新 Agent 只通过 Workspace 包创建 | Agent 的可运行前提是完整 AgentScope Harness；仅填 name/ID 无法证明指令、权限、Skill、MCP 和 Subagent 完整 | `POST /api/agent-registry`、`GET /api/agent-registry/templates`、`template_id`、`source_seed_id` | OpenAPI 不含旧路由/字段；新 ID 导入成功后进入注册表 |
 | 只保留一个内置业务 Agent | 仓库只需提供一个可运行、可导出、可修改的起点 | `templates/business-agent/general` 和多个普通业务 Agent 出生副本 | 初始化源中的业务 Agent 集合严格等于声明的内置集合 |
 | 内置、默认、受保护分开表达 | 三者分别回答“是否随版本提供”“兼容入口默认选谁”“是否可在线删除” | `origin=seed/user` 及由来源推导全部行为 | API 分别返回 `builtin`、`default`、`protected` |
 | 初始化源不参与持续同步 | 运行态 Workspace 及其 per-Agent Git 才是当前行为事实 | 运行态 `data/seed-catalog`、删除标记、逐文件回灌 | 已存在 Workspace 整体跳过；重启不复活已删普通 Agent |
@@ -34,8 +34,7 @@ docker/runtime-bootstrap/
 ${HOST_RUNTIME_VOLUME_ROOT}/
 ├── governor-workspace/
 └── data/business-agents/<agent_id>/
-    ├── workspace/       # 当前 Claude 原生项目与 per-Agent Git 仓库
-    ├── claude-root/     # Claude 会话状态，不属于 Workspace 包
+    ├── workspace/       # 已发布 AgentScope Harness 与 per-Agent Git 仓库
     └── version/         # worktree/release 等版本治理状态，不属于 Workspace 包
 ```
 
@@ -50,11 +49,14 @@ ${HOST_RUNTIME_VOLUME_ROOT}/
 ```text
 workspace/
   agent.yaml
-  CLAUDE.md
-  .mcp.json
-  .claude/
-  hooks/
-  commands/
+  AGENT.md
+  mcp/
+    <name>.json
+  skills/
+    <name>/SKILL.md
+  subagents/
+    <name>/agent.yaml
+    <name>/AGENT.md
   tests/
     README.md
     test_*.py
@@ -64,11 +66,11 @@ workspace/
 包内普通文件由包所有者负责，平台逐字节保留：
 
 - 允许文本、二进制、executable bit、`.env`、真实 endpoint、本机路径和 MCP header；
-- 不改写 `agent.yaml`、`CLAUDE.md`、settings、MCP、hook、skill 或 subagent；
+- 不改写 `agent.yaml`、`AGENT.md`、MCP、Skill 或 Subagent；
 - `agent.yaml.agent.id` 是导入身份确认字段，必须有效且与 URL 中的目标 `agent_id` 逐字一致；
 - 包内 profile、name、status 或说明文字不成为平台注册表身份事实；
 - 空目录不进入 Git，不承诺导出后保留；
-- conversation、SDK session、run、feedback、平台测试运行、Langfuse、数据库和 `claude-root` 不进入包。
+- AgentScope session/message、AgentGov run、feedback、平台测试运行、Langfuse、数据库和 Runtime 可写状态不进入包。
 
 `tests/` 与其他 Workspace 文件一样按字节导入、导出和版本化。导入缺少 `tests/` 或
 `tests/README.md` 不拒绝包，但成功回执中的 `test_suite.diagnostics` 会给出 warning；没有
@@ -229,15 +231,15 @@ API 启动协调器读取 `docker/runtime-bootstrap/`：
 新建复用 registry reservation、no-follow 文件发布、Git 初始化、finalize 和失败补偿 saga。覆盖与恢复：
 
 1. 获取该 Agent 的维护栅栏；
-2. 拒绝活跃 turn、未终结 change set 和 SDK session 失效冲突；
+2. 拒绝活跃 run 与未终结 change set；
 3. dirty Workspace 先形成包含普通文件的快照；
 4. 在临时 worktree 形成候选 commit；
 5. 确认 `expected_current_commit_sha` 仍等于目标当前提交版本后激活；
-6. 同一数据库事务清除 inactive SDK resume 映射；
+6. 保留已有 AgentScope session 的不可变版本绑定，新 session 绑定激活后的 commit；
 7. 失败时补偿 Git、session mapping、注册表与自有文件。
 
-当前 turn 的 HEAD、SDK mapping、active run 和 intent 在同一 admission 写屏障内绑定。导入成功后不重启
-API；已有 API session ID 保留，新 turn 建立新的 SDK session 并读取回执中的 commit。
+当前 run 的 Harness digest/commit、AgentScope session 绑定和 intent 在同一 admission 写屏障内固定。
+导入成功后不重启 API；已有 session 继续指向创建时的不可变 Agent 版本，新 session 使用新 commit。
 
 ## 7. 输入保护与仓库边界
 
@@ -247,7 +249,7 @@ API；已有 API session ID 保留，新 turn 建立新的 SDK session 并读取
 - 最多 10,000 个成员；路径最大 4 KiB、深度最大 32；tar 元数据单记录最大 64 KiB；
 - 拒绝绝对路径、`..`、NUL、非 UTF-8、重复项、文件/目录前缀冲突和任何 `.git` 成员；
 - 拒绝 symlink、hardlink、device、FIFO、socket；
-- `.mcp.json`、`.claude/settings.json` 如存在，必须是 JSON object；
+- `agent.yaml`、`subagents/*/agent.yaml` 如存在，必须是 YAML object；`mcp/*.json` 如存在，必须是 JSON object；
 - import 请求本身不执行上传包中的代码、测试、安装脚本或网络请求；只有用户后续显式发起平台测试时，
   才在固定 commit 的隔离 checkout 中执行固定 pytest 命令。
 

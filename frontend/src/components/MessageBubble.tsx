@@ -1,6 +1,13 @@
 import { ListTree, Loader2, MessageSquare, Search } from "lucide-react";
-import type { ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest } from "../types/runtime";
-import { ClaudeUserInputCard } from "./ClaudeUserInputCard";
+import type {
+  AgentScopeToolResultState,
+  ChatMessage,
+  RuntimeExternalExecutionRequest,
+  RuntimeUserConfirmAction,
+  RuntimeUserConfirmRequest,
+} from "../types/runtime";
+import { RuntimeExternalExecutionCard } from "./RuntimeExternalExecutionCard";
+import { RuntimeUserConfirmCard } from "./RuntimeUserConfirmCard";
 import { MarkdownContent } from "./MarkdownContent";
 
 interface Props {
@@ -15,7 +22,12 @@ interface Props {
   userInputErrors?: Record<string, string>;
   submittingUserInputRequests?: Set<string>;
   userInputDisabled?: boolean;
-  onSubmitUserInput?: (request: ClaudeUserInputRequest, input: Omit<ClaudeUserInputDecisionPayload, "decision_token">) => void;
+  onSubmitUserInput?: (request: RuntimeUserConfirmRequest, action: RuntimeUserConfirmAction) => void;
+  onSubmitExternalExecution?: (
+    request: RuntimeExternalExecutionRequest,
+    state: AgentScopeToolResultState,
+    outputs: Record<string, string>,
+  ) => void;
 }
 
 export function MessageBubble({
@@ -30,6 +42,7 @@ export function MessageBubble({
   submittingUserInputRequests,
   userInputDisabled = false,
   onSubmitUserInput,
+  onSubmitExternalExecution,
 }: Props) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
@@ -46,20 +59,34 @@ export function MessageBubble({
     >
       <div className={`message-bubble ${roleClass} ${streamingClass}`.trim()}>
         <div className="message-meta">
-          <span>{isUser ? "You" : isSystem ? "System" : "Claude Agent"}</span>
+          <span>{isUser ? "You" : isSystem ? "System" : "Agent"}</span>
           <time>{formatTime(message.createdAt)}</time>
         </div>
         {hasContent ? <FormattedText text={message.content} /> : null}
-        {message.role === "assistant" && message.userInputRequests?.length ? (
-          <div className="claude-user-input-list">
-            {message.userInputRequests.map((request) => (
-              <ClaudeUserInputCard
-                key={request.request_id}
+        {message.role === "assistant" && message.userConfirmRequests?.length ? (
+          <div className="runtime-user-confirm-list">
+            {message.userConfirmRequests.map((request) => (
+              <RuntimeUserConfirmCard
+                key={request.requestId}
                 request={request}
-                error={userInputErrors[request.request_id]}
-                submitting={submittingUserInputRequests?.has(request.request_id)}
+                error={userInputErrors[request.requestId]}
+                submitting={submittingUserInputRequests?.has(request.requestId)}
                 disabled={userInputDisabled}
-                onSubmit={(item, input) => onSubmitUserInput?.(item, input)}
+                onSubmit={(item, action) => onSubmitUserInput?.(item, action)}
+              />
+            ))}
+          </div>
+        ) : null}
+        {message.role === "assistant" && message.externalExecutionRequests?.length ? (
+          <div className="runtime-user-confirm-list">
+            {message.externalExecutionRequests.map((request) => (
+              <RuntimeExternalExecutionCard
+                key={request.requestId}
+                request={request}
+                error={userInputErrors[request.requestId]}
+                submitting={submittingUserInputRequests?.has(request.requestId)}
+                disabled={userInputDisabled}
+                onSubmit={(item, state, outputs) => onSubmitExternalExecution?.(item, state, outputs)}
               />
             ))}
           </div>

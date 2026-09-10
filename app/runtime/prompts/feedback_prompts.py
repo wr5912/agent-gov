@@ -53,11 +53,11 @@ def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
             "只有 effective_mcp_config.json 显示选中的 MCP config 或 MCP config path 仍有 unresolved placeholder 时，"
             "通常归因到 MCP 配置或运行时配置问题。\n"
             "workspace_placeholder_summary.json 中其他占位符按来源归因：\n"
-            "- .claude/settings.json 若影响权限、sandbox 或网络域名，通常归因到运行时代码或配置。\n"
-            "- mcp_servers/**/sample*.json 若作为 MCP 工具返回数据污染回答，通常归因到外部 MCP 服务数据质量。\n"
+            "- agent.yaml 的 session/workspace_policy 若影响权限、sandbox 或网络域名，通常归因到运行时配置。\n"
+            "- mcp/*.json 若引用的 MCP 工具返回数据污染回答，通常归因到外部 MCP 服务数据质量。\n"
             "- README、docs、*.example 只作为说明或示例，通常归 not_actionable 或 insufficient_information，除非证据显示示例被当作运行配置使用。\n"
             "- *.sh 中的 ${VAR:-default} 通常是 shell 默认值语法，不应仅因出现占位符归因，必须结合执行失败证据判断。\n"
-            "如果有效 .mcp.json 或 .claude/settings.json 中仍存在占位符或错误运行环境路径，通常归因到 runtime-bootstrap 初始化或 Workspace 配置。\n"
+            "如果有效 mcp/*.json 或 agent.yaml 中仍存在未解析占位符或错误运行环境路径，通常归因到 runtime-bootstrap 初始化或 Workspace 配置。\n"
             "只有在 MCP 配置已实例化且无占位符、MCP 仍连接失败或服务返回异常时，才优先判定 external_mcp_service。\n"
             "MAX_TURNS 达上限若伴随 MCP failed 或 MCP 配置未解析占位符，应视为放大器，不要把 turns 默认值当作唯一根因。",
         ),
@@ -65,10 +65,9 @@ def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
             "业务 Agent 配置",
             "目标业务 Agent 的权威路径只以输入上下文 target_agent_context 为准。归因到执行资产问题"
             "（instruction_gap/skill_gap/mcp_description_gap）或工具/权限问题前，必须用 Read/Glob/Grep 按需读取"
-            "target_agent_context.workspace_dir 下的原始配置（CLAUDE.md、.claude/settings.json、.mcp.json、.claude/skills）"
+            "target_agent_context.workspace_dir 下的原始配置（AGENT.md、agent.yaml、mcp/*.json、skills/*/SKILL.md、subagents/*）"
             "确认当前配置是否缺失、冲突或描述不当，不要脱离实际配置臆断。"
-            "/governor-workspace 只代表治理 Agent 自身配置；除非本次问题对象明确是 governor，否则不得把"
-            "/governor-workspace 下的文件作为目标业务 Agent 配置证据。",
+            "/runtime-workspaces/ 下的物化目录只代表 Runtime 临时副本；不得把它当作目标业务 Agent 的权威配置证据。",
         ),
         ("约束", NATURAL_LANGUAGE_CHINESE_RULE),
         ("输入上下文", _prompt_context_section("attribution_prompt_context", prompt_context)),
@@ -108,17 +107,16 @@ def improvement_optimization_plan_prompt(*, prompt_context: JsonObject | None = 
             "约束",
             f"{NATURAL_LANGUAGE_CHINESE_RULE}"
             "不要输出后端系统 ID、路由名、队列名、工具调用参数或后端版本字段。"
-            "不要输出 JSON 代码块；用自然语言小节或列表表达即可，formatter 会转换为结构化模型。",
+            "不要输出 Markdown 或自然语言前后缀；最终必须严格遵守请求末尾给出的 JSON Schema。",
         ),
         (
             "业务 Agent 配置",
             "目标业务 Agent 的权威路径只以输入上下文 target_agent_context 为准。"
             "提方案前用 Read/Glob/Grep 按需读取 target_agent_context.workspace_dir 下的原始配置"
-            "（CLAUDE.md/.claude/settings.json/.mcp.json/.claude/skills）。"
+            "（AGENT.md/agent.yaml/mcp/*.json/skills/*/SKILL.md/subagents/*）。"
             "changes[].target 与 change 必须针对真实存在的配置资产提出具体改动"
-            "（例如改 CLAUDE.md 某段、补/改某个 skill、调整 settings 权限或 MCP），不要提出与当前配置无关或已存在的改动。"
-            "/governor-workspace 只代表治理 Agent 自身配置；除非本次问题对象明确是 governor，否则不得把"
-            "/governor-workspace 下的文件作为目标业务 Agent 配置或优化对象。",
+            "（例如改 AGENT.md 某段、补/改某个 Skill、调整 agent.yaml 权限或 MCP），不要提出与当前配置无关或已存在的改动。"
+            "/runtime-workspaces/ 下的物化目录只代表 Runtime 临时副本；不得把它当作目标业务 Agent 配置或优化对象。",
         ),
         ("输入上下文", _prompt_context_section("improvement_optimization_plan_prompt_context", prompt_context)),
     )

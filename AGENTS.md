@@ -45,16 +45,18 @@
 
 ## 核心架构原则
 
-本仓库以 `claude-agent-sdk` 及其捆绑的 Claude Code agent 为中心。后端只是交互接口、
-确定性编排和反馈优化闭环的薄层。
+本仓库生产数据面只使用固定版本的 AgentScope Runtime；AgentGov 后端是鉴权、版本绑定、
+治理编排、反馈闭环和运行关联的薄控制面，不实现第二套 agent loop。
 
-- Agent/SDK 是会话、消息、trace、session 元数据和子 Agent 行为事实的单一真相源。
-- 优先使用 SDK 原生 `get_session_messages`、`get_session_info`、`list_sessions`、
-  `get_subagent_messages`、`SessionStore` 等能力，不手解析 CLI transcript，也不另建并行副本。
-- 后端只做 API 契约、证据投影和治理编排；交互与优化共享同一份 Agent 行为事实。
-- 不重写或绕过 agent loop。权限、MCP、hooks、skills、subagents 以 Claude Code 原生发现
-  和配置为准，后端不通过 Options 接管。
-- 新增后端 schema、存储或解析前，必须先证明 SDK/agent 没有持有或暴露同一事实。
+- AgentScope 是 Session、Message、AgentState 和会话恢复的单一真相源；AgentGov 不复制消息正文。
+- Git 是 Harness、测试和发布版本的单一真相源；每个发布版本创建不可变的 AgentScope Agent 绑定。
+- AgentGov 只持有 `run_id`、版本绑定、反馈/审批/改进记录和 `trace_id` 引用；Langfuse 持有
+  OTel 语义轨迹。`session_id`、`run_id`、`reply_id`、`trace_id` 各自表达不同生命周期，不互相冒充。
+- Runtime 集成只调用 AgentScope 公共 API，禁止私有模块导入、核心补丁、运行时选择器、fallback
+  和双写兼容层；SSE 数据面保持 AgentScope 原生字节与未知事件透传。
+- 权限、MCP、skills、subagents 和 Workspace 由已发布 AgentScope Harness 与受控 middleware
+  组合实现；任何自修改必须进入候选版本、测试、人工确认和发布流程，不能原地修改活动 Harness。
+- 新增后端 schema、存储或解析前，必须先证明 AgentScope、Git 或 Langfuse 未持有同一事实。
 
 ## 质量优先与旧设计替换
 
@@ -155,16 +157,17 @@ make codex-guard
 - `docker/.env` 服务 Compose/API 容器；`docker/.env.local-debug` 服务宿主机 Python/
   PyCharm；`frontend/.env.local` 只服务 Vite。它们是按运行环境选择，不是 layered override。
 - 宿主机进程自动选择本机调试 env，容器由 Compose 注入 `RUNTIME_CONTAINER=1` 选择容器 env。
-- 本机 API 内的治理模型任务不复用交互式 Claude `/login`；真实运行前私有 env 必须提供
-  `MODEL_PROVIDER_API_KEY`，但真实值不得进入仓库、日志、文档、提交说明或最终回复。
+- 模型 Provider 凭据只注入独立 AgentScope Runtime；AgentGov API、前端和 Harness 均不得持有。
+  真实运行前由 Runtime 对私有 env 做 fail-closed 校验，真实值不得进入仓库、日志、文档、提交说明或最终回复。
 - API key、MCP header、数据库凭据、本机私有路径、运行态 SQLite 和私有日志不得进入
   AgentGov 项目源码仓库、公开文档、日志、提交说明或最终回复。
 - 业务 Agent 的 live workspace 与其 per-Agent Git 是敏感运行资产，可按字节保留 `.env`、
   真实 endpoint、凭据型 header、数据库配置和本机路径；该例外不延伸到项目源码仓库。
   live Workspace 回流仓库内置运行卷初始化源前必须先在仓库外形成候选，再通过
   `runtime-bootstrap` 准入扫描。
-- 当前 Playground、调试 UI 和自托管 Langfuse 是开发观测面，可保留完整 prompt/tool/governance/trace
-  I/O；该例外不放宽仓库和对外输出边界。
+- Playground/调试 UI 可在当前请求内展示业务内容，但这不授权 AgentGov 或 Langfuse 持久化
+  原始 prompt、输出、tool/MCP 参数或 secret；OTel 默认只保留受控语义字段、精确 UTF-8
+  长度和 SHA-256。
 - 修改 env 选择、路径、模型凭据或 Langfuse 地址时，同步 README、示例、policy 测试和启动日志。
 
 ## 文档与配置治理

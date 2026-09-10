@@ -5,16 +5,13 @@ from collections.abc import Callable
 from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found
-from app.runtime.agent_trace import AgentRunTraceResponse, project_agent_trace
 from app.runtime.json_types import JsonObject
-from app.runtime.message_utils import extract_answer_from_messages
 from app.runtime.records.source_records import (
     FeedbackSignalSourceType,
     FeedbackSourceKind,
     SocEventType,
 )
 from app.runtime.schemas import (
-    AgentRunResponse,
     AssetProvenanceImprovement,
     AssetProvenanceResponse,
     FeedbackSignalCreateRequest,
@@ -31,6 +28,7 @@ from app.runtime.schemas import (
 from app.runtime.state_machines import PendingCorrelationStatus
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import ImprovementStore
+from app.runtime_gateway.contracts import AgentRunResponse
 
 
 def create_feedback_workbench_router(
@@ -40,7 +38,7 @@ def create_feedback_workbench_router(
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
-    _register_agent_run_routes(router, feedback_store)
+    _register_agent_run_list_route(router, feedback_store)
     _register_feedback_signal_routes(router, feedback_store)
     _register_feedback_provenance_route(router, feedback_store, improvement_store)
     _register_soc_event_routes(router, feedback_store)
@@ -49,7 +47,7 @@ def create_feedback_workbench_router(
     return router
 
 
-def _register_agent_run_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+def _register_agent_run_list_route(router: APIRouter, feedback_store: FeedbackStore) -> None:
 
     @router.get(
         "/agent-runs",
@@ -65,71 +63,11 @@ def _register_agent_run_routes(router: APIRouter, feedback_store: FeedbackStore)
         case_id: str | None = None,
         agent_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-        include_messages: bool = Query(
-            default=False,
-            description="Include full SDK messages and reconstructed answer for explicit debug or audit inspection.",
-        ),
+        include_messages: bool = Query(default=False, deprecated=True, description="Ignored; messages are owned by AgentScope."),
     ) -> list[JsonObject]:
         runs = feedback_store.list_runs(run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, agent_id=agent_id, limit=limit)
-        return [_agent_run_response_payload(run, include_messages=include_messages) for run in runs]
-
-    @router.get(
-        "/agent-runs/{run_id}/trace",
-        response_model=AgentRunTraceResponse,
-        response_model_exclude_none=True,
-        summary="Get the refresh-safe semantic Trace for one Agent run",
-    )
-    async def get_agent_run_trace(run_id: str) -> AgentRunTraceResponse:
-        run = ensure_found(feedback_store.find_run(run_id=run_id), "Agent run not found")
-        raw_messages = run.get("messages")
-        messages = [message for message in raw_messages if isinstance(message, dict)] if isinstance(raw_messages, list) else []
-        raw_errors = run.get("errors")
-        errors = [str(error) for error in raw_errors] if isinstance(raw_errors, list) else []
-        turn_status = run.get("turn_status")
-        if turn_status not in {"running", "succeeded", "failed", "cancelled", "interrupted"}:
-            turn_status = None
-        turn_index = run.get("turn_index")
-        if not isinstance(turn_index, int) or isinstance(turn_index, bool) or turn_index < 0:
-            turn_index = None
-        return AgentRunTraceResponse(
-            run_id=run_id,
-            session_id=_optional_string(run.get("session_id")),
-            sdk_session_id=_optional_string(run.get("sdk_session_id")),
-            agent_version_id=_optional_string(run.get("agent_version_id")),
-            langfuse_trace_id=_optional_string(run.get("langfuse_trace_id")),
-            langfuse_trace_url=_optional_string(run.get("langfuse_trace_url")),
-            alert_id=_optional_string(run.get("alert_id")),
-            case_id=_optional_string(run.get("case_id")),
-            turn_status=turn_status,
-            turn_index=turn_index,
-            turn_error=run.get("turn_error") if isinstance(run.get("turn_error"), dict) else None,
-            errors=errors,
-            completeness="complete" if isinstance(raw_messages, list) else "unavailable",
-            events=project_agent_trace(run_id, messages),
-            agent_activity=run.get("agent_activity") if isinstance(run.get("agent_activity"), dict) else {},
-            created_at=_optional_string(run.get("created_at")),
-            completed_at=_optional_string(run.get("completed_at")),
-        )
-
-
-def _agent_run_response_payload(run: JsonObject, *, include_messages: bool) -> JsonObject:
-    payload = dict(run)
-    raw_messages = payload.get("messages")
-    messages = raw_messages if isinstance(raw_messages, list) else []
-    if not include_messages:
-        payload.pop("messages", None)
-        payload.pop("answer", None)
-        return payload
-    payload["messages"] = [message for message in messages if isinstance(message, dict)]
-    if not isinstance(payload.get("answer"), str) or not str(payload.get("answer")).strip():
-        answer = extract_answer_from_messages(payload["messages"])
-        if answer:
-            payload["answer"] = answer
-    return payload
-
-
-def _optional_string(value: object) -> str | None:
-    return value if isinstance(value, str) else None
+        del include_messages
+        return runs
 
 
 def _register_feedback_signal_routes(

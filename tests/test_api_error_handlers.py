@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -87,7 +88,6 @@ def test_public_finite_value_inputs_reject_unknown_values_at_validation_boundary
 
     with TestClient(module.app) as client:
         invalid_queries = (
-            ("/api/claude-user-input-requests", {"status": "unknown"}),
             ("/api/agent-change-sets", {"status": "unknown"}),
             ("/api/agent-releases", {"status": "unknown"}),
             ("/api/agent-test-runs/history", {"status": "unknown"}),
@@ -250,17 +250,47 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
 
 
 def test_chat_during_agent_version_maintenance_returns_structured_503(monkeypatch, tmp_path):
+    monkeypatch.setenv("RUNTIME_CANDIDATES_DIR", str(tmp_path / "candidate-workspaces"))
     module = _load_app(
         monkeypatch,
         tmp_path,
         extra_agent_ids=(ORDINARY_TEST_AGENT_ID,),
         requires_web_hitl=False,
     )
-    # 维护态由 main.py 装配的 provider 判定，所有注册业务 Agent 走同一条校验路径。
-    monkeypatch.setattr(module.runtime, "agent_version_maintenance_provider", lambda agent_id: True)
 
-    with TestClient(module.app) as client:
-        response = client.post("/api/chat", json={"message": "hello", "agent_id": ORDINARY_TEST_AGENT_ID})
+    async def create_runtime_agent(_payload):
+        return "runtime-agent-maintenance"
+
+    async def no_existing_runtime_agents(_name):
+        return []
+
+    monkeypatch.setattr(module.runtime_client, "create_agent", create_runtime_agent)
+    monkeypatch.setattr(module.runtime_client, "list_agent_ids_by_name", no_existing_runtime_agents)
+    binding = asyncio.run(module.provisioner.ensure(ORDINARY_TEST_AGENT_ID))
+    module.run_store.bind_session(
+        session_id="session-maintenance",
+        agent_id=ORDINARY_TEST_AGENT_ID,
+        agent_version_id=binding.agent_version_id,
+        runtime_agent_id=binding.runtime_agent_id,
+        digest=binding.harness_digest,
+        idempotency_key=None,
+    )
+
+    with module.agent_governance.version_maintenance.lease(
+        agent_id=ORDINARY_TEST_AGENT_ID,
+        kind="restore",
+        owner_id="test",
+    ):
+        with TestClient(module.app) as client:
+            response = client.post(
+                "/api/runtime/chat/",
+                json={
+                    "agent_id": binding.runtime_agent_id,
+                    "session_id": "session-maintenance",
+                    "client_operation_id": "maintenance-block",
+                    "input": {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+                },
+            )
 
     assert response.status_code == 503
     assert response.json() == {

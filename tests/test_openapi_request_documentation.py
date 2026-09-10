@@ -1,100 +1,111 @@
-import copy
+from __future__ import annotations
 
-import pytest
+from collections.abc import Mapping
+
+from app.openapi_request_examples import REQUEST_EXAMPLE_CONTRACTS
 from scripts.export_openapi import build_openapi_schema
-from scripts.openapi_request_input_audit import audit_request_input_documentation
+
+HTTP_METHODS = frozenset({"get", "post", "put", "delete", "patch", "options", "head"})
 
 
-def test_all_live_request_inputs_have_descriptions_and_examples() -> None:
-    schema = dict(build_openapi_schema())
-
-    assert audit_request_input_documentation(schema) == []
-
-    body_operations = 0
-    named_examples = 0
-    parameters = 0
-    for path_item in schema["paths"].values():
-        for operation in path_item.values():
-            if not isinstance(operation, dict):
-                continue
-            request_body = operation.get("requestBody")
-            if isinstance(request_body, dict):
-                body_operations += 1
-                for media in request_body["content"].values():
-                    named_examples += len(media.get("examples", {}))
-            parameters += len(operation.get("parameters", []))
-
-    assert body_operations == 45
-    assert named_examples == 63
-    assert parameters == 166
+def _references(fragment: object) -> set[str]:
+    found: set[str] = set()
+    if isinstance(fragment, Mapping):
+        reference = fragment.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/components/schemas/"):
+            found.add(reference.rsplit("/", 1)[-1])
+        for child in fragment.values():
+            found.update(_references(child))
+    elif isinstance(fragment, list):
+        for child in fragment:
+            found.update(_references(child))
+    return found
 
 
-def test_responses_swagger_guide_covers_every_nested_request_field() -> None:
+def _has_example(fragment: Mapping[str, object]) -> bool:
+    return "example" in fragment or bool(fragment.get("examples"))
+
+
+def test_every_public_request_body_and_parameter_has_semantic_documentation() -> None:
     schema = build_openapi_schema()
-    operation = schema["paths"]["/v1/responses"]["post"]
-    description = operation["description"]
-    speech = schema["components"]["schemas"]["AgentGovRequestExtension"]["properties"]["with_speech_summary"]
+    components = schema["components"]["schemas"]
+    body_operations: set[tuple[str, str]] = set()
+    reachable_components: set[str] = set()
 
-    assert "Parameters → No parameters" in description
-    assert "Request body" in description
-    assert description.count("\n| `") == 22
-    assert "`agentgov.with_speech_summary`" in description
-    assert "`agentgov.debug.sdk_raw`" in description
-    assert "`input[].content[].text`" in description
-    assert "top-level stream=true" in speech["description"]
-    assert "422" in speech["description"]
-    assert "best-effort" in speech["description"]
-    assert speech["examples"] == [True]
+    for path, path_item in schema["paths"].items():
+        for method, operation in path_item.items():
+            if method not in HTTP_METHODS or not isinstance(operation, Mapping):
+                continue
+            for parameter in operation.get("parameters", []):
+                assert str(parameter.get("description", "")).strip(), (
+                    f"{method.upper()} {path} parameter {parameter.get('in')}:{parameter.get('name')} missing description"
+                )
+                assert _has_example(parameter), f"{method.upper()} {path} parameter {parameter.get('in')}:{parameter.get('name')} missing example"
+
+            request_body = operation.get("requestBody")
+            if not isinstance(request_body, Mapping):
+                continue
+            body_operations.add((path, method))
+            assert str(request_body.get("description", "")).strip(), f"{method.upper()} {path} requestBody missing description"
+            for media_type, media in request_body["content"].items():
+                assert media.get("examples"), f"{method.upper()} {path} {media_type} missing named examples"
+                body_schema = media.get("schema", {})
+                reachable_components.update(_references(body_schema))
+                for field_name, field_schema in body_schema.get("properties", {}).items():
+                    assert str(field_schema.get("description", "")).strip(), f"{method.upper()} {path} inline field {field_name} missing description"
+                    assert _has_example(field_schema), f"{method.upper()} {path} inline field {field_name} missing example"
+
+    assert set(REQUEST_EXAMPLE_CONTRACTS) == body_operations
+
+    queue = list(reachable_components)
+    while queue:
+        component_name = queue.pop()
+        component = components[component_name]
+        nested = _references(component) - reachable_components
+        reachable_components.update(nested)
+        queue.extend(nested)
+
+    for component_name in sorted(reachable_components):
+        component = components[component_name]
+        assert str(component.get("description", "")).strip(), f"request component {component_name} missing description"
+        for field_name, field_schema in component.get("properties", {}).items():
+            assert str(field_schema.get("description", "")).strip(), f"request component {component_name}.{field_name} missing description"
+            assert _has_example(field_schema), f"request component {component_name}.{field_name} missing example"
 
 
-def test_request_documentation_audit_reaches_arrays_unions_refs_and_multipart() -> None:
-    schema = copy.deepcopy(build_openapi_schema())
-    schema["components"]["schemas"]["ResponsesInputText"]["properties"]["text"].pop("examples")
-    schema["paths"]["/api/agent-registry/{agent_id}/workspace/import"]["post"]["requestBody"]["content"]["multipart/form-data"][
-        "schema"
-    ]["properties"]["package"].pop("description")
+def test_governance_and_agentscope_examples_cover_high_risk_journeys() -> None:
+    schema = build_openapi_schema()
 
-    issues = audit_request_input_documentation(schema)
+    expected_example_names = {
+        ("/api/runtime/sessions/", "post"): {"create_published_agent_session"},
+        ("/api/runtime/chat/", "post"): {"agent_scope_message", "resume_user_confirmation"},
+        ("/api/feedback-cases", "post"): {"from_feedback_signal"},
+        ("/api/improvements", "post"): {"from_feedback"},
+        ("/api/agent-change-sets", "post"): {"current_published_base", "explicit_base"},
+        ("/api/agent-change-sets/{change_set_id}/approve", "post"): {"approve_reviewed_change_set"},
+        ("/api/agent-change-sets/{change_set_id}/publish", "post"): {"normal_publish", "force_publish"},
+        ("/api/agent-releases/{release_id}/rollback", "post"): {"rollback_release"},
+    }
+    for (path, method), expected in expected_example_names.items():
+        examples = schema["paths"][path][method]["requestBody"]["content"]["application/json"]["examples"]
+        assert set(examples) == expected
 
-    assert any("ResponsesInputText.text missing example" in issue for issue in issues)
-    assert any("multipart/form-data.package missing description" in issue for issue in issues)
+    hitl = schema["paths"]["/api/runtime/chat/"]["post"]["requestBody"]["content"]["application/json"]["examples"]["resume_user_confirmation"]["value"]
+    assert hitl["input"]["type"] == "USER_CONFIRM_RESULT"
+    assert hitl["input"]["reply_id"] == "reply-id-from-require-user-confirm"
+    assert "rules" not in hitl["input"]["confirm_results"][0]
 
 
-@pytest.mark.parametrize(
-    ("mutation", "expected"),
-    [
-        (
-            lambda schema: schema["paths"]["/v1/responses"]["post"]["requestBody"].pop("description"),
-            "POST /v1/responses requestBody missing description",
-        ),
-        (
-            lambda schema: schema["components"]["schemas"]["AgentGovDebug"].pop("description"),
-            "request component AgentGovDebug missing description",
-        ),
-        (
-            lambda schema: schema["components"]["schemas"]["AgentGovRequestExtension"]["properties"]["debug"].pop("description"),
-            "AgentGovRequestExtension.debug missing description",
-        ),
-        (
-            lambda schema: schema["paths"]["/api/agent-runs/{run_id}/cancel"]["post"]["parameters"][0].pop("example"),
-            "parameter path:run_id missing example",
-        ),
-        (
-            lambda schema: schema["paths"]["/api/agent-change-sets"]["get"]["parameters"][0].update(example="running"),
-            "violates schema",
-        ),
-        (
-            lambda schema: schema["components"]["schemas"]["ResponsesRequest"]["properties"]["model"].update(examples=["string"]),
-            "generic string placeholder",
-        ),
-        (
-            lambda schema: schema["paths"]["/v1/responses"]["post"].update(description="Request-body field guide removed."),
-            "missing Swagger no-parameters explanation",
-        ),
-    ],
-)
-def test_request_documentation_audit_rejects_regressions(mutation, expected) -> None:
-    schema = copy.deepcopy(build_openapi_schema())
-    mutation(schema)
+def test_request_examples_do_not_register_removed_runtime_routes() -> None:
+    removed_prefixes = (
+        "/api/chat",
+        "/api/agent-runtime/",
+        "/api/sessions",
+        "/api/claude-user-input-requests",
+        "/v1/chat/completions",
+        "/v1/responses",
+        "/v1/conversations",
+        "/v1/agentgov/confirmation-requests",
+    )
 
-    assert any(expected in issue for issue in audit_request_input_documentation(schema))
+    assert all(not path.startswith(removed_prefixes) for path, _method in REQUEST_EXAMPLE_CONTRACTS)

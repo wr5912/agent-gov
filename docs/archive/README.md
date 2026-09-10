@@ -25,6 +25,13 @@
 | 同名活跃文档的复杂安全旧稿 | `docs/archive/design/业务AgentWorkspace包导入与热加载产品工程方案_复杂安全旧稿.md` | `docs/业务AgentWorkspace包导入与热加载产品工程方案.md` | `2026-07-16` |
 | 同名活跃文档的旧复杂稿 | `docs/archive/design/业务Agent工作区资产闭环产品工程方案_旧复杂稿.md` | `docs/业务AgentWorkspace包导入与热加载产品工程方案.md` | `2026-07-16` |
 | `docs/业务Agent工作区资产闭环产品工程方案.md` | `docs/archive/design/业务Agent工作区资产闭环产品工程方案.md` | `docs/业务AgentWorkspace包导入与热加载产品工程方案.md` | `2026-07-17` |
+| `docs/engineering/Agent运行时语义事件与SpeechSummary整改方案.md` | `docs/archive/obsolete/Agent运行时语义事件与SpeechSummary整改方案.md` | 根目录 `README.md` 的 AgentScope Runtime 公共契约与 OTel/Langfuse 章节 | `2026-09-09` |
+| `docs/engineering/vLLM模型网关与Sidecar整改优化方案.md` | `docs/archive/obsolete/vLLM模型网关与Sidecar整改优化方案.md` | 根目录 `README.md` 的 AgentScope-only 三服务架构与 Runtime 配置章节 | `2026-09-09` |
+| `docs/engineering/多Runtime适配与外部CLI旁路及Multica协作边界方案.md` | `docs/archive/obsolete/多Runtime适配与外部CLI旁路及Multica协作边界方案.md` | 根目录 `README.md` 的 AgentScope-only 架构与公共契约 | `2026-09-09` |
+| `docs/engineering/AgentGov下一阶段P2ARuntime边界提取与ClaudeAdapter实施方案.md` | `docs/archive/obsolete/AgentGov下一阶段P2ARuntime边界提取与ClaudeAdapter实施方案.md` | 已落地的 `app/runtime_gateway/` 与根目录 `README.md` | `2026-09-09` |
+| `docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md` | `docs/archive/obsolete/OpenAI兼容接口能否替代原生Chat端点评估.md` | `docs/AgentGov集成指南.md` 的 AgentScope Runtime 单路径 | `2026-09-09` |
+| `docs/engineering/AgentGov下一阶段P0准入收口实施方案.md` | `docs/archive/obsolete/AgentGov下一阶段P0准入收口实施方案.md` | 根目录 `README.md` 的 fresh AgentScope epoch 与质量门 | `2026-09-09` |
+| `docs/engineering/AgentGov下一阶段P0模拟MCP平台验收实施方案.md` | `docs/archive/obsolete/AgentGov下一阶段P0模拟MCP平台验收实施方案.md` | 根目录 `README.md` 的 AgentScope MCP Harness 与隔离容器验收 | `2026-09-09` |
 
 ## 归档图片资产
 

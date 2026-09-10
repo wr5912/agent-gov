@@ -59,10 +59,7 @@ def annotation_contains_output_formatter_result_basemodel(annotation: ast.expr |
 
 
 def is_typed_output_runner_function(rel_path: str, function_name: str) -> bool:
-    return function_name in {"run_profile_json", "_run_profile_json", "format_agent_text"} and rel_path in {
-        "app/runtime/agent_job_runner.py",
-        "app/runtime/claude_runtime.py",
-    }
+    return function_name in {"run_profile_json", "format_agent_text"} and rel_path == "app/runtime_gateway/execution.py"
 
 
 def is_typed_output_completion_function(function_name: str) -> bool:

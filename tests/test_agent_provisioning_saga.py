@@ -30,9 +30,18 @@ def _store(tmp_path: Path) -> tuple[AgentRegistryStore, object]:
 def _plan(*entries: tuple[str, bytes]) -> WorkspaceProvisionPlan:
     if not entries:
         entries = (
-            ("CLAUDE.md", b"# SOC\n"),
-            (".mcp.json", b'{"mcpServers": {}}\n'),
-            (".claude/settings.json", b'{"permissions":{"ask":["Bash(*)"]}}\n'),
+            ("AGENT.md", b"# SOC\n"),
+            (
+                "agent.yaml",
+                b"schema_version: 1\n"
+                b"agent: {id: soc-ops, runtime: agentscope, runtime_contract: agentscope-app/2.0.8}\n"
+                b"session: {permission_mode: default}\n"
+                b"workspace_policy: {fail_closed: true, immutable_harness: true, allow_for_run: false}\n",
+            ),
+            (
+                "mcp/soc.json",
+                b'{"schema_version":1,"name":"soc","credential_refs":[],"mcp_config":{"type":"http_mcp","url":"https://example.test/mcp"}}\n',
+            ),
         )
     return WorkspaceProvisionPlan(
         entries=tuple(
@@ -121,8 +130,8 @@ def test_success_finalizes_after_workspace_and_derives_hitl_from_settings(tmp_pa
     assert created.requires_web_hitl is True
     assert store.get_agent("soc-ops") is not None
     assert store.get_agent("soc-ops").requires_web_hitl is True
-    settings_path = workspace / ".claude" / "settings.json"
-    settings_path.write_text('{"permissions":{"ask":[]}}\n', encoding="utf-8")
+    settings_path = workspace / "agent.yaml"
+    settings_path.write_text(settings_path.read_text(encoding="utf-8").replace("session: {permission_mode: default}\n", ""), encoding="utf-8")
     assert store.get_agent("soc-ops").requires_web_hitl is False
 
 
@@ -150,14 +159,14 @@ def test_rollback_preserves_file_replaced_by_external_writer_and_keeps_tombstone
     def replace_owned_file_then_fail(_reservation):
         replacement = workspace / "external.tmp"
         replacement.write_text("external-owner", encoding="utf-8")
-        os.replace(replacement, workspace / "CLAUDE.md")
+        os.replace(replacement, workspace / "AGENT.md")
         raise RuntimeError("forced finalize failure")
 
     monkeypatch.setattr(store, "finalize_business_agent", replace_owned_file_then_fail)
     with pytest.raises(RuntimeError, match="forced finalize failure"):
         _provision(store, workspace)
 
-    assert (workspace / "CLAUDE.md").read_text(encoding="utf-8") == "external-owner"
+    assert (workspace / "AGENT.md").read_text(encoding="utf-8") == "external-owner"
     assert store.get_agent("soc-ops") is None
     with factory.begin() as db:
         row = db.get(AgentRegistryModel, "soc-ops")
@@ -170,8 +179,8 @@ def test_apply_failure_preserves_preexisting_workspace_and_tombstones_new_row(mo
     workspace.mkdir(parents=True)
     keep = workspace / "KEEP.txt"
     keep.write_text("operator-owned", encoding="utf-8")
-    claude = workspace / "CLAUDE.md"
-    claude.write_text("custom", encoding="utf-8")
+    prompt = workspace / "AGENT.md"
+    prompt.write_text("custom", encoding="utf-8")
 
     import app.runtime.business_agent_workspace as workspace_module
 
@@ -190,9 +199,9 @@ def test_apply_failure_preserves_preexisting_workspace_and_tombstones_new_row(mo
         _provision(store, workspace)
 
     assert keep.read_text(encoding="utf-8") == "operator-owned"
-    assert claude.read_text(encoding="utf-8") == "custom"
-    assert not (workspace / ".mcp.json").exists()
-    assert not (workspace / ".claude" / "settings.json").exists()
+    assert prompt.read_text(encoding="utf-8") == "custom"
+    assert not (workspace / "mcp" / "soc.json").exists()
+    assert not (workspace / "agent.yaml").exists()
     assert store.get_agent("soc-ops") is None
     with factory.begin() as db:
         row = db.get(AgentRegistryModel, "soc-ops")
@@ -316,7 +325,7 @@ def test_startup_recovery_restores_tombstone_and_hides_new_orphan(tmp_path: Path
     store.reserve_business_agent(name="Replacement", agent_id="old", workspace_dir=str(replacement_workspace))
     store.reserve_business_agent(name="Orphan", agent_id="orphan", workspace_dir=str(tmp_path / "orphan"))
     replacement_workspace.mkdir()
-    partial = replacement_workspace / "CLAUDE.md"
+    partial = replacement_workspace / "AGENT.md"
     partial.write_text("partial replacement", encoding="utf-8")
 
     assert store.recover_incomplete_provisions(now="2999-01-01T00:00:00+00:00") == 2
@@ -346,7 +355,7 @@ def test_crash_recovery_blocks_partial_workspace_reuse_until_verified_cleanup(
         workspace_dir=str(workspace),
     )
     workspace.mkdir(parents=True)
-    partial_path = workspace / "CLAUDE.md"
+    partial_path = workspace / "AGENT.md"
     partial_path.write_text("crash-owned partial", encoding="utf-8")
     assert store.recover_incomplete_provisions(now="2999-01-01T00:00:00+00:00") == 1
 

@@ -22,7 +22,7 @@ def create_config_router(
     @router.get(
         "/config",
         response_model=ConfigMappingResponse,
-        summary="Inspect Claude Code configuration mapping",
+        summary="Inspect AgentScope Harness mapping",
         description="Returns path, mount, scope, load, and git-policy metadata without exposing sensitive file contents.",
     )
     async def config_mapping(

@@ -1,0 +1,351 @@
+{
+  "converter": "agentgov-claude-to-agentscope/v1",
+  "entries": [
+    {
+      "human_confirmation": "not_required",
+      "rule": "subagent_manifest_split",
+      "source_path": ".claude/agents/response-playbook-builder.md",
+      "source_sha256": "6f8eb3f030dabca0c400becabaf15d6c669e0e422b020f0d64565b1e8f223bf6",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "subagents/response-playbook-builder/agent.yaml",
+          "sha256": "4614a3d9ca800a1e6a1a1610ff8bf7de3f1e10024911585cd5dfbf25e78a59d3"
+        },
+        {
+          "path": "subagents/response-playbook-builder/AGENT.md",
+          "sha256": "c1e4da676c07feac043e446ed8421196d3e2bc79727542f1e73f17bc257683e7"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "subagent_manifest_split",
+      "source_path": ".claude/agents/response-playbook-planning.md",
+      "source_sha256": "c5e8e1f3de8db072c50fb84ec66ad9b2b1535b6e57cf33aa5b50b1507d259db0",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "subagents/response-playbook-planning/agent.yaml",
+          "sha256": "8368c3563ffb47edca3d109d823d43e1640acf28097f9de105ebc63f2309e9b0"
+        },
+        {
+          "path": "subagents/response-playbook-planning/AGENT.md",
+          "sha256": "921d58fcfeca2da21900d1b5c1d66c8c0b47c9d41e055ffd703edf9e8989350a"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "subagent_manifest_split",
+      "source_path": ".claude/agents/response-playbook-summarizer.md",
+      "source_sha256": "f618c0234d477407ccbc65156ff7ab275804f584299acd582af6896fc55586f2",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "subagents/response-playbook-summarizer/agent.yaml",
+          "sha256": "9f2fa5c2432add96b74a3e76414482256f6d4e3e677acb98075aa697f376066b"
+        },
+        {
+          "path": "subagents/response-playbook-summarizer/AGENT.md",
+          "sha256": "4beb33e0ba82b6e42c3f121bdab3543ecc774c0203a3b9a2c12713e12592ad3a"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "command_to_skill",
+      "source_path": ".claude/commands/dispose-threat.md",
+      "source_sha256": "c6f5ce40054e0b32dffda0a3b469a0a3db1150e7314a8ed07b8297fa19d304ca",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "skills/dispose-threat/SKILL.md",
+          "sha256": "ac7c43912a6f2d9fd510459db591b58c8a3359fb0864e9320358d900402aaa39"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "command_to_skill",
+      "source_path": ".claude/commands/secops-investigate.md",
+      "source_sha256": "55e075853b4b3f158c2f080442ac7e76d184019a333436efafd1cf49b8aade6b",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "skills/secops-investigate/SKILL.md",
+          "sha256": "f379636f7519ef426a13130be46a54acf42a80238c7b758220f110977a4db9fe"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "ordered_rule_append_to_agent_md",
+      "source_path": ".claude/rules/evidence-first.md",
+      "source_sha256": "ba1e115e74b7ec4832d5672db84f89e68d6b80db9e9767dcc8c4bcae54ac0594",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "AGENT.md",
+          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "ordered_rule_append_to_agent_md",
+      "source_path": ".claude/rules/response-safety.md",
+      "source_sha256": "e53bf4552a9a7d5956b1cbce60f95a34a986eb3ba79162655ef78d7ce2f70095",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "AGENT.md",
+          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "ordered_rule_append_to_agent_md",
+      "source_path": ".claude/rules/secops-operational-boundary.md",
+      "source_sha256": "b762b758e2d07cd206cbdd5b67cec10246b4e4899b27dc7c06ce06446cf2fcad",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "AGENT.md",
+          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "permissions_and_hooks_to_platform_policy",
+      "source_path": ".claude/settings.json",
+      "source_sha256": "4be6a4123f4a8601b0b04b5a1c561d617ef4b5b283b930919efa80622b2e27bc",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "agent.yaml",
+          "sha256": "99e5ebe65d010997bbfeefd0e1e7d95a52ca600de4af38266da12f19c318d6a9"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "skill_directory_move",
+      "source_path": ".claude/skills/playbook-dry-run/SKILL.md",
+      "source_sha256": "ec73b868b2b35303b7e5496853000e533872acb6ca45e8ae1a88bc9940c1dd15",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "skills/playbook-dry-run/SKILL.md",
+          "sha256": "34f00ff9a0766202a5f45157b38cd2429dcbca599aeb7197be10751ad837b50f"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "skill_directory_move",
+      "source_path": ".claude/skills/security-operations-analysis/SKILL.md",
+      "source_sha256": "8cc6f2dad04779cef6847af39f9f7f83573d74b6e52f0cbd77d572d0624f7847",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "skills/security-operations-analysis/SKILL.md",
+          "sha256": "72c7128a8e2e82e046bf6ce9069428ed2eb5cc915cbb9950e2f9d483c334fb23"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "skill_directory_move",
+      "source_path": ".claude/skills/threat-response-disposition/SKILL.md",
+      "source_sha256": "31e5bdaee21a6e739aabdb0e96e8b9966fcad6441f6919279a377ea2da7e6c94",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "skills/threat-response-disposition/SKILL.md",
+          "sha256": "c5f6b2874f669730e8dc70ee3bd8e1bee3dbc7a7dae1e574be56ef1730a21d94"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "workspace_path_reference_rewrite",
+      "source_path": ".gitignore",
+      "source_sha256": "5b263eaa75838bf4d5b5ad826e87904f9d0f8d379d2e8598ed81a8991bd65322",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": ".gitignore",
+          "sha256": "41011dc333bb94514f06ce7d4ecce37a3525f47514756ff3d83fa64c23020ea6"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "approved_by_cutover_plan",
+      "rule": "mcp_servers_to_agentscope_configs_without_ineffective_local_auth",
+      "source_path": ".mcp.json",
+      "source_sha256": "3b9277364bb17ed9a6ffdf8402159b5263b9217cbe9f27ad4da4a9cd8d4f30ca",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "mcp/sec-ops.json",
+          "sha256": "856b47e949900b8ed00d85863bf1ce59effc46c0c5076d113669132b92ad703a"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "workspace_path_reference_rewrite",
+      "source_path": ".worktreeinclude",
+      "source_sha256": "64024807483b78c76de0475af3eb0c542cd704ceca5eccec5f4dd46db16c7c52",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": ".worktreeinclude",
+          "sha256": "4a18004e1e8db7492e628d497fbc730d89f4fc6e24b97f60b917241d6c551478"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "system_prompt_to_agent_md",
+      "source_path": "CLAUDE.md",
+      "source_sha256": "17b845fa5e4cf9db7c7fe6d9cf1d42f04078fdc44a460a86bf2e5bd5ea006be4",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "AGENT.md",
+          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "documentation_reference_rewrite",
+      "source_path": "README.md",
+      "source_sha256": "cdb6abc727b47d7d17f1369fde4078c01f6db68d4b89e0833b9495e23d8148e1",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "README.md",
+          "sha256": "5c640650825a56dbac5fa7c47f3c9600f9f6fd5da68f9d3f608f8217fdd6656d"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "manifest_v1_to_agentscope_v1",
+      "source_path": "agent.yaml",
+      "source_sha256": "2ae9e507990c7b9f5d5a142a55b913a2ec9d33b8e2e4ecbc329e8cc73fa3d8c0",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "agent.yaml",
+          "sha256": "99e5ebe65d010997bbfeefd0e1e7d95a52ca600de4af38266da12f19c318d6a9"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "approved_by_cutover_plan",
+      "rule": "reviewed_post_tool_audit.py_to_runtime_contract",
+      "source_path": "hooks/post_tool_audit.py",
+      "source_sha256": "7f33a50c77529039317ec9e94f7335573c103f8ae515a55b7fcbc732f17d8f2c",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "agent.yaml",
+          "sha256": "99e5ebe65d010997bbfeefd0e1e7d95a52ca600de4af38266da12f19c318d6a9"
+        },
+        {
+          "path": "AGENT.md",
+          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "approved_by_cutover_plan",
+      "rule": "reviewed_pre_tool_guard.py_to_runtime_contract",
+      "source_path": "hooks/pre_tool_guard.py",
+      "source_sha256": "92041118067359429b218d7839c76bd21567ea84fba1fe4bc5bb9a106abaf829",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "agent.yaml",
+          "sha256": "99e5ebe65d010997bbfeefd0e1e7d95a52ca600de4af38266da12f19c318d6a9"
+        },
+        {
+          "path": "AGENT.md",
+          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "approved_by_cutover_plan",
+      "rule": "reviewed_session_start.py_to_runtime_contract",
+      "source_path": "hooks/session_start.py",
+      "source_sha256": "f6b4e6992e68c0d63a72a4c8f96e27c98c8427ca460ec7ecfa7b7829d20561c0",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "agent.yaml",
+          "sha256": "99e5ebe65d010997bbfeefd0e1e7d95a52ca600de4af38266da12f19c318d6a9"
+        },
+        {
+          "path": "AGENT.md",
+          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "test_documentation_rewrite",
+      "source_path": "tests/README.md",
+      "source_sha256": "45d0d2413f6d1e0ee55a2df86e1375d201b3df6e692930958fb7d558010a34da",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "tests/README.md",
+          "sha256": "8a0f7782589f8b4834533e3c22314cbe26180576b52471a8b720580623c06f1b"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "legacy_contract_tests_to_agentscope_contract",
+      "source_path": "tests/test_hooks.py",
+      "source_sha256": "3022414c70ab989c27b1249b5e39033eee8d17b15b003f9a7ad4d1107d6afaa9",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "tests/test_security_operations_expert_agentscope_harness.py",
+          "sha256": "647d3fffb27af5c7aaf646c9880e76628288015630c2ddd21ac82c34fb94e8c5"
+        }
+      ]
+    },
+    {
+      "human_confirmation": "not_required",
+      "rule": "legacy_contract_tests_to_agentscope_contract",
+      "source_path": "tests/test_native_config.py",
+      "source_sha256": "aa2732d453fe2ec09ec02646dc20315a5b3ceb1c5862ee37a9c3e9c0b6404a57",
+      "status": "mapped",
+      "targets": [
+        {
+          "path": "tests/test_security_operations_expert_agentscope_harness.py",
+          "sha256": "647d3fffb27af5c7aaf646c9880e76628288015630c2ddd21ac82c34fb94e8c5"
+        }
+      ]
+    }
+  ],
+  "harness_digest": "57e02e36602b95f7effbbda4bd2a5966a64eefa46c854416e0a04e06f6fb7085",
+  "mapped_count": 24,
+  "output_tree_sha256": "0d4da820a84744a6d867e245c372054f1f8c84931124ceeafb42aefebcf6bceb",
+  "rejected_count": 0,
+  "retired_count": 0,
+  "schema_version": 1,
+  "source_coverage_percent": 100.0,
+  "source_file_count": 24,
+  "source_root": ".",
+  "source_tree_sha256": "99ac0787b35667e372e12f5c771290805e8034e3d2278069e269eadbc9658f19"
+}

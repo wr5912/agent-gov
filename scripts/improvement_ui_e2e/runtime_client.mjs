@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 export class RuntimeApiError extends Error {
   constructor(method, path, status, body) {
     super(`${method} ${path} failed: ${status} ${body}`);
@@ -78,6 +80,99 @@ export function jsonInit(method, body) {
   };
 }
 
+const TERMINAL_RUNTIME_STATES = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
+
+export async function provisionRuntimeAgent(config, governanceAgentId) {
+  const binding = await apiJson(config, "/api/runtime/agents/" + encodeURIComponent(governanceAgentId)
+    + "/provision", jsonInit("POST", {}));
+  if (binding?.governance_agent_id !== governanceAgentId || !binding.runtime_agent_id
+      || !binding.agent_version_id || !binding.provisioned) {
+    throw new Error("Runtime provision did not return the requested Agent/version binding");
+  }
+  return binding;
+}
+
+export function assertExactRuntimeRun(run, expected) {
+  for (const key of ["run_id", "session_id", "runtime_agent_id", "agent_version_id"]) {
+    if (!expected[key] || run?.[key] !== expected[key]) {
+      throw new Error("Runtime run evidence has a mismatched " + key);
+    }
+  }
+  if (run.agent_id !== expected.governance_agent_id) {
+    throw new Error("Runtime run evidence belongs to a different governance Agent");
+  }
+}
+
+export async function waitForTerminalRuntimeRun(config, expected) {
+  const deadline = Date.now() + config.actionTimeoutMs;
+  while (Date.now() < deadline) {
+    const run = await apiJson(config, "/api/agent-runs/" + encodeURIComponent(expected.run_id));
+    assertExactRuntimeRun(run, expected);
+    if (TERMINAL_RUNTIME_STATES.has(run.status)) return run;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("The exact Runtime run did not reach a terminal state before timeout");
+}
+
+export async function waitForCompleteRuntimeTrace(config, run) {
+  const deadline = Date.now() + config.actionTimeoutMs;
+  const expected = { ...run, governance_agent_id: run.agent_id };
+  while (Date.now() < deadline) {
+    const evidence = await apiJson(config, "/api/agent-runs/" + encodeURIComponent(run.run_id) + "/trace");
+    if (evidence?.run_id !== run.run_id || (evidence.trace_id && evidence.trace_id !== run.trace_id)) {
+      throw new Error("Langfuse trace evidence is not bound to the exact source run");
+    }
+    if (evidence.trace_status === "complete" && evidence.trace_id && evidence.trace
+        && evidence.trace.fetch_status !== "failed") {
+      const persisted = await apiJson(config, "/api/agent-runs/" + encodeURIComponent(run.run_id));
+      assertExactRuntimeRun(persisted, expected);
+      if (persisted.status !== run.status || persisted.trace_status !== "complete"
+          || persisted.trace_id !== evidence.trace_id) {
+        throw new Error("Source run terminal/trace evidence was not persisted consistently");
+      }
+      return persisted;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error("Source run Langfuse trace did not become complete before timeout");
+}
+
+async function createFeedbackSourceRun(config, binding, text) {
+  const session = await apiJson(config, "/api/runtime/sessions/", {
+    ...jsonInit("POST", { agent_id: binding.runtime_agent_id, name: "feedback-ui-evidence" }),
+    headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID(), "X-User-ID": "agentgov-ui" },
+  });
+  if (!session?.session_id) throw new Error("Runtime did not return a real feedback source session");
+  const receipt = await apiRequest(config, "/api/runtime/chat/", jsonInit("POST", {
+    agent_id: binding.runtime_agent_id,
+    session_id: session.session_id,
+    client_operation_id: randomUUID(),
+    input: { name: "user", role: "user", content: [{ type: "text", text }] },
+    metadata: { purpose: "feedback-ui-acceptance" },
+  }));
+  if (!receipt.response.ok) throw new RuntimeApiError(receipt.method, receipt.path, receipt.status, receipt.text);
+  const runId = receipt.response.headers.get("X-AgentGov-Run-Id");
+  if (!runId || receipt.payload?.session_id !== session.session_id) {
+    throw new Error("Runtime chat did not return the exact source run/session receipt");
+  }
+  const expected = { ...binding, run_id: runId, session_id: session.session_id };
+  let terminalReached = false;
+  try {
+    const terminal = await waitForTerminalRuntimeRun(config, expected);
+    terminalReached = true;
+    if (terminal.status !== "succeeded" || !terminal.trace_id || !terminal.reply_ids?.length) {
+      throw new Error("Feedback source run did not succeed with real reply and trace references");
+    }
+    return await waitForCompleteRuntimeTrace(config, terminal);
+  } catch (error) {
+    if (!terminalReached) {
+      await apiRequest(config, "/api/agent-runs/" + encodeURIComponent(runId) + "/cancel", jsonInit("POST", {}))
+        .catch(() => {});
+    }
+    throw error;
+  }
+}
+
 const IMPROVEMENT_FIXTURES = {
   "evidence-conflict": {
     title: "多源证据冲突降级治理",
@@ -85,12 +180,13 @@ const IMPROVEMENT_FIXTURES = {
     feedbackSummary: "多源证据冲突时仍输出高置信度结论",
     rawText: "可复现输入中，来源 A（MCP，2026-07-18T09:00:00Z）判定 IOC 203.0.113.10 为恶意，来源 B（本地知识库，2026-07-18T09:01:00Z）判定同一 IOC 为良性；当前回答却静默选择来源 A 并标记为高置信度。",
     scenario: "evidence-conflict",
+    runInput: "仅依据以下给定事实简短回答，不调用工具或读取文件：来源A判定IOC 203.0.113.10为恶意，来源B判定同一IOC为良性，两者同等权威且暂无补充证据。请给出结论、置信度和下一步处置。",
     problem: "同一 IOC 的多个权威来源冲突时，Agent 未列出冲突并降级置信度",
-    possibleReason: "根 CLAUDE.md 只要求追溯来源，尚未定义多源证据冲突时的决策规则",
-    possibleObject: "目标业务 Agent 根 CLAUDE.md 的默认分析流程（不涉及 skill、settings 或 MCP 配置）",
-    suggestion: "仅修改目标业务 Agent 根 CLAUDE.md：多源证据冲突时必须并列来源、采集时间和冲突值，未消解前降为低置信度且不得升级或执行高风险动作；不得静默选边，不涉及 skill、settings 或 MCP 配置",
+    possibleReason: "根 AGENT.md 只要求追溯来源，尚未定义多源证据冲突时的决策规则",
+    possibleObject: "目标业务 Agent 根 AGENT.md 的默认分析流程（不涉及 skill、agent.yaml 或 MCP 配置）",
+    suggestion: "仅修改目标业务 Agent 根 AGENT.md：多源证据冲突时必须并列来源、采集时间和冲突值，未消解前降为低置信度且不得升级或执行高风险动作；不得静默选边，不涉及 skill、agent.yaml 或 MCP 配置",
     userQuote: "来源 A 判定恶意、来源 B 判定良性，不能静默选边后仍给出高置信度。",
-    authorizedTargetPaths: ["CLAUDE.md"],
+    authorizedTargetPaths: ["AGENT.md"],
     requiredTestLiterals: ["来源A", "来源B", "低"],
     requiredTestCodeFragments: [
       '仅依据以下已给定事实回答，不调用任何工具或读取文件。',
@@ -104,15 +200,17 @@ const IMPROVEMENT_FIXTURES = {
     feedbackSummary: "查询仍有 next_cursor 时错误宣称未发现更多风险",
     rawText: "MCP 返回 next_cursor，但回答忽略后续页并断言已检查全部告警且未发现更多风险。",
     scenario: "pagination-incomplete",
+    runInput: "仅依据以下给定事实简短回答，不调用工具或读取文件：告警查询当前返回10条记录并带有next_cursor，尚未读取后续页。能否断言已检查全部告警且没有其他风险？",
     problem: "分页查询未完成时，Agent 把局部证据错误表述为全量或无风险结论",
-    possibleReason: "根 CLAUDE.md 尚未定义 next_cursor、has_more 和 truncated 的完整性检查规则",
-    possibleObject: "目标业务 Agent 根 CLAUDE.md 的默认工具结果完整性规则（不涉及 skill、settings 或 MCP 配置）",
-    suggestion: "仅修改目标业务 Agent 根 CLAUDE.md：给出全量统计或未发现风险等否定结论前必须检查 limit 是否命中以及 next_cursor、has_more、truncated、partial；未耗尽分页时继续查询或明确标记为局部样本，不涉及 skill、settings 或 MCP 配置",
+    possibleReason: "根 AGENT.md 尚未定义 next_cursor、has_more 和 truncated 的完整性检查规则",
+    possibleObject: "目标业务 Agent 根 AGENT.md 的默认工具结果完整性规则（不涉及 skill、agent.yaml 或 MCP 配置）",
+    suggestion: "仅修改目标业务 Agent 根 AGENT.md：给出全量统计或未发现风险等否定结论前必须检查 limit 是否命中以及 next_cursor、has_more、truncated、partial；未耗尽分页时继续查询或明确标记为局部样本，不涉及 skill、agent.yaml 或 MCP 配置",
     userQuote: "返回里还有 next_cursor，不能说已经检查全部告警。",
     additionalFeedbacks: [{
       summary: "工具结果标记 truncated 时错误输出全量统计",
       rawText: "工具明确返回 truncated=true，回答仍把当前计数写成全部资产的最终统计。",
       scenario: "truncated-result",
+      runInput: "仅依据以下给定事实简短回答，不调用工具或读取文件：资产查询返回10条记录并标记truncated=true。能否把当前计数作为全部资产的最终统计？",
     }],
   },
 };
@@ -120,10 +218,11 @@ const IMPROVEMENT_FIXTURES = {
 export async function seedBaseImprovement(config, fixtureName = "evidence-conflict") {
   await apiJson(config, "/health");
   const agents = await apiJson(config, "/api/agent-registry");
-  const agent = agents.find((item) => item.status === "active") || agents[0];
+  const agent = agents.find((item) => item.status === "active" && item.category === "business");
   if (!agent?.agent_id) throw new Error("real runtime has no registered business Agent");
   const fixture = IMPROVEMENT_FIXTURES[fixtureName];
   if (!fixture) throw new Error(`unknown real-container improvement fixture: ${fixtureName}`);
+  const binding = await provisionRuntimeAgent(config, agent.agent_id);
   const stamp = `ui-e2e-${Date.now().toString(36)}`;
   const item = await apiJson(config, "/api/improvements", jsonInit("POST", {
     agent_id: agent.agent_id,
@@ -133,23 +232,22 @@ export async function seedBaseImprovement(config, fixtureName = "evidence-confli
     auto_merge: false,
   }));
   const feedbackInputs = [
-    { summary: fixture.feedbackSummary, rawText: fixture.rawText, scenario: fixture.scenario },
+    { summary: fixture.feedbackSummary, rawText: fixture.rawText, scenario: fixture.scenario, runInput: fixture.runInput },
     ...(fixture.additionalFeedbacks || []),
   ];
   const feedbacks = [];
-  for (const [index, input] of feedbackInputs.entries()) {
-    const suffix = index ? `-${index + 1}` : "";
+  const sourceRuns = [];
+  for (const input of feedbackInputs) {
+    const run = await createFeedbackSourceRun(config, binding, input.runInput);
+    sourceRuns.push(run);
     feedbacks.push(await apiJson(config, `/api/improvements/${item.improvement_id}/feedbacks`, jsonInit("POST", {
       summary: input.summary,
       source: "playground_run",
       raw_text: input.rawText,
-      run_id: `${stamp}-run${suffix}`,
-      session_id: `${stamp}-session${suffix}`,
-      agent_version_id: `${stamp}-baseline`,
+      run_id: run.run_id,
+      session_id: run.session_id,
+      agent_version_id: run.agent_version_id,
       scenario: input.scenario,
-      task_id: `${stamp}-task${suffix}`,
-      alert_id: `${stamp}-alert${suffix}`,
-      case_id: `${stamp}-case${suffix}`,
     })));
   }
   await apiJson(config, `/api/improvements/${item.improvement_id}/normalized-feedback`, jsonInit("PUT", {
@@ -168,6 +266,7 @@ export async function seedBaseImprovement(config, fixtureName = "evidence-confli
     requiredTestCodeFragments: [...(fixture.requiredTestCodeFragments || [])],
     feedback: feedbacks[0],
     feedbacks,
+    sourceRuns,
     item,
     stamp,
   };

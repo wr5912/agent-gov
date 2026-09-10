@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 from uuid import uuid4
@@ -19,35 +20,38 @@ from business_agent_test_utils import create_test_business_agent_workspace
 def _settings(tmp_path):
     governor_workspace = tmp_path / "docker" / "volume" / "governor-workspace"
     data = tmp_path / "docker" / "volume" / "data"
-    governor_root = tmp_path / "docker" / "volume" / "claude-roots" / "governor"
-    for path in (governor_workspace, governor_root / ".claude"):
-        path.mkdir(parents=True, exist_ok=True)
+    governor_workspace.mkdir(parents=True, exist_ok=True)
     settings = AppSettings(
         _env_file=None,
         GOVERNOR_WORKSPACE_DIR=governor_workspace,
         DATA_DIR=data,
-        GOVERNOR_CLAUDE_ROOT=governor_root,
-        MODEL_PROVIDER_API_KEY="sk-test-provider",
         RUNTIME_VOLUME_MODE="local-debug",
     )
     workspace = settings.default_workspace_dir
     workspace.mkdir(parents=True, exist_ok=True)
-    (settings.default_claude_root / ".claude").mkdir(parents=True, exist_ok=True)
     create_test_business_agent_workspace(
         workspace,
         agent_id=DEFAULT_BUSINESS_AGENT_ID,
         name="Security Operations Expert",
     )
-    (workspace / "CLAUDE.md").write_text("# Test Agent\n", encoding="utf-8")
-    (workspace / ".mcp.json").write_text(
+    (workspace / "AGENT.md").write_text("# Test Agent\n", encoding="utf-8")
+    mcp_dir = workspace / "mcp"
+    mcp_dir.mkdir(parents=True, exist_ok=True)
+    (mcp_dir / "sec-ops.json").write_text(
         json.dumps(
             {
-                "mcpServers": {
-                    "sec-ops-data": {
-                        "type": "http",
-                        "url": "http://localhost:58001/mcp",
-                    }
-                }
+                "schema_version": 1,
+                "name": "sec-ops",
+                "credential_refs": [
+                    {"env": "SEC_OPS_MCP_URL", "path": "mcp_config.url"},
+                ],
+                "mcp_config": {
+                    "type": "http_mcp",
+                    "url": "${SEC_OPS_MCP_URL}",
+                },
+                "enable_tools": [],
+                "enable_resources": [],
+                "enable_resource_templates": [],
             },
             indent=2,
         )
@@ -62,26 +66,48 @@ def _store(tmp_path):
     return FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda _aid=None: "main-v-test"), settings
 
 
+def _run_payload(
+    *,
+    run_id: str = "run-1",
+    agent_id: str = DEFAULT_BUSINESS_AGENT_ID,
+    session_id: str | None = None,
+    created_at: str = "2026-05-20T00:00:00+00:00",
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Build one complete AgentScope-era AgentGov run projection."""
+
+    trace_id = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "session_id": session_id or f"session-{run_id}",
+        "agent_version_id": f"version-{agent_id}",
+        "runtime_agent_id": f"runtime-{agent_id}",
+        "harness_digest": "a" * 64,
+        "status": "succeeded",
+        "reply_ids": [f"reply-{run_id}"],
+        "trace_id": trace_id,
+        "trace_url": f"http://langfuse.local/project/traces/{trace_id}",
+        "trace_status": "complete",
+        "metadata": {},
+        "created_at": created_at,
+        "started_at": created_at,
+        "updated_at": created_at,
+        "completed_at": created_at,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _record_run(store: FeedbackStore):
     return store.record_run(
-        {
-            "run_id": "run-1",
-            "agent_id": DEFAULT_BUSINESS_AGENT_ID,
-            "session_id": "session-1",
-            "alert_id": "alert-1",
-            "case_id": "case-1",
-            "message": "研判告警",
-            "messages": [{"event": "AssistantMessage", "content": [{"text": "告警研判摘要"}]}],
-            "langfuse_trace_id": "trace-1",
-            "langfuse_trace_url": "http://langfuse.local/project/traces/trace-1",
-            "answer_summary": "告警研判摘要",
-            "agent_activity": {
-                "tool_names": ["mcp__sec-ops-data__asset"],
-                "tool_calls": [{"name": "mcp__sec-ops-data__asset", "input": {"token": "secret-token"}}],
-            },
-            "created_at": "2026-05-20T00:00:00+00:00",
-            "completed_at": "2026-05-20T00:00:01+00:00",
-        }
+        _run_payload(
+            session_id="session-1",
+            alert_id="alert-1",
+            case_id="case-1",
+            completed_at="2026-05-20T00:00:01+00:00",
+            updated_at="2026-05-20T00:00:01+00:00",
+        )
     )
 
 
@@ -149,6 +175,7 @@ __all__ = [
     "FeedbackStore",
     "SocEventIngestRequest",
     "_record_run",
+    "_run_payload",
     "_seed_execution_record",
     "_settings",
     "_store",

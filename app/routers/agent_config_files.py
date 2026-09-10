@@ -12,7 +12,6 @@ from app.runtime.config_file_schemas import (
     AgentConfigFileUpdateResponse,
 )
 from app.runtime.config_mapping import DEFAULT_AGENT_ID
-from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.services.agent_config_files import AgentConfigFileError, AgentConfigFileService
@@ -23,7 +22,6 @@ def create_agent_config_files_router(
     *,
     settings: AppSettings,
     agent_registry_store: AgentRegistryStore,
-    session_store: LocalSessionStore,
     require_api_key: Callable,
     version_maintenance: AgentVersionMaintenanceCoordinator | None = None,
 ) -> APIRouter:
@@ -31,7 +29,6 @@ def create_agent_config_files_router(
     service = AgentConfigFileService(
         settings=settings,
         agent_registry_store=agent_registry_store,
-        session_store=session_store,
     )
 
     @router.get(
@@ -41,7 +38,7 @@ def create_agent_config_files_router(
     )
     async def read_agent_config_file(
         agent_id: str = Query(default=DEFAULT_AGENT_ID, description="Business agent id from /api/agent-registry."),
-        path: str = Query(description="Editable project config path. Currently only .mcp.json is supported."),
+        path: str = Query(description="Editable Harness path: agent.yaml, AGENT.md, or mcp/<name>.json."),
     ) -> AgentConfigFileResponse:
         try:
             return service.read_file(agent_id=agent_id, path=path)
@@ -56,7 +53,7 @@ def create_agent_config_files_router(
     async def update_agent_config_file(
         request: AgentConfigFileUpdateRequest,
         agent_id: str = Query(default=DEFAULT_AGENT_ID, description="Business agent id from /api/agent-registry."),
-        path: str = Query(description="Editable project config path. Currently only .mcp.json is supported."),
+        path: str = Query(description="Editable Harness path: agent.yaml, AGENT.md, or mcp/<name>.json."),
     ) -> AgentConfigFileUpdateResponse:
         try:
             safe_agent_id = validate_agent_id(agent_id)

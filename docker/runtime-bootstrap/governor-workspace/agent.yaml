@@ -1,15 +1,94 @@
+schema_version: 1
 agent:
+  id: governor
   name: 治理智能体
   version: 0.1.0
   language: zh-CN
-  runtime: claude-code
+  runtime: agentscope
+  runtime_contract: agentscope-app/2.0.8
   profile: governor
-
+  system_prompt: AGENT.md
+context_config: {}
+react_config: {}
+invite_config:
+  invitable: false
+session:
+  model_profile: default
+  permission_mode: default
+  cwd: .
+workspace_policy:
+  owner: agentgov
+  isolation: per_agent
+  immutable_harness: true
+  fail_closed: true
+  allow_for_run: false
+  allowed_tools:
+  - Glob
+  - Grep
+  - HarnessList
+  - HarnessRead
+  - Read
+  - Skill
+  - WebFetch
+  denied_tools:
+  - Bash(*)
+  - Edit(/**)
+  - NotebookEdit(/**)
+  - Write(/**)
+  immutable_paths:
+  - AGENT.md
+  - agent.yaml
+  - skills/**
+  - mcp/**
+  - subagents/**
+  writable_paths: []
+  denied_read_paths:
+  - '**/*credential*'
+  - '**/*secret*'
+  - '**/.env'
+  - '**/.env.*'
+  - .env
+  - /runtime-data/**
+  allowed_network_domains: []
+  sandbox:
+    enabled: true
+    fail_if_unavailable: true
+    allow_unsandboxed_commands: false
+  guard:
+    implementation: agentgov_runtime_middleware
+    mode: deny_only
+    denied_command_families:
+    - destructive_filesystem
+    - direct_production_mutation
+    - remote_installer_pipe
+    - network_scanning
+runtime_middlewares:
+- type: policy_guard
+  phase: before_tool_call
+  fail_closed: true
+- type: system_prompt_context
+  source: AGENT.md
 paths:
-  # 以下路径均以 governor workspace 为基准。
-  workspace: .
-  claude_home: ../claude-roots/governor/.claude
-  data_root: ../data
-
-outputs:
-  schema: per-job-type
+  workspace: /workspace
+  data_root: /workspace/data
+harness:
+  digest_algorithm: sha256
+  system_prompt:
+    name: system_prompt
+    path: AGENT.md
+    sha256: 735fceb79759691f25b412d38584e85b8a30cdd45cfc79a9ae7fd98ef71d2f70
+  skills:
+  - name: read-business-agent-config
+    path: skills/read-business-agent-config
+    sha256: 7a56cdfc464b1aff34e59fc2de6ced481167b1eab98f0fd201d617278ca4bc77
+  mcps: []
+  subagents: []
+  tests:
+    name: tests
+    path: tests
+    sha256: 1a1b7be766ec4fcaebbf67b011633f73181b43a03ef6a5df3c8e815981647f19
+  content_digest: 5f67670eaa8c6daa9612fc20bd213e29285c71eba4adb035109b5a7ad075cf04
+extension_points:
+  add_skill: skills/<skill-name>/SKILL.md
+  add_mcp_server: mcp/<name>.json
+  add_subagent: subagents/<name>/

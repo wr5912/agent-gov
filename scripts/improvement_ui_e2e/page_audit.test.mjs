@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { unexpectedDiagnostics } from "./page_audit.mjs";
+import { assertNoForbiddenUiRequests, unexpectedDiagnostics } from "./page_audit.mjs";
+
+test("removed session APIs cannot be hidden by a successful mock response", () => {
+  for (const path of ["/api/sessions", "/api/sessions/", "/api/sessions/old-session/messages"]) {
+    assert.throws(() => assertNoForbiddenUiRequests([{ method: "GET", path }]), /forbidden stale UI requests/);
+  }
+  assert.doesNotThrow(() => assertNoForbiddenUiRequests([
+    { method: "GET", path: "/api/runtime/sessions/" },
+    { method: "GET", path: "/api/runtime/sessions/current-session/messages" },
+  ]));
+});
 
 function diagnostics(httpErrors = []) {
   return {
@@ -62,7 +72,7 @@ test("missing controlled failures and optional artifact 404s both fail the audit
   }]);
 });
 
-test("presentation navigation cancellation is ignored without hiding transport failures", () => {
+test("known read-only effect cancellations are ignored without hiding transport failures", () => {
   const state = diagnostics();
   state.requestFailures = [
     {
@@ -80,7 +90,31 @@ test("presentation navigation cancellation is ignored without hiding transport f
       url: "http://runtime.test/api/agent-registry",
       error: "net::ERR_ABORTED",
     },
+    {
+      method: "GET",
+      url: "http://runtime.test/api/runtime/sessions/session-1/messages?agent_id=soc-ops&limit=200",
+      error: "net::ERR_ABORTED",
+    },
+    {
+      method: "GET",
+      url: "http://runtime.test/api/runtime/sessions/session-1/status?agent_id=soc-ops",
+      error: "NS_BINDING_ABORTED",
+    },
+    {
+      method: "GET",
+      url: "http://runtime.test/api/agent-runs?session_id=session-1&limit=500",
+      error: "net::ERR_ABORTED",
+    },
+    {
+      method: "GET",
+      url: "http://runtime.test/api/agent-runs?limit=500",
+      error: "net::ERR_ABORTED",
+    },
   ];
 
-  assert.deepEqual(unexpectedDiagnostics(state).requestFailures, state.requestFailures.slice(1));
+  assert.deepEqual(unexpectedDiagnostics(state).requestFailures, [
+    state.requestFailures[1],
+    state.requestFailures[2],
+    state.requestFailures[6],
+  ]);
 });

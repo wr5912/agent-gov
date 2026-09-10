@@ -11,6 +11,7 @@ from app.runtime.stores.feedback_store import FeedbackStore
 from pydantic import ValidationError
 
 from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+from feedback_store_test_utils import _run_payload
 
 
 def _store(tmp_path) -> FeedbackStore:
@@ -21,14 +22,7 @@ def _store(tmp_path) -> FeedbackStore:
 
 
 def _signal(store: FeedbackStore, *, run_id: str, agent_id: str, signal_id: str | None = None) -> dict:
-    store.record_run(
-        {
-            "run_id": run_id,
-            "session_id": f"session-{run_id}",
-            "agent_id": agent_id,
-            "created_at": "2026-07-13T00:00:00+00:00",
-        }
-    )
+    store.record_run(_run_payload(run_id=run_id, agent_id=agent_id, created_at="2026-07-13T00:00:00+00:00"))
     return store.create_signal(FeedbackSignalCreateRequest(signal_id=signal_id, run_id=run_id, labels=["ownership-test"]))
 
 
@@ -112,12 +106,12 @@ def test_unmatched_signal_stays_unassigned_and_cannot_create_case(tmp_path) -> N
 def test_session_locator_and_soc_event_persist_business_agent_owner(tmp_path) -> None:
     store = _store(tmp_path)
     store.record_run(
-        {
-            "run_id": "run-session-owner",
-            "session_id": "session-owner",
-            "agent_id": "agent-a",
-            "created_at": "2026-07-13T00:00:00+00:00",
-        }
+        _run_payload(
+            run_id="run-session-owner",
+            session_id="session-owner",
+            agent_id="agent-a",
+            created_at="2026-07-13T00:00:00+00:00",
+        )
     )
 
     signal = store.create_signal(FeedbackSignalCreateRequest(session_id="session-owner"))
@@ -153,12 +147,12 @@ def test_resolved_pending_updates_event_owner_before_case_creation(tmp_path) -> 
     )
     pending_id = ingested["pending_correlation"]["pending_id"]
     store.record_run(
-        {
-            "run_id": "run-later",
-            "session_id": "session-later",
-            "agent_id": "agent-b",
-            "created_at": "2026-07-13T00:00:01+00:00",
-        }
+        _run_payload(
+            run_id="run-later",
+            session_id="session-later",
+            agent_id="agent-b",
+            created_at="2026-07-13T00:00:01+00:00",
+        )
     )
 
     resolved = store.resolve_pending(pending_id, run_id="run-later", comment="reviewed")
@@ -318,12 +312,12 @@ def test_case_source_kind_prevents_cross_table_id_collision(tmp_path) -> None:
     store = _store(tmp_path)
     _signal(store, run_id="run-collision-a", agent_id="agent-a", signal_id="shared-source")
     store.record_run(
-        {
-            "run_id": "run-collision-b",
-            "session_id": "session-collision-b",
-            "agent_id": "agent-b",
-            "created_at": "2026-07-13T00:00:00+00:00",
-        }
+        _run_payload(
+            run_id="run-collision-b",
+            session_id="session-collision-b",
+            agent_id="agent-b",
+            created_at="2026-07-13T00:00:00+00:00",
+        )
     )
     store.ingest_soc_event(
         SocEventIngestRequest(
@@ -354,12 +348,11 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
     )
     for run_id, agent_id in (("run-claimed", "agent-a"), ("run-stale", "agent-b")):
         store.record_run(
-            {
-                "run_id": run_id,
-                "session_id": f"session-{run_id}",
-                "agent_id": agent_id,
-                "created_at": "2026-07-13T00:00:00+00:00",
-            }
+            _run_payload(
+                run_id=run_id,
+                agent_id=agent_id,
+                created_at="2026-07-13T00:00:00+00:00",
+            )
         )
         store.ingest_soc_event(
             SocEventIngestRequest(

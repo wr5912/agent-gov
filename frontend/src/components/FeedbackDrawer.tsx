@@ -82,7 +82,7 @@ export function FeedbackDrawer({
       setCreated(item);
       setPhase("saved");
       try {
-        // 先落原始反馈，再由后端把它整理成 title+problem 的系统理解（DSPy；不可用则启发式兜底），并回填事项标题。
+        // 先落原始反馈，再由 AgentScope governor 整理成 title+problem；失败时使用确定性兜底并回填标题。
         await addImprovementFeedback(clientConfig, item.improvement_id, {
           summary: problem,
           source: "playground_run",

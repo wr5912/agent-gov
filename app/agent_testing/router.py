@@ -165,8 +165,8 @@ def _register_test_session_routes(router: APIRouter, service: AgentTestingServic
         return AgentTestMessageResponse.model_validate(result.model_dump(mode="python"))
 
     @router.delete("/agent-test-sessions/{test_session_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_agent_test_session(test_session_id: str) -> Response:
-        service.delete_session(test_session_id)
+    async def delete_agent_test_session(test_session_id: str) -> Response:
+        await service.delete_session_async(test_session_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

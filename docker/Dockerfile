@@ -9,12 +9,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ \
-    NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
     API_HOST=0.0.0.0 \
     API_PORT=8080 \
     GOVERNOR_WORKSPACE_DIR=/governor-workspace \
-    DATA_DIR=/data \
-    GOVERNOR_CLAUDE_ROOT=/claude-roots/governor
+    DATA_DIR=/data
 
 WORKDIR /app
 
@@ -36,18 +34,16 @@ RUN set -eux; \
     fi; \
     apt-get update && apt-get install -y --no-install-recommends \
     bash \
-    bubblewrap \
     ca-certificates \
     curl \
     git \
     ripgrep \
     socat \
-    nodejs \
-    npm \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/requirements.txt
+COPY requirements-api.txt /app/requirements-api.txt
 COPY VERSION /app/VERSION
+COPY agentgov_harness_digest.py /app/agentgov_harness_digest.py
 COPY packages/agentgov-testkit /app/packages/agentgov-testkit
 # python:slim 不内置 uv；这里仅用阿里 PyPI bootstrap uv，项目依赖安装仍统一走 uv。
 RUN python -m pip install --no-cache-dir \
@@ -56,29 +52,15 @@ RUN python -m pip install --no-cache-dir \
         uv \
     && uv pip install --system --no-cache \
         --index-url https://mirrors.aliyun.com/pypi/simple/ \
-        -r /app/requirements.txt \
+        -r /app/requirements-api.txt \
         /app/packages/agentgov-testkit
-
-COPY docker/a2ui-requirements.txt /app/docker/a2ui-requirements.txt
-COPY docker/vendor/A2UI /app/vendor/A2UI
-# a2ui-agent-sdk 来自 Google A2UI v0.9 的 agent_sdks/python 子目录。
-# 源码已 vendor 到仓库，避免镜像构建依赖 GitHub；PyPI 依赖仍在 build 阶段下载。
-RUN set -eux; \
-    uv pip install --system --no-cache \
-        --index-url https://mirrors.aliyun.com/pypi/simple/ \
-        --constraints /app/requirements.txt \
-        -r /app/docker/a2ui-requirements.txt \
-        /app/vendor/A2UI/agent_sdks/python; \
-    LITELLM_LOCAL_MODEL_COST_MAP=True python -c "import importlib; [importlib.import_module(name) for name in ('a2a', 'google.adk', 'google.genai', 'litellm', 'jsonschema', 'dotenv', 'click', 'a2ui')]"
-
-ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 
 COPY app /app/app
 COPY scripts/bootstrap_runtime_volume.py /app/scripts/bootstrap_runtime_volume.py
 COPY scripts/runtime_cleanup.py /app/scripts/runtime_cleanup.py
 COPY docker/runtime-bootstrap /app/docker/runtime-bootstrap
 
-RUN mkdir -p /governor-workspace /claude-roots/governor/.claude /data
+RUN mkdir -p /governor-workspace /data
 
 ARG AGENT_GOV_ACCEPTANCE_RUN_ID=unmanaged
 LABEL io.agentgov.acceptance-run-id="${AGENT_GOV_ACCEPTANCE_RUN_ID}"

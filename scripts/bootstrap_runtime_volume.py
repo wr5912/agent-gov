@@ -29,34 +29,21 @@ _RUNTIME_ENV_FILE_MODES = {
     ".env.local-debug": "local-debug",
     ".env.local-debug.example": "local-debug",
 }
-# 仅 governor 需要顶层 claude-roots/<name>；业务 Agent 的 claude-root 在各自运行态目录中。
-PROFILE_NAMES = ("governor",)
 RUNTIME_DATA_DIRS = (
-    "data/sessions",
-    "data/transcripts",
+    "data/business-agents",
     "data/uploads",
     "data/outputs",
     "data/outputs/reports",
-    "data/agent-memory",
-    "data/feedback-signals",
-    "data/soc-events",
-    "data/pending-correlations",
-    "data/feedback-cases",
-    "data/evidence-packages",
-    # 普通业务 Agent 的 version/claude-root 目录不在此无条件创建，由通用机制按需供给。
+    "data/.agent-testing/sessions",
+    "data/.agent-testing/runs",
+    "agentscope-runtime/data",
+    "agentscope-runtime/workspaces",
+    "agentscope-runtime/candidates",
     "langfuse/postgres",
     "langfuse/clickhouse/data",
     "langfuse/clickhouse/logs",
     "langfuse/redis",
     "langfuse/minio",
-)
-LEGACY_AGENT_GOVERNANCE_MIGRATIONS = (
-    (Path("data/agent-governance/worktrees"), Path("data/business-agents/main-agent/version/worktrees")),
-    (Path("data/agent-governance/releases"), Path("data/business-agents/main-agent/version/releases")),
-    (
-        Path("data/agent-governance/candidate-claude-roots"),
-        Path("data/business-agents/main-agent/version/candidate-claude-roots"),
-    ),
 )
 
 
@@ -64,7 +51,6 @@ class BootstrapResult(TypedDict):
     created_dirs: list[str]
     copied: list[str]
     skipped_existing: list[str]
-    migrated: list[str]
 
 
 def _repo_root() -> Path:
@@ -216,59 +202,6 @@ def _copy_missing(
     shutil.copy2(src, dest)
 
 
-def _remove_empty_parents(path: Path, *, stop_at: Path) -> None:
-    current = path
-    while current != stop_at and stop_at in current.parents:
-        try:
-            current.rmdir()
-        except OSError:
-            return
-        current = current.parent
-
-
-def _migrate_legacy_agent_governance_dirs(*, runtime_root: Path, dry_run: bool, migrated: list[str]) -> None:
-    for legacy_rel, target_rel in LEGACY_AGENT_GOVERNANCE_MIGRATIONS:
-        legacy = runtime_root / legacy_rel
-        target = runtime_root / target_rel
-        if not legacy.is_dir():
-            continue
-        if not target.exists():
-            migrated.append(f"{legacy.as_posix()} -> {target.as_posix()}")
-            if dry_run:
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(legacy.as_posix(), target.as_posix())
-            _remove_empty_parents(legacy.parent, stop_at=runtime_root / "data")
-            continue
-        _merge_legacy_dir(legacy=legacy, target=target, runtime_root=runtime_root, dry_run=dry_run, migrated=migrated)
-
-
-def _merge_legacy_dir(
-    *,
-    legacy: Path,
-    target: Path,
-    runtime_root: Path,
-    dry_run: bool,
-    migrated: list[str],
-) -> None:
-    children = sorted(legacy.iterdir())
-    if dry_run:
-        migrated.extend(f"{child.as_posix()} -> {(target / child.name).as_posix()}" for child in children if not (target / child.name).exists())
-        return
-    target.mkdir(parents=True, exist_ok=True)
-    for child in children:
-        destination = target / child.name
-        if destination.exists():
-            continue
-        migrated.append(f"{child.as_posix()} -> {destination.as_posix()}")
-        shutil.move(child.as_posix(), destination.as_posix())
-    try:
-        legacy.rmdir()
-    except OSError:
-        return
-    _remove_empty_parents(legacy.parent, stop_at=runtime_root / "data")
-
-
 def bootstrap_runtime_volume(
     *,
     runtime_root: Path,
@@ -280,20 +213,12 @@ def bootstrap_runtime_volume(
     del runtime_volume_mode, env
     copied: list[str] = []
     skipped: list[str] = []
-    migrated: list[str] = []
     created_dirs: list[str] = []
     for rel in RUNTIME_DATA_DIRS:
         path = runtime_root / rel
         created_dirs.append(path.as_posix())
         if not dry_run:
             path.mkdir(parents=True, exist_ok=True)
-    _migrate_legacy_agent_governance_dirs(runtime_root=runtime_root, dry_run=dry_run, migrated=migrated)
-    for profile in PROFILE_NAMES:
-        path = runtime_root / "claude-roots" / profile / ".claude"
-        created_dirs.append(path.as_posix())
-        if not dry_run:
-            path.mkdir(parents=True, exist_ok=True)
-
     if bootstrap_dir.is_symlink() or not bootstrap_dir.is_dir():
         raise ValueError(f"Runtime bootstrap source must be a real directory: {bootstrap_dir}")
     governor_workspace = bootstrap_dir / "governor-workspace"
@@ -319,7 +244,6 @@ def bootstrap_runtime_volume(
         "created_dirs": created_dirs,
         "copied": copied,
         "skipped_existing": skipped,
-        "migrated": migrated,
     }
 
 

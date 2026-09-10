@@ -45,7 +45,7 @@ ProblemType = Literal[
 ]
 
 OptimizationObjectType = Literal[
-    "business_agent_claude_md",
+    "business_agent_agent_md",
     "skill",
     "subagent",
     "mcp_config",
@@ -119,7 +119,7 @@ class AttributionOutput(NormalizedAttributionOutput):
 
 
 class ImprovementOptimizationChangeFormatterOutput(NormalizedOutputRecord):
-    target: str = Field(description="变更对象，如 CLAUDE.md、skill、subagent、mcp_config、runtime_config。")
+    target: str = Field(description="变更对象，如 AGENT.md、skill、subagent、mcp_config、runtime_config。")
     change: str = Field(description="具体优化建议。")
 
 

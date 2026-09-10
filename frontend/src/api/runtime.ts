@@ -1,8 +1,13 @@
-import { requestBlob, requestJson } from "./request";
+import { ApiRequestError, makeUrl, requestBlob, requestJson, runtimeHeaders } from "./request";
 import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
-export { streamClaudeSdkChat as streamChat } from "./claudeSdkStream";
-export type { StreamChatHandlers } from "./claudeSdkStream";
-export { defaultRuntimeConfig, isLegacyDockerApiBase } from "./request";
+export { connectAgentScopeSessionStream } from "./agentScopeStream";
+export type {
+  AgentScopeStreamConnection,
+  AgentScopeStreamHandlers,
+  SubagentHitlProjection,
+  SubagentHitlResolution,
+} from "./agentScopeStream";
+export { defaultRuntimeConfig, shouldMigrateStoredApiBase } from "./request";
 export * from "./agentTesting";
 export * from "./feedback";
 import type {
@@ -25,17 +30,18 @@ import type {
   AgentReleaseRollbackRequest,
   AgentReleaseRestoreRequest,
   AgentReleaseRestoreResponse,
-  AgentRunCancelResponse,
   AgentRepositoryDiscardChangesRequest,
   AgentRepositorySnapshotRequest,
   AgentRepositoryStatus,
-  ClaudeUserInputDecisionPayload,
-  ClaudeUserInputDecisionResponse,
+  AgentScopeChatInput,
+  AgentScopeChatReceipt,
+  AgentScopeChatResponse,
+  AgentScopeMessagesResponse,
+  AgentScopeSessionView,
+  AgentScopeStatusResponse,
   ConfigMappingResponse,
-  ConversationItem,
-  ConversationItemList,
-  OpenAICompatAgentConfig,
   RuntimeClientConfig,
+  RuntimeCurrentVersion,
   RuntimeHealth,
   SessionInfo,
   SkillInfo,
@@ -49,89 +55,250 @@ export function getHealth(config: RuntimeClientConfig) {
   return requestJson<RuntimeHealth>(config, "/health");
 }
 
-// 会话侧栏走 canonical /v1/conversations（投影自同一 session_store）；映射回 SessionInfo 使侧栏无需改动。
-export async function getSessions(config: RuntimeClientConfig): Promise<SessionInfo[]> {
-  const list = await requestJson<{ data?: unknown[] }>(config, "/v1/conversations");
-  const data = Array.isArray(list.data) ? list.data : [];
-  return data.map(conversationToSessionInfo).filter((session): session is SessionInfo => session !== null);
+export async function createRuntimeSession(
+  config: RuntimeClientConfig,
+  agentId: string,
+  idempotencyKey: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const result = await requestJson<{ session_id: string }>(config, "/api/runtime/sessions/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+      ...runtimeHeaders(config),
+    },
+    body: JSON.stringify({ agent_id: agentId }),
+    signal,
+  });
+  if (!result.session_id) throw new Error("Runtime 创建会话后未返回 session_id。");
+  return result.session_id;
 }
 
-export function deleteSession(config: RuntimeClientConfig, sessionId: string) {
-  return requestJson<{ deleted: boolean; id: string }>(
+export async function getSessions(
+  config: RuntimeClientConfig,
+  governanceAgentId: string,
+  signal?: AbortSignal,
+): Promise<SessionInfo[]> {
+  const query = new URLSearchParams({ governance_agent_id: governanceAgentId });
+  const list = await requestJson<{ sessions: AgentScopeSessionView[]; total: number }>(
     config,
-    `/v1/conversations/${encodeURIComponent(`conv_${sessionId}`)}`,
-    { method: "DELETE" },
+    `/api/runtime/sessions/?${query.toString()}`,
+    { headers: runtimeHeaders(config), signal },
+  );
+  return (list.sessions || []).map((session) => sessionViewToSessionInfo(session, governanceAgentId));
+}
+
+export function provisionRuntimeAgent(
+  config: RuntimeClientConfig,
+  governanceAgentId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson<RuntimeCurrentVersion>(
+    config,
+    `/api/runtime/agents/${encodeURIComponent(governanceAgentId)}/provision`,
+    { method: "POST", headers: runtimeHeaders(config), signal },
   );
 }
 
-export function cancelAgentRun(
+export async function getRuntimeSessionMessages(
   config: RuntimeClientConfig,
-  runId: string,
+  agentId: string,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<AgentScopeMessagesResponse> {
+  const messages: AgentScopeMessagesResponse["messages"] = [];
+  const seenCursors = new Set<string>();
+  let before: string | undefined;
+  let isRunning = false;
+
+  while (true) {
+    const query = new URLSearchParams({ agent_id: agentId, limit: "200" });
+    if (before) query.set("before", before);
+    const page = await requestJson<AgentScopeMessagesResponse>(
+      config,
+      `/api/runtime/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`,
+      { headers: runtimeHeaders(config), signal },
+    );
+    const pageMessages = Array.isArray(page.messages) ? page.messages : [];
+    messages.unshift(...pageMessages);
+    isRunning = page.is_running;
+    if (!page.has_more) return { messages, is_running: isRunning, has_more: false };
+
+    const cursor = pageMessages[0]?.id;
+    if (!cursor || seenCursors.has(cursor)) {
+      throw new Error("Runtime messages 分页返回了无效游标。");
+    }
+    seenCursors.add(cursor);
+    before = cursor;
+  }
+}
+
+export function getRuntimeSessionStatus(
+  config: RuntimeClientConfig,
+  agentId: string,
+  sessionId: string,
   signal?: AbortSignal,
 ) {
-  return requestJson<AgentRunCancelResponse>(
+  const query = new URLSearchParams({ agent_id: agentId });
+  return requestJson<AgentScopeStatusResponse>(
     config,
-    `/api/agent-runs/${encodeURIComponent(runId)}/cancel`,
+    `/api/runtime/sessions/${encodeURIComponent(sessionId)}/status?${query.toString()}`,
+    { headers: runtimeHeaders(config), signal },
+  );
+}
+
+export async function startRuntimeChat(
+  config: RuntimeClientConfig,
+  agentId: string,
+  sessionId: string,
+  input: AgentScopeChatInput,
+  context: {
+    alertId?: string;
+    caseId?: string;
+    confirmationScope?: "once" | "run";
+    expectedRunId?: string;
+    clientOperationId: string;
+  },
+  signal?: AbortSignal,
+): Promise<AgentScopeChatReceipt> {
+  const response = await fetchRuntime(
+    config,
+    "/api/runtime/chat/",
     {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agent_id: agentId,
+        session_id: sessionId,
+        client_operation_id: context.clientOperationId,
+        input,
+        confirmation_scope: context.confirmationScope ?? "once",
+        expected_run_id: context.expectedRunId,
+        alert_id: context.alertId,
+        case_id: context.caseId,
+        metadata: {
+          client: "agent-gov-ui",
+        },
+      }),
+      signal,
+    },
+  );
+  const data = await decodeRuntimeJson<AgentScopeChatResponse>(response);
+  const runId = response.headers.get("X-AgentGov-Run-Id")?.trim() || "";
+  const responseSessionId = response.headers.get("X-AgentGov-Session-Id")?.trim() || "";
+  if (!runId || !responseSessionId) {
+    throw new ApiRequestError("decode", "Runtime chat 响应缺少 AgentGov 运行标识头。");
+  }
+  if (responseSessionId !== sessionId || data.session_id !== sessionId) {
+    throw new ApiRequestError("decode", "Runtime chat 响应的 session_id 与当前会话不一致。");
+  }
+  return { ...data, runId };
+}
+
+export async function interruptRuntimeSession(
+  config: RuntimeClientConfig,
+  agentId: string,
+  sessionId: string,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({ agent_id: agentId });
+  return requestJson<{ session_id: string }>(
+    config,
+    `/api/runtime/sessions/${encodeURIComponent(sessionId)}/interrupt?${query.toString()}`,
+    {
+      method: "POST",
+      headers: runtimeHeaders(config),
+      body: null,
       signal,
       timeoutMs: 15_000,
     },
   );
 }
 
-export async function getConversationItems(
-  config: RuntimeClientConfig,
-  sessionId: string,
-  signal?: AbortSignal,
-): Promise<ConversationItem[]> {
-  // Callers hold the internal session id. Always add the public prefix once,
-  // including when a legacy client chose a session id that starts with "conv_".
-  const conversationId = `conv_${sessionId}`;
-  const items: ConversationItem[] = [];
-  const seenCursors = new Set<string>();
-  let after: string | undefined;
+function sessionViewToSessionInfo(view: AgentScopeSessionView, businessAgentId?: string): SessionInfo {
+  const session = view.session;
+  const config = isRecord(session.config) ? session.config : {};
+  const sessionId = stringValue(session.id) || stringValue(session.session_id);
+  if (!sessionId) throw new Error("Runtime session 缺少 id。");
+  const createdAt = stringValue(session.created_at) || new Date().toISOString();
+  return {
+    session_id: sessionId,
+    agent_id: stringValue(session.agent_id) || null,
+    business_agent_id: businessAgentId || null,
+    created_at: createdAt,
+    updated_at: stringValue(session.updated_at) || createdAt,
+    title: stringValue(config.name) || stringValue(session.name),
+    turns: numberValue(session.turns),
+    metadata: isRecord(session.metadata) ? session.metadata : {},
+    is_running: view.is_running,
+    status: view.status,
+    active_run_id: stringValue(session.active_run_id) || null,
+  };
+}
 
-  while (true) {
-    const query = new URLSearchParams({ limit: "100", order: "asc" });
-    if (after) query.set("after", after);
-    const page = await requestJson<ConversationItemList>(
-      config,
-      `/v1/conversations/${encodeURIComponent(conversationId)}/items?${query.toString()}`,
-      { signal },
-    );
-    const pageItems = Array.isArray(page.data) ? page.data : [];
-    items.push(...pageItems);
-    if (!page.has_more) return items;
-
-    const cursor = page.last_id || pageItems.at(-1)?.id;
-    if (!cursor || seenCursors.has(cursor)) {
-      throw new Error("Conversation items pagination returned an invalid cursor");
+async function fetchRuntime(config: RuntimeClientConfig, path: string, init: RequestInit) {
+  const controller = new AbortController();
+  const callerSignal = init.signal;
+  let timedOut = false;
+  const timeoutId = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort("timeout");
+  }, 30_000);
+  const abortFromCaller = () => controller.abort(callerSignal?.reason || "caller_aborted");
+  if (callerSignal?.aborted) controller.abort(callerSignal.reason || "caller_aborted");
+  else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  try {
+    const response = await fetch(makeUrl(config, path), {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        ...runtimeHeaders(config),
+        ...(init.headers || {}),
+      },
+    });
+    if (!response.ok) {
+      const errorBody: { detail?: string; message?: string; error_code?: string } = await decodeRuntimeJson<{
+        detail?: string;
+        message?: string;
+        error_code?: string;
+      }>(response)
+        .catch(() => ({}));
+      const errorCode = typeof errorBody.error_code === "string" ? errorBody.error_code : undefined;
+      const detail = errorBody.detail || errorBody.message || `${response.status} ${response.statusText}`;
+      throw new ApiRequestError(
+        "http",
+        errorCode ? `[${errorCode}] ${detail}` : detail,
+        { status: response.status, errorCode },
+      );
     }
-    seenCursors.add(cursor);
-    after = cursor;
+    return response;
+  } catch (error) {
+    if (error instanceof ApiRequestError) throw error;
+    if (timedOut) throw new ApiRequestError("timeout", "Runtime 请求超时。");
+    if (callerSignal?.aborted) throw new ApiRequestError("aborted", "Runtime 请求已取消。");
+    throw new ApiRequestError("network", error instanceof Error ? error.message : String(error));
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
-function conversationToSessionInfo(value: unknown): SessionInfo | null {
-  if (!isRecord(value) || typeof value.id !== "string") return null;
-  const sessionId = value.id.startsWith("conv_") ? value.id.slice("conv_".length) : value.id;
-  const ag = isRecord(value.agentgov) ? value.agentgov : {};
-  const epochToIso = (epoch: unknown): string | undefined =>
-    typeof epoch === "number" ? new Date(epoch * 1000).toISOString() : undefined;
-  const createdAt = epochToIso(value.created_at) || new Date().toISOString();
-  return {
-    session_id: sessionId,
-    sdk_session_id: typeof ag.sdk_session_id === "string" ? ag.sdk_session_id : null,
-    agent_id: typeof ag.agent_id === "string" ? ag.agent_id : null,
-    created_at: createdAt,
-    updated_at: epochToIso(ag.updated_at) || createdAt,
-    title: typeof value.title === "string" ? value.title : undefined,
-    turns: typeof ag.turns === "number" ? ag.turns : 0,
-    metadata: isRecord(value.metadata) ? value.metadata : {},
-    active_run_id: typeof ag.active_run_id === "string" ? ag.active_run_id : null,
-    active_run_expires_at: typeof ag.active_run_expires_at === "string" ? ag.active_run_expires_at : null,
-  } as SessionInfo;
+async function decodeRuntimeJson<T>(response: Response): Promise<T> {
+  try {
+    return await response.json() as T;
+  } catch {
+    throw new ApiRequestError("decode", "Runtime 返回了无效 JSON。");
+  }
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export function getAgents(config: RuntimeClientConfig, agentId?: string) {
@@ -248,27 +415,6 @@ export function deleteBusinessAgent(config: RuntimeClientConfig, agentId: string
 export function getSkills(config: RuntimeClientConfig, agentId?: string) {
   const query = agentId ? `?${new URLSearchParams({ agent_id: agentId }).toString()}` : "";
   return requestJson<SkillInfo[]>(config, `/api/skills${query}`);
-}
-
-// F12：/v1 出口 Agent 配置类型改用 OpenAPI 生成类型（删手写 schema 双轨），从 types/runtime re-export。
-export type { OpenAICompatAgentConfig };
-
-export function getOpenAICompatAgent(config: RuntimeClientConfig) {
-  return requestJson<OpenAICompatAgentConfig>(config, "/api/settings/openai-compat-agent");
-}
-
-export function setOpenAICompatAgent(config: RuntimeClientConfig, agentId: string) {
-  return requestJson<OpenAICompatAgentConfig>(config, "/api/settings/openai-compat-agent", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ agent_id: agentId }),
-  });
-}
-
-export function resetOpenAICompatAgent(config: RuntimeClientConfig) {
-  return requestJson<OpenAICompatAgentConfig>(config, "/api/settings/openai-compat-agent", {
-    method: "DELETE",
-  });
 }
 
 export const runtimeApi = {
@@ -426,18 +572,6 @@ export function restoreAgentRelease(config: RuntimeClientConfig, releaseId: stri
   return requestJson<AgentReleaseRestoreResponse>(
     config,
     `/api/agent-releases/${encodeURIComponent(releaseId)}/restore`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
-}
-
-export function submitClaudeUserInputDecision(config: RuntimeClientConfig, requestId: string, payload: ClaudeUserInputDecisionPayload) {
-  return requestJson<ClaudeUserInputDecisionResponse>(
-    config,
-    `/v1/agentgov/confirmation-requests/${encodeURIComponent(requestId)}/decision`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

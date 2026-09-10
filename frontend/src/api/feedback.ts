@@ -21,7 +21,7 @@ import type {
   SocEventCreateResponse,
   SocEventRecord,
 } from "../types/feedback";
-import type { RuntimeClientConfig } from "../types/runtime";
+import type { RuntimeClientConfig, RuntimePendingAction } from "../types/runtime";
 
 function feedbackQueryString(filters?: FeedbackFilters): string {
   const params = new URLSearchParams();
@@ -34,8 +34,50 @@ function feedbackQueryString(filters?: FeedbackFilters): string {
   return query ? `?${query}` : "";
 }
 
-export function getAgentRuns(config: RuntimeClientConfig, filters?: FeedbackFilters) {
-  return requestJson<FeedbackRunRecord[]>(config, `/api/agent-runs${feedbackQueryString(filters)}`);
+export function getAgentRuns(config: RuntimeClientConfig, filters?: FeedbackFilters, signal?: AbortSignal) {
+  return requestJson<FeedbackRunRecord[]>(
+    config,
+    `/api/agent-runs${feedbackQueryString(filters)}`,
+    { signal },
+  );
+}
+
+export function getAgentRun(config: RuntimeClientConfig, runId: string, signal?: AbortSignal) {
+  return requestJson<FeedbackRunRecord>(
+    config,
+    `/api/agent-runs/${encodeURIComponent(runId)}`,
+    { signal },
+  );
+}
+
+export function getAgentRunPendingActions(
+  config: RuntimeClientConfig,
+  runId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson<RuntimePendingAction[]>(
+    config,
+    `/api/agent-runs/${encodeURIComponent(runId)}/pending-actions`,
+    { signal },
+  );
+}
+
+/** Resolve an ambiguous initial chat POST by its caller-created, run-scoped operation ID. */
+export function getAgentRunByClientOperation(
+  config: RuntimeClientConfig,
+  sessionId: string,
+  clientOperationId: string,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({
+    session_id: sessionId,
+    client_operation_id: clientOperationId,
+  });
+  return requestJson<FeedbackRunRecord>(
+    config,
+    `/api/agent-runs/by-client-operation?${query.toString()}`,
+    { signal },
+  );
 }
 
 export function getAgentJobs(config: RuntimeClientConfig, filters?: FeedbackFilters & { job_type?: JobType; scope_kind?: string; scope_id?: string }) {

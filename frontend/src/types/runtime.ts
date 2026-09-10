@@ -29,10 +29,6 @@ type OpenApiAgentReleaseResponse = components["schemas"]["AgentReleaseResponse"]
 type OpenApiAgentReleaseRollbackRequest = components["schemas"]["AgentReleaseRollbackRequest"];
 type OpenApiAgentReleaseRestoreRequest = components["schemas"]["AgentReleaseRestoreRequest"];
 type OpenApiAgentReleaseRestoreResponse = components["schemas"]["AgentReleaseRestoreResponse"];
-type OpenApiAgentRunCancelResponse = components["schemas"]["AgentRunCancelResponse"];
-type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
-type OpenApiAgentRunTraceResponse = components["schemas"]["AgentRunTraceResponse"];
-type OpenApiAgentTraceEvent = components["schemas"]["AgentTraceEvent"];
 type OpenApiAgentConfigFileResponse = components["schemas"]["AgentConfigFileResponse"];
 type OpenApiAgentConfigFileUpdateRequest = components["schemas"]["AgentConfigFileUpdateRequest"];
 type OpenApiAgentConfigFileUpdateResponse = components["schemas"]["AgentConfigFileUpdateResponse"];
@@ -42,30 +38,27 @@ type OpenApiAgentRepositoryStatusResponse = components["schemas"]["AgentReposito
 type OpenApiWorkspaceImportResponse = components["schemas"]["WorkspaceImportResponse"];
 type OpenApiWorkspaceRestoreRequest = components["schemas"]["WorkspaceRestoreRequest"];
 type OpenApiWorkspaceRestoreResponse = components["schemas"]["WorkspaceRestoreResponse"];
-type OpenApiClaudeSdkEventsRequest = components["schemas"]["ClaudeSdkEventsRequest"];
-type OpenApiClaudeUserInputDecisionRequest = components["schemas"]["ClaudeUserInputDecisionRequest"];
-type OpenApiClaudeUserInputDecisionResponse = components["schemas"]["ClaudeUserInputDecisionResponse"];
-type OpenApiClaudeUserInputRequestResponse = components["schemas"]["ClaudeUserInputRequestResponse"];
 type OpenApiConfigMappingItem = components["schemas"]["ConfigMappingItem"];
 type OpenApiConfigMappingResponse = components["schemas"]["ConfigMappingResponse"];
 type OpenApiRuntimeHealth = components["schemas"]["RuntimeHealthResponse"];
-type OpenApiSessionInfo = components["schemas"]["SessionInfo"];
 type OpenApiSkillInfo = components["schemas"]["SkillInfo"];
-type OpenApiConversationItem = components["schemas"]["ConversationItem"];
-type OpenApiConversationItemList = components["schemas"]["ConversationItemList"];
 
 export type RuntimeHealth = OpenApiRuntimeHealth;
 export type AgentInfo = OpenApiAgentInfo;
 /** 业务 Agent（治理对象，/api/agent-registry），区别于运行内 Subagent（/api/agents）。 */
 export type AgentSummary = OpenApiAgentSummary;
+
+export interface RuntimeCurrentVersion {
+  governance_agent_id: string;
+  agent_version_id: string;
+  harness_digest: string;
+  runtime_agent_id?: string | null;
+  provisioned: boolean;
+}
 export type AgentPresentation = OpenApiAgentPresentation;
-export type OpenAICompatAgentConfig = components["schemas"]["OpenAICompatAgentConfig"];
 export type AgentLifecycleTransitionRequest = OpenApiAgentLifecycleTransitionRequest;
 export type AgentDeleteResponse = OpenApiAgentDeleteResponse;
 export type SkillInfo = OpenApiSkillInfo;
-export type SessionInfo = OpenApiSessionInfo;
-export type ConversationItem = OpenApiConversationItem;
-export type ConversationItemList = OpenApiConversationItemList;
 export type ConfigMappingItem = OpenApiConfigMappingItem;
 export type ConfigMappingResponse = OpenApiConfigMappingResponse;
 export type AgentTestRunCreateRequest = OpenApiAgentTestRunCreateRequest;
@@ -112,18 +105,12 @@ export type AgentChangeSetActionRequest = OpenApiAgentChangeSetActionRequest;
 export type AgentChangeSetPublishRequest = OpenApiAgentChangeSetPublishRequest;
 export type AgentReleaseRollbackRequest = OpenApiAgentReleaseRollbackRequest;
 export type AgentReleaseRestoreRequest = OpenApiAgentReleaseRestoreRequest;
-export type AgentRunCancelResponse = OpenApiAgentRunCancelResponse;
-export type AgentRunRecord = OpenApiAgentRunResponse;
-export type AgentRunTrace = OpenApiAgentRunTraceResponse;
-export type AgentTraceEvent = OpenApiAgentTraceEvent;
 export type AgentConfigFileResponse = OpenApiAgentConfigFileResponse;
 export type AgentConfigFileUpdateRequest = OpenApiAgentConfigFileUpdateRequest;
 export type AgentConfigFileUpdateResponse = OpenApiAgentConfigFileUpdateResponse;
 export type WorkspaceImportResponse = OpenApiWorkspaceImportResponse;
 export type WorkspaceRestoreRequest = OpenApiWorkspaceRestoreRequest;
 export type WorkspaceRestoreResponse = OpenApiWorkspaceRestoreResponse;
-
-export type ClaudeSdkEventsRequest = OpenApiClaudeSdkEventsRequest;
 
 export interface AgentActivity {
   tool_names: string[];
@@ -135,6 +122,237 @@ export interface AgentActivity {
 export type ChatRole = "user" | "assistant" | "system";
 export type LangfuseTraceStatus = "available" | "not_recorded" | "history_unlinked";
 
+export type AgentScopeSessionStatus =
+  | "running"
+  | "idle"
+  | "awaiting_permission"
+  | "awaiting_external_result";
+
+export interface AgentScopeSessionRecord {
+  id?: string;
+  session_id?: string;
+  agent_id?: string | null;
+  name?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface AgentScopeSessionView {
+  session: AgentScopeSessionRecord;
+  is_running: boolean;
+  status: AgentScopeSessionStatus;
+  team?: unknown;
+}
+
+/** Playground-side projection of an AgentScope SessionView. */
+export interface SessionInfo {
+  session_id: string;
+  /** AgentScope Runtime Agent ID pinned when the Session was created. */
+  agent_id: string | null;
+  /** Stable AgentGov governance object owning this Runtime Session. */
+  business_agent_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  title?: string;
+  turns: number;
+  metadata: Record<string, unknown>;
+  is_running: boolean;
+  status: AgentScopeSessionStatus;
+  active_run_id?: string | null;
+}
+
+export interface AgentScopeContentBlock {
+  type: string;
+  id?: string;
+  text?: string;
+  thinking?: string;
+  hint?: string | AgentScopeContentBlock[];
+  name?: string;
+  input?: string;
+  output?: string | AgentScopeContentBlock[];
+  state?: string;
+  suggested_rules?: unknown[];
+  [key: string]: unknown;
+}
+
+export interface AgentScopeToolCallBlock extends AgentScopeContentBlock {
+  type: "tool_call";
+  id: string;
+  name: string;
+  input: string;
+}
+
+export interface AgentScopeMessage {
+  name: string;
+  role: ChatRole;
+  content: AgentScopeContentBlock[];
+  id: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  usage?: Record<string, unknown> | null;
+  finished_at?: string | null;
+  finished_reason?: "completed" | "interrupted" | "exceed_max_iters" | "error" | null;
+  structured_output?: Record<string, unknown> | null;
+  error?: AgentScopeError | null;
+}
+
+export interface AgentScopeError {
+  type: string;
+  message: string;
+  [key: string]: unknown;
+}
+
+export interface AgentScopeAgentEvent {
+  id: string;
+  created_at: string;
+  metadata: Record<string, unknown>;
+  type: string;
+  session_id?: string;
+  reply_id?: string;
+  block_id?: string;
+  tool_call_id?: string;
+  tool_call_name?: string;
+  delta?: string;
+  finished_reason?: "completed" | "interrupted" | "exceed_max_iters" | "error" | string;
+  error?: AgentScopeError | null;
+  tool_calls?: AgentScopeToolCallBlock[];
+  name?: string;
+  value?: unknown;
+  [key: string]: unknown;
+}
+
+export interface AgentScopeMessagesResponse {
+  messages: AgentScopeMessage[];
+  is_running: boolean;
+  has_more: boolean;
+}
+
+export interface AgentScopeStatusResponse {
+  session_id: string;
+  status: AgentScopeSessionStatus;
+}
+
+export interface AgentScopeChatResponse {
+  status: "started";
+  session_id: string;
+}
+
+export interface AgentScopeChatReceipt extends AgentScopeChatResponse {
+  runId: string;
+}
+
+export interface AgentScopeUserMessage {
+  name: "user";
+  role: "user";
+  content: Array<{ type: "text"; text: string }>;
+}
+
+export interface AgentScopeUserConfirmResult {
+  type: "USER_CONFIRM_RESULT";
+  reply_id: string;
+  confirm_results: Array<{
+    confirmed: boolean;
+    tool_call: AgentScopeToolCallBlock;
+  }>;
+}
+
+export type AgentScopeToolResultState = "success" | "error" | "interrupted" | "denied";
+
+export interface AgentScopeExternalExecutionResult {
+  type: "EXTERNAL_EXECUTION_RESULT";
+  reply_id: string;
+  execution_results: Array<{
+    type: "tool_result";
+    id: string;
+    name: string;
+    output: string;
+    state: AgentScopeToolResultState;
+  }>;
+}
+
+export type AgentScopeChatInput = AgentScopeUserMessage | AgentScopeUserConfirmResult | AgentScopeExternalExecutionResult | null;
+
+export type RuntimeConfirmationScope = "once" | "run";
+export type RuntimeUserConfirmAction = "allow_once" | "allow_for_run" | "deny";
+
+export interface RuntimeUserConfirmRequest {
+  requestId: string;
+  replyId: string;
+  /** Present when AgentScope projected a Team worker request onto the leader stream. */
+  workerSessionId?: string;
+  toolCalls: AgentScopeToolCallBlock[];
+  status: "waiting" | "resolved" | "cancelled";
+  decision?: RuntimeUserConfirmAction | "runtime_interrupted";
+  resolvedAt?: string;
+}
+
+export interface RuntimeExternalExecutionRequest {
+  requestId: string;
+  replyId: string;
+  /** Present when AgentScope projected a Team worker request onto the leader stream. */
+  workerSessionId?: string;
+  toolCalls: AgentScopeToolCallBlock[];
+  status: "waiting" | "resolved" | "cancelled";
+  resultState?: AgentScopeToolResultState | "runtime_interrupted";
+  resolvedAt?: string;
+}
+
+export interface RuntimePendingAction {
+  action_id: string;
+  session_id: string;
+  run_id: string;
+  reply_id: string;
+  kind: "human" | "external";
+  tool_call: Record<string, unknown>;
+  status: "pending";
+  created_at: string;
+}
+
+export interface AgentRunRecord {
+  run_id: string;
+  session_id: string;
+  agent_id: string;
+  agent_version_id: string;
+  runtime_agent_id?: string;
+  client_operation_id?: string | null;
+  harness_digest?: string;
+  status: "queued" | "running" | "waiting_human" | "waiting_external" | "finalizing" | "succeeded" | "failed" | "cancelled" | "interrupted";
+  reply_ids?: string[];
+  trace_id?: string | null;
+  trace_url?: string | null;
+  trace_status?: "pending" | "complete" | "incomplete";
+  terminal_reason?: string | null;
+  error?: Record<string, unknown> | null;
+  alert_id?: string | null;
+  case_id?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  started_at?: string | null;
+  updated_at?: string;
+  completed_at?: string | null;
+}
+
+export interface AgentRunTrace {
+  run_id: string;
+  trace_id?: string | null;
+  trace_url?: string | null;
+  trace_status: "pending" | "complete" | "incomplete";
+}
+
+/** UI projection only; payload retains the complete native AgentScope event. */
+export interface AgentTraceEvent {
+  event_id: string;
+  kind: string;
+  message_index: number;
+  run_id: string;
+  scope: "main";
+  sequence: number;
+  source_event: string;
+  payload?: Record<string, unknown>;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -142,7 +360,6 @@ export interface ChatMessage {
   createdAt: string;
   runId?: string;
   sessionId?: string;
-  sdkSessionId?: string;
   agentVersionId?: string;
   langfuseTraceId?: string;
   langfuseTraceUrl?: string;
@@ -153,10 +370,11 @@ export interface ChatMessage {
   partial?: boolean;
   controlError?: string;
   agentActivity?: AgentActivity;
-  userInputRequests?: ClaudeUserInputRequest[];
+  userConfirmRequests?: RuntimeUserConfirmRequest[];
+  externalExecutionRequests?: RuntimeExternalExecutionRequest[];
   traceState?: "live" | "calibrating" | "ready" | "unavailable" | "error";
   traceError?: string;
-  /** Complete semantic SDK facts for this run, reconciled from AgentRun after completion. */
+  /** Native AgentScope events observed for this run. */
   events?: StreamLogEvent[];
 }
 
@@ -169,27 +387,6 @@ export interface StreamLogEvent {
   createdAt: string;
   sequence?: number;
 }
-
-export interface StreamEnvelope {
-  event: string;
-  data: unknown;
-}
-
-export type ClaudeUserInputRequestType = OpenApiClaudeUserInputRequestResponse["request_type"];
-export type ClaudeUserInputStatus = OpenApiClaudeUserInputRequestResponse["status"];
-export type ClaudeUserInputDecisionAction = OpenApiClaudeUserInputDecisionRequest["action"];
-
-export type ClaudeUserInputRequest = Omit<OpenApiClaudeUserInputRequestResponse, "input" | "context" | "risk" | "decision_payload"> & {
-  decision_token?: string;
-  input: Record<string, unknown>;
-  context: Record<string, unknown>;
-  risk: Record<string, unknown>;
-  decision_payload?: Record<string, unknown>;
-};
-
-export type ClaudeUserInputDecisionPayload = OpenApiClaudeUserInputDecisionRequest;
-
-export type ClaudeUserInputDecisionResponse = OpenApiClaudeUserInputDecisionResponse;
 
 export interface RuntimeClientConfig {
   apiBase: string;

@@ -33,14 +33,16 @@ def test_agv_001_governance_platform_positioning() -> None:
 
 
 def test_agv_003_048_frontend_is_debug_observation_boundary() -> None:
-    """AGV-003 / AGV-048 前端边界：调试与治理观察界面，不接管 CLI、不操作生产。"""
+    """AGV-003 / AGV-048 前端边界：只经 AgentGov API 观察治理，不接管 Runtime 或生产。"""
     readme = _read("README.md")
     chat = _read("frontend/src/components/ChatPanel.tsx")
 
-    assert "不接管 Claude Code CLI 进程" in readme
     assert "不提供 Terminal" in readme
-    assert "通过后端 Runtime API 完成" in readme
-    assert "不接管 Claude Code 进程" in chat
+    assert "不接管 AgentScope Runtime" in readme
+    assert "所有运行交互均通过 AgentGov API 完成" in readme
+    assert "不直接访问 AgentScope Runtime 管理面" in readme
+    assert "Playground 主区只留对话、回复动作和输入" in chat
+    assert "Claude" not in chat
 
 
 def test_agv_046_security_ops_is_replaceable_example_scenario() -> None:

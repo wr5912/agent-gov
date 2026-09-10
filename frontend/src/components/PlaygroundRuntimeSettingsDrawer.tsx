@@ -14,14 +14,11 @@ interface PlaygroundRuntimeSettingsDrawerProps {
   clientConfig: RuntimeClientConfig;
   agents: AgentInfo[];
   skills: SkillInfo[];
-  activeSessionId?: string;
   alertId: string;
   caseId: string;
-  maxTurns: number;
   streaming: boolean;
   onAlertIdChange: (v: string) => void;
   onCaseIdChange: (v: string) => void;
-  onMaxTurnsChange: (v: number) => void;
   health: RuntimeHealth | null;
   configMapping: ConfigMappingResponse | null;
   selectedBusinessAgentId: string;
@@ -37,17 +34,16 @@ export function PlaygroundRuntimeSettingsDrawer(props: PlaygroundRuntimeSettings
   const mappings = props.configMapping?.mappings || [];
   const existingMappings = mappings.filter((item) => item.exists);
   const projectMappings = mappings.filter(
-    (item) => item.display_group === "agent_project_config" && item.safe_to_edit,
+    (item) => item.display_group === "harness" && item.safe_to_edit,
   );
-  const runtimeMappings = existingMappings.filter((item) => item.display_group === "versioning_runtime");
-  const userStateMappings = existingMappings.filter((item) => item.display_group === "agent_user_state");
-  const agentRepositoryPath = runtimeMappings.find((item) => item.kind === "agent-git-repository")?.container_path;
-  const providerReadiness = props.health?.model_provider_route?.readiness;
+  const runtimeMappings = existingMappings.filter((item) => item.display_group === "versioning");
+  const userStateMappings = existingMappings.filter((item) => item.display_group === "hidden_debug");
+  const runtimeReadiness = props.health?.runtime_service;
 
   return (
     <DrawerShell
       title="运行设置"
-      description="查看当前业务 Agent 的 Claude Code 配置、能力发现和任务上下文。"
+      description="查看当前业务 Agent 的 AgentScope Runtime 能力和任务上下文。"
       size="wide"
       testId="playground-runtime-settings-drawer"
       className="playground-runtime-settings-drawer"
@@ -74,10 +70,6 @@ export function PlaygroundRuntimeSettingsDrawer(props: PlaygroundRuntimeSettings
         </div>
         <div className="runtime-settings-grid">
           <label className="form-field">
-            <span>Max Turns</span>
-            <input type="number" min={1} max={50} value={props.maxTurns} onChange={(event) => props.onMaxTurnsChange(Number(event.target.value || 1))} />
-          </label>
-          <label className="form-field">
             <span>Alert ID</span>
             <input value={props.alertId} onChange={(event) => props.onAlertIdChange(event.target.value)} placeholder="alert-001" />
           </label>
@@ -95,22 +87,19 @@ export function PlaygroundRuntimeSettingsDrawer(props: PlaygroundRuntimeSettings
             <Metric label="Status" value={props.health?.status || "unknown"} tone={props.health?.status === "ok" ? "good" : "warn"} />
             <Metric label="Model" value={props.health?.model || "-"} />
             <Metric label="Business Agent" value={props.configMapping?.agent_id || props.selectedBusinessAgentId || "-"} />
-            <Metric label="Workspace" value={agentRepositoryPath || props.health?.workspace_dir || "-"} mono />
-            <Metric label="Claude Home" value={props.configMapping?.claude_home || props.health?.claude_home || "-"} mono />
-            <Metric label="Config Mode" value={props.health?.claude_config_mode || "-"} />
-            <Metric label="Provider Key" value={props.health?.provider_api_key_configured ? "configured" : "missing"} tone={props.health?.provider_api_key_configured ? "good" : "warn"} />
+            <Metric label="Workspace" value={props.configMapping?.workspace || props.health?.workspace_dir || "-"} mono />
             <Metric
-              label="Model Provider"
-              value={providerReadiness?.status || "not checked"}
-              tone={providerReadiness?.status === "ready" ? "good" : "warn"}
+              label="AgentScope Runtime"
+              value={runtimeReadiness?.status || "not checked"}
+              tone={runtimeReadiness?.status === "ready" ? "good" : "warn"}
             />
-            {providerReadiness?.error_code ? (
-              <div className="runtime-provider-diagnostic" data-testid="model-provider-diagnostic">
-                <strong>{providerReadiness.error_code}</strong>
+            {runtimeReadiness?.error_code ? (
+              <div className="runtime-provider-diagnostic" data-testid="runtime-service-diagnostic">
+                <strong>{runtimeReadiness.error_code}</strong>
                 <span>
-                  probe={providerReadiness.probe || "unknown"} · reason={providerReadiness.reason || "unknown"}
+                  probe={runtimeReadiness.probe || "unknown"} · reason={runtimeReadiness.reason || "unknown"}
                 </span>
-                {providerReadiness.action ? <p>{providerReadiness.action}</p> : null}
+                {runtimeReadiness.action ? <p>{runtimeReadiness.action}</p> : null}
               </div>
             ) : null}
           </DebugPanel>
@@ -119,12 +108,12 @@ export function PlaygroundRuntimeSettingsDrawer(props: PlaygroundRuntimeSettings
             {projectMappings.length ? projectMappings.map((item) => (
               <div className="runtime-debug-card" key={`${item.scope}-${item.kind}-${item.container_path}`}>
                 <strong>{item.scope} · {item.kind}</strong>
-                {item.scope === "project" && item.kind === "mcp" ? (
+                {item.kind === "manifest" || item.kind === "instructions" ? (
                   <button
                     className="runtime-config-path-button"
                     type="button"
-                    data-testid="runtime-config-edit-mcp"
-                    onClick={() => setEditingPath(".mcp.json")}
+                    data-testid={`runtime-config-edit-${item.kind}`}
+                    onClick={() => setEditingPath(item.kind === "manifest" ? "agent.yaml" : "AGENT.md")}
                   >
                     <code>{item.container_path}</code>
                   </button>
@@ -155,7 +144,6 @@ export function PlaygroundRuntimeSettingsDrawer(props: PlaygroundRuntimeSettings
           clientConfig={props.clientConfig}
           agentId={props.selectedBusinessAgentId}
           path={editingPath}
-          sessionId={props.activeSessionId}
           streaming={props.streaming}
           onApplied={props.onConfigApplied}
           onClose={() => setEditingPath(null)}
@@ -199,8 +187,10 @@ function Metric({ label, value, mono, tone }: { label: string; value: string; mo
 }
 
 function mappingLoadLabel(item: MappingItem) {
-  if (item.load_semantics === "runtime_used") return "后端运行态使用";
-  if (item.load_semantics === "claude_loaded") return item.loaded_by_default ? "Claude 默认加载" : "Claude 项目配置";
-  if (item.load_semantics === "claude_optional") return item.loaded_by_default ? "Claude 可加载" : "按需加载";
+  if (item.load_semantics === "runtime_loaded") return "Runtime 直接加载";
+  if (item.load_semantics === "runtime_materialized") return "Runtime 物化加载";
+  if (item.load_semantics === "governance_only") return "仅治理使用";
+  if (item.loaded_by_default) return "Runtime 默认加载";
+  if (item.safe_to_edit) return "项目配置";
   return "不直接加载";
 }

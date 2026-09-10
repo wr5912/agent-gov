@@ -1,6 +1,6 @@
 # Claude 原生业务Agent人类确认机制整改实现方案
 
-> 归档说明（2026-07-10）：本文记录 canonical Responses/HITL 落地前的整改设计，仅用于历史审计，不再代表当前接口。当前外部契约见 [AgentGov 集成指南](../../AgentGov集成指南.md)，工程决策见 [Responses-first ADR](../../engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)。
+> 归档说明（2026-07-10，2026-09-09 更新）：本文仅用于历史审计，不再代表当前接口。当前外部契约见 [AgentGov 集成指南](../../AgentGov集成指南.md)；被取代的 [Responses-first ADR](../obsolete/OpenAI兼容接口能否替代原生Chat端点评估.md) 也已归档。
 >
 > 文档状态：历史审批方案；2026-07-13 起由当前运行时契约取代。本文保留设计演进背景，后文中的 `bypassPermissions`、Bash 全量直放和普通 HITL 不支持 `updated_input` 等旧口径不再代表现状。
 > 适用范围：所有注册业务Agent（含 `main-agent`）的 Playground / Agent Runtime 交互运行。

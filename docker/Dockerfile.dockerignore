@@ -1,7 +1,8 @@
-.env
-docker/.env
-docker/.env.local
-docker/.env.local-debug
+# 私有配置及其回退备份不得发送给 Docker builder；保留 .env.example。
+**/.env
+**/.env.local
+**/.env.local-debug
+**/.env.bak*
 .git
 __pycache__/
 *.pyc
@@ -9,5 +10,4 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 data/
-claude-root/
 docker/volume/

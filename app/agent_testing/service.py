@@ -87,12 +87,14 @@ class AgentTestingService:
         list_agents: Callable[[], Iterable[object]] | None = None,
         schedule_reader: Callable[[str], JsonObject | None] | None = None,
         schedule_list_reader: Callable[[list[str]], list[JsonObject]] | None = None,
+        release_candidate: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.store = store
         self._store_for = store_for
         self._agent_exists = agent_exists
         self._get_change_set = get_change_set
         self._run_candidate = run_candidate
+        self._release_candidate = release_candidate
         self._list_agents = list_agents or (lambda: ())
         self._schedule_reader = schedule_reader
         self._schedule_list_reader = schedule_list_reader
@@ -115,11 +117,31 @@ class AgentTestingService:
         return self.runner.recover()
 
     def close(self) -> None:
+        """关闭测试 runner 并清理本地 checkout。
+
+        保留同步入口供既有单元测试和纯本地调用使用。生产应用必须调用
+        :meth:`aclose`，以便同时销毁 AgentScope 中的候选 Session/Agent。
+        """
+
         self.runner.close()
         with self._sessions_lock:
             session_ids = list(self._sessions)
         for session_id in session_ids:
             self.delete_session(session_id)
+
+    async def aclose(self) -> None:
+        """异步回收所有候选 Runtime 资源和本地 checkout。"""
+
+        # 先停止可能仍在调用候选 Session 的 pytest 子进程，再销毁 Runtime 资源，
+        # 避免 shutdown 期间出现测试进程与远端 Session 删除的竞态。
+        self.runner.close()
+        with self._sessions_lock:
+            session_ids = list(self._sessions)
+        for session_id in session_ids:
+            try:
+                await self.delete_session_async(session_id)
+            except Exception:
+                logger.exception("Failed to release AgentScope candidate test session", extra={"test_session_id": session_id})
 
     def inspect_suite(self, agent_id: str, *, commit_sha: str | None = None) -> AgentTestSuiteSummary:
         safe_agent_id = self._require_agent(agent_id)
@@ -352,6 +374,19 @@ class AgentTestingService:
         if session is None:
             return
         self.runner.remove_checkout(store=self._store_for(session.agent_id), destination=session.checkout)
+
+    async def delete_session_async(self, test_session_id: str) -> None:
+        """销毁 AgentScope 候选 Session，再无条件清理本地 checkout。
+
+        Runtime 资源键使用传给候选执行器的外部 Session id，而不是测试 API 的
+        ``ats-*`` id；重复调用保持幂等，可用于上一次远端清理失败后的重试。
+        """
+
+        try:
+            if self._release_candidate is not None:
+                await self._release_candidate(f"agent-test-{test_session_id}")
+        finally:
+            self.delete_session(test_session_id)
 
     def record_import(self, *, agent_id: str, action: str, package_sha256: str, tree_sha256: str, commit_sha: str) -> tuple[str, AgentTestSuiteSummary]:
         suite = self.inspect_suite(agent_id, commit_sha=commit_sha)

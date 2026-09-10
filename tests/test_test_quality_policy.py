@@ -101,7 +101,8 @@ def test_repository_quality_policy_covers_every_collected_leaf() -> None:
 
     assert validation.errors == ()
     assert len(validation.collection.nodeids) == len(validation.classifications)
-    assert len(validation.collection.nodeids) >= 1000
+    # Runtime 原子切换删除了整套旧适配层回归；保留足够高的下限以防测试集合静默坍缩。
+    assert len(validation.collection.nodeids) >= 500
     assert any(nodeid.startswith("docker/runtime-bootstrap/governor-workspace/tests/") for nodeid in validation.collection.nodeids)
     assert not any("/business-agents/" in nodeid and "/workspace/tests/" in nodeid for nodeid in validation.collection.nodeids)
     assert {classification.owner for classification in validation.classifications.values()} == {

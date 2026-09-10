@@ -188,7 +188,7 @@ function defaultPayload(path) {
   if (path === "/api/agent-test-runs/history") return { items: [], next_cursor: null };
   if (path === "/api/agent-registry/soc-ops/test-suite/file") return { agent_id: "soc-ops", commit_sha: testAssets[0].suite.commit_sha, path: "tests/test_alert.py", content: testSourceLines.join("\n"), line_count: testSourceLines.length, symbols: testSourceSymbols };
   if (path === "/api/agent-registry/soc-ops/test-schedule/events") return [];
-  if (path === "/api/sessions" || path === "/api/agents" || path === "/api/skills" || path === "/api/improvements" || path === "/api/agent-change-sets" || path === "/api/agent-releases" || path === "/api/agent-test-runs") return [];
+  if (path === "/api/agents" || path === "/api/skills" || path === "/api/improvements" || path === "/api/agent-change-sets" || path === "/api/agent-releases" || path === "/api/agent-test-runs") return [];
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
   if (path === "/api/agent-repository/current") return { agent_version_id: "v0", commit_sha: "v0", created_at: ts, reason: "current" };

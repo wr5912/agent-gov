@@ -44,7 +44,7 @@
 | 治理成熟度路径 | 内置业务 Agent 闭环、多业务 Agent、场景包、跨 Agent 方法论沉淀 | AGV-043, AGV-044, AGV-045 |
 | 典型落地场景 | 安全运营只是典型场景之一，平台不绑定单一行业 | AGV-046 |
 | 产品边界 | AgentGov 负责治理能力，外部系统负责业务界面、权限、生产系统和高风险动作责任；当前不建设通用协作模型 | AGV-047, AGV-048, AGV-049 |
-| OpenAI 兼容主路径 | Responses-first 接口可承载 Playground 主运行、会话恢复、外部 API 集成，并保留原生 Chat 兼容面 | AGV-050 |
+| AgentScope Runtime 主路径 | AgentGov API 承载 Playground、会话恢复、run/reply/trace 映射与外部系统集成；生产无旧 Runtime 双轨 | AGV-050 |
 | 平台发布评测与 EvalOps | 业务 Agent、evaluator-owned 评测基准和平台发布裁决职责分离 | AGV-051 |
 | 平台控制面与数据治理 | 单组织先行仍保留 backend-owned 身份、resource scope 和数据全生命周期边界 | AGV-052, AGV-053 |
 | 扩展集成与可运营性 | 外部集成遵循通用可靠性契约，规模化扩展具有 SLO、容量和经济性证据 | AGV-054, AGV-055 |
@@ -149,7 +149,7 @@
 
 证据要求：Agent 定义记录、配置摘要、live Workspace 原样往返证据和运行卷初始化源准入扫描结果。
 
-自动验收：`tests/test_agent_workspace_manifest_identity.py::test_create_accepts_exact_manifest_identity_without_rewriting_package`（包内 ID 与目标 ID 完全一致时创建稳定注册身份且平台不改写文件）、`tests/test_agent_workspace_manifest_identity.py::test_create_rejects_source_identity_mismatch_with_actionable_error_and_audit`（来源 ID 冲突在任何目标状态产生前明确拒绝）、`tests/test_agent_registry_store.py::test_direct_create_and_template_catalog_endpoints_are_removed`（旧直接创建和模板目录不可用）、`tests/test_agent_workspace_packages.py::test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env`（live Workspace 私有配置与二进制原样往返）、`tests/test_runtime_bootstrap_tools.py::test_runtime_bootstrap_safety_scan_is_read_only` 与 `test_runtime_bootstrap_safety_sanitizes_embedded_secret`（仓库初始化源扫描只读且秘密可被显式清理）。配置面采用 Claude Code 原生文件，运行业务 Agent 时以该 Workspace 为 cwd；平台不另建通用模板或 per-Agent 模型凭据来源。
+自动验收：`tests/test_agent_workspace_manifest_identity.py::test_create_accepts_exact_manifest_identity_without_rewriting_package`（包内 ID 与目标 ID 完全一致时创建稳定注册身份且平台不改写文件）、`tests/test_agent_workspace_manifest_identity.py::test_create_rejects_source_identity_mismatch_with_actionable_error_and_audit`（来源 ID 冲突在任何目标状态产生前明确拒绝）、`tests/test_agent_registry_store.py::test_direct_create_and_template_catalog_endpoints_are_removed`（旧直接创建和模板目录不可用）、`tests/test_agent_workspace_packages.py::test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env`（live Workspace 私有配置与二进制原样往返）、`tests/test_runtime_bootstrap_tools.py::test_runtime_bootstrap_safety_scan_is_read_only` 与 `test_runtime_bootstrap_safety_sanitizes_embedded_secret`（仓库初始化源扫描只读且秘密可被显式清理）。配置面采用 AgentScope Harness（`agent.yaml`、`AGENT.md`、`skills/`、`mcp/`、`subagents/`），Runtime 只从该 Workspace 的受控工作副本执行；平台不另建通用模板或 per-Agent 模型凭据来源。
 
 ### AGV-005 业务 Agent 与治理 Agent 边界清晰
 
@@ -246,9 +246,10 @@
 
 证据要求：运行记录 API 响应、trace 链接或 SQLite 投影。
 
-自动验收（部分）：`tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent`
-与 `tests/test_session_history.py::test_read_session_history_projects_via_committed_sdk_store`
-证明 Playground 历史由 owning Agent 的 SDK transcript 投影，SQLite `agent_runs` 不再作为消息恢复源。
+自动验收（部分）：`tests/test_runtime_gateway_store.py::test_reply_end_waits_for_canonical_message_before_releasing_fence`
+与 `tests/test_runtime_gateway_router.py::test_trace_completes_only_after_matching_finished_agentgov_run_root`
+证明运行终态等待 AgentScope canonical message 持久化，并且 trace 只在匹配的 `agentgov.run`
+根 span 完成后进入可查询终态。
 仍缺一次真实运行将 input/output/status/error、tool/skill 活动、Trace 与后续反馈、
 归因和评估联合反查的运行态证据。
 
@@ -392,11 +393,11 @@
 
 证据要求：UI 详情截图或 API JSON。
 
-自动验收（部分）：`tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent`、
-`tests/test_conversations_api.py::test_items_project_run_and_trace_context_by_transcript_uuid`、
-`tests/test_session_history.py::test_endpoint_projects_history` 和
-`tests/test_session_history.py::test_normalize_message_hostile_inputs_do_not_crash_or_pollute_role`
-证明前端会话历史的 API 真相来自 SDK transcript，运行/Trace 上下文按 UUID 确定性关联，并覆盖 owning Agent 和 hostile 消息投影。
+自动验收（部分）：`tests/test_runtime_gateway_router.py::test_sse_proxy_preserves_raw_frames_and_unknown_events`、
+`tests/test_runtime_gateway_store.py::test_persisted_message_must_match_observed_reply_end` 和
+`tests/test_runtime_gateway_router.py::test_trace_completes_only_after_matching_finished_agentgov_run_root`
+证明 AgentScope 原生事件帧经 AgentGov API 透传，终态回复与 canonical message 一致，且 run/trace
+关联只接受匹配的已完成根 span。
 仍缺真实运行下 UI 回复细节对 input/output、tool/skill、错误与 Trace 的联合展示证据。
 
 ### AGV-015 Feedback Loop 形成标准化归因链路
@@ -769,13 +770,13 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：error_json、状态机事件、补偿或回滚记录。
 
-自动验收（部分）：`tests/test_responses_stream.py::test_stream_finalization_exhaustion_interrupts_and_allows_immediate_retry`、
-`tests/test_runtime_db_0040.py::test_0040_archive_and_destructive_changes_roll_back_together`、
+自动验收（部分）：`tests/test_runtime_gateway_store.py::test_restart_reconciliation_fails_closed_and_keeps_session_fence`、
+`tests/test_runtime_gateway_recovery.py::test_startup_recovery_discovers_and_cleans_unbound_session_with_404_idempotency`、
 `tests/test_agent_governance_publish.py::test_publish_db_finalize_failure_rolls_back_metadata_and_retry_reconciles` 和
 `tests/test_agent_maintenance_recovery.py::test_restore_reconciles_crash_after_git_before_operation_persistence`、
 `tests/test_agent_maintenance_recovery.py::test_reconciler_completes_expired_restore_after_git_without_repeating_reset`、
 `tests/test_agent_maintenance_recovery.py::test_worktree_cleanup_reconciles_crash_after_idempotent_git_delete`
-已覆盖 Runtime finalize 条件更新冲突耗尽后的立即恢复、旧链归档与 DDL 原子回滚、publish/rollback/restore durable operation 对账，
+已覆盖 AgentScope 会话围栏与未绑定 session 的重启恢复、publish/rollback/restore durable operation 对账，
 以及终态 worktree cleanup 的启动恢复和用户重试入口。残余缺口是完整 Improvement 闭环在任一阶段失败后的
 单条跨层恢复验收仍未统一覆盖。
 
@@ -850,7 +851,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：输出详情和归因结果。
 
-自动验收（部分）：`tests/test_feedback_output_normalizers.py::test_attribution_formatter_output_drops_backend_owned_fields` 证明后端字段所有权边界。仍缺 `reasoning_error` 与数据、工具、执行资产问题的独立分类回归；字段形状本身不能替代该业务语义验收。
+自动验收（部分）：`tests/test_feedback_output_normalizers.py::test_attribution_formatter_drops_backend_owned_fields` 证明后端字段所有权边界。仍缺 `reasoning_error` 与数据、工具、执行资产问题的独立分类回归；字段形状本身不能替代该业务语义验收。
 
 ### AGV-033 反馈进入问题分类和证据链
 
@@ -874,7 +875,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：attribution output 和 evidence references。
 
-自动验收（部分）：`tests/test_runtime_db.py::test_feedback_store_soc_event_ingest_is_idempotent_under_concurrency` 证明并发摄取幂等。仍缺 matched/duplicate/pending 三分类响应、证据链与人工复核提示的联合验收。
+自动验收（部分）：`tests/test_feedback_case_agent_ownership.py::test_concurrent_ensure_case_for_source_is_idempotent` 证明并发归并同一反馈来源时保持幂等。仍缺 matched/duplicate/pending 三分类响应、证据链与人工复核提示的联合验收。
 
 ### AGV-034 优化形成可执行资产而非一次性建议
 
@@ -990,18 +991,18 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 测试步骤：
 
 1. 发起无效输入、无权限请求或模拟治理模型调用失败。
-2. 查询 API 响应、provider readiness 和 UI 状态。
+2. 查询 API 响应、AgentScope Runtime readiness 和 UI 状态。
 3. 检查错误是否可用于下一步处理。
 
 成功标准：
 
 - 错误包含 error code 或明确 detail。
-- 模型调用失败包含 probe、reason、retryable 和 action 等可执行诊断。
+- Runtime 调用失败包含稳定错误码，并且 readiness 不泄露内部目标或响应正文。
 - UI 不显示误导性空态。
 
 证据要求：错误响应、readiness 摘要、UI 失败态。
 
-自动验收：`tests/test_api_error_handlers.py::test_feedback_store_error_handler_returns_structured_error`、`tests/test_model_provider_router.py::test_vllm_transport_failure_stops_agent_request_with_precise_diagnostic`、`tests/test_health_endpoints.py::test_readiness_reports_sanitized_vllm_timeout_and_recovers`。
+自动验收：`tests/test_api_error_handlers.py::test_feedback_store_error_handler_returns_structured_error`、`tests/test_runtime_gateway_router.py::test_runtime_client_normalizes_transport_failure_without_leaking_target`、`tests/test_health_endpoints.py::test_readiness_reports_agentscope_unreachable_without_leaking_body`。
 
 ### AGV-039 当前调试前端可观察核心治理链路
 
@@ -1049,7 +1050,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：env 配置摘要、业务动作结果、健康检查。
 
-自动验收（示例凭据不泄露）：`tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key`。
+自动验收（示例凭据不泄露）：`tests/test_repository_env_policy.py::test_official_env_examples_keep_secrets_and_runtime_ownership_explicit`。
 
 ### AGV-041 高风险动作需要审批
 
@@ -1102,7 +1103,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：Workspace 包 digest/commit、运行卷初始化源扫描结果、调试观测面边界说明和 401 响应。
 
-自动验收：`tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key`、`tests/test_agent_workspace_packages.py::test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env`、`tests/test_runtime_bootstrap_tools.py::test_runtime_bootstrap_safety_scan_is_read_only`、`tests/test_runtime_bootstrap_tools.py::test_runtime_bootstrap_safety_sanitizes_embedded_secret`；前端/Langfuse 完整调试观测由运行时和 UI 验收覆盖。
+自动验收：`tests/test_repository_env_policy.py::test_official_env_examples_keep_secrets_and_runtime_ownership_explicit`、`tests/test_agent_workspace_packages.py::test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env`、`tests/test_runtime_bootstrap_tools.py::test_runtime_bootstrap_safety_scan_is_read_only`、`tests/test_runtime_bootstrap_tools.py::test_runtime_bootstrap_safety_sanitizes_embedded_secret`；前端/Langfuse 完整调试观测由运行时和 UI 验收覆盖。
 
 ### AGV-043 内置业务 Agent 端到端闭环
 
@@ -1189,7 +1190,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 测试步骤：
 
-1. 阅读安全运营相关 CLAUDE.md、README 或产品文档。
+1. 阅读安全运营相关 `AGENT.md`、README 或产品文档。
 2. 检查是否表明安全运营是典型示例。
 3. 验证目标文档同时保留其他场景。
 
@@ -1244,7 +1245,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 成功标准：
 
-- 前端不接管 Claude Code CLI 进程。
+- 前端不接管 AgentScope Runtime 进程或绕过 AgentGov API 直连其管理面。
 - 前端不编辑宿主机敏感文件。
 - 聊天、反馈、评估和版本治理通过后端治理 API 完成。
 
@@ -1278,48 +1279,67 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 自动验收：`tests/test_agv_acceptance.py::test_agv_049_collaboration_platform_selection_is_deferred`。该验收同时约束两条边界：当前不接入外部研发协作平台；后期多智能体协作在真实需求出现后重新选型，不预设候选产品。
 
-### AGV-050 Responses 外部契约与 Playground SDK-native 主路径
+### AGV-050 AgentScope Runtime 外部契约与 Playground 主路径
 
 状态：`current`
 
-目标来源：核心目标 7、Runtime、外部 API 集成、`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`。
+目标来源：核心目标 7、Runtime、外部 API 集成、根 `README.md` 的 AgentScope Runtime 公共契约。
 
 前置条件：API、UI 容器已用当前代码和 `docker/.env` 配置启动；存在至少一个 runnable 业务 Agent（默认 `security-operations-expert`）。
 
 测试步骤：
 
-1. 打开真实容器 Swagger 的 `/docs#/openai-responses/create_response_v1_responses_post`，确认
-   `Parameters → No parameters` 旁明确说明 JSON 位于 `Request body`，Responses 展开 22 个
-   嵌套字段、5 个具名请求示例；`with_speech_summary` 展示默认 `false`、顶层
-   `stream=true`、非流式 `422` 和 best-effort 事件语义。抽查 SDK、query-heavy 和 multipart
-   operation，确认字段/参数都有描述与具体示例。
-2. 通过 Playground 发起一次真实业务 Agent 运行。
-3. 确认 Playground live turn 只走 `POST /api/agent-runtime/sdk-events`，不调用 `/v1/responses` 或旧 `/api/chat/stream`；每个官方 SDK yield 原序对应一帧 `claude.sdk.<ClassName>`。
-4. 通过 `/v1/conversations` 读取会话列表，并通过 `/v1/conversations/{conversation_id}/items` 验证会话 items 契约可用。
-5. 通过 `GET /v1/responses/{response_id}` 验证 `resp_<run_id>` 可从持久化 run 重建响应。
-6. 发起对抗式与边界请求：strict 模式 `instructions`、control 缺 `agentgov.agent_id`、`agentgov` 未知字段、非法 `max_turns`、保留 metadata 注入、旧 `/api/chat`/`/api/chat/stream` 缺 `agent_id`。
-7. 分别调用 Responses control 流与 SDK-native 流，构造 thinking delta/ThinkingBlock signature、同消息多个工具 block 与 input JSON delta、tool result、hook/task/result，并同时产生大量 `SystemMessage:thinking_tokens`；验证 Responses 输出 reasoning 生命周期和 `agentgov.tool_call.*`，且没有标准 `function_call`。
-8. 在 Playground 记录 live evidence：block key 不依赖每帧 `StreamEvent.uuid`，顶层 text 才进入回答，subagent text 只进证据，thinking_tokens 只作指标；完成后调用 `GET /api/agent-runs/{run_id}/trace`，仅在 `completeness=complete` 时校准替换，刷新后再次打开同一 run 的 Trace。
-9. 分别制造 failed、cancelled、interrupted 终态，确认运行列表和 Trace API 返回持久化终态/错误；制造缺失 `messages` 的旧 run，确认明确返回 `completeness=unavailable`。
-10. 调用旧 `/api/chat/stream` 默认 raw 与 `?event_mode=semantic`，确认 raw 兼容、semantic 保留文本流且只把完整 SDK 事实投影为 `trace_event`。
-11. 在 Playground 的 SDK-native 流出现部分文本后点击“停止”，立即用快捷键和发送按钮尝试第二次发送；确认 UI 在等待 `run_id`、取消中和状态待核对三个阶段都保持锁定，取消请求精确命中响应头中的 `run_id`，直到后端返回持久化终态才允许下一轮。
-12. 取消完成后立即在同一 session 发送第二条消息，确认成功且不出现 `SESSION_CONFLICT`；第一条的部分输出仍显示“已取消”，不显示“运行失败”。对 `/api/chat/stream`、流式 `/v1/responses` 和 raw debug stream 断开消费，确认嵌套 source 均关闭；对非流式 `/api/chat`、`/v1/responses`、`/v1/chat/completions` 取消请求任务，确认共用 owner 协调和持久化收口。
-13. 构造前一 API 进程留下的 running intent 后启动新进程，确认启动阶段立即写入 `interrupted` AgentRun、丢弃 staging、释放 session fence；取消 API 对重复终态返回 `200`，对未知 run 返回 `404`，对无本进程 owner 的 running run 返回 `409`，超时返回 `504`。
+1. 打开真实容器 `/docs`，确认只提供 AgentScope Runtime 的 session、chat、message、status、
+   stream、interrupt、run、cancel 和 trace 契约；旧 Claude SDK、Responses、Chat/Session 路径不存在。
+2. 使用稳定 `Idempotency-Key` 调用 `POST /api/runtime/sessions/`，确认返回
+   `X-AgentGov-Session-Id`；重放得到同一会话，跨 Agent 重用 key 被拒绝。
+3. 尝试在创建会话请求中注入 model、credential、Workspace 或权限规则，确认 `422`；正常会话只
+   使用 AgentGov 解析的不可变 Agent 版本和 Harness digest。
+4. 订阅 `GET /api/runtime/sessions/{session_id}/stream?agent_id=...`，再调用
+   `POST /api/runtime/chat/`；确认响应头同时给出精确 `run_id` 与 `session_id`。
+5. 验证 AgentScope `AgentEvent` SSE 保持原字节和顺序，未知合法事件不被代理层丢弃或误判为终态；
+   `GET /api/runtime/sessions/{session_id}/messages` 返回 canonical messages。
+6. 轮询 `GET /api/agent-runs/{run_id}`，覆盖 succeeded、failed、cancelled、interrupted 终态；
+   `finalizing` 必须等待 canonical message/receipt 持久化，不能提前标记成功。
+7. 构造人工确认与外部执行暂停，使用同一 `reply_id` 通过 `POST /api/runtime/chat/` 提交 AgentScope
+   原生结果并继续同一个 run；伪造 kind、reply 或持久化 permission rules 被拒绝。
+8. 在 Playground 出现部分文本后点击“停止”，确认请求精确命中
+   `POST /api/agent-runs/{run_id}/cancel`；客户端断连不冒充取消，直到持久化 terminal 后才开放同
+   session 的下一次发送。
+9. 调用 `GET /api/agent-runs/{run_id}/trace`，确认 `session_id`、`reply_id`、`trace_id`、Agent
+   版本和 Harness 映射可追溯；只有 terminal run 且匹配的 `agentgov.run` 根 observation 已结束时
+   `trace_status=complete`。
+10. 验证 Langfuse trace 的安全语义：精确根名 `agentgov.run`，子 span 名为 `invoke_agent`、
+    `chat` 和按实际调用出现的 `execute_tool`，不在名称或属性中泄露 prompt、模型、Agent 或工具正文。
+11. 断开 AgentScope Runtime，确认 `/health/live` 仍可用、`/health/ready` 返回 `503` 且不泄露内部
+    地址或响应正文；恢复后 readiness 重新通过。
+12. 通过公开 Make 入口生成临时 Runtime 根、唯一 Compose project/容器前缀、随机回环端口和全部
+    宿主挂载；确认不读写既有 `${HOME}/volume-agent-gov`，再基于当前工作树 rebuild 并
+    `--force-recreate` 三个核心服务，执行 OpenAPI、Runtime、UI 取消与 Langfuse semantic trace 验收。
+13. 人为令一次刷新失败，确认 runner 仍执行 `down --volumes` 并删除临时目录，既有项目和运行卷不变。
 
 成功标准：
 
-- `/api/agent-runtime/sdk-events` 承载 Playground live turn，`/v1/conversations` 承载会话恢复；前端 live turn 不经过 Responses 或 Chat projector。
-- control 模式能把业务 Agent、conversation、run、response retrieve 串成同一条运行事实链；`response.output[]` 与 `agentgov.run_id/session_id/conversation_id` 可审计。
-- Responses 的 reasoning/message 在流式、非流式和 retrieve 中有稳定 ID 与顺序；服务端工具调用只产生 `agentgov.tool_call.*` 观察和兼容 `agentgov.tool_step`，不会要求客户端重复执行。
-- hostile 输入被 4xx 拒绝，保留 metadata 不回显，旧原生 Chat 入口仍按兼容契约拒绝缺失 `agent_id`，不静默跑 main。
-- `/v1/chat/completions` 保持兼容入口定位，不作为 HITL、会话治理或工具时间线主控制面。
-- Trace 不出现 `SystemMessage:thinking_tokens` 洪水；每个完整 ThinkingBlock 只形成一条 thinking 事件，同消息全部工具调用/结果、hook、task、result 和 subagent 归属无遗漏。
-- live 与刷新后的 Trace 由同一投影器生成并一致；失败、取消、中断可重放，旧数据不可用时明确降级而不是展示几个 conversation block 冒充完整 Trace。
-- 三类 managed SSE 响应都暴露 backend-owned run/session header；Stop 不以客户端 abort 冒充后端取消，取消未确认时不会开放第二次发送。取消、断连、非流式任务取消、关闭和重启均释放持久化 session fence，允许同会话立即安全重试。
+- Playground 和外部客户端只经 AgentGov API 使用 AgentScope Runtime，不直连 Runtime 管理面。
+- session 固定 Agent 版本/Harness；chat 输入不能覆盖 model、credential、权限或配置。
+- AgentScope 原生 SSE、canonical messages 与 AgentGov run 映射共同形成单一运行事实链。
+- `session_id`、`run_id`、`reply_id`、`trace_id` 各司其职，值不要求相同且可按 run 反查。
+- 人工确认和外部执行使用 AgentScope 原生暂停/恢复事件，同时受 AgentGov 逐次决策与权限策略约束。
+- Stop 精确取消 `run_id`，断连不冒充取消；失败、取消、中断和重启恢复都有持久化终态。
+- Trace 仅在真实完整时标记 complete，并满足 `agentgov.run` 根 span、安全子 span 名和关联属性契约。
+- 生产链路不存在 Claude SDK、Responses、旧 Chat/Session 或 LiteLLM sidecar 双轨。
 
 证据要求：OpenAPI/pytest 契约、前端网络请求、真实容器 Playwright 截图、API 响应、容器健康状态。
 
-自动验收：核心 API 契约已绑定到 `tests/quality_policy.json` 的 `openai_responses_first_surface`、`responses_streaming_sse` 与 `playground_native_sdk_stream` 场景，覆盖 `tests/test_openapi_request_documentation.py`、`tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_sdk_projector.py`、`tests/test_responses_retrieve.py`、`tests/test_claude_sdk_native_stream.py`、`tests/test_runtime_run_cancellation.py`、`tests/test_conversations_api.py`、`tests/test_trace_projection.py`、`tests/test_trace_stream_contract.py` 和 `tests/test_agent_runs_api.py`；旧 Chat raw/semantic 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收使用 `make container-openapi-check`、`make ui-openai-responses-smoke` 与 `make ui-playground-cancel-smoke`：公开入口先基于当前工作树重建镜像、recreate Compose UI/API，再只读验证 Swagger 输入文档、运行 Responses API、消息动作和“发送→停止→同会话立即再发送”浏览器验收，验证 UI live turn 只请求 SDK-native endpoint、取消命中精确 run、会话走 `/v1/conversations`、Trace 刷新重放、Responses retrieve 可用，并执行 hostile / boundary 请求。
+自动验收：`tests/test_main_agentscope_cutover.py::test_main_exposes_only_agentscope_runtime_surfaces`、
+`tests/test_runtime_gateway_router.py::test_session_creation_uses_only_governed_runtime_configuration_and_is_idempotent`、
+`tests/test_runtime_gateway_router.py::test_sse_proxy_preserves_raw_frames_and_unknown_events`、
+`tests/test_runtime_gateway_store.py::test_user_confirmation_reuses_run_and_rejects_kind_tamper_and_rules`、
+`tests/test_runtime_gateway_router.py::test_trace_completes_only_after_matching_finished_agentgov_run_root` 与
+`tests/test_health_endpoints.py::test_readiness_reports_agentscope_unreachable_without_leaking_body`。真实容器
+端到端验收使用 `make container-openapi-check`、`make ui-playground-cancel-smoke` 与
+`make langfuse-smoke`，且由统一入口在一次性项目中重建并 recreate 当前工作树三服务，成功或失败
+都清理临时容器、卷和挂载目录。
 
 ### AGV-051 评测基准独立治理并驱动平台发布评测
 
@@ -1426,7 +1446,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：通用 integration contract、幂等/对账记录、断网与部分失败结果、observer 只读证据和未配置负向断言。
 
-当前缺口：Responses/Chat 公开 API 和当前边界文档已有部分证据；尚无覆盖 webhook/observer/上层调度的通用幂等、sequence/ack、撤销授权和部分失败验收。
+当前缺口：AgentScope Runtime Gateway 的 session/chat SSE/run/trace/feedback 公开契约和当前边界文档已有部分证据；尚无覆盖 webhook/observer/上层调度的通用幂等、sequence/ack、撤销授权和部分失败验收。
 
 ### AGV-055 规模化扩展具有 SLO、容量与单位经济性证据
 

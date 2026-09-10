@@ -21,17 +21,22 @@ def load_test_app(
     root = tmp_path / "docker" / "volume"
     data = root / "data"
     governor_workspace = root / "governor-workspace"
-    governor_root = root / "claude-roots" / "governor"
     agent_worktrees = data / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "version" / "worktrees"
     release_archives = data / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "version" / "releases"
     for path in (
         data,
         governor_workspace,
-        governor_root / ".claude",
         agent_worktrees,
         release_archives,
     ):
         path.mkdir(parents=True, exist_ok=True)
+
+    create_test_business_agent_workspace(
+        governor_workspace,
+        agent_id="governor",
+        name="AgentGov Governor",
+        requires_web_hitl=True,
+    )
 
     monkeypatch.setenv("RUNTIME_CONTAINER", "0")
     monkeypatch.setenv("RUNTIME_VOLUME_MODE", "local-debug")
@@ -55,25 +60,21 @@ def load_test_app(
     monkeypatch.setenv("HOST_RUNTIME_VOLUME_ROOT", str(root))
     monkeypatch.setenv("HOST_DATA_MOUNT", str(data))
     monkeypatch.setenv("HOST_GOVERNOR_WORKSPACE_MOUNT", str(governor_workspace))
-    monkeypatch.setenv("HOST_GOVERNOR_CLAUDE_ROOT_MOUNT", str(governor_root))
     monkeypatch.setenv("GOVERNOR_WORKSPACE_DIR", str(governor_workspace))
     monkeypatch.setenv("DATA_DIR", str(data))
-    monkeypatch.setenv("GOVERNOR_CLAUDE_ROOT", str(governor_root))
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
-    # app-level tests must not inherit a developer's private vLLM route or make startup
-    # capability probes. Anthropic-compatible routing is hermetic and fake SDK calls use
-    # only this non-secret test credential.
-    monkeypatch.setenv("MODEL_PROVIDER_BACKEND", "anthropic_compatible")
-    monkeypatch.setenv("MODEL_PROVIDER_API_URL", "http://model-provider.test")
-    monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "test-provider-key")
+    monkeypatch.setenv("AGENTSCOPE_RUNTIME_URL", "http://agentscope-runtime.test")
+    monkeypatch.setenv("AGENTGOV_RUNTIME_SHARED_SECRET", "test-runtime-shared-secret")
+    monkeypatch.setenv("AGENTSCOPE_MODEL_NAME", "test-model")
+    monkeypatch.setenv("AGENTSCOPE_MODEL_TYPE", "OpenAIChatModel")
+    monkeypatch.setenv("AGENTSCOPE_MODEL_CREDENTIAL", "test-model-credential")
     monkeypatch.setenv("API_KEY", api_key)
-    monkeypatch.setenv("ENABLE_AGENT_RUNTIME_RAW_EVENTS", "true" if raw_events_enabled else "false")
-    monkeypatch.setenv("AGENT_RUNTIME_RAW_EVENTS_MAX_BYTES", "67108864")
-    monkeypatch.delenv("RESPONSE_ORCHESTRATOR_API_KEY", raising=False)
+    monkeypatch.setenv("AGENTGOV_API_MODE", "open")
+    monkeypatch.delenv("AGENTGOV_ACCEPTANCE_IDENTITY", raising=False)
+    monkeypatch.delenv("AGENTGOV_ACCEPTANCE_API_KEY", raising=False)
+    del raw_events_enabled
     monkeypatch.setenv("AGENT_GIT_REPOSITORY_DIR", str(default_workspace))
     monkeypatch.setenv("AGENT_GIT_WORKTREES_DIR", str(agent_worktrees))
     monkeypatch.setenv("AGENT_RELEASE_ARCHIVES_DIR", str(release_archives))
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
     import app.runtime.settings as settings_module
 

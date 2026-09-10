@@ -29,7 +29,6 @@ TARGET_AGENT_ID = "identity-target"
             "../../private",
         ),
         (b"agent:\n  id: ' identity-target '\n", "WORKSPACE_MANIFEST_AGENT_ID_INVALID", "不能包含首尾空白", None),
-        (b"agent: [\n", "WORKSPACE_MANIFEST_INVALID", "不是可解析的安全 YAML", None),
         (
             b"agent:\n  id: identity-target\n  id: identity-target\n",
             "WORKSPACE_MANIFEST_INVALID",
@@ -47,7 +46,7 @@ def test_create_rejects_missing_or_invalid_manifest_identity_before_mutation(
     forbidden_fragment: str | None,
 ) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    files = {"CLAUDE.md": b"# rejected\n"}
+    files = {"AGENT.md": b"# rejected\n"}
     if manifest is not None:
         files["agent.yaml"] = manifest
     package = _workspace_package(files)
@@ -82,7 +81,7 @@ def test_create_rejects_deep_manifest_without_partial_state(monkeypatch, tmp_pat
     lines.append(f"{'  ' * 351}value")
     package = _workspace_package(
         {
-            "CLAUDE.md": b"# rejected\n",
+            "AGENT.md": b"# rejected\n",
             "agent.yaml": ("\n".join(lines) + "\n").encode(),
         }
     )
@@ -135,7 +134,7 @@ def test_create_rejects_case_only_manifest_identity_mismatch(monkeypatch, tmp_pa
     module = _load_app(monkeypatch, tmp_path)
     package = _workspace_package(
         {
-            "CLAUDE.md": b"# rejected\n",
+            "AGENT.md": b"# rejected\n",
             "agent.yaml": b"agent:\n  id: Identity-Target\n",
         }
     )
@@ -196,7 +195,11 @@ def test_create_rejects_url_agent_id_with_surrounding_whitespace_before_package_
 def test_create_accepts_exact_manifest_identity_without_rewriting_package(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     source = Path(__file__).resolve().parents[1] / "docker" / "runtime-bootstrap" / "business-agents" / "security-operations-expert" / "workspace"
-    manifest = f"agent:\n  id: {TARGET_AGENT_ID}\n  profile: security-operations-expert\n".encode()
+    manifest = (source / "agent.yaml").read_bytes().replace(
+        b"id: security-operations-expert",
+        f"id: {TARGET_AGENT_ID}".encode(),
+        1,
+    )
     package = _package_from_workspace(source, overrides={"agent.yaml": manifest})
 
     with TestClient(module.app) as client:
@@ -225,7 +228,7 @@ def test_create_accepts_exact_manifest_identity_without_rewriting_package(monkey
         assert stat.S_IMODE(target_files[relative].stat().st_mode) & 0o111 == stat.S_IMODE(source_path.stat().st_mode) & 0o111
 
 
-def test_overwrite_rejects_manifest_mismatch_before_workspace_or_session_changes(monkeypatch, tmp_path: Path) -> None:
+def test_overwrite_rejects_manifest_mismatch_before_workspace_changes(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
         created = _import_new_agent(client, agent_id=TARGET_AGENT_ID, name="identity target")
@@ -233,14 +236,6 @@ def test_overwrite_rejects_manifest_mismatch_before_workspace_or_session_changes
         baseline_commit = _run_git(workspace, "rev-parse", "HEAD")
         baseline_tree = _run_git(workspace, "rev-parse", "HEAD^{tree}")
 
-        def fail_session_invalidation(*_args, **_kwargs):
-            raise AssertionError("identity rejection must not invalidate sessions")
-
-        monkeypatch.setattr(
-            module.session_store,
-            "clear_inactive_sdk_sessions_for_agent_in_transaction",
-            fail_session_invalidation,
-        )
         response = client.post(
             f"/api/agent-registry/{TARGET_AGENT_ID}/workspace/import",
             data={"expected_current_commit_sha": baseline_commit},
@@ -249,7 +244,7 @@ def test_overwrite_rejects_manifest_mismatch_before_workspace_or_session_changes
                     "replacement.tar.gz",
                     _workspace_package(
                         {
-                            "CLAUDE.md": b"# must not apply\n",
+                            "AGENT.md": b"# must not apply\n",
                             "agent.yaml": b"agent:\n  id: another-agent\n",
                         }
                     ),

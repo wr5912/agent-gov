@@ -20,7 +20,7 @@ from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app
-from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID, create_test_business_agent_workspace
 from test_agent_workspace_packages import _import_new_agent
 
 
@@ -75,6 +75,23 @@ def _record_passed_test_run(module, *, agent_id: str, commit_sha: str, change_se
     )
 
 
+def _record_runtime_run(store, *, run_id: str, agent_id: str) -> None:
+    timestamp = "2026-06-12T00:00:00Z"
+    store.record_run(
+        {
+            "run_id": run_id,
+            "session_id": f"session-{run_id}",
+            "agent_id": agent_id,
+            "agent_version_id": "a" * 40,
+            "runtime_agent_id": f"runtime-{agent_id}",
+            "harness_digest": "b" * 64,
+            "status": "succeeded",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+    )
+
+
 def _write_runnable_agent_test(worktree: Path) -> None:
     tests_dir = worktree / "tests"
     tests_dir.mkdir()
@@ -119,13 +136,13 @@ def test_get_agent_returns_stable_identity(tmp_path: Path) -> None:
     assert record.created_at
 
 
-def test_hitl_observation_is_derived_from_current_project_settings(tmp_path: Path) -> None:
+def test_hitl_observation_is_derived_from_current_agent_manifest(tmp_path: Path) -> None:
     store, profiles = _store(tmp_path)
     workspace = tmp_path / "workspace"
-    settings_path = workspace / ".claude" / "settings.json"
-    settings_path.parent.mkdir(parents=True)
-    settings_path.write_text(
-        '{"permissions":{"ask":["mcp__approval__execute"]}}\n',
+    workspace.mkdir(parents=True)
+    manifest_path = workspace / "agent.yaml"
+    manifest_path.write_text(
+        "session:\n  permission_mode: default\n",
         encoding="utf-8",
     )
     store.create_business_agent(
@@ -136,7 +153,7 @@ def test_hitl_observation_is_derived_from_current_project_settings(tmp_path: Pat
 
     assert store.get_agent("soc-ops").requires_web_hitl is True
 
-    settings_path.write_text('{"permissions":{"ask":[]}}\n', encoding="utf-8")
+    manifest_path.write_text("session:\n  permission_mode: dont_ask\n", encoding="utf-8")
     assert store.get_agent("soc-ops").requires_web_hitl is False
 
     store.sync_business_agents(profiles)
@@ -170,22 +187,6 @@ def test_lifespan_syncs_discovered_business_agent_registry(monkeypatch, tmp_path
     assert all(agent.category == "business" for agent in agents)
 
 
-def test_lifespan_leaves_legacy_sdk_session_for_demand_driven_migration(monkeypatch, tmp_path: Path) -> None:
-    """API readiness 不得被历史 transcript 全量迁移阻塞；恢复/历史读取路径负责按需迁移。"""
-    module = _load_app(monkeypatch, tmp_path)
-    session = module.session_store.get_or_create_owned("legacy-session", agent_id=DEFAULT_BUSINESS_AGENT_ID)
-    session.sdk_session_id = "00000000-0000-4000-8000-000000000001"
-    module.session_store.save(session)
-
-    with TestClient(module.app) as client:
-        assert client.get("/health/live").status_code == 200
-
-    persisted = module.session_store.get(session.session_id)
-    assert persisted is not None
-    assert persisted.sdk_store_ready_at is None
-    assert persisted.sdk_store_migration_error is None
-
-
 def test_list_agents_endpoint_returns_registered_business_agents(monkeypatch, tmp_path: Path) -> None:
     """AGV-004/007：注册的业务 Agent 定义可经 API 查询，作为外部接入与归属对象的可见入口。"""
     module = _load_app(monkeypatch, tmp_path)
@@ -197,6 +198,11 @@ def test_list_agents_endpoint_returns_registered_business_agents(monkeypatch, tm
     assert {item["agent_id"] for item in body} == {ORDINARY_TEST_AGENT_ID, DEFAULT_BUSINESS_AGENT_ID}
     assert all(item["category"] == "business" for item in body)
     assert all(item["workspace_dir"] for item in body)
+    assert all(item["agent_version_id"] is None for item in body)
+    assert all(item["harness_digest"] is None for item in body)
+    assert all(item["runtime_agent_id"] is None and item["provisioned"] is False for item in body)
+    # Registry 盘点是纯读路径：不得顺带初始化 Git 或生成不可变 Runtime 快照。
+    assert all(not Path(item["workspace_dir"]).joinpath(".git").exists() for item in body)
     default = next(item for item in body if item["agent_id"] == DEFAULT_BUSINESS_AGENT_ID)
     assert default["builtin"] is True and default["default"] is True and default["protected"] is True
 
@@ -212,18 +218,49 @@ def test_direct_create_and_template_catalog_endpoints_are_removed(monkeypatch, t
     assert template_catalog.status_code == 405
 
 
-def test_chat_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -> None:
-    """AGV-024 基座：/api/chat 带 agent_id 路由到业务 Agent profile；缺省 agent_id 422；未知 404。"""
-    from app.runtime.schemas import ChatResponse
+def test_runtime_session_creation_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -> None:
+    """Session 创建按 agent_id 绑定到唯一不可变 AgentScope Runtime Agent。"""
+    from app.runtime_gateway.client import RuntimeJsonResponse
+    from app.runtime_gateway.provisioning import RuntimeAgentBinding
+    from app.runtime_gateway.store import RuntimeObjectNotFound
 
     module = _load_app(monkeypatch, tmp_path)
-    captured: dict = {}
+    captured: dict[str, str] = {}
+    provisioned: dict[str, RuntimeAgentBinding] = {}
 
-    async def fake_run(req, *, profile=None, **kwargs):
-        captured["profile"] = profile
-        return ChatResponse(run_id="r", session_id="s", answer="ok")
+    async def fake_ensure(agent_id: str) -> RuntimeAgentBinding:
+        record = module.agent_registry_store.get_agent(agent_id)
+        if record is None:
+            raise RuntimeObjectNotFound(f"Business Agent not found: {agent_id}")
+        captured["agent_id"] = agent_id
+        captured["workspace_dir"] = record.workspace_dir
+        binding = RuntimeAgentBinding(
+            agent_id=agent_id,
+            agent_version_id="a" * 40,
+            runtime_agent_id=f"runtime-{agent_id}",
+            harness_digest="b" * 64,
+            workspace_id=f"workspace-{agent_id}",
+            permission_mode="dont_ask",
+            cwd=".",
+            model_profile="default",
+        )
+        provisioned[binding.runtime_agent_id] = binding
+        return binding
 
-    monkeypatch.setattr(module.runtime, "run", fake_run)
+    def fake_require_current(runtime_agent_id: str) -> RuntimeAgentBinding:
+        try:
+            return provisioned[runtime_agent_id]
+        except KeyError as exc:
+            raise RuntimeObjectNotFound(f"Runtime Agent is not provisioned: {runtime_agent_id}") from exc
+
+    async def fake_request(method: str, path: str, **kwargs) -> RuntimeJsonResponse:
+        if method == "POST" and path == "/sessions/":
+            return RuntimeJsonResponse(201, {}, {"session_id": "session-soc-ops"})
+        return RuntimeJsonResponse(200, {}, {})
+
+    monkeypatch.setattr(module.provisioner, "ensure", fake_ensure)
+    monkeypatch.setattr(module.provisioner, "require_current_runtime", fake_require_current)
+    monkeypatch.setattr(module.runtime_client, "request_json", fake_request)
     with TestClient(module.app) as client:
         created = _import_new_agent(
             client,
@@ -233,18 +270,17 @@ def test_chat_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -
         )
         assert created.status_code == 200
 
-        # 带 agent_id -> 路由到该业务 Agent 的 profile（被治理对象，cwd=其 workspace）。
-        routed = client.post("/api/chat", json={"message": "hi", "agent_id": "soc-ops"})
-        assert routed.status_code == 200
-        assert captured["profile"] is not None
-        assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops/workspace")
-        assert captured["profile"].category == "business"
-
-        # 缺省 agent_id -> 422（两个原生入口 agent_id 必填，不静默跑平台默认）。
-        assert client.post("/api/chat", json={"message": "hi"}).status_code == 422
-
-        # 未知 agent_id -> 404，不静默回退到平台默认（避免错误归属）。
-        assert client.post("/api/chat", json={"message": "hi", "agent_id": "biz-unknown"}).status_code == 404
+        current = client.post("/api/runtime/agents/soc-ops/provision")
+        assert current.status_code == 200
+        runtime_agent_id = current.json()["runtime_agent_id"]
+        routed = client.post("/api/runtime/sessions/", json={"agent_id": runtime_agent_id})
+        assert routed.status_code == 201
+        assert routed.json()["session_id"] == "session-soc-ops"
+        assert captured["agent_id"] == "soc-ops"
+        assert captured["workspace_dir"].endswith("/business-agents/soc-ops/workspace")
+        assert client.post("/api/runtime/sessions/", json={"agent_id": "soc-ops"}).status_code == 404
+        assert client.post("/api/runtime/sessions/", json={}).status_code == 422
+        assert client.post("/api/runtime/agents/biz-unknown/provision").status_code == 404
 
 
 def test_business_agent_has_active_lifecycle_status_by_default(monkeypatch, tmp_path: Path) -> None:
@@ -271,7 +307,7 @@ def test_feedback_asset_provenance_traces_agent_and_relationship(monkeypatch, tm
         agent_id="soc-ops",
         workspace_dir=str(module.settings.data_dir / "business-agents" / "soc-ops" / "workspace"),
     )
-    fs.record_run({"run_id": "run-x", "agent_id": "soc-ops", "created_at": "2026-06-12T00:00:00Z"})
+    _record_runtime_run(fs, run_id="run-x", agent_id="soc-ops")
     signal = fs.create_signal(FeedbackSignalCreateRequest(run_id="run-x", labels=["tool_data_incomplete"]))
     case = fs.create_case(source_refs=[("signal", signal["signal_id"])], title="数据标准化反馈")
     case_id = case["feedback_case_id"]
@@ -301,15 +337,8 @@ def test_feedback_asset_provenance_traces_agent_and_relationship(monkeypatch, tm
 
 
 def test_business_agent_lifecycle_transitions_and_archived_excluded_from_run(monkeypatch, tmp_path: Path) -> None:
-    """AGV-020：合法生命周期转移被接受、非法转移被拒（可理解错误）、archived 不参与新运行。"""
-    from app.runtime.schemas import ChatResponse
-
+    """AGV-020：合法生命周期转移被接受，非法转移被拒且归档 Agent 停止计划任务。"""
     module = _load_app(monkeypatch, tmp_path)
-
-    async def fake_run(req, *, profile=None, **kwargs):
-        return ChatResponse(run_id="r", session_id="s", answer="ok")
-
-    monkeypatch.setattr(module.runtime, "run", fake_run)
     with TestClient(module.app) as client:
         _import_new_agent(client, agent_id="soc-ops", name="客服助手")  # 默认 active
         module.agent_test_schedule_service.update_schedule(
@@ -329,9 +358,8 @@ def test_business_agent_lifecycle_transitions_and_archived_excluded_from_run(mon
         assert rejected.status_code == 409
         assert client.post("/api/agent-registry/soc-ops/lifecycle", json={"status": "unknown"}).status_code == 422
         assert "transition" in rejected.json()["detail"].lower()
-        # archived Agent 仍可查询（审计）但不参与新运行（400）。
+        # archived Agent 仍可查询，保留审计身份。
         assert any(a["agent_id"] == "soc-ops" for a in client.get("/api/agent-registry").json())
-        assert client.post("/api/chat", json={"message": "hi", "agent_id": "soc-ops"}).status_code == 400
         # 普通业务 Agent 与导入 Agent 使用同一生命周期状态机。
         ordinary_lifecycle = client.post(
             f"/api/agent-registry/{ORDINARY_TEST_AGENT_ID}/lifecycle",
@@ -350,12 +378,12 @@ def test_delete_business_agent_reports_impact_and_protects_builtin_agent(monkeyp
     with TestClient(module.app) as client:
         # 统一入口创建一个治理对象，后续运行、反馈、测试和版本都用同一 agent_id 串联。
         _import_new_agent(client, agent_id="soc-ops", name="客服助手")
-        fs.record_run({"run_id": "run-x", "agent_id": "soc-ops", "created_at": "2026-06-12T00:00:00Z"})
+        _record_runtime_run(fs, run_id="run-x", agent_id="soc-ops")
         signal = fs.create_signal(FeedbackSignalCreateRequest(run_id="run-x", labels=["tool_data_incomplete"]))
         # 版本维度：该 Agent 独立 change set → release（落自己的版本 store）。
         change_set = gov.create_change_set(title="soc-ops 候选", operator="t", agent_id="soc-ops")
         worktree = Path(str(change_set["worktree_path"]))
-        worktree.joinpath("CLAUDE.md").write_text("# soc-ops\n", encoding="utf-8")
+        worktree.joinpath("AGENT.md").write_text("# soc-ops\n", encoding="utf-8")
         _write_runnable_agent_test(worktree)
         commit = gov._store_for("soc-ops").commit_worktree(worktree, message="c")
         change_set = gov.mark_candidate_committed(
@@ -418,11 +446,11 @@ def test_workspace_imported_business_agents_share_governance_without_builtin_spe
         assert "shop-bot" in {a["agent_id"] for a in client.get("/api/agent-registry").json()}
 
         # 复用运行、反馈、测试和版本能力，全部经 agent_id 归属。
-        fs.record_run({"run_id": "run-s", "agent_id": "shop-bot", "created_at": "2026-06-12T00:00:00Z"})
+        _record_runtime_run(fs, run_id="run-s", agent_id="shop-bot")
         signal = fs.create_signal(FeedbackSignalCreateRequest(run_id="run-s", labels=["tool_data_incomplete"]))
         change_set = gov.create_change_set(title="shop-bot 候选", operator="t", agent_id="shop-bot")
         worktree = Path(str(change_set["worktree_path"]))
-        worktree.joinpath("CLAUDE.md").write_text("# shop-bot\n", encoding="utf-8")
+        worktree.joinpath("AGENT.md").write_text("# shop-bot\n", encoding="utf-8")
         _write_runnable_agent_test(worktree)
         commit = gov._store_for("shop-bot").commit_worktree(worktree, message="c")
         change_set = gov.mark_candidate_committed(
@@ -501,24 +529,13 @@ def test_discover_skips_invalid_and_non_agent_entries(monkeypatch, tmp_path: Pat
 
 
 def test_lifespan_auto_registers_live_business_agent_workspaces(monkeypatch, tmp_path: Path) -> None:
-    """端到端：磁盘上的 AAA/BBB Workspace 在应用启动时被登记并可被 chat 路由。"""
-    from app.runtime.schemas import ChatResponse
-
+    """端到端：磁盘上的 AAA/BBB Workspace 在应用启动时被登记。"""
     module = _load_app(monkeypatch, tmp_path)
     data_dir = module.settings.data_dir
     # 模拟外部导入已落盘：把两个业务 Agent 的 Workspace 放入运行卷。
     for agent_id in ("AAA", "BBB"):
         ws = business_agent_layout(data_dir, agent_id).workspace
-        ws.mkdir(parents=True, exist_ok=True)
-        ws.joinpath("CLAUDE.md").write_text(f"# {agent_id}\n", encoding="utf-8")
-
-    captured: dict = {}
-
-    async def fake_run(req, *, profile=None, **kwargs):
-        captured["profile"] = profile
-        return ChatResponse(run_id="r", session_id="s", answer="ok")
-
-    monkeypatch.setattr(module.runtime, "run", fake_run)
+        create_test_business_agent_workspace(ws, agent_id=agent_id, name=agent_id)
     with TestClient(module.app) as client:
         listed = client.get("/api/agent-registry").json()
         ids = {a["agent_id"] for a in listed}
@@ -528,12 +545,6 @@ def test_lifespan_auto_registers_live_business_agent_workspaces(monkeypatch, tmp
         assert discovered["category"] == "business"
         assert discovered["status"] == "active"
         assert discovered["workspace_dir"].endswith("/business-agents/AAA/workspace")
-
-        # 端到端"认得"：chat 路由到自动登记的 AAA（每请求动态构造其业务 profile）。
-        routed = client.post("/api/chat", json={"message": "hi", "agent_id": "AAA"})
-        assert routed.status_code == 200
-        assert str(captured["profile"].workspace_dir).endswith("/business-agents/AAA/workspace")
-        assert captured["profile"].category == "business"
 
 
 def test_lifespan_discovery_keeps_each_business_agent_single_row_across_restarts(monkeypatch, tmp_path: Path) -> None:

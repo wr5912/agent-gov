@@ -23,6 +23,12 @@ class ExtensibleResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    """候选 Harness 测试所用的非流式请求。
+
+    产品聊天使用 ``RuntimeChatRequest``；这里保留独立 schema 以避免测试资产直接
+    操作生产 Session。
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     message: str = Field(
@@ -52,23 +58,6 @@ class ChatRequest(BaseModel):
         description="Registered business agent to run. Required by /api/chat and /api/chat/stream; requests without it are rejected with 422.",
         examples=["security-operations-expert"],
     )
-    max_turns: Optional[int] = Field(
-        default=None,
-        ge=1,
-        le=50,
-        description="Per-request turn cap. Defaults to MAX_TURNS.",
-        examples=[8],
-    )
-    model: Optional[str] = Field(
-        default=None,
-        description="Per-request model override. Defaults to AGENT_MODEL.",
-        examples=["claude-sonnet-4-5"],
-    )
-    system_append: Optional[str] = Field(
-        default=None,
-        description="Extra instruction appended to the Claude Code preset prompt.",
-        examples=["输出结论时同时列出关键证据。"],
-    )
     metadata: JsonObject = Field(
         default_factory=dict,
         description="Caller-provided JSON metadata retained with the managed run for observability.",
@@ -86,13 +75,9 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     run_id: str
     session_id: str
-    sdk_session_id: Optional[str] = Field(
-        default=None,
-        description="Internal Claude SDK resume id. May differ from session_id (history sess_*, SDK rebuild, resume failure); it is not the product conversation id — use session_id.",
-    )
     agent_version_id: Optional[str] = None
-    langfuse_trace_id: Optional[str] = None
-    langfuse_trace_url: Optional[str] = None
+    trace_id: Optional[str] = None
+    trace_url: Optional[str] = None
     answer: str
     messages: list[JsonObject] = Field(default_factory=list)
     agent_activity: JsonObject = Field(default_factory=dict)
@@ -124,8 +109,8 @@ class ConfigMappingItem(BaseModel):
     host_mount: Optional[str] = None
     exists: bool
     loaded_by_default: bool
-    load_semantics: Literal["claude_loaded", "claude_optional", "runtime_used", "not_applicable"] = "not_applicable"
-    display_group: Literal["agent_project_config", "agent_user_state", "versioning_runtime", "hidden_debug"] = "hidden_debug"
+    load_semantics: Literal["runtime_loaded", "runtime_materialized", "governance_only", "not_applicable"] = "not_applicable"
+    display_group: Literal["harness", "runtime", "versioning", "hidden_debug"] = "hidden_debug"
     safe_to_edit: bool = False
     git_policy: str
     notes: Optional[str] = None
@@ -133,12 +118,10 @@ class ConfigMappingItem(BaseModel):
 
 class ConfigMappingResponse(BaseModel):
     agent_id: str = "security-operations-expert"
-    claude_config_mode: str
-    claude_root: str
-    claude_home: str
-    claude_global_config_file: str
-    claude_config_dir: Optional[str] = None
-    setting_sources_effective: list[str]
+    runtime: Literal["agentscope"] = "agentscope"
+    runtime_url: str
+    workspace: str
+    runtime_contract: str
     mappings: list[ConfigMappingItem]
 
 
@@ -159,11 +142,8 @@ class RuntimeDocsResponse(BaseModel):
 
 
 class RuntimeDependencyVersions(BaseModel):
-    claude_agent_sdk: Optional[str] = None
-    bundled_claude_code_cli: Optional[str] = None
-    path_claude_code_cli: Optional[str] = None
+    agentscope: Optional[str] = None
     langfuse: Optional[str] = None
-    litellm: Optional[str] = None
     httpx: Optional[str] = None
     starlette: Optional[str] = None
     opentelemetry_sdk: Optional[str] = None
@@ -175,8 +155,8 @@ class RuntimeLivenessResponse(BaseModel):
     runtime_version: str
 
 
-class ModelProviderReadiness(BaseModel):
-    status: Literal["not_checked", "checking", "ready", "degraded"]
+class RuntimeServiceReadiness(BaseModel):
+    status: Literal["ready", "not_ready"]
     error_code: Optional[str] = None
     message: Optional[str] = None
     reason: Optional[str] = None
@@ -189,35 +169,10 @@ class ModelProviderReadiness(BaseModel):
     checked_at: Optional[str] = None
 
 
-class ModelProviderVersionProbe(BaseModel):
-    status: Literal["skipped", "succeeded", "failed"]
-    endpoint: Optional[str] = None
-    version: Optional[str] = None
-    reason: Optional[str] = None
-    status_code: Optional[int] = None
-    duration_ms: Optional[int] = None
-    error_code: Optional[str] = None
-
-
-class ModelProviderRouteHealth(BaseModel):
-    backend: str
-    route: Optional[str] = None
-    provider_endpoint_configured: bool
-    provider_endpoint: Optional[str] = None
-    claude_base_url: Optional[str] = None
-    formatter_api_base: Optional[str] = None
-    formatter_model_prefix: Optional[str] = None
-    sidecar_required: Optional[bool] = None
-    sidecar_base_url: Optional[str] = None
-    provider_api_key_required: bool
-    version_probe: Optional[ModelProviderVersionProbe] = None
-    readiness: ModelProviderReadiness
-
-
 class RuntimeReadinessResponse(BaseModel):
     status: Literal["ready", "not_ready"]
     runtime_version: str
-    model_provider: ModelProviderReadiness
+    runtime_service: RuntimeServiceReadiness
 
 
 class RuntimeHealthResponse(ExtensibleResponse):
@@ -230,26 +185,17 @@ class RuntimeHealthResponse(ExtensibleResponse):
     data_dir: str
     runtime_db_backend: str
     runtime_db_path: str
-    claude_root: str
-    claude_home: str
-    claude_config_mode: str
-    claude_config_dir: Optional[str] = None
-    claude_global_config_file: str
-    setting_sources_effective: list[str]
-    model: Optional[str] = None
-    provider_api_url_configured: bool
-    provider_api_key_configured: bool
-    model_provider_route: ModelProviderRouteHealth
-    claude_web_hitl_enabled: bool = False
+    runtime_kind: Literal["agentscope"] = "agentscope"
+    runtime_url: str
+    runtime_service: RuntimeServiceReadiness
+    model: str
     feedback_debug_evidence: bool
     agent_version_id: Optional[str] = None
     runtime_dependency_versions: RuntimeDependencyVersions = Field(default_factory=RuntimeDependencyVersions)
     langfuse_enabled: bool
     langfuse_base_url: Optional[str] = None
-    langfuse_otel_endpoint_configured: bool
     langfuse_public_key_configured: bool
     langfuse_secret_key_configured: bool
-    langfuse_otel_signals: list[str] = Field(default_factory=list)
     docs: RuntimeDocsResponse
 
 
@@ -428,31 +374,6 @@ class FeedbackSourceResponse(ExtensibleResponse):
     raw: JsonObject = Field(default_factory=dict)
 
 
-class AgentRunResponse(BaseModel):
-    run_id: str
-    session_id: Optional[str] = None
-    sdk_session_id: Optional[str] = None
-    agent_version_id: Optional[str] = None
-    langfuse_trace_id: Optional[str] = None
-    langfuse_trace_url: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
-    message: Optional[str] = None
-    answer: Optional[str] = None
-    answer_summary: Optional[str] = None
-    messages: list[JsonObject] = Field(
-        default_factory=list,
-        description="Full SDK message timeline, returned only when include_messages=true.",
-    )
-    agent_activity: JsonObject = Field(default_factory=dict)
-    turn_status: Optional[Literal["running", "succeeded", "failed", "cancelled", "interrupted"]] = None
-    turn_index: Optional[int] = Field(default=None, ge=0)
-    turn_error: Optional[JsonObject] = None
-    errors: list[str] = Field(default_factory=list)
-    created_at: Optional[str] = None
-    completed_at: Optional[str] = None
-
-
 class FeedbackCaseCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -537,75 +458,3 @@ class EvidencePackageFileResponse(BaseModel):
     file_name: str
     sha256: Optional[str] = None
     content: JsonValue
-
-
-class OpenAIChatMessage(BaseModel):
-    """One text-only message accepted by the deprecated Chat Completions shim."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    role: Literal["developer", "system", "user", "assistant"] = Field(
-        description="OpenAI-style role for this text message.",
-        examples=["user"],
-    )
-    content: str = Field(
-        min_length=1,
-        pattern=NON_BLANK_TEXT_PATTERN,
-        description="Non-blank text content for this message.",
-        examples=["请总结这起告警的关键风险"],
-    )
-
-    @field_validator("content")
-    @classmethod
-    def _non_blank_content(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("chat message content must contain non-whitespace text")
-        return value
-
-
-class OpenAIChatCompletionRequest(BaseModel):
-    """Text-only, non-streaming request accepted by the deprecated compatibility shim."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    model: Optional[str] = Field(
-        default=None,
-        description="Model override. Defaults to AGENT_MODEL.",
-        examples=["claude-sonnet-4-5"],
-    )
-    messages: list[OpenAIChatMessage] = Field(
-        min_length=1,
-        description="OpenAI-compatible text chat messages. At least one non-empty user message is required.",
-        examples=[[{"role": "user", "content": "请总结这起告警的关键风险"}]],
-    )
-    stream: Literal[False] = Field(
-        default=False,
-        description="This minimal compatibility endpoint is non-streaming; only false is accepted.",
-        examples=[False],
-    )
-    max_turns: Optional[int] = Field(
-        default=None,
-        ge=1,
-        le=50,
-        description="Claude Agent turn cap for this request.",
-        examples=[8],
-    )
-    metadata: JsonObject = Field(
-        default_factory=dict,
-        description="Caller-provided JSON metadata retained with the managed run for observability.",
-        examples=[{"source": "openai-compat-client"}],
-    )
-
-
-class OpenAIChatCompletionChoice(BaseModel):
-    index: int = 0
-    message: OpenAIChatMessage
-    finish_reason: Optional[str] = "stop"
-
-
-class OpenAIChatCompletionResponse(BaseModel):
-    id: str
-    object: str = "chat.completion"
-    model: Optional[str] = None
-    choices: list[OpenAIChatCompletionChoice]
-    usage: Optional[JsonObject] = None

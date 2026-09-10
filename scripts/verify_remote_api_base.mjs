@@ -18,8 +18,8 @@ if (!host) {
 }
 let port = requestedPort;
 let uiBase = `http://${host}:${port}`;
-const expectedApiBase = `http://${host}:58080`;
-const forbiddenApiBases = new Set(["http://localhost:58080", "http://127.0.0.1:58080"]);
+const expectedApiBase = `http://${host}:50400`;
+const forbiddenApiBases = new Set(["http://localhost:50400", "http://127.0.0.1:50400"]);
 
 function firstRoutableIPv4() {
   for (const entries of Object.values(networkInterfaces())) {
@@ -58,7 +58,7 @@ function startVite() {
     detached: true,
     env: {
       ...process.env,
-      VITE_RUNTIME_API_BASE: "http://localhost:58080",
+      VITE_RUNTIME_API_BASE: "http://localhost:50400",
       VITE_RUNTIME_API_KEY: "",
     },
   });
@@ -119,7 +119,7 @@ function json(route, data, status = 200) {
 
 function routeData(path) {
   if (path === "/health") return { status: "ok", model: "remote-api-base-mock", provider_key_configured: true };
-  if (path === "/api/sessions" || path === "/api/agents" || path === "/api/skills" || path === "/api/agent-change-sets" || path === "/api/agent-releases") return [];
+  if (path === "/api/agents" || path === "/api/skills" || path === "/api/agent-change-sets" || path === "/api/agent-releases") return [];
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-registry") return [
     { agent_id: "security-operations-expert", name: "Security Operations Expert", category: "baseline", workspace_dir: "/runtime/main", created_at: "2026-06-29T00:00:00Z", status: "active" },
@@ -149,7 +149,7 @@ async function main() {
     const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
     await page.addInitScript(() => {
-      window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: "http://localhost:58080", apiKey: "" }));
+      window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: "http://localhost:50400", apiKey: "" }));
       window.localStorage.removeItem("playground-session-messages");
       window.localStorage.removeItem("playground-active-session");
     });

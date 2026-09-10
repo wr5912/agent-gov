@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+import yaml
 
 ORDINARY_TEST_AGENT_ID = "test-business-agent"
 SECONDARY_TEST_AGENT_ID = "secondary-test-business-agent"
@@ -15,32 +16,35 @@ def create_test_business_agent_workspace(
     name: str,
     requires_web_hitl: bool = True,
 ) -> None:
-    """Create the minimum Claude-native Business Agent Workspace used by tests."""
+    """Create the minimum governed AgentScope Harness used by tests."""
     workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "CLAUDE.md").write_text(
+    (workspace / "AGENT.md").write_text(
         f"# {name}\n\nBusiness Agent ID: `{agent_id}`.\n",
         encoding="utf-8",
     )
-    (workspace / ".mcp.json").write_text(
-        json.dumps({"mcpServers": {}}, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    settings_dir = workspace / ".claude"
-    settings_dir.mkdir(parents=True, exist_ok=True)
-    (settings_dir / "settings.json").write_text(
-        json.dumps(
+    (workspace / "agent.yaml").write_text(
+        yaml.safe_dump(
             {
-                "$schema": "https://json.schemastore.org/claude-code-settings.json",
-                "permissions": {
-                    "defaultMode": "default",
-                    "disableBypassPermissionsMode": "disable",
-                    "allow": ["Read(./**)", "Glob", "Grep", "Skill"],
-                    "ask": (["Bash(*)", "Edit(./**)", "Write(./**)"] if requires_web_hitl else []),
-                    "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)"],
+                "schema_version": 1,
+                "agent": {
+                    "id": agent_id,
+                    "runtime": "agentscope",
+                    "runtime_contract": "agentscope-app/2.0.8",
+                    "system_prompt": "AGENT.md",
+                },
+                "session": {
+                    "permission_mode": "default" if requires_web_hitl else "dont_ask",
+                    "cwd": ".",
+                    "model_profile": "default",
+                },
+                "workspace_policy": {
+                    "fail_closed": True,
+                    "immutable_harness": True,
+                    "allow_for_run": False,
                 },
             },
-            indent=2,
-        )
-        + "\n",
+            sort_keys=False,
+            allow_unicode=True,
+        ),
         encoding="utf-8",
     )

@@ -24,10 +24,9 @@ from app.runtime.agent_workspace_package_schemas import (
     WorkspaceRestoreResponse,
 )
 from app.runtime.business_agent_workspace import WorkspaceProvisionPlan
-from app.runtime.errors import SessionConflictError
-from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
+from app.runtime_gateway.store import RuntimeRunStore
 from app.services import agent_workspace_manifest_identity as manifest_identity
 from app.services import agent_workspace_package_codec as package_codec
 from app.services.agent_version_maintenance import AgentVersionMaintenanceCoordinator
@@ -89,7 +88,7 @@ class AgentWorkspacePackageService:
         store_for: Callable[[str], GitAgentVersionStore],
         version_maintenance: AgentVersionMaintenanceCoordinator,
         has_open_change_sets: Callable[[str], bool],
-        session_store: LocalSessionStore,
+        run_store: RuntimeRunStore,
         agent_testing: AgentTestingService,
     ) -> None:
         self._settings = settings
@@ -97,7 +96,7 @@ class AgentWorkspacePackageService:
         self._store_for = store_for
         self._version_maintenance = version_maintenance
         self._has_open_change_sets = has_open_change_sets
-        self._session_store = session_store
+        self._run_store = run_store
         self._agent_testing = agent_testing
 
     def export_workspace(self, agent_id: str) -> WorkspaceExportArtifact:
@@ -216,7 +215,7 @@ class AgentWorkspacePackageService:
             expected = _full_commit(request.expected_current_commit_sha, field="expected_current_commit_sha")
             target = _full_commit(request.target_commit_sha, field="target_commit_sha")
             self._require_no_open_change_set(safe_agent_id)
-            self._require_no_active_session_turn(safe_agent_id)
+            self._require_no_active_run(safe_agent_id)
             lease = self._version_maintenance.lease(
                 agent_id=safe_agent_id,
                 kind="workspace_restore",
@@ -328,7 +327,7 @@ class AgentWorkspacePackageService:
         commit_message: str,
     ) -> WorkspaceImportResponse:
         self._require_no_open_change_set(record.agent_id)
-        self._require_no_active_session_turn(record.agent_id)
+        self._require_no_active_run(record.agent_id)
         lease = self._version_maintenance.lease(
             agent_id=record.agent_id,
             kind="workspace_import",
@@ -506,33 +505,17 @@ class AgentWorkspacePackageService:
             )
 
     def _invalidate_sessions_for_activation(self, db: Session, agent_id: str) -> None:
-        try:
-            self._session_store.clear_inactive_sdk_sessions_for_agent_in_transaction(
-                db,
-                agent_id=agent_id,
-            )
-        except SessionConflictError as exc:
-            raise WorkspacePackageError(
-                409,
-                "WORKSPACE_SESSION_INVALIDATION_CONFLICT",
-                str(exc),
-            ) from exc
-        except Exception as exc:
-            raise WorkspacePackageError(
-                503,
-                "WORKSPACE_SESSION_INVALIDATION_FAILED",
-                f"Failed to invalidate inactive SDK sessions: {exc.__class__.__name__}",
-            ) from exc
+        # 已存在 Session 固定在创建时的不可变 Agent 版本；发布新 Harness 不改写历史绑定。
+        del db, agent_id
 
-    def _require_no_active_session_turn(self, agent_id: str) -> None:
-        try:
-            self._session_store.require_no_active_turns_for_agent(agent_id=agent_id)
-        except SessionConflictError as exc:
+    def _require_no_active_run(self, agent_id: str) -> None:
+        active = self._run_store.active_run_for_agent(agent_id)
+        if active is not None:
             raise WorkspacePackageError(
                 409,
                 "WORKSPACE_SESSION_INVALIDATION_CONFLICT",
-                str(exc),
-            ) from exc
+                f"Business Agent {agent_id} has active run {active.run_id}",
+            )
 
 
 def _safe_agent_id(agent_id: str) -> str:

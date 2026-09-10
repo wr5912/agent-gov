@@ -103,28 +103,30 @@ function mockConversationItems(sessionId) {
     return [
       {
         id: `msg_${index * 2}`,
-        object: "conversation.item",
-        type: "message",
+        name: "user",
         role: "user",
         content: [{ type: "text", text: `请用一句话说明你的治理职责，序号 ${n}。` }],
-        parent_tool_use_id: null,
+        metadata: {},
+        created_at: ts,
+        finished_at: ts,
+        finished_reason: "completed",
       },
       {
         id: `msg_${index * 2 + 1}`,
-        object: "conversation.item",
-        type: "message",
+        name: "assistant",
         role: "assistant",
         content: [
           { type: "text", text: `我是 AgentGov 治理测试助手。第 ${n} 段回复用于构造可滚动的 Playground 长会话，验证刻度密度。`.repeat(repeatCount) },
-          { type: "tool_use", id: `tool-${n}`, name: "Read", input: { file_path: "CLAUDE.md" } },
+          { type: "tool_call", id: `tool-${n}`, name: "Read", input: JSON.stringify({ file_path: "AGENT.md" }), state: "success" },
         ],
-        parent_tool_use_id: null,
-        agentgov: {
+        metadata: {
           run_id: `run-${sessionId}-${n}`,
           session_id: sessionId,
-          sdk_session_id: sessionId,
           agent_version_id: "v-parity",
         },
+        created_at: ts,
+        finished_at: ts,
+        finished_reason: "completed",
       },
     ];
   }).flat();
@@ -141,73 +143,53 @@ function advanceMockImprovement(path, stage, artifact) {
 
 const UNHANDLED = Symbol("unhandled");
 
-function basePayload(path) {
-  if (path === "/health") return { status: "ok", model: "parity-mock" };
-  if (path === "/v1/conversations") return {
-    object: "list",
-    data: ["mock-session", "density-check-0", "density-check-1", "density-check-4"].map((sessionId) => ({
-      id: `conv_${sessionId}`,
-      object: "conversation",
-      created_at: Date.parse(ts) / 1000,
-      title: "Playground 历史验证",
-      metadata: {},
-      agentgov: {
+function basePayload(path, request) {
+  if (path === "/health") return { status: "ok", runtime_kind: "agentscope", model: "parity-mock" };
+  if (path === "/api/runtime/sessions/") {
+    const sessionIds = request.agentId === "shop-bot"
+      ? []
+      : ["mock-session", "density-check-0", "density-check-1", "density-check-4"];
+    return {
+      sessions: sessionIds.map((sessionId) => ({
+      session: {
+        id: sessionId,
         agent_id: "soc-ops",
-        sdk_session_id: sessionId,
-        updated_at: Date.parse(ts) / 1000,
+        created_at: ts,
+        updated_at: ts,
+        metadata: {},
+        config: {
+          name: "Playground 历史验证",
+        },
         turns: sessionId === "mock-session" ? 36 : Number(sessionId.match(/\d+$/)?.[0] || 0),
       },
-    })),
-  };
-  const conversationItems = path.match(/^\/v1\/conversations\/conv_(.+)\/items$/);
+      is_running: false,
+      status: "idle",
+      })),
+      total: sessionIds.length,
+    };
+  }
+  const conversationItems = path.match(/^\/api\/runtime\/sessions\/(.+)\/messages$/);
   if (conversationItems) {
     const items = mockConversationItems(decodeURIComponent(conversationItems[1]));
-    return { object: "list", data: items, first_id: items[0]?.id || null, last_id: items.at(-1)?.id || null, has_more: false };
+    return { messages: items, is_running: false, has_more: false };
+  }
+  const sessionStatus = path.match(/^\/api\/runtime\/sessions\/(.+)\/status$/);
+  if (sessionStatus) {
+    return { session_id: decodeURIComponent(sessionStatus[1]), status: "idle" };
   }
   const agentRunTrace = path.match(/^\/api\/agent-runs\/([^/]+)\/trace$/);
   if (agentRunTrace) {
     const runId = decodeURIComponent(agentRunTrace[1]);
     return {
       run_id: runId,
-      session_id: "mock-session",
-      sdk_session_id: "mock-session",
-      agent_version_id: "v-parity",
-      turn_status: "succeeded",
-      turn_index: 1,
-      turn_error: null,
-      errors: [],
-      completeness: "complete",
-      events: [
-        {
-          event_id: `${runId}-event-1`,
-          run_id: runId,
-          sequence: 1,
-          message_index: 0,
-          block_index: 0,
-          kind: "thinking",
-          source_event: "AssistantMessage",
-          scope: "main",
-          payload: { thinking: "先核验 Workspace 中的事实。" },
-        },
-        {
-          event_id: `${runId}-event-2`,
-          run_id: runId,
-          sequence: 2,
-          message_index: 0,
-          block_index: 1,
-          kind: "tool_use",
-          source_event: "AssistantMessage",
-          scope: "main",
-          payload: { tool_name: "Read", tool_use_id: "tool-1", input: { file_path: "CLAUDE.md" } },
-        },
-      ],
-      agent_activity: {},
-      created_at: ts,
-      completed_at: ts,
+      trace_id: "0123456789abcdef0123456789abcdef",
+      trace_url: internalTraceUrl("0123456789abcdef0123456789abcdef"),
+      trace_status: "complete",
+      trace: { fetch_status: "complete" },
     };
   }
   if (path === "/api/agent-registry") return AGENTS;
-  if (path === "/api/agents" || path === "/api/skills" || path === "/api/sessions" || path === "/api/agent-releases") return [];
+  if (path === "/api/agents" || path === "/api/skills" || path === "/api/agent-releases") return [];
   if (
     path === "/api/agent-runs"
     || path === "/api/feedback-sources"
@@ -237,7 +219,7 @@ function changeSetPayload(path, request) {
     source_attribution_status: "confirmed",
   }];
   if (/^\/api\/agent-change-sets\/[^/]+\/file-diff$/.test(path)) {
-    const filePath = request.queryPath || "CLAUDE.md";
+    const filePath = request.queryPath || "AGENT.md";
     return {
       from_version_id: "base-demo",
       to_version_id: "candidate-b",
@@ -433,43 +415,40 @@ function assetPayload(path, request) {
 function runtimeConfigPayload(path, request) {
   if (path === "/api/config") return {
     agent_id: "security-operations-expert",
-    claude_config_mode: "native",
-    claude_root: "/data/business-agents/security-operations-expert/claude-root",
-    claude_home: "/data/business-agents/security-operations-expert/claude-root/.claude",
-    claude_global_config_file: "/data/business-agents/security-operations-expert/claude-root/.claude.json",
-    claude_config_dir: null,
-    setting_sources_effective: null,
+    runtime_url: "http://agentscope-runtime:8090",
+    workspace: "/data/business-agents/security-operations-expert/workspace",
+    runtime_contract: "agentscope-app/2.0.8",
     mappings: [
       {
-        scope: "project",
+        scope: "harness",
         kind: "instructions",
-        container_path: "/data/business-agents/security-operations-expert/workspace/CLAUDE.md",
+        container_path: "/data/business-agents/security-operations-expert/workspace/AGENT.md",
         exists: true,
         loaded_by_default: true,
-        load_semantics: "claude_loaded",
-        display_group: "agent_project_config",
+        load_semantics: "runtime_loaded",
+        display_group: "harness",
         safe_to_edit: true,
         git_policy: "tracked",
       },
       {
-        scope: "project",
+        scope: "harness",
         kind: "mcp",
-        container_path: "/data/business-agents/security-operations-expert/workspace/.mcp.json",
+        container_path: "/data/business-agents/security-operations-expert/workspace/mcp",
         exists: true,
         loaded_by_default: true,
-        load_semantics: "claude_loaded",
-        display_group: "agent_project_config",
+        load_semantics: "runtime_materialized",
+        display_group: "harness",
         safe_to_edit: true,
         git_policy: "tracked",
       },
       {
-        scope: "runtime",
-        kind: "agent-change-set-worktrees",
+        scope: "governance",
+        kind: "candidate-worktrees",
         container_path: "/data/business-agents/security-operations-expert/version/worktrees",
         exists: true,
         loaded_by_default: false,
-        load_semantics: "runtime_used",
-        display_group: "versioning_runtime",
+        load_semantics: "governance_only",
+        display_group: "versioning",
         safe_to_edit: false,
         git_policy: "ignored",
       },
@@ -477,16 +456,20 @@ function runtimeConfigPayload(path, request) {
   };
   if (path === "/api/agent-config-file") {
     const body = request.method === "PUT" ? JSON.parse(request.postData || "{}") : {};
+    const requestedPath = request.queryPath || "AGENT.md";
+    const defaultContent = requestedPath === "AGENT.md"
+      ? "# AgentScope Harness\n\n核验事件时间与告警时间的一致性。\n"
+      : "{}\n";
     return {
       agent_id: "security-operations-expert",
-      path: ".mcp.json",
-      container_path: "/data/business-agents/security-operations-expert/workspace/.mcp.json",
+      path: requestedPath,
+      container_path: `/data/business-agents/security-operations-expert/workspace/${requestedPath}`,
       exists: true,
-      content: typeof body.content === "string" ? body.content : '{\n  "mcpServers": {}\n}\n',
+      content: typeof body.content === "string" ? body.content : defaultContent,
       sha256: "mock-sha-after",
       size_bytes: 24,
-      content_type: "application/json",
-      sdk_session_invalidated: request.method === "PUT",
+      content_type: requestedPath.endsWith(".json") ? "application/json" : "text/markdown",
+      existing_sessions_unchanged: true,
     };
   }
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
@@ -515,8 +498,8 @@ function improvementPayload(path, request) {
   if (/^\/api\/improvements\/[^/]+\/optimization-plan\/generate$/.test(path)) { advanceMockImprovement(path, "optimization", "optimization_plan"); return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增时间校验指令" }], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts }; }
   if (/^\/api\/improvements\/[^/]+\/optimization-plan\/confirm$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) { advanceMockImprovement(path, "execution", "execution"); return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts }; }
-  if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "confirmed", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) { advanceMockImprovement(path, "execution", "execution"); return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: AGENT.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["AGENT.md"] }, created_at: ts, updated_at: ts }; }
+  if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: AGENT.md"], agent_version: "candidate-b", status: "confirmed", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["AGENT.md"] }, created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/regression-test-design\/generate$/.test(path)) {
     advanceMockImprovement(path, "regression", "regression_test_design");
     const improvementId = decodeURIComponent(path.split("/")[3] || "imp-demo01");
@@ -536,7 +519,7 @@ function improvementPayload(path, request) {
     const improvementId = decodeURIComponent(executionRecord[1] || "");
     const item = IMPROVEMENTS.find((row) => row.improvement_id === improvementId);
     if (!item?.artifact_presence.execution) return { __status: 404, detail: "not found" };
-    return { execution_id: "exec-1", improvement_id: improvementId || "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
+    return { execution_id: "exec-1", improvement_id: improvementId || "imp-demo01", summary: "已在隔离的待发布变更中应用并生成待发布版本", changes_applied: ["append_text: AGENT.md"], agent_version: "candidate-b", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "candidate-b", applied_diff: { changed_files: ["AGENT.md"] }, created_at: ts, updated_at: ts };
   }
   const lifecycle = path.match(/^\/api\/improvements\/([^/]+)\/lifecycle$/);
   if (lifecycle) {

@@ -1,0 +1,37 @@
+schema_version: 1
+agent:
+  id: response-playbook-planning
+  name: response-playbook-planning
+  description: 处置方案规划专家。基于研判结果和 SOC 能力清单，生成处置目标、成功标准、处置意图和风险摘要。只规划、不执行。
+  runtime: agentscope
+  runtime_contract: agentscope-app/2.0.8
+  system_prompt: AGENT.md
+context_config: {}
+react_config: {}
+invite_config:
+  invitable: false
+session:
+  permission_mode: dont_ask
+workspace_policy:
+  allowed_tools:
+  - Read
+  - Grep
+  - Glob
+  - mcp__sec-ops__resource_read
+  - mcp__sec-ops__resource_templates_list
+  - mcp__sec-ops__resources_list
+  - mcp__sec-ops__soc_api__get_resp_playbooks_recommend
+  denied_tools:
+  - mcp__sec-ops__soc_api__create*
+  - mcp__sec-ops__soc_api__manual
+  - mcp__sec-ops__soc_api__execute
+  - mcp__sec-ops__soc_api__post_*
+  - mcp__sec-ops__soc_api__put_*
+  - mcp__sec-ops__soc_api__delete_*
+  - mcp__sec-ops__soc_api__patch_*
+  - mcp__sec-ops__soc_api__update*
+  - mcp__sec-ops__soc_api__delete*
+  - mcp__sec-ops__soc_api__upload*
+  - mcp__sec-ops__soc_api__cancel*
+  - mcp__sec-ops__soc_api__rollback
+  fail_closed: true

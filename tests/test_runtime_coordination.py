@@ -19,65 +19,51 @@ from app.runtime.runtime_coordination import (
 )
 from app.runtime.settings import AppSettings
 
-_GENERIC_MUTATION_ASK = [
-    "mcp__*__*write*",
-    "mcp__*__*update*",
-    "mcp__*__*delete*",
-    "mcp__*__*block*",
-    "mcp__*__*isolate*",
-    "mcp__*__*disable*",
-    "mcp__*__*kill*",
-    "mcp__*__*quarantine*",
-]
-
-
 def _settings(tmp_path: Path, *, initialize_workspace: bool = True) -> AppSettings:
     root = tmp_path / "runtime"
     settings = AppSettings(
         _env_file=None,
         DATA_DIR=root / "data",
         GOVERNOR_WORKSPACE_DIR=root / "governor-workspace",
-        GOVERNOR_CLAUDE_ROOT=root / "claude-roots" / "governor",
         RUNTIME_VOLUME_MODE="local-debug",
     )
     if initialize_workspace:
         workspace = settings.default_workspace_dir
-        (workspace / ".claude").mkdir(parents=True)
-        (workspace / ".claude" / "settings.json").write_text(json.dumps(_workspace_settings()), encoding="utf-8")
-        (workspace / ".mcp.json").write_text('{"mcpServers": {}}\n', encoding="utf-8")
-        (workspace / "hooks").mkdir()
-        (workspace / "hooks" / "pre_tool_guard.py").write_text("# managed test hook\n", encoding="utf-8")
+        workspace.mkdir(parents=True)
+        (workspace / "AGENT.md").write_text("# Business Agent\n", encoding="utf-8")
+        (workspace / "agent.yaml").write_text(_workspace_manifest(), encoding="utf-8")
     return settings
 
 
-def _workspace_settings() -> dict:
-    return {
-        "permissions": {
-            "allow": ["Read(./**)", "Glob", "Grep", "Skill"],
-            "ask": ["Bash(*)", "Edit(./**)", "Write(./**)", *_GENERIC_MUTATION_ASK],
-            "deny": [],
-        },
-        "sandbox": {
-            "enabled": True,
-            "failIfUnavailable": True,
-            "autoAllowBashIfSandboxed": False,
-            "enableWeakerNestedSandbox": True,
-            "allowUnsandboxedCommands": False,
-        },
-    }
+def _workspace_manifest() -> str:
+    return (
+        "schema_version: 1\n"
+        "agent:\n"
+        "  id: security-operations-expert\n"
+        "  runtime: agentscope\n"
+        "  runtime_contract: agentscope-app/2.0.8\n"
+        "workspace_policy:\n"
+        "  fail_closed: true\n"
+        "  immutable_harness: true\n"
+        "  allow_for_run: false\n"
+        "  allowed_tools: [Read(./**), Glob, Grep, Skill]\n"
+        "  denied_tools: [Read(./.env)]\n"
+    )
 
 
 def _bootstrap(tmp_path: Path) -> Path:
     root = tmp_path / "runtime-bootstrap"
     workspace = root / "business-agents" / "security-operations-expert" / "workspace"
-    (workspace / ".claude").mkdir(parents=True)
-    (workspace / ".claude" / "settings.json").write_text(json.dumps(_workspace_settings()), encoding="utf-8")
-    (workspace / ".mcp.json").write_text('{"mcpServers": {}}\n', encoding="utf-8")
-    (workspace / "hooks").mkdir()
-    (workspace / "hooks" / "pre_tool_guard.py").write_text("# managed test hook\n", encoding="utf-8")
+    workspace.mkdir(parents=True)
+    (workspace / "AGENT.md").write_text("# Business Agent\n", encoding="utf-8")
+    (workspace / "agent.yaml").write_text(_workspace_manifest(), encoding="utf-8")
     governor = root / "governor-workspace"
     governor.mkdir()
-    (governor / "CLAUDE.md").write_text("# Governor\n", encoding="utf-8")
+    (governor / "AGENT.md").write_text("# Governor\n", encoding="utf-8")
+    (governor / "agent.yaml").write_text(
+        _workspace_manifest().replace("security-operations-expert", "governor"),
+        encoding="utf-8",
+    )
     return root
 
 
@@ -101,12 +87,10 @@ def _default_store(settings: AppSettings) -> GitAgentVersionStore:
     )
 
 
-def _remove_managed_ask(settings: AppSettings, *, commit: bool) -> GitAgentVersionStore:
+def _narrow_allowed_tools(settings: AppSettings, *, commit: bool) -> GitAgentVersionStore:
     store = _default_store(settings)
-    path = settings.default_workspace_dir / ".claude" / "settings.json"
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["permissions"]["ask"].remove(_GENERIC_MUTATION_ASK[-1])
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    path = settings.default_workspace_dir / "agent.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace(", Skill", ""), encoding="utf-8")
     if commit:
         store.create_snapshot(reason="historical_policy", note="historical managed policy")
     return store
@@ -140,7 +124,7 @@ def test_runtime_receipt_is_idempotent_and_not_bound_to_runtime_endpoint_env(tmp
     assert runtime_contract_status(
         settings=settings,
         bootstrap_dir=template,
-        env={"CLAUDE_ALLOWED_NETWORK_DOMAINS": "soc.internal"},
+        env={"AGENTSCOPE_RUNTIME_URL": "http://different-runtime.example"},
     ).valid
 
 
@@ -162,9 +146,9 @@ def test_clean_historical_workspace_is_not_rewritten_or_recommitted(tmp_path):
     settings = _settings(tmp_path)
     template = _bootstrap(tmp_path)
     _prepare(settings, template)
-    store = _remove_managed_ask(settings, commit=True)
+    store = _narrow_allowed_tools(settings, commit=True)
     historical_head = store.current_commit_sha()
-    settings_path = settings.default_workspace_dir / ".claude" / "settings.json"
+    settings_path = settings.default_workspace_dir / "agent.yaml"
     historical_bytes = settings_path.read_bytes()
 
     _prepare(settings, template)
@@ -180,38 +164,38 @@ def test_invalid_historical_workspace_fails_read_only_validation_without_rewrite
     _prepare(settings, template)
     store = _default_store(settings)
     historical_head = store.current_commit_sha()
-    settings_path = settings.default_workspace_dir / ".claude" / "settings.json"
+    settings_path = settings.default_workspace_dir / "agent.yaml"
     settings_path.write_text("{", encoding="utf-8")
 
-    with pytest.raises(ManagedAgentPolicyError, match="invalid_settings"):
+    with pytest.raises(ManagedAgentPolicyError, match="invalid_manifest"):
         _prepare(settings, template)
 
     assert store.current_commit_sha() == historical_head
     assert settings_path.read_text(encoding="utf-8") == "{"
-    assert {str(item["path"]) for item in store.workspace_changes()} == {".claude/settings.json"}
+    assert {str(item["path"]) for item in store.workspace_changes()} == {"agent.yaml"}
 
 
 def test_dirty_workspace_does_not_block_receipt_refresh_or_get_committed(tmp_path):
     settings = _settings(tmp_path)
     template = _bootstrap(tmp_path)
     _prepare(settings, template)
-    store = _remove_managed_ask(settings, commit=False)
+    store = _narrow_allowed_tools(settings, commit=False)
     historical_head = store.current_commit_sha()
-    settings_path = settings.default_workspace_dir / ".claude" / "settings.json"
+    settings_path = settings.default_workspace_dir / "agent.yaml"
     dirty_bytes = settings_path.read_bytes()
 
     _prepare(settings, template)
 
     assert store.current_commit_sha() == historical_head
     assert settings_path.read_bytes() == dirty_bytes
-    assert {str(item["path"]) for item in store.workspace_changes()} == {".claude/settings.json"}
+    assert {str(item["path"]) for item in store.workspace_changes()} == {"agent.yaml"}
 
 
 def test_open_change_set_does_not_trigger_workspace_migration(tmp_path):
     settings = _settings(tmp_path)
     template = _bootstrap(tmp_path)
     _prepare(settings, template)
-    store = _remove_managed_ask(settings, commit=True)
+    store = _narrow_allowed_tools(settings, commit=True)
     historical_head = store.current_commit_sha()
     settings.runtime_db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(settings.runtime_db_path) as connection:

@@ -4,10 +4,10 @@
 
 ## 项目共享内容
 
-- `settings.json`: 可提交的 Claude Code 项目级设置；当前对内建 Read 工具限制私有 env 读取、
-  要求 env 写入确认，在 PreToolUse 阻断真实容器验收旁路，并在 SessionStart 注入语言约束、
+- `settings.json`: 可提交的 Claude Code 项目级设置；当前要求私有 env 的 Edit/Write 操作确认，
+  未配置 Read deny；在 PreToolUse 阻断真实容器验收旁路，并在 SessionStart 注入语言约束、
   在 Stop 运行项目治理硬门。
-  Read deny 不约束 Bash/Python 子进程，不应表述为 OS 安全边界；严格隔离需另行启用
+  工具权限配置不约束 Bash/Python 子进程，不应表述为 OS 安全边界；严格隔离需另行启用
   Claude sandbox 或组织级 managed policy。
 - `rules/project.md`: 通用工作流和执行顺序。
 - `rules/architecture.md`: 通用架构卫生阈值。
@@ -18,10 +18,9 @@
 
 ## 启动边界
 
-当前 Claude Code 2.1.206 从仓库子目录启动时不会向上加载根 `.claude/settings.json`，
-因此项目权限规则与 Stop hook 会缺失。需要项目硬门的开发会话统一通过
-`python3 scripts/run_claude.py` 启动；该 launcher 会先切到仓库根，再原样传递 CLI 参数。
-项目专属模型约束放在 `rules/agentgov-project.md`，根目录和子目录启动均能发现。
+Claude Code 开发会话从仓库根启动，以加载 `.claude/settings.json` 的项目权限规则与 Stop hook。
+项目不再提供与生产 Runtime 绑定的 CLI launcher；项目专属架构约束放在
+`rules/agentgov-project.md`。
 
 ## 本仓库专项技能镜像
 

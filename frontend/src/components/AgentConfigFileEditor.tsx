@@ -11,7 +11,6 @@ interface AgentConfigFileEditorProps {
   clientConfig: RuntimeClientConfig;
   agentId: string;
   path: string;
-  sessionId?: string;
   streaming: boolean;
   onApplied?: () => void;
   onClose: () => void;
@@ -23,12 +22,15 @@ interface JsonValidation {
   sizeBytes: number;
 }
 
-function validateJsonContent(content: string, loading: boolean): JsonValidation {
+function validateContent(path: string, content: string, loading: boolean): JsonValidation {
   if (loading && !content.trim()) return { sizeBytes: 0 };
+  if (!path.startsWith("mcp/") || !path.endsWith(".json")) {
+    return { sizeBytes: new Blob([content]).size };
+  }
   try {
     const parsed = JSON.parse(content);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { error: ".mcp.json 必须是 JSON object", sizeBytes: new Blob([content]).size };
+      return { error: "MCP 配置必须是 JSON object", sizeBytes: new Blob([content]).size };
     }
     return {
       formatted: `${JSON.stringify(parsed, null, 2)}\n`,
@@ -51,7 +53,6 @@ export function AgentConfigFileEditor({
   clientConfig,
   agentId,
   path,
-  sessionId,
   streaming,
   onApplied,
   onClose,
@@ -120,10 +121,11 @@ export function AgentConfigFileEditor({
     };
   }, [agentId, clientConfig, path]);
 
-  const validation = useMemo(() => validateJsonContent(draft, loading), [draft, loading]);
+  const isJson = path.startsWith("mcp/") && path.endsWith(".json");
+  const validation = useMemo(() => validateContent(path, draft, loading), [draft, loading, path]);
   const dirty = file ? draft !== file.content : draft.trim() !== "";
   const blocked = loading || applying || streaming;
-  const validationLabel = loading ? "加载中" : validation.error ? "JSON 错误" : "JSON 有效";
+  const validationLabel = loading ? "加载中" : validation.error ? "JSON 错误" : isJson ? "JSON 有效" : "UTF-8 文本";
   const validationTone = loading ? "" : validation.error ? "warn" : "good";
 
   function resetDraft() {
@@ -148,11 +150,10 @@ export function AgentConfigFileEditor({
       const updated = await updateAgentConfigFile(clientConfig, agentId, path, {
         content: draft,
         expected_sha256: file?.sha256 || undefined,
-        session_id: sessionId,
       });
       setFile(updated);
       setDraft(updated.content);
-      setStatus(updated.sdk_session_invalidated ? "已应用，当前会话将在下次运行重新加载配置。" : "已应用。");
+      setStatus("已应用，后续运行将加载最新配置。");
       onApplied?.();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -184,15 +185,17 @@ export function AgentConfigFileEditor({
               {validationLabel}
             </span>
             <span className="config-file-editor-chip">{loading ? "待加载" : formatBytes(validation.sizeBytes)}</span>
-            <button
-              className="secondary-button"
-              type="button"
-              data-testid="agent-config-file-editor-format"
-              disabled={blocked || Boolean(validation.error)}
-              onClick={formatDraft}
-            >
-              <WandSparkles size={15} />格式化
-            </button>
+            {isJson ? (
+              <button
+                className="secondary-button"
+                type="button"
+                data-testid="agent-config-file-editor-format"
+                disabled={blocked || Boolean(validation.error)}
+                onClick={formatDraft}
+              >
+                <WandSparkles size={15} />格式化
+              </button>
+            ) : null}
             <button
               className="secondary-button"
               type="button"
@@ -214,7 +217,7 @@ export function AgentConfigFileEditor({
               highlightSelectionMatches: true,
               lineNumbers: true,
             }}
-            extensions={editorExtensions}
+            extensions={isJson ? editorExtensions : [EditorView.lineWrapping]}
             editable={!blocked}
             readOnly={blocked}
             onChange={(value) => {

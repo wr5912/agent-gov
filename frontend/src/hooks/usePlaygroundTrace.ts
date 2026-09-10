@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { getAgentRunTrace } from "../api/agentTrace";
+import { getAgentRun } from "../api/feedback";
 import { mergeChatMessageRunContext } from "../chatMessageRunContext";
-import { traceLogEvent } from "../playgroundTrace";
 import type { ChatMessage, RuntimeClientConfig } from "../types/runtime";
 
 type MessagesBySession = Record<string, ChatMessage[]>;
+const TRACE_WAIT_TIMEOUT_MS = 60_000;
+const TRACE_POLL_INTERVAL_MS = 1_000;
 
 export function usePlaygroundTrace(
   clientConfig: RuntimeClientConfig,
@@ -28,16 +30,19 @@ export function usePlaygroundTrace(
       traceError: undefined,
     }));
     try {
-      const trace = await getAgentRunTrace(clientConfig, runId, controller.signal);
+      const deadline = Date.now() + TRACE_WAIT_TIMEOUT_MS;
+      let run = await getAgentRun(clientConfig, runId, controller.signal);
+      let trace = await getAgentRunTrace(clientConfig, runId, controller.signal);
+      while (trace.trace_status !== "complete" && Date.now() < deadline) {
+        await abortableDelay(TRACE_POLL_INTERVAL_MS, controller.signal);
+        run = await getAgentRun(clientConfig, runId, controller.signal);
+        trace = await getAgentRunTrace(clientConfig, runId, controller.signal);
+      }
       if (controller.signal.aborted) return;
       patchMessage(setMessagesBySession, sessionId, messageId, (message) => ({
-        ...mergeChatMessageRunContext(message, trace),
-        // 只有完整持久化 trace 才校准替换；不可用/失败时保留本轮 SDK-native live evidence。
-        events: trace.completeness === "complete"
-          ? (trace.events || []).map(traceLogEvent)
-          : message.events,
-        traceState: trace.completeness === "complete" ? "ready" : "unavailable",
-        traceError: trace.completeness === "complete" ? undefined : "该历史运行没有可用的完整 SDK 消息。",
+        ...mergeChatMessageRunContext(mergeChatMessageRunContext(message, run), trace),
+        traceState: trace.trace_status === "complete" ? "ready" : "unavailable",
+        traceError: trace.trace_status === "complete" ? undefined : "该运行的 Langfuse Trace 尚未完整落盘。",
       }));
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -51,6 +56,24 @@ export function usePlaygroundTrace(
       if (pending.current.get(messageId) === controller) pending.current.delete(messageId);
     }
   }, [clientConfig, setMessagesBySession]);
+}
+
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Trace polling aborted", "AbortError"));
+      return;
+    }
+    const timeout = globalThis.setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    const abort = () => {
+      globalThis.clearTimeout(timeout);
+      reject(new DOMException("Trace polling aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function patchMessage(

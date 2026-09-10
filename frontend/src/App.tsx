@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { deleteSession, defaultRuntimeConfig, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConversationItems, getCurrentAgentRef, getHealth, getSessions, isLegacyDockerApiBase, listBusinessAgents, submitClaudeUserInputDecision } from "./api/runtime";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { defaultRuntimeConfig, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getCurrentAgentRef, getHealth, getRuntimeSessionMessages, getRuntimeSessionStatus, getSessions, listBusinessAgents, provisionRuntimeAgent, shouldMigrateStoredApiBase } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
 import { AssetRegistry } from "./components/AssetRegistry";
@@ -16,17 +16,20 @@ import { useLocalStorage } from "./hooks/useLocalStorage";
 import { usePlaygroundSessionScope } from "./hooks/usePlaygroundSessionScope";
 import { usePlaygroundTrace } from "./hooks/usePlaygroundTrace";
 import { usePlaygroundRun } from "./hooks/usePlaygroundRun";
-import { cancelWaitingUserInputRequests, patchUserInputRequest } from "./claudeUserInputState";
-import { messagesFromConversationItems } from "./playgroundHistory";
+import { cancelWaitingUserConfirmRequests, patchUserConfirmRequest } from "./runtimeUserConfirmState";
+import {
+  cancelWaitingExternalExecutionRequests,
+  patchExternalExecutionRequest,
+} from "./runtimeExternalExecutionState";
+import { messagesFromAgentScopeMessages } from "./playgroundHistory";
 import { usePromptSuggestion } from "./hooks/usePromptSuggestion";
 import {
-  canSubmitPlaygroundUserInput,
   initialPlaygroundRunState,
   isPlaygroundRunLocked,
   playgroundRunReducer,
 } from "./playgroundRunState";
-import type { AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo } from "./types/runtime";
-import { getAgentRuns } from "./api/feedback";
+import type { AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, RuntimeClientConfig, RuntimeExternalExecutionRequest, RuntimeHealth, RuntimeUserConfirmRequest, SessionInfo } from "./types/runtime";
+import { getAgentRunPendingActions, getAgentRuns } from "./api/feedback";
 import { defaultLangfuseUrl, makeApiDocsUrl } from "./runtimeUrls";
 import "./styles.css";
 
@@ -51,11 +54,9 @@ export default function App() {
     startNewSession,
     selectSession: selectScopedSession,
     claimLocalSession,
-    forgetSession,
   } = usePlaygroundSessionScope({ sessions, messagesBySession });
   const [alertId, setAlertId] = useState("");
   const [caseId, setCaseId] = useState("");
-  const [maxTurns, setMaxTurns] = useState(16);
   const [input, setInput] = useState("");
   const [runState, dispatchRun] = useReducer(playgroundRunReducer, initialPlaygroundRunState);
   const streaming = isPlaygroundRunLocked(runState);
@@ -64,6 +65,7 @@ export default function App() {
   const [submittingUserInputRequests, setSubmittingUserInputRequests] = useState<Set<string>>(() => new Set());
   const [lastError, setLastError] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
+  const [runtimeProvisioning, setRuntimeProvisioning] = useState(false);
   const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeWindow, setActiveWindow] = useState<"chat" | "improvement" | "asset">("chat");
@@ -76,8 +78,7 @@ export default function App() {
   const [feedbackDrawerOpen, setFeedbackDrawerOpen] = useState(false);
   const [feedbackContext, setFeedbackContext] = useState<FeedbackContext | null>(null);
 
-  const decisionTokensRef = useRef<Record<string, string>>({});
-  const shouldMigrateLegacyApiBase = isLegacyDockerApiBase(clientConfig.apiBase) && !isLegacyDockerApiBase(runtimeDefaults.apiBase);
+  const shouldMigrateLegacyApiBase = shouldMigrateStoredApiBase(clientConfig.apiBase, runtimeDefaults.apiBase);
   const migratedClientConfig = useMemo<RuntimeClientConfig>(() => {
     if (!shouldMigrateLegacyApiBase) return clientConfig;
     return {
@@ -101,7 +102,6 @@ export default function App() {
     setCaseId("");
     setInput("");
     setStreamingAssistantMessageId(undefined);
-    decisionTokensRef.current = {};
     setUserInputErrors({});
     setSubmittingUserInputRequests(new Set());
     setLastError(undefined);
@@ -116,20 +116,27 @@ export default function App() {
   useEffect(() => {
     if (!shouldMigrateLegacyApiBase) return;
     setClientConfig((current) => {
-      if (!isLegacyDockerApiBase(current.apiBase)) return current;
+      if (!shouldMigrateStoredApiBase(current.apiBase, runtimeDefaults.apiBase)) return current;
       return migratedClientConfig;
     });
-  }, [migratedClientConfig, setClientConfig, shouldMigrateLegacyApiBase]);
+  }, [migratedClientConfig, runtimeDefaults.apiBase, setClientConfig, shouldMigrateLegacyApiBase]);
   const apiDocsUrl = useMemo(() => makeApiDocsUrl(effectiveClientConfig.apiBase), [effectiveClientConfig.apiBase]);
   const langfuseUrl = useMemo(() => defaultLangfuseUrl(), []);
 
   const activeMessages = activeSessionId ? messagesBySession[activeSessionId] || [] : [];
+  const activeMessagesLoaded = Boolean(
+    activeSessionId && Object.prototype.hasOwnProperty.call(messagesBySession, activeSessionId),
+  );
   const activeMessageCount = activeMessages.length;
   const activeBackendSession = useMemo(
     () => sessions.find((session) => session.session_id === activeSessionId),
     [activeSessionId, sessions],
   );
-  const activeBackendSessionTurns = activeBackendSession?.turns ?? 0;
+  const selectedBusinessAgent = useMemo(
+    () => businessAgents.find((agent) => agent.agent_id === selectedBusinessAgentId),
+    [businessAgents, selectedBusinessAgentId],
+  );
+  const activeRuntimeAgentId = activeBackendSession?.agent_id || selectedBusinessAgent?.runtime_agent_id || "";
   const activeBackendRunId = activeBackendSession?.active_run_id || undefined;
   const activeTraceMessage = useMemo(() => {
     if (activeTraceMessageId) {
@@ -143,23 +150,20 @@ export default function App() {
     return undefined;
   }, [activeMessages, activeTraceMessageId, streamingAssistantMessageId]);
   const activeTraceEvents = activeTraceMessage?.events || [];
-  const activeTraceSourceUserInput = activeTraceMessage
-    ? precedingUserInput(activeMessages, activeTraceMessage.id)
-    : undefined;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setLastError(undefined);
     try {
-      const healthRequest = getHealth(effectiveClientConfig).then((response) => {
-        setHealth(response);
-        return response;
-      });
-      const [, sessionsRes, businessAgentsRes] = await Promise.all([
-        healthRequest,
-        getSessions(effectiveClientConfig),
+      const [healthRes, businessAgentsRes] = await Promise.all([
+        getHealth(effectiveClientConfig),
         listBusinessAgents(effectiveClientConfig),
       ]);
+      setHealth(healthRes);
+      const sessionGroups = await Promise.all(
+        businessAgentsRes.map((agent) => getSessions(effectiveClientConfig, agent.agent_id)),
+      );
+      const sessionsRes = sessionGroups.flat();
       setSessions(sessionsRes);
       setBusinessAgents(businessAgentsRes);
       if (reconcilePlaygroundScope(businessAgentsRes, sessionsRes)) resetPlaygroundTransientState();
@@ -226,21 +230,54 @@ export default function App() {
   }, [activeBackendRunId, activeSessionId, runState.lastRunId, runState.phase]);
 
   useEffect(() => {
-    if (!activeSessionId || activeMessageCount > 0 || streaming || activeBackendSessionTurns <= 0) return;
+    if (
+      !activeSessionId
+      || !activeRuntimeAgentId
+      || activeMessageCount > 0
+      || (streaming && runState.source !== "detached")
+    ) return;
 
     const controller = new AbortController();
-    void Promise.all([
-      getConversationItems(effectiveClientConfig, activeSessionId, controller.signal),
-      getAgentRuns(effectiveClientConfig, { session_id: activeSessionId, limit: 500 }),
-    ])
-      .then(([items, runs]) => {
+    void loadPlaygroundHistory(
+      effectiveClientConfig,
+      activeRuntimeAgentId,
+      activeSessionId,
+      controller.signal,
+    )
+      .then(({ history, status, runs, restoredMessages }) => {
         if (controller.signal.aborted) return;
-        const restoredMessages = messagesFromConversationItems(items, activeSessionId, runs);
-        if (!restoredMessages.length) return;
         setMessagesBySession((prev) => {
           if ((prev[activeSessionId] || []).length > 0) return prev;
           return { ...prev, [activeSessionId]: restoredMessages };
         });
+        setSessions((current) => current.map((session) => (
+          session.session_id === activeSessionId
+            ? { ...session, status: status.status, is_running: history.is_running }
+            : session
+        )));
+        const activeRun = [...runs].reverse().find((run) => {
+          const value = typeof run.status === "string" ? run.status : run.turn_status;
+          return ["queued", "running", "waiting_human", "waiting_external", "finalizing"].includes(String(value || ""));
+        });
+        if (status.status !== "idle" && activeRun?.run_id) {
+          const operationId = `detached:${activeSessionId}:${activeRun.run_id}`;
+          if (runState.phase === "idle") {
+            dispatchRun({
+              type: "observe_backend_run",
+              operationId,
+              sessionId: activeSessionId,
+              runId: activeRun.run_id,
+            });
+          }
+          if (
+            status.status === "awaiting_permission"
+            || status.status === "awaiting_external_result"
+            || activeRun.status === "waiting_human"
+            || activeRun.status === "waiting_external"
+          ) {
+            dispatchRun({ type: "awaiting_input", operationId });
+          }
+        }
       })
       .catch((error) => {
         if (controller.signal.aborted) return;
@@ -250,7 +287,53 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [activeBackendSessionTurns, activeMessageCount, activeSessionId, effectiveClientConfig, setMessagesBySession, streaming]);
+  }, [
+    activeMessageCount,
+    activeRuntimeAgentId,
+    activeSessionId,
+    effectiveClientConfig,
+    runState.phase,
+    runState.source,
+    setMessagesBySession,
+    streaming,
+  ]);
+
+  const refreshPlayground = useCallback(async () => {
+    try {
+      await refresh();
+      if (!activeSessionId || !activeRuntimeAgentId || streaming) return;
+      const { history, status, restoredMessages } = await loadPlaygroundHistory(
+        effectiveClientConfig,
+        activeRuntimeAgentId,
+        activeSessionId,
+      );
+      setMessagesBySession((current) => ({ ...current, [activeSessionId]: restoredMessages }));
+      setSessions((current) => current.map((session) => (
+        session.session_id === activeSessionId
+          ? { ...session, status: status.status, is_running: history.is_running }
+          : session
+      )));
+    } catch (error) {
+      setLastError(error instanceof Error ? `刷新会话失败：${error.message}` : `刷新会话失败：${String(error)}`);
+    }
+  }, [activeRuntimeAgentId, activeSessionId, effectiveClientConfig, refresh, streaming]);
+
+  const provisionSelectedRuntime = useCallback(async () => {
+    if (!selectedBusinessAgentId || streaming || runtimeProvisioning) return;
+    setRuntimeProvisioning(true);
+    setLastError(undefined);
+    try {
+      const current = await provisionRuntimeAgent(effectiveClientConfig, selectedBusinessAgentId);
+      if (!current.provisioned || !current.runtime_agent_id) {
+        throw new Error("Runtime 供给完成后未返回 AgentScope Agent ID。");
+      }
+      await refresh();
+    } catch (error) {
+      setLastError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRuntimeProvisioning(false);
+    }
+  }, [effectiveClientConfig, refresh, runtimeProvisioning, selectedBusinessAgentId, streaming]);
 
   function updateSessionMessages(sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) {
     setMessagesBySession((prev) => ({
@@ -259,13 +342,13 @@ export default function App() {
     }));
   }
 
-  function updateUserInputRequest(requestId: string, patch: Partial<ClaudeUserInputRequest>) {
+  function updateUserConfirmRequest(requestId: string, patch: Partial<RuntimeUserConfirmRequest>) {
     setMessagesBySession((prev) => {
       const next: Record<string, ChatMessage[]> = {};
       for (const [sessionId, messages] of Object.entries(prev)) {
         next[sessionId] = messages.map((message) => (
-          message.userInputRequests?.some((request) => request.request_id === requestId)
-            ? { ...message, userInputRequests: patchUserInputRequest(message.userInputRequests, requestId, patch) }
+          message.userConfirmRequests?.some((request) => request.requestId === requestId)
+            ? { ...message, userConfirmRequests: patchUserConfirmRequest(message.userConfirmRequests, requestId, patch) }
             : message
         ));
       }
@@ -273,36 +356,59 @@ export default function App() {
     });
   }
 
-  function cancelUserInputForMessage(
-    sessionId: string | undefined,
-    messageId: string | undefined,
-    decision: "client_cancelled" | "runtime_interrupted",
-  ) {
-    if (!sessionId || !messageId) return;
-    const resolvedAt = new Date().toISOString();
-    let changed = false;
+  function updateExternalExecutionRequest(requestId: string, patch: Partial<RuntimeExternalExecutionRequest>) {
     setMessagesBySession((prev) => {
-      const result = cancelWaitingUserInputRequests(prev[sessionId] || [], messageId, decision, resolvedAt);
-      changed = result.requestIds.length > 0;
-      return changed ? { ...prev, [sessionId]: result.messages } : prev;
+      const next: Record<string, ChatMessage[]> = {};
+      for (const [sessionId, messages] of Object.entries(prev)) {
+        next[sessionId] = messages.map((message) => (
+          message.externalExecutionRequests?.some((request) => request.requestId === requestId)
+            ? {
+                ...message,
+                externalExecutionRequests: patchExternalExecutionRequest(
+                  message.externalExecutionRequests,
+                  requestId,
+                  patch,
+                ),
+              }
+            : message
+        ));
+      }
+      return next;
     });
-    decisionTokensRef.current = {};
+  }
+
+  function cancelUserConfirmForMessage(sessionId: string, messageId: string) {
+    const resolvedAt = new Date().toISOString();
+    setMessagesBySession((prev) => {
+      const messages = cancelWaitingUserConfirmRequests(prev[sessionId] || [], messageId, resolvedAt);
+      return { ...prev, [sessionId]: messages };
+    });
     setUserInputErrors({});
     setSubmittingUserInputRequests(new Set());
   }
 
-  const { sendMessage, stopStream } = usePlaygroundRun({
+  function cancelExternalExecutionForMessage(sessionId: string, messageId: string) {
+    const resolvedAt = new Date().toISOString();
+    setMessagesBySession((prev) => {
+      const messages = cancelWaitingExternalExecutionRequests(prev[sessionId] || [], messageId, resolvedAt);
+      return { ...prev, [sessionId]: messages };
+    });
+    setUserInputErrors({});
+    setSubmittingUserInputRequests(new Set());
+  }
+
+  const { sendMessage, stopStream, submitUserConfirm, submitExternalExecution } = usePlaygroundRun({
     clientConfig: effectiveClientConfig,
     input,
     runState,
     dispatchRun,
     activeSessionId,
+    activeMessages,
+    activeMessagesLoaded,
     selectedBusinessAgentId,
+    runtimeAgentId: activeRuntimeAgentId,
     alertId,
     caseId,
-    maxTurns,
-    streamingAssistantMessageId,
-    decisionTokensRef,
     promptSuggestion,
     setInput,
     setStreamingAssistantMessageId,
@@ -314,52 +420,13 @@ export default function App() {
     setSubmittingUserInputRequests,
     claimLocalSession,
     updateSessionMessages,
-    updateUserInputRequest,
-    cancelUserInputForMessage,
+    updateUserConfirmRequest,
+    updateExternalExecutionRequest,
+    cancelUserConfirmForMessage,
+    cancelExternalExecutionForMessage,
     calibrateTrace,
     refresh,
   });
-
-  async function submitUserInputDecision(
-    request: ClaudeUserInputRequest,
-    input: Omit<ClaudeUserInputDecisionPayload, "decision_token">,
-  ) {
-    if (!canSubmitPlaygroundUserInput(runState)) return;
-    const token = decisionTokensRef.current[request.request_id];
-    if (!token) {
-      setUserInputErrors((prev) => ({ ...prev, [request.request_id]: "当前确认已失效，请重新运行本轮任务。" }));
-      return;
-    }
-    setUserInputErrors((prev) => {
-      const next = { ...prev };
-      delete next[request.request_id];
-      return next;
-    });
-    setSubmittingUserInputRequests((prev) => new Set(prev).add(request.request_id));
-    try {
-      const result = await submitClaudeUserInputDecision(effectiveClientConfig, request.request_id, {
-        ...input,
-        decision_token: token,
-      });
-      delete decisionTokensRef.current[request.request_id];
-      updateUserInputRequest(request.request_id, {
-        status: result.status,
-        decision: result.decision,
-        resolved_at: result.resolved_at || new Date().toISOString(),
-      });
-    } catch (error) {
-      setUserInputErrors((prev) => ({
-        ...prev,
-        [request.request_id]: error instanceof Error ? error.message : String(error),
-      }));
-    } finally {
-      setSubmittingUserInputRequests((prev) => {
-        const next = new Set(prev);
-        next.delete(request.request_id);
-        return next;
-      });
-    }
-  }
 
   function createSession() {
     if (streaming) return;
@@ -370,31 +437,6 @@ export default function App() {
   function selectSession(sessionId: string) {
     if (streaming) return;
     if (selectScopedSession(sessionId)) resetPlaygroundTransientState();
-  }
-
-  async function removeSession(sessionId: string) {
-    setLastError(undefined);
-    try {
-      const session = sessions.find((item) => item.session_id === sessionId);
-      if (session?.active_run_id || (streaming && activeSessionId === sessionId)) {
-        setLastError("会话运行中，完成或取消后才能删除。");
-        return;
-      }
-      if (session) await deleteSession(effectiveClientConfig, sessionId);
-      setMessagesBySession((prev) => {
-        const next = { ...prev };
-        delete next[sessionId];
-        return next;
-      });
-      forgetSession(sessionId);
-      if (activeSessionId === sessionId) {
-        setActiveTraceMessageId(undefined);
-        setEvidencePanelOpen(false);
-      }
-      await refresh();
-    } catch (error) {
-      setLastError(error instanceof Error ? error.message : String(error));
-    }
   }
 
   function showPlaygroundWindow() {
@@ -414,7 +456,7 @@ export default function App() {
     if (switchBusinessAgent(agentId)) resetPlaygroundTransientState();
   }
 
-  const currentAgentName = businessAgents.find((a) => a.agent_id === selectedBusinessAgentId)?.name || (selectedBusinessAgentId || "默认业务 Agent");
+  const currentAgentName = selectedBusinessAgent?.name || (selectedBusinessAgentId || "默认业务 Agent");
 
   function openFeedbackDrawer(message?: ChatMessage) {
     const feedbackAlertId = message?.alertId || alertId.trim() || undefined;
@@ -506,8 +548,7 @@ export default function App() {
               activeSessionId={activeSessionId}
               onSelectSession={selectSession}
               onNewSession={createSession}
-              onDeleteSession={removeSession}
-              onRefresh={refresh}
+              onRefresh={refreshPlayground}
               streaming={streaming}
             />
           ) : null}
@@ -521,10 +562,13 @@ export default function App() {
             sessionSidebarOpen={sessionSidebarOpen}
             agentName={currentAgentName}
             agentPresentation={agentPresentation}
+            runtimeReady={Boolean(activeRuntimeAgentId)}
+            runtimeProvisioning={runtimeProvisioning}
             promptSuggestions={promptSuggestion.suggestions}
             onInputChange={promptSuggestion.handleInputChange}
             onUsePromptSuggestion={promptSuggestion.apply}
             onSend={sendMessage}
+            onProvisionRuntime={() => { void provisionSelectedRuntime(); }}
             onStop={stopStream}
             onToggleSession={() => { setSessionSidebarOpen((open) => !open); setPlaygroundDrawer(null); }}
             onOpenRuntimeSettings={() => { setSessionSidebarOpen(false); setPlaygroundDrawer("runtime-settings"); }}
@@ -534,12 +578,12 @@ export default function App() {
             onRerun={rerunMessage}
             userInputErrors={userInputErrors}
             submittingUserInputRequests={submittingUserInputRequests}
-            onSubmitUserInput={submitUserInputDecision}
+            onSubmitUserInput={submitUserConfirm}
+            onSubmitExternalExecution={submitExternalExecution}
           />
           {evidencePanelOpen ? (
             <PlaygroundEvidencePanel
               message={activeTraceMessage}
-              sourceUserInput={activeTraceSourceUserInput}
               events={activeTraceEvents}
               streaming={streaming}
               langfuseUrl={langfuseUrl}
@@ -554,14 +598,11 @@ export default function App() {
               clientConfig={effectiveClientConfig}
               agents={agents}
               skills={skills}
-              activeSessionId={activeSessionId}
               alertId={alertId}
               caseId={caseId}
-              maxTurns={maxTurns}
               streaming={streaming}
               onAlertIdChange={setAlertId}
               onCaseIdChange={setCaseId}
-              onMaxTurnsChange={setMaxTurns}
               health={health}
               configMapping={configMapping}
               selectedBusinessAgentId={selectedBusinessAgentId}
@@ -603,4 +644,27 @@ function precedingUserInput(messages: ChatMessage[], messageId: string) {
     if (messages[current].role === "user") return messages[current].content;
   }
   return undefined;
+}
+
+async function loadPlaygroundHistory(
+  config: RuntimeClientConfig,
+  agentId: string,
+  sessionId: string,
+  signal?: AbortSignal,
+) {
+  const [history, status, runs] = await Promise.all([
+    getRuntimeSessionMessages(config, agentId, sessionId, signal),
+    getRuntimeSessionStatus(config, agentId, sessionId, signal),
+    getAgentRuns(config, { session_id: sessionId, limit: 500 }, signal),
+  ]);
+  const waitingRun = runs.find((run) => ["waiting_human", "waiting_external"].includes(String(run.status || "")));
+  const pendingActions = waitingRun?.run_id
+    ? await getAgentRunPendingActions(config, waitingRun.run_id, signal)
+    : [];
+  return {
+    history,
+    status,
+    runs,
+    restoredMessages: messagesFromAgentScopeMessages(history.messages, sessionId, runs, pendingActions),
+  };
 }

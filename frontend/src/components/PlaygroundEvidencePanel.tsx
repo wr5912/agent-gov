@@ -1,7 +1,5 @@
-import { Download, ListTree, PanelRightClose } from "lucide-react";
-import { useState } from "react";
+import { ListTree, PanelRightClose } from "lucide-react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { anthropicMockConfigFromTrace } from "../playgroundTrace";
 import type { ChatMessage, StreamLogEvent } from "../types/runtime";
 import { LangfuseTraceAction } from "./LangfuseTraceAction";
 import { TraceContextChips, TraceTimelineView, traceActivityFromEvents } from "./TraceDrawer";
@@ -12,7 +10,6 @@ export const EVIDENCE_PANEL_MAX_WIDTH = 680;
 
 interface PlaygroundEvidencePanelProps {
   message?: ChatMessage;
-  sourceUserInput?: string;
   events: StreamLogEvent[];
   streaming: boolean;
   langfuseUrl: string;
@@ -28,7 +25,6 @@ function clampEvidencePanelWidth(width: number) {
 
 export function PlaygroundEvidencePanel({
   message,
-  sourceUserInput,
   events,
   streaming,
   langfuseUrl,
@@ -37,42 +33,8 @@ export function PlaygroundEvidencePanel({
   onRetryTrace,
   onClose,
 }: PlaygroundEvidencePanelProps) {
-  const [exportFailure, setExportFailure] = useState<{ messageId?: string; error: string }>();
   const activity = traceActivityFromEvents(events);
   const panelWidth = clampEvidencePanelWidth(width);
-  const missingSource = message?.traceState === "ready" && !sourceUserInput
-    ? "找不到本轮对应的用户输入，无法导出 MockLLM 配置。"
-    : undefined;
-  const exportError = exportFailure && exportFailure.messageId === message?.id ? exportFailure.error : undefined;
-  const canExport = Boolean(
-    !streaming
-    && message?.traceState === "ready"
-    && message.runId
-    && sourceUserInput
-    && events.length,
-  );
-
-  const exportMockLLM = () => {
-    setExportFailure(undefined);
-    try {
-      const fixture = anthropicMockConfigFromTrace(message?.runId || "", sourceUserInput || "", events);
-      const blob = new Blob([`${JSON.stringify(fixture, null, 2)}\n`], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      try {
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = `mockllm-anthropic-${message?.runId}.json`;
-        anchor.click();
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    } catch (error) {
-      setExportFailure({
-        messageId: message?.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
 
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -136,16 +98,6 @@ export function PlaygroundEvidencePanel({
           {message ? <TraceContextChips message={message} activity={activity} /> : null}
         </div>
         <div className="evidence-panel-actions">
-          <button
-            className="secondary-button evidence-langfuse-link"
-            type="button"
-            data-testid="export-mockllm"
-            disabled={!canExport}
-            title={canExport ? "导出 Anthropic MockLLM 配置" : "完整 Trace 校准后可导出"}
-            onClick={exportMockLLM}
-          >
-            <Download size={14} />导出 MockLLM
-          </button>
           <LangfuseTraceAction
             message={message}
             langfuseUrl={langfuseUrl}
@@ -166,10 +118,6 @@ export function PlaygroundEvidencePanel({
       </div>
 
       <section className="evidence-tab-panel trace-drawer-body" role="tabpanel" data-testid="evidence-panel-trace">
-        {missingSource ? <div className="trace-load-status error" role="alert">{missingSource}</div> : null}
-        {exportError ? (
-          <div className="trace-load-status error" role="alert">导出失败：{exportError}</div>
-        ) : null}
         {message?.traceState === "error" ? (
           <div className="trace-load-status error" role="alert">
             Trace 加载失败：{message.traceError || "未知错误"}

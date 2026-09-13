@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib
 import json
 import os
 import re
@@ -14,7 +13,6 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from types import ModuleType
 from typing import TYPE_CHECKING, Final, NoReturn, NotRequired, TypeAlias, TypedDict, cast
 
 from dotenv.parser import parse_stream
@@ -27,6 +25,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from app.runtime import sqlite_schema_contract as schema_contract  # noqa: E402
+
+from scripts import agentscope_atomic_cutover_bootstrap as bootstrap  # noqa: E402
+from scripts import agentscope_atomic_cutover_env as cutover_env  # noqa: E402
 
 COMPOSE_FILE = REPO_ROOT / "docker/docker-compose.yml"
 LANGFUSE_COMPOSE_FILE = REPO_ROOT / "docker/docker-compose.langfuse.yml"
@@ -91,32 +92,22 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _bootstrap_module() -> ModuleType:
-    module = _import_first(("scripts.agentscope_atomic_cutover_bootstrap", "agentscope_atomic_cutover_bootstrap"))
-    if module is None:
-        raise CutoverError("bootstrap cutover helper 缺失；拒绝 destructive cutover")
-    return module
-
-
 def _source_artifact_sha256() -> str:
-    return cast(str, _bootstrap_module().source_artifact_sha256(REPO_ROOT))
+    return bootstrap.source_artifact_sha256(REPO_ROOT)
 
 
 _ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*?))?\}")
 
 
 def _operator_home() -> Path:
-    module = _import_first(("scripts.agentscope_atomic_cutover_env", "agentscope_atomic_cutover_env"))
-    if module is not None:
-        return cast(Path, module.trusted_operator_identity().home)
-    return Path(os.path.expanduser("~")).resolve()
+    return cutover_env.trusted_operator_identity().home
 
 
 def _require_privileged_mutation() -> None:
     if os.geteuid() != 0:
         raise CutoverError("atomic cutover mutating command 必须以 root 权限运行并保留 SUDO_UID")
     try:
-        _bootstrap_module().trusted_operator_identity()
+        cutover_env.trusted_operator_identity()
     except (KeyError, OSError, ValueError) as exc:
         raise CutoverError("无法建立可信 cutover operator identity") from exc
 
@@ -291,7 +282,7 @@ def _compose_base(env_file: Path, compose_file: Path = COMPOSE_FILE) -> list[str
 def require_compose_project_stopped(env_file: Path) -> None:
     env = load_env_file(env_file)
     project = env.get("COMPOSE_PROJECT_NAME", "agent-gov")
-    child_env = cast(dict[str, str], _bootstrap_module().selected_env_child_env(env_file))
+    child_env = cast(dict[str, str], bootstrap.selected_env_child_env(env_file))
     try:
         result = subprocess.run(
             ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}"],
@@ -305,17 +296,6 @@ def require_compose_project_stopped(env_file: Path) -> None:
         raise CutoverError("无法确认维护窗口中的 Compose 项目已停止") from exc
     if result.stdout.strip():
         raise CutoverError("维护闸未关闭：目标 Compose project 仍有容器；先显式 down 后再 prepare/execute")
-
-
-def _import_first(module_names: tuple[str, ...]) -> ModuleType | None:
-    for module_name in module_names:
-        try:
-            return importlib.import_module(module_name)
-        except ModuleNotFoundError as exc:
-            top_level = module_name.partition(".")[0]
-            if exc.name not in {module_name, top_level}:
-                raise
-    return None
 
 
 def command_inspect(args: argparse.Namespace) -> int:

@@ -3,11 +3,14 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import pwd
+import re
 import shutil
 import sqlite3
 import stat
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -264,26 +267,29 @@ def _write_digest_pinned_build_dockerfiles(root: Path) -> None:
         path.write_text(f"FROM {reference}\n", encoding="utf-8")
 
 
-def test_remote_preflight_bundle_inspect_remains_read_only_and_self_contained(tmp_path) -> None:
-    operator_home = tmp_path / "operator"
-    runtime_root = operator_home / "volume-agent-gov"
-    runtime_root.mkdir(parents=True)
+@pytest.mark.parametrize("spoof_runtime_root", [False, True])
+def test_remote_preflight_bundle_inspect_remains_read_only_and_self_contained(tmp_path, spoof_runtime_root: bool) -> None:
+    operator_home = Path(pwd.getpwuid(os.geteuid()).pw_dir).resolve()
+    untrusted_home = tmp_path / "operator"
+    runtime_root = (untrusted_home if spoof_runtime_root else operator_home) / "volume-agent-gov"
+    # 只分类随机且不存在的 DB 路径；不创建卷目录、不打开既有 live 数据库。
+    data_root = runtime_root / f".preflight-unused-{uuid.uuid4().hex}"
+    assert not data_root.exists()
     preflight_root = tmp_path / "remote/images/.agentscope-cutover-preflight.fixture"
-    scripts = preflight_root / "scripts"
-    runtime_package = preflight_root / "app/runtime"
-    scripts.mkdir(parents=True)
-    runtime_package.mkdir(parents=True)
-    standalone = scripts / "agentscope_atomic_cutover.py"
-    shutil.copyfile(CUTOVER_SCRIPT, standalone)
-    shutil.copyfile(REPO_ROOT / "app/__init__.py", preflight_root / "app/__init__.py")
-    shutil.copyfile(REPO_ROOT / "app/runtime/__init__.py", runtime_package / "__init__.py")
-    shutil.copyfile(REPO_ROOT / "app/runtime/sqlite_schema_contract.py", runtime_package / "sqlite_schema_contract.py")
+    # 消费实际上传清单，防止测试自己补齐文件后掩盖真实远端 bundle 漏包。
+    upload = _script_text().split('log "Preflighting remote Runtime epoch before source sync"', 1)[1].split("); then", 1)[0]
+    for relative in re.findall(r"(?m)^    \./(\S+\.py) \\\s*$", upload):
+        destination = preflight_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPO_ROOT / relative, destination)
+    standalone = preflight_root / "scripts/agentscope_atomic_cutover.py"
     env_file = tmp_path / "remote/docker.env"
-    env_file.write_text(f"HOST_RUNTIME_VOLUME_ROOT={runtime_root}\n", encoding="utf-8")
+    env_file.write_text(f"HOST_RUNTIME_VOLUME_ROOT={runtime_root}\nHOST_DATA_MOUNT={data_root}\n", encoding="utf-8")
     env = {
-        "HOME": operator_home.as_posix(),
+        "HOME": untrusted_home.as_posix(),
         "PATH": os.environ["PATH"],
         "PYTHONPATH": preflight_root.as_posix(),
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
 
     result = subprocess.run(
@@ -295,9 +301,15 @@ def test_remote_preflight_bundle_inspect_remains_read_only_and_self_contained(tm
         text=True,
     )
 
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["classification"] == "empty"
-    assert list(runtime_root.iterdir()) == []
+    if spoof_runtime_root:
+        assert result.returncode != 0 and "拒绝危险 Runtime root" in result.stderr
+        assert not result.stdout.strip()
+    else:
+        assert result.returncode == 0, result.stderr
+        result_metadata = json.loads(result.stdout)
+        assert result_metadata["classification"] == "empty"
+        assert result_metadata["database"] == str(data_root / "runtime.sqlite3")
+    assert not data_root.exists()
 
 
 @pytest.mark.parametrize(

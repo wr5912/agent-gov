@@ -268,7 +268,11 @@ if ! (
   cd "$TMP_DIR"
   rsync -azR \
     -e "$(rsync_ssh_command)" \
+    ./scripts/__init__.py \
     ./scripts/agentscope_atomic_cutover.py \
+    ./scripts/agentscope_atomic_cutover_bootstrap.py \
+    ./scripts/agentscope_atomic_cutover_images.py \
+    ./scripts/agentscope_atomic_cutover_env.py \
     ./app/__init__.py \
     ./app/runtime/__init__.py \
     ./app/runtime/sqlite_schema_contract.py \

@@ -35,6 +35,7 @@ class _GovernanceService(Protocol):
         intent: PublicationIntent,
         *,
         requested_tag_name: str | None,
+        db: Any | None = None,
     ) -> None: ...
 
     def _published_release(
@@ -82,7 +83,7 @@ def _prepare_finalization(
         row = db.get(AgentChangeSetModel, intent.change_set_id)
         if row is None:
             raise _error(404, "Agent change set not found")
-        service._validate_publication_intent(row, intent, requested_tag_name=intent.tag_name)
+        service._validate_publication_intent(row, intent, requested_tag_name=intent.tag_name, db=db)
         if row.status == "published":
             return service._published_release(
                 service._change_set_to_payload(row),

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 import yaml
+from agentgov_subagent_manifest_policy import validate_subagent_manifest
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app import SubAgentTemplate
 from agentscope.permission import PermissionBehavior, PermissionContext, PermissionMode, PermissionRule
@@ -21,6 +23,11 @@ _VERSION = re.compile(r"[0-9a-f]+")
 _SNAPSHOT_MARKER = "snapshot.json"
 SubagentTemplateRegistry: TypeAlias = dict[str, SubAgentTemplate]
 PermissionRuleRegistry: TypeAlias = dict[str, list[PermissionRule]]
+_LOGGER = logging.getLogger(__name__)
+
+
+class InvalidSubagentManifestError(ValueError):
+    """单个 Harness 的 subagent 契约无效；该 Harness 仍不可绑定运行。"""
 
 
 def load_subagent_templates(
@@ -61,9 +68,19 @@ def discover_subagent_templates(
         if _SNAPSHOT_SOURCE.fullmatch(snapshot.name) is None:
             continue
         workspace, digest = _validated_snapshot(snapshot)
+        try:
+            incoming = load_subagent_templates(workspace, digest)
+        except InvalidSubagentManifestError:
+            # 仅隔离经过 marker 与完整 digest 校验的旧版本契约错误。
+            # Workspace 绑定时仍会重新校验并拒绝该 Harness；不得注册降级模板。
+            _LOGGER.warning(
+                "Immutable Harness snapshot %s has invalid subagent manifest; its workspace bindings remain unavailable",
+                snapshot.name,
+            )
+            continue
         _merge_templates(
             templates,
-            load_subagent_templates(workspace, digest),
+            incoming,
         )
     return templates
 
@@ -114,27 +131,19 @@ def _validated_snapshot(snapshot: Path) -> tuple[Path, str]:
 
 def _load_template(subagent: Path, digest: str) -> SubAgentTemplate:
     manifest = _load_yaml_object(subagent / "agent.yaml")
-    agent = manifest.get("agent")
-    policy = manifest.get("workspace_policy")
-    session = manifest.get("session", {})
-    if not isinstance(agent, dict) or not isinstance(policy, dict) or not isinstance(session, dict):
-        raise ValueError("Subagent manifest requires agent, session, and workspace_policy objects")
-    name = agent.get("id")
-    description = agent.get("description")
-    if not isinstance(name, str) or _NAME.fullmatch(name) is None:
-        raise ValueError("Subagent agent.id is invalid")
-    if subagent.name != name:
-        raise ValueError("Subagent directory and agent.id must match")
-    if not isinstance(description, str) or not description.strip():
-        raise ValueError("Subagent agent.description is required")
-    if agent.get("system_prompt") != "AGENT.md":
-        raise ValueError("Subagent system_prompt must be AGENT.md")
+    issues = validate_subagent_manifest(manifest, directory_name=subagent.name)
+    if issues:
+        details = "; ".join(f"{issue.code}: {issue.detail}" for issue in issues)
+        raise InvalidSubagentManifestError(f"Invalid subagent manifest: {details}")
+    agent = cast(JsonObject, manifest["agent"])
+    policy = cast(JsonObject, manifest["workspace_policy"])
+    session = cast(JsonObject, manifest["session"])
+    name = cast(str, agent["id"])
+    description = cast(str, agent["description"])
     prompt_path = subagent / "AGENT.md"
     if prompt_path.is_symlink() or not prompt_path.is_file():
         raise ValueError("Subagent AGENT.md is missing or unsafe")
-    mode = _permission_mode(session.get("permission_mode", "default"))
-    if policy.get("fail_closed") is not True:
-        raise ValueError("Subagent workspace_policy must be fail_closed")
+    mode = _permission_mode(session["permission_mode"])
     permission = PermissionContext(
         mode=mode,
         allow_rules=_permission_rules(

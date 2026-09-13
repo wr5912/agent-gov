@@ -6,7 +6,6 @@ import logging
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from types import MappingProxyType
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,8 +26,6 @@ from app.routers.agent_jobs import create_agent_jobs_router
 from app.routers.agent_workspace_packages import create_agent_workspace_packages_router
 from app.routers.agents import create_agents_router
 from app.routers.assets import create_assets_router
-from app.routers.catalog import create_catalog_router
-from app.routers.config import create_config_router
 from app.routers.core import create_core_router
 from app.routers.error_handlers import register_error_handlers
 from app.routers.feedback_cases import create_feedback_cases_router
@@ -37,13 +34,10 @@ from app.routers.improvement_content import create_improvement_content_router
 from app.routers.improvement_execution import create_improvement_execution_router
 from app.routers.improvement_feedback_ops import create_improvement_feedback_ops_router
 from app.routers.improvements import create_improvement_relations_router, create_improvements_router
-from app.routers.langfuse_traces import create_langfuse_traces_router
 from app.runtime.agent_git_store import GitAgentVersionStore
-from app.runtime.agent_job_types import AgentJobType
 from app.runtime.agent_profiles import build_profiles, discover_business_agents
 from app.runtime.integrations.runtime_langfuse import RuntimeLangfuseClient
 from app.runtime.logging_config import configure_runtime_logging
-from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.runtime_recovery import RUNTIME_RECOVERY_INTERVAL_SECONDS
 from app.runtime.settings import get_settings, runtime_settings_log_message
@@ -64,7 +58,9 @@ from app.runtime_gateway.router import (
 )
 from app.runtime_gateway.store import RuntimeRunStore
 from app.runtime_gateway.trace_reconciliation import reconcile_pending_traces
+from app.services.agent_candidate_writer import AgentCandidateWriter
 from app.services.agent_governance import AgentGovernanceService
+from app.services.agent_publication_evidence_migration import reconcile_legacy_publication_evidence
 from app.services.improvement_execution_service import ImprovementExecutionService
 from app.services.improvement_governor_service import ImprovementGovernorService
 from app.services.runtime_agent_deletion import RuntimeAgentDeletionService
@@ -115,15 +111,9 @@ agent_governance = AgentGovernanceService(
 )
 agent_registry_store = AgentRegistryStore(runtime_db_session_factory)
 agent_registry_store.deletion_pending = run_store.agent_deletion_pending
-agent_governance.agent_exists = lambda agent_id: agent_registry_store.get_agent(agent_id) is not None
+agent_governance.agent_exists = agent_registry_store.has_agent
 feedback_store.agent_exists = agent_governance.agent_exists
-
-
-def _resolve_agent_version_id(agent_id: Optional[str]) -> Optional[str]:
-    return agent_governance._store_for(agent_id or DEFAULT_BUSINESS_AGENT_ID).current_version_id()
-
-
-feedback_store.agent_version_provider = _resolve_agent_version_id
+feedback_store.agent_version_provider = agent_governance.current_agent_version_id
 provisioner = RuntimeAgentProvisioner(
     client=runtime_client,
     store=run_store,
@@ -131,7 +121,17 @@ provisioner = RuntimeAgentProvisioner(
     version_store_for=agent_governance._store_for,
     read_version_store_for=agent_governance._store_for_read_only,
     snapshot_store=harness_snapshots,
+    release_session_config={
+        "type": settings.agentscope_model_type,
+        "credential_id": settings.agentscope_credential_id,
+        "model": settings.agentscope_model_name,
+        "parameters": dict(settings.agentscope_model_parameters),
+    },
 )
+agent_governance.release_activator = provisioner.ensure_version
+agent_governance.release_activation_committer = provisioner.complete_release_activation
+agent_governance.release_activation_compensator = provisioner.compensate_release_activation
+agent_candidate_writer = AgentCandidateWriter(agent_governance)
 runtime_execution = AgentScopeExecutionService(
     settings=settings,
     client=runtime_client,
@@ -147,11 +147,6 @@ improvement_governor_service = ImprovementGovernorService(
     content_store=improvement_content_store,
     run_profile_json=runtime_execution.run_profile_json,
     data_dir=settings.data_dir,
-    format_normalized_feedback=lambda raw_text: runtime_execution.format_agent_text(
-        job_type=str(AgentJobType.NORMALIZED_FEEDBACK),
-        raw_text=raw_text,
-        job_input={"raw_feedback": raw_text},
-    ),
     find_run_by_id=lambda run_id: feedback_store.find_run(run_id=run_id),
 )
 asset_store = AssetStore(runtime_db_session_factory)
@@ -167,7 +162,7 @@ improvement_execution_service = ImprovementExecutionService(
 agent_testing_service = AgentTestingService(
     store=agent_testing_store,
     store_for=agent_governance._store_for,
-    agent_exists=lambda agent_id: agent_registry_store.get_agent(agent_id) is not None,
+    agent_exists=agent_registry_store.has_agent,
     get_change_set=agent_governance.get_change_set,
     run_candidate=runtime_execution.run_candidate,
     release_candidate=runtime_execution.release_candidate,
@@ -182,13 +177,12 @@ agent_testing_service = AgentTestingService(
 agent_test_schedule_service = AgentTestScheduleService(
     store=agent_test_schedule_store,
     testing=agent_testing_service,
-    agent_exists=lambda agent_id: agent_registry_store.get_agent(agent_id) is not None,
-    agent_status=lambda agent_id: getattr(agent_registry_store.get_agent(agent_id), "status", None),
+    agent_exists=agent_registry_store.has_agent,
+    agent_status=agent_registry_store.status_of,
 )
-agent_governance.latest_passed_test_run = lambda agent_id, commit_sha: agent_testing_service.latest_passed_for_commit(
-    agent_id=agent_id,
-    commit_sha=commit_sha,
-)
+agent_governance.latest_passed_test_run = agent_testing_service.latest_passed_for_commit
+agent_governance.latest_candidate_test_run = agent_testing_store.latest_for_candidate
+agent_governance.test_run_by_id = agent_testing_store.get_run
 runtime_agent_deletion = RuntimeAgentDeletionService(
     client=runtime_client,
     store=run_store,
@@ -223,9 +217,6 @@ def _recover_agent_provisions() -> None:
 
 
 def _reconcile_governance_state() -> None:
-    release_reconciliation = agent_governance.reconcile_release_operations()
-    if any(release_reconciliation.values()):
-        logger.warning("reconciled interrupted Agent release operations: %s", release_reconciliation)
     execution_reconciliation = improvement_execution_service.reconcile_expired_executions()
     if any(execution_reconciliation.values()):
         logger.warning("reconciled expired improvement executions: %s", execution_reconciliation)
@@ -315,6 +306,9 @@ async def lifespan(_: FastAPI):
     _recover_agent_provisions()
     registered_agents = _sync_business_agent_profiles()
     logger.info("business agent registry synced: %s", registered_agents)
+    publication_migration = reconcile_legacy_publication_evidence(agent_governance)
+    if any(publication_migration.to_payload().values()):
+        logger.warning("legacy publication evidence reconciliation: %s", publication_migration.to_payload())
     await _reconcile_runtime_gateway_state(include_fresh_intents=True)
     interrupted_runs = run_store.reconcile_after_restart()
     if interrupted_runs:
@@ -465,16 +459,12 @@ app.include_router(
     )
 )
 app.include_router(create_internal_runtime_router(store=run_store, shared_secret=settings.runtime_shared_secret))
-app.include_router(create_config_router(settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
 app.include_router(
     create_agent_config_files_router(
-        settings=settings,
-        agent_registry_store=agent_registry_store,
+        candidate_writer=agent_candidate_writer,
         require_api_key=require_api_key,
-        version_maintenance=agent_governance.version_maintenance,
     )
 )
-app.include_router(create_catalog_router(settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
 app.include_router(create_agent_governance_router(agent_governance=agent_governance, require_api_key=require_api_key))
 app.include_router(
     create_agents_router(
@@ -495,8 +485,8 @@ app.include_router(
         settings=settings,
         agent_registry_store=agent_registry_store,
         agent_governance=agent_governance,
-        run_store=run_store,
         agent_testing=agent_testing_service,
+        runtime_client=runtime_client,
         require_api_key=require_api_key,
     )
 )
@@ -535,7 +525,6 @@ app.include_router(
         require_api_key=require_api_key,
     )
 )
-app.include_router(create_langfuse_traces_router(client=langfuse_client, require_api_key=require_api_key))
 app.include_router(create_assets_router(asset_store=asset_store, require_api_key=require_api_key))
 app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_feedback_cases_router(feedback_store=feedback_store, require_api_key=require_api_key))

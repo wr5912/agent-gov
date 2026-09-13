@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -15,6 +16,7 @@ from app.runtime.runtime_db import (
     AgentReleaseSourceClaimModel,
     AgentReleaseTagClaimModel,
 )
+from app.runtime.runtime_db_base import begin_sqlite_write_transaction
 from app.runtime.state_machines import validate_transition
 from app.services.agent_publication_provenance import (
     PublicationSourceRevision,
@@ -39,12 +41,62 @@ class PublicationSourceConflict(ValueError):
     """A source improvement is already owned by another publication intent."""
 
 
+def _is_lower_hex(value: object, length: int) -> bool:
+    return isinstance(value, str) and len(value) == length and all(character in "0123456789abcdef" for character in value)
+
+
+_PUBLICATION_INTENT_FIELDS = frozenset(
+    {
+        "release_id",
+        "change_set_id",
+        "agent_id",
+        "commit_sha",
+        "diff_digest",
+        "test_run_id",
+        "suite_digest",
+        "tag_name",
+        "operator",
+        "note",
+        "force",
+        "force_publication_blocker",
+        "previous_status",
+        "started_at",
+        "previous_commit_sha",
+        "source_improvement_id",
+        "source_improvement_updated_at",
+    }
+)
+_PUBLICATION_INTENT_REQUIRED_STRINGS = (
+    "release_id",
+    "change_set_id",
+    "agent_id",
+    "commit_sha",
+    "diff_digest",
+    "tag_name",
+    "operator",
+    "previous_status",
+    "started_at",
+)
+_PUBLICATION_INTENT_OPTIONAL_STRINGS = (
+    "test_run_id",
+    "suite_digest",
+    "note",
+    "force_publication_blocker",
+    "previous_commit_sha",
+    "source_improvement_id",
+    "source_improvement_updated_at",
+)
+
+
 @dataclass(frozen=True)
 class PublicationIntent:
     release_id: str
     change_set_id: str
     agent_id: str
     commit_sha: str
+    diff_digest: str
+    test_run_id: str | None
+    suite_digest: str | None
     tag_name: str
     operator: str
     note: str | None
@@ -62,6 +114,9 @@ class PublicationIntent:
             "change_set_id": self.change_set_id,
             "agent_id": self.agent_id,
             "commit_sha": self.commit_sha,
+            "diff_digest": self.diff_digest,
+            "test_run_id": self.test_run_id,
+            "suite_digest": self.suite_digest,
             "tag_name": self.tag_name,
             "operator": self.operator,
             "note": self.note,
@@ -76,36 +131,79 @@ class PublicationIntent:
 
     @classmethod
     def from_payload(cls, value: object) -> PublicationIntent:
-        if not isinstance(value, dict):
-            raise ValueError("publication intent must be an object")
-        required = (
-            "release_id",
-            "change_set_id",
-            "agent_id",
-            "commit_sha",
-            "tag_name",
-            "operator",
-            "previous_status",
-            "started_at",
-        )
-        if any(not isinstance(value.get(field), str) or not value[field] for field in required):
-            raise ValueError("publication intent is incomplete")
+        record = _publication_intent_record(value)
+        force = _publication_intent_force(record)
+        _validate_publication_intent_record(record, force)
         return cls(
-            release_id=str(value["release_id"]),
-            change_set_id=str(value["change_set_id"]),
-            agent_id=str(value["agent_id"]),
-            commit_sha=str(value["commit_sha"]),
-            tag_name=str(value["tag_name"]),
-            operator=str(value["operator"]),
-            note=str(value["note"]) if value.get("note") is not None else None,
-            force=bool(value.get("force")),
-            force_publication_blocker=(str(value["force_publication_blocker"]) if value.get("force_publication_blocker") is not None else None),
-            previous_status=str(value["previous_status"]),
-            started_at=str(value["started_at"]),
-            previous_commit_sha=(str(value["previous_commit_sha"]) if value.get("previous_commit_sha") else None),
-            source_improvement_id=(str(value["source_improvement_id"]) if value.get("source_improvement_id") else None),
-            source_improvement_updated_at=(str(value["source_improvement_updated_at"]) if value.get("source_improvement_updated_at") else None),
+            release_id=str(record["release_id"]),
+            change_set_id=str(record["change_set_id"]),
+            agent_id=str(record["agent_id"]),
+            commit_sha=str(record["commit_sha"]),
+            diff_digest=str(record["diff_digest"]),
+            test_run_id=cast(str | None, record["test_run_id"]),
+            suite_digest=cast(str | None, record["suite_digest"]),
+            tag_name=str(record["tag_name"]),
+            operator=str(record["operator"]),
+            note=cast(str | None, record["note"]),
+            force=force,
+            force_publication_blocker=cast(str | None, record["force_publication_blocker"]),
+            previous_status=str(record["previous_status"]),
+            started_at=str(record["started_at"]),
+            previous_commit_sha=cast(str | None, record["previous_commit_sha"]),
+            source_improvement_id=cast(str | None, record["source_improvement_id"]),
+            source_improvement_updated_at=cast(str | None, record["source_improvement_updated_at"]),
         )
+
+
+def _publication_intent_record(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        raise ValueError("publication intent must be an object")
+    if set(value) != _PUBLICATION_INTENT_FIELDS:
+        raise ValueError("publication intent schema is invalid")
+    return cast(JsonObject, value)
+
+
+def _publication_intent_force(record: JsonObject) -> bool:
+    value = record["force"]
+    if type(value) is not bool:
+        raise ValueError("publication intent force flag is invalid")
+    return value
+
+
+def _validate_publication_intent_record(record: JsonObject, force: bool) -> None:
+    if any(not isinstance(record.get(field), str) or not record[field] for field in _PUBLICATION_INTENT_REQUIRED_STRINGS):
+        raise ValueError("publication intent is incomplete")
+    if any(record[field] is not None and not isinstance(record[field], str) for field in _PUBLICATION_INTENT_OPTIONAL_STRINGS):
+        raise ValueError("publication intent optional field type is invalid")
+    if record["previous_status"] not in {"candidate_committed", "approved"}:
+        raise ValueError("publication intent previous status is invalid")
+    test_run_id = record["test_run_id"]
+    suite_digest = record["suite_digest"]
+    if (test_run_id is None) != (suite_digest is None) or force == (test_run_id is not None):
+        raise ValueError("publication intent test evidence is incomplete")
+    if not _is_lower_hex(record["commit_sha"], 40) or not _is_lower_hex(record["diff_digest"], 64):
+        raise ValueError("publication intent commit or diff identity is invalid")
+    if suite_digest is not None and not _is_lower_hex(suite_digest, 64):
+        raise ValueError("publication intent suite digest is invalid")
+    previous_commit = record["previous_commit_sha"]
+    if previous_commit is not None and not _is_lower_hex(previous_commit, 40):
+        raise ValueError("publication intent previous commit is invalid")
+    if test_run_id is not None and not test_run_id:
+        raise ValueError("publication intent test run id is invalid")
+    source_id = record["source_improvement_id"]
+    source_updated_at = record["source_improvement_updated_at"]
+    if (source_id is None) != (source_updated_at is None):
+        raise ValueError("publication intent source identity is incomplete")
+    if source_id == "" or source_updated_at == "":
+        raise ValueError("publication intent source identity is invalid")
+    force_blocker = record["force_publication_blocker"]
+    if force != (isinstance(force_blocker, str) and bool(force_blocker)):
+        raise ValueError("publication intent force evidence is invalid")
+    note = record["note"]
+    if force and (not isinstance(note, str) or not note.strip()):
+        raise ValueError("publication intent force reason is invalid")
+    if force and record["previous_status"] != "candidate_committed":
+        raise ValueError("force publication intent cannot replace an approved evidence path")
 
 
 def capture_publication_source(db: Session, change_set_id: str) -> PublicationSourceRevision | None:
@@ -141,9 +239,12 @@ def commit_publication_intent(
     before: JsonObject,
     after: JsonObject,
     add_event: Callable[..., None],
+    validate_candidate_test: Callable[[Session], None],
 ) -> None:
     try:
         with session_factory.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            validate_candidate_test(db)
             validate_intent_provenance(db, intent)
             _assert_release_tag_available(db, intent)
             _assert_release_source_available(db, intent)
@@ -207,9 +308,7 @@ def validate_source_claim(db: Session, intent: PublicationIntent) -> None:
     expected = (intent.change_set_id, intent.release_id)
     actual = (claim.change_set_id, claim.release_id) if claim else None
     if actual != expected:
-        raise PublicationSourceConflict(
-            f"来源改进事项 {intent.source_improvement_id} 的发布预留不属于当前变更集"
-        )
+        raise PublicationSourceConflict(f"来源改进事项 {intent.source_improvement_id} 的发布预留不属于当前变更集")
 
 
 def record_publication_error(
@@ -250,7 +349,11 @@ def reconcile_publication_failure(
     add_event: Callable[..., None],
 ) -> bool:
     try:
-        side_effects_present = store.publication_side_effects_present(intent.commit_sha, intent.tag_name)
+        side_effects_present = store.publication_side_effects_present(
+            intent.commit_sha,
+            intent.tag_name,
+            previous_commit_sha=intent.previous_commit_sha,
+        )
     except AgentGitError:
         side_effects_present = True
     if side_effects_present:
@@ -327,10 +430,40 @@ def _cancel_publication_intent(
     return True
 
 
+def release_projection_matches_intent(value: JsonObject, intent: PublicationIntent) -> bool:
+    expected: JsonObject = {
+        "schema_version": "agent-release/v1",
+        "release_id": intent.release_id,
+        "agent_id": intent.agent_id,
+        "created_at": intent.started_at,
+        "status": "published",
+        "tag_name": intent.tag_name,
+        "commit_sha": intent.commit_sha,
+        "previous_commit_sha": intent.previous_commit_sha,
+        "source_improvement_id": intent.source_improvement_id,
+        "change_set_id": intent.change_set_id,
+        "rollback_of_release_id": None,
+        "note": intent.note,
+        "operator": intent.operator,
+        "force_published": intent.force,
+        "force_publication_blocker": intent.force_publication_blocker if intent.force else None,
+        "force_publish_reason": intent.note if intent.force else None,
+    }
+    return all(value.get(field) == expected_value for field, expected_value in expected.items())
+
+
 def release_matches_intent(row: AgentReleaseModel, intent: PublicationIntent) -> bool:
-    actual = (row.change_set_id, row.agent_id, row.commit_sha, row.tag_name, row.status)
-    expected = (intent.change_set_id, intent.agent_id, intent.commit_sha, intent.tag_name, "published")
-    return actual == expected
+    actual = (row.release_id, row.change_set_id, row.agent_id, row.created_at, row.commit_sha, row.tag_name, row.status)
+    expected = (
+        intent.release_id,
+        intent.change_set_id,
+        intent.agent_id,
+        intent.started_at,
+        intent.commit_sha,
+        intent.tag_name,
+        "published",
+    )
+    return actual == expected and release_projection_matches_intent(dict(row.payload_json or {}), intent)
 
 
 def _assert_release_tag_available(db: Session, intent: PublicationIntent) -> None:
@@ -398,9 +531,7 @@ def _source_claim(db: Session, intent: PublicationIntent) -> AgentReleaseSourceC
 
 
 def _source_conflict(intent: PublicationIntent, owner_change_set_id: str) -> PublicationSourceConflict:
-    return PublicationSourceConflict(
-        f"来源改进事项 {intent.source_improvement_id} 已由变更集 {owner_change_set_id} 持有发布预留，不能重复发布"
-    )
+    return PublicationSourceConflict(f"来源改进事项 {intent.source_improvement_id} 已由变更集 {owner_change_set_id} 持有发布预留，不能重复发布")
 
 
 def release_payload(
@@ -425,6 +556,9 @@ def release_payload(
         "rollback_of_release_id": None,
         "archive_path": archive.get("archive_path"),
         "archive_sha256": archive.get("sha256"),
+        "runtime_agent_id": archive.get("runtime_agent_id"),
+        "harness_digest": archive.get("harness_digest"),
+        "workspace_id": archive.get("workspace_id"),
         "note": intent.note,
         "operator": intent.operator,
         "force_published": intent.force,

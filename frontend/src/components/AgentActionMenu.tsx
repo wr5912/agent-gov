@@ -1,4 +1,4 @@
-import { Download, Trash2, Upload } from "lucide-react";
+import { Download, SlidersHorizontal, Trash2, Upload } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -16,6 +16,7 @@ interface AgentActionMenuProps {
   disabled: boolean;
   onClose: () => void;
   onExport: () => void;
+  onConfigure: () => void;
   onOverwrite: () => void;
   onDelete: () => void;
 }
@@ -27,7 +28,7 @@ function useAnchoredMenu(anchor: HTMLButtonElement, onClose: () => void) {
     if (!anchor.isConnected) return onClose();
     const rect = anchor.getBoundingClientRect();
     const menuWidth = menuRef.current?.offsetWidth || 216;
-    const menuHeight = menuRef.current?.offsetHeight || 132;
+    const menuHeight = menuRef.current?.offsetHeight || 174;
     const gap = 6;
     const inset = 8;
     const roomBelow = window.innerHeight - rect.bottom - inset;
@@ -97,6 +98,9 @@ export function AgentActionMenu(props: AgentActionMenuProps) {
     >
       <button type="button" role="menuitem" data-testid="settings-agent-export" disabled={props.disabled} onClick={props.onExport}>
         <Download size={15} /><span>导出 Workspace</span>
+      </button>
+      <button type="button" role="menuitem" data-testid="settings-agent-configure-native" disabled={props.disabled} onClick={props.onConfigure}>
+        <SlidersHorizontal size={15} /><span>表单配置候选…</span>
       </button>
       <button type="button" role="menuitem" data-testid="settings-agent-overwrite" disabled={props.disabled} onClick={props.onOverwrite}>
         <Upload size={15} /><span>覆盖导入…</span>

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import cast
 
 from sqlalchemy import select
@@ -9,15 +8,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.runtime.runtime_db_base import begin_sqlite_write_transaction, utc_now
 
 from ._store_support import (
-    RuntimeInputRejected,
     RuntimeObjectNotFound,
     RuntimeStateConflict,
     _detached,
-    _finish_run,
     _require_run,
     _run_response,
     _runtime_context_response,
-    _transition,
 )
 from .contracts import (
     ACTIVE_RUN_STATUSES,
@@ -33,8 +29,10 @@ from .contracts import (
     RuntimeTraceTeamChildExpectation,
     RuntimeTraceToolExpectation,
 )
+from .hitl import HITLValidationError, parse_tool_call_fingerprint
 from .models import (
     AgentRunModel,
+    RuntimeChatOperationModel,
     RuntimePendingActionModel,
     RuntimeReceiptModel,
     RuntimeSessionBindingModel,
@@ -68,19 +66,34 @@ class RuntimeRunQueryStoreMixin:
         client_operation_id: str,
     ) -> AgentRunResponse:
         with self.Session() as db:
-            rows = list(
+            operation_run_ids = set(
                 db.scalars(
-                    select(AgentRunModel).where(
+                    select(RuntimeChatOperationModel.run_id).where(
+                        RuntimeChatOperationModel.root_session_id == session_id,
+                        RuntimeChatOperationModel.client_operation_id == client_operation_id,
+                    ),
+                ).all(),
+            )
+            origin_run_ids = set(
+                db.scalars(
+                    select(AgentRunModel.run_id).where(
                         AgentRunModel.session_id == session_id,
                         AgentRunModel.client_operation_id == client_operation_id,
                     ),
                 ).all(),
             )
-            if not rows:
+            run_ids = operation_run_ids | origin_run_ids
+            if not run_ids:
                 raise RuntimeObjectNotFound("Agent run not found for client operation")
-            if len(rows) > 1:
-                raise RuntimeStateConflict("client_operation_id has multiple AgentGov runs")
-            return _run_response(rows[0])
+            if len(run_ids) > 1:
+                raise RuntimeStateConflict(
+                    "client_operation_id has multiple AgentGov runs",
+                )
+            if not operation_run_ids:
+                raise RuntimeStateConflict(
+                    "client_operation_id run exists without its durable operation ledger",
+                )
+            return _run_response(_require_run(db, run_ids.pop()))
 
     def active_run_for_session(self, session_id: str) -> AgentRunResponse | None:
         with self.Session() as db:
@@ -152,6 +165,38 @@ class RuntimeRunQueryStoreMixin:
             ).all()
             return [_run_response(row) for row in rows]
 
+    def mark_trace_observed(
+        self,
+        run_id: str,
+        *,
+        trace_url: str | None = None,
+    ) -> AgentRunResponse:
+        """Langfuse 派生图已与 durable facts 对账时提升为完整。"""
+
+        with self.Session.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            run = _require_run(db, run_id)
+            if RunStatus(run.status) not in TERMINAL_RUN_STATUSES:
+                raise RuntimeStateConflict("Only a terminal run can have a complete trace")
+            run.trace_status = "complete"
+            if trace_url:
+                run.trace_url = trace_url
+            run.updated_at = utc_now()
+            return _run_response(run)
+
+    def mark_trace_incomplete(self, run_id: str) -> AgentRunResponse:
+        """Trace 在有界等待后仍与 durable facts 不完整。"""
+
+        with self.Session.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            run = _require_run(db, run_id)
+            if RunStatus(run.status) not in TERMINAL_RUN_STATUSES:
+                raise RuntimeStateConflict("Only a terminal run can have an incomplete trace")
+            if run.trace_status == "pending":
+                run.trace_status = "incomplete"
+                run.updated_at = utc_now()
+            return _run_response(run)
+
     def active_run_for_agent(self, agent_id: str) -> AgentRunResponse | None:
         with self.Session() as db:
             run = db.scalar(
@@ -180,134 +225,27 @@ class RuntimeRunQueryStoreMixin:
             ).all()
             return [_run_response(row) for row in rows]
 
-    def recovery_required_runs(self) -> list[AgentRunResponse]:
-        """返回重启后仍持有 fence、必须先让上游静止的 runs。"""
-
-        with self.Session() as db:
-            rows = db.scalars(
-                select(AgentRunModel).where(AgentRunModel.status.in_([item.value for item in ACTIVE_RUN_STATUSES])).order_by(AgentRunModel.updated_at),
-            ).all()
-            return [_run_response(row) for row in rows if (row.metadata_json or {}).get("recovery_required") is True]
-
-    def mark_recovery_interrupt_requested(self, run_id: str) -> AgentRunResponse:
-        with self.Session.begin() as db:
-            begin_sqlite_write_transaction(db.connection())
-            run = _require_run(db, run_id)
-            if RunStatus(run.status) not in ACTIVE_RUN_STATUSES:
-                return _run_response(run)
-            metadata = dict(run.metadata_json or {})
-            metadata["recovery_interrupt_requested"] = True
-            metadata["recovery_quiescent_observations"] = 0
-            run.metadata_json = metadata
-            run.updated_at = utc_now()
-            return _run_response(run)
-
-    def note_recovery_quiescent(self, run_id: str) -> int:
-        with self.Session.begin() as db:
-            begin_sqlite_write_transaction(db.connection())
-            run = _require_run(db, run_id)
-            if RunStatus(run.status) not in ACTIVE_RUN_STATUSES:
-                return 0
-            metadata = dict(run.metadata_json or {})
-            observations = int(metadata.get("recovery_quiescent_observations") or 0) + 1
-            metadata["recovery_quiescent_observations"] = observations
-            run.metadata_json = metadata
-            run.updated_at = utc_now()
-            return observations
-
-    def reset_recovery_quiescent(self, run_id: str) -> AgentRunResponse:
-        """任一 Team Session 非 idle 时清零连续静止观测。"""
-
-        with self.Session.begin() as db:
-            begin_sqlite_write_transaction(db.connection())
-            run = _require_run(db, run_id)
-            if RunStatus(run.status) not in ACTIVE_RUN_STATUSES:
-                return _run_response(run)
-            metadata = dict(run.metadata_json or {})
-            metadata["recovery_quiescent_observations"] = 0
-            run.metadata_json = metadata
-            run.updated_at = utc_now()
-            return _run_response(run)
-
-    def fail_recovery(self, run_id: str, *, error: str) -> AgentRunResponse:
-        """上游已确认静止但缺少完整 canonical batch 时，明确中断并释放 fence。"""
-
-        with self.Session.begin() as db:
-            begin_sqlite_write_transaction(db.connection())
-            run = _require_run(db, run_id)
-            if RunStatus(run.status) in TERMINAL_RUN_STATUSES:
-                return _run_response(run)
-            run.trace_status = "incomplete"
-            run.terminal_reason = "observation_incomplete"
-            run.error_json = {"type": "runtime_recovery", "message": error}
-            _transition(run, RunStatus.INTERRUPTED)
-            _finish_run(db, run)
-            return _run_response(run)
-
-    def reconcile_after_restart(self) -> list[str]:
-        """进程重启后保留 active fence，等待 Runtime canonical receipt/reconcile。"""
-
-        with self.Session.begin() as db:
-            begin_sqlite_write_transaction(db.connection())
-            runs = list(db.scalars(select(AgentRunModel).where(AgentRunModel.status.in_([item.value for item in ACTIVE_RUN_STATUSES]))).all())
-            for run in runs:
-                metadata = dict(run.metadata_json or {})
-                metadata["recovery_required"] = True
-                run.metadata_json = metadata
-                run.trace_status = "incomplete"
-                run.updated_at = utc_now()
-            return [run.run_id for run in runs]
-
-    def reconcile_after_runtime_boot(self, boot_id: str) -> list[str]:
-        """Runtime 单独重启时幂等保留 active fences 并强制 canonical recovery。"""
-
-        if not boot_id:
-            raise RuntimeInputRejected("Runtime boot_id must not be empty")
-        with self.Session.begin() as db:
-            begin_sqlite_write_transaction(db.connection())
-            runs = list(
-                db.scalars(
-                    select(AgentRunModel).where(
-                        AgentRunModel.status.in_(
-                            [item.value for item in ACTIVE_RUN_STATUSES],
-                        ),
-                    ),
-                ).all(),
-            )
-            changed: list[str] = []
-            for run in runs:
-                metadata = dict(run.metadata_json or {})
-                if metadata.get("runtime_boot_id") == boot_id:
-                    continue
-                metadata.update(
-                    {
-                        "runtime_boot_id": boot_id,
-                        "recovery_required": True,
-                        "recovery_quiescent_observations": 0,
-                    },
-                )
-                metadata.pop("recovery_interrupt_requested", None)
-                run.metadata_json = metadata
-                run.trace_status = "incomplete"
-                run.updated_at = utc_now()
-                changed.append(run.run_id)
-            return changed
-
 
 def _pending_action_response(
     row: RuntimePendingActionModel,
 ) -> RuntimePendingActionResponse:
     if row.kind not in {"human", "external"}:
         raise RuntimeStateConflict("Pending action kind is invalid")
-    allowed_tool_fields = ("type", "id", "name", "input", "state")
-    tool_call = {key: deepcopy(row.tool_call_json[key]) for key in allowed_tool_fields if key in row.tool_call_json}
+    try:
+        fingerprint = parse_tool_call_fingerprint(
+            row.tool_call_json,
+            expected_id=row.tool_call_id,
+            expected_name=row.tool_call_name,
+        )
+    except HITLValidationError as exc:
+        raise RuntimeStateConflict(str(exc)) from exc
     return RuntimePendingActionResponse(
         action_id=row.action_id,
         session_id=row.session_id,
         run_id=row.run_id,
         reply_id=row.reply_id,
         kind="human" if row.kind == "human" else "external",
-        tool_call=tool_call,
+        **fingerprint.model_dump(mode="python"),
         status="pending",
         created_at=row.created_at,
     )
@@ -325,6 +263,11 @@ def _trace_expectations(
     db: Session,
 ) -> RuntimeTraceExpectations:
     root_reply_ids, integrity_complete = _trace_root_reply_ids(run.reply_ids_json)
+    interrupted_before_reply, interruption_integrity = _trace_interruption_expectation(
+        run,
+        receipts,
+        root_reply_ids,
+    )
     action_expectations: list[RuntimeTraceActionExpectation] = []
     for action in actions:
         if (
@@ -384,7 +327,8 @@ def _trace_expectations(
         team_children=children,
         tool_results=tool_expectations,
         actions=action_expectations,
-        control_integrity_complete=integrity_complete and tools_complete,
+        interrupted_before_reply=interrupted_before_reply,
+        control_integrity_complete=(integrity_complete and tools_complete and interruption_integrity),
     )
 
 
@@ -394,6 +338,28 @@ def _trace_root_reply_ids(raw_reply_ids: object) -> tuple[list[str], bool]:
     reply_ids = [value for value in raw_reply_ids if isinstance(value, str) and value and value != "pending"]
     complete = len(reply_ids) == len(raw_reply_ids) and len(set(reply_ids)) == len(reply_ids)
     return reply_ids, complete
+
+
+def _trace_interruption_expectation(
+    run: AgentRunModel,
+    receipts: list[RuntimeReceiptModel],
+    root_reply_ids: list[str],
+) -> tuple[bool, bool]:
+    interrupted = [row for row in receipts if row.event_type == "RUN_INTERRUPTED"]
+    receipt_sessions = [row.session_id for row in interrupted]
+    raw_metadata_sessions = (run.metadata_json or {}).get(
+        "runtime_interrupted_session_ids",
+    )
+    metadata_sessions = raw_metadata_sessions if isinstance(raw_metadata_sessions, list) else []
+    metadata_is_valid = (
+        (raw_metadata_sessions is None or isinstance(raw_metadata_sessions, list))
+        and all(isinstance(value, str) and value for value in metadata_sessions)
+        and len(set(metadata_sessions)) == len(metadata_sessions)
+    )
+    receipt_is_valid = all(row.reply_id is None and not row.payload_json for row in interrupted) and len(set(receipt_sessions)) == len(receipt_sessions)
+    integrity_complete = metadata_is_valid and receipt_is_valid and set(metadata_sessions) == set(receipt_sessions)
+    interrupted_before_reply = integrity_complete and run.terminal_reason == "interrupted" and not root_reply_ids and run.session_id in receipt_sessions
+    return interrupted_before_reply, integrity_complete
 
 
 def _trace_child_session_ids(

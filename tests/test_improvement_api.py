@@ -21,9 +21,9 @@ EMPTY_ARTIFACT_PRESENCE = {
 }
 
 
-def test_improvement_item_single_source_lifecycle(monkeypatch, tmp_path: Path) -> None:
+def test_improvement_item_single_source_lifecycle(process_environment, tmp_path: Path) -> None:
     """业务产物负责前推阶段，公开 lifecycle 只允许返工。"""
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         created = client.post(
             "/api/improvements",
@@ -99,8 +99,8 @@ def test_improvement_item_single_source_lifecycle(monkeypatch, tmp_path: Path) -
         assert "transition" in rejected.json()["detail"].lower()
 
 
-def test_list_scoped_by_agent_and_global(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_list_scoped_by_agent_and_global(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         a = client.post("/api/improvements", json={"agent_id": "agent-a", "title": "a"}).json()["improvement_id"]
         b = client.post("/api/improvements", json={"agent_id": "agent-b", "title": "b"}).json()["improvement_id"]
@@ -110,8 +110,8 @@ def test_list_scoped_by_agent_and_global(monkeypatch, tmp_path: Path) -> None:
     assert {a, b}.issubset(allitems)
 
 
-def test_create_rejects_empty_and_unknown_is_404(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_create_rejects_empty_and_unknown_is_404(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         assert client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "  "}).status_code == 400
         assert client.post("/api/improvements", json={"agent_id": "  ", "title": "x"}).status_code == 400
@@ -127,9 +127,9 @@ def test_create_rejects_empty_and_unknown_is_404(monkeypatch, tmp_path: Path) ->
         assert client.post("/api/improvements/imp-unknown/lifecycle", json={"stage": "unknown"}).status_code == 422
 
 
-def test_archive_is_terminal_status_and_blocks_lifecycle(monkeypatch, tmp_path: Path) -> None:
+def test_archive_is_terminal_status_and_blocks_lifecycle(process_environment, tmp_path: Path) -> None:
     """归档为终态：事项关系与内容都不可再写，且失败写入不留下部分副作用。"""
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         created = client.post(
             "/api/improvements",
@@ -185,9 +185,9 @@ def test_archive_is_terminal_status_and_blocks_lifecycle(monkeypatch, tmp_path: 
         assert client.post("/api/improvements/imp-unknown/archive").status_code == 404
 
 
-def test_merge_split_and_similar_api(monkeypatch, tmp_path: Path) -> None:
+def test_merge_split_and_similar_api(process_environment, tmp_path: Path) -> None:
     """W2-b：相似 → 归并(同 Agent)→ 拆分；跨 Agent 归并 400、未知 404。"""
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         a = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警时间窗口不一致误报", "source_feedback_refs": ["f1"]}).json()
         b = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警时间窗口不一致重复反馈", "source_feedback_refs": ["f2"]}).json()
@@ -211,9 +211,9 @@ def test_merge_split_and_similar_api(monkeypatch, tmp_path: Path) -> None:
         assert client.post(f"/api/improvements/{a['improvement_id']}/merge", json={"source_improvement_id": "imp-nope"}).status_code == 404
 
 
-def test_auto_merge_on_create(monkeypatch, tmp_path: Path) -> None:
+def test_auto_merge_on_create(process_environment, tmp_path: Path) -> None:
     """W2-b：auto_merge 创建时把来源反馈并入相似开放事项，而非新建。"""
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         base = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "数据时间窗口不可靠导致误判", "source_feedback_refs": ["fa"]}).json()
         merged = client.post(
@@ -226,9 +226,9 @@ def test_auto_merge_on_create(monkeypatch, tmp_path: Path) -> None:
         assert len(client.get("/api/improvements", params={"agent_id": "soc-ops"}).json()) == 1
 
 
-def test_closed_loop_links_api_is_read_only(monkeypatch, tmp_path: Path) -> None:
+def test_closed_loop_links_api_is_read_only(process_environment, tmp_path: Path) -> None:
     """闭环链接由权威业务动作写入；公开 API 只读，不能注入任意或跨 Agent 引用。"""
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         item = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "关联闭环"}).json()
         iid = item["improvement_id"]
@@ -243,9 +243,9 @@ def test_closed_loop_links_api_is_read_only(monkeypatch, tmp_path: Path) -> None
         assert client.get("/api/improvements/imp-nope/links").status_code == 404
 
 
-def test_create_ignores_hostile_backend_owned_fields(monkeypatch, tmp_path: Path) -> None:
+def test_create_ignores_hostile_backend_owned_fields(process_environment, tmp_path: Path) -> None:
     """字段所有权：请求体里夹带 backend-owned 字段不得越权——后端权威生成 id/stage/status。"""
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         created = client.post(
             "/api/improvements",
@@ -275,8 +275,8 @@ def test_create_ignores_hostile_backend_owned_fields(monkeypatch, tmp_path: Path
     assert body["created_at"] != "1999-01-01T00:00:00Z"
 
 
-def test_artifact_presence_false_keeps_strict_subresource_404(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_artifact_presence_false_keeps_strict_subresource_404(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         item = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "空产物事项"}).json()
         improvement_id = item["improvement_id"]

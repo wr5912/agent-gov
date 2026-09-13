@@ -114,6 +114,39 @@ class AgentPublicationErrorResponse(BaseModel):
     updated_at: str
 
 
+class AgentChangeSetApprovalEvidenceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_commit_sha: str
+    diff_digest: str
+    test_run_id: str
+    suite_digest: str
+    review_digest: str
+    reviewed_file_count: int
+
+
+class AgentChangeSetPublicationEvidenceResponse(BaseModel):
+    """公开发布恢复所需的不可变证据，不暴露内部操作人与备注。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    diff_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    test_run_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    suite_digest: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    tag_name: str = Field(min_length=1)
+    force: bool
+
+    @model_validator(mode="after")
+    def validate_test_evidence_mode(self) -> AgentChangeSetPublicationEvidenceResponse:
+        has_test_evidence = self.test_run_id is not None and self.suite_digest is not None
+        if (self.test_run_id is None) != (self.suite_digest is None):
+            raise ValueError("publication evidence test identity is incomplete")
+        if self.force == has_test_evidence:
+            raise ValueError("publication evidence test identity does not match force mode")
+        return self
+
+
 class AgentChangeSetResponse(ExtensibleResponse):
     schema_version: str = "agent-change-set/v1"
     change_set_id: str
@@ -129,6 +162,8 @@ class AgentChangeSetResponse(ExtensibleResponse):
     title: Optional[str] = None
     note: Optional[str] = None
     diff_summary: JsonObject = Field(default_factory=dict)
+    approval_evidence: Optional[AgentChangeSetApprovalEvidenceResponse] = None
+    publication_evidence: Optional[AgentChangeSetPublicationEvidenceResponse] = None
     latest_test_run_id: Optional[str] = None
     latest_test_run: Optional[JsonObject] = None
     latest_release_id: Optional[str] = None
@@ -138,6 +173,11 @@ class AgentChangeSetResponse(ExtensibleResponse):
     publication_provenance_blocker: Optional[str] = None
     publication_blocker: Optional[str] = None
     publication_error: Optional[AgentPublicationErrorResponse] = None
+    candidate_evidence_epoch: Optional[str] = None
+    evidence_not_before: Optional[str] = None
+    legacy_evidence_migration: Optional[JsonObject] = None
+    legacy_publication_quarantine: Optional[JsonObject] = None
+    legacy_publication_identity: Optional[JsonObject] = None
     worktree_cleanup_pending: bool = False
     worktree_cleanup: Optional[JsonObject] = None
 
@@ -166,6 +206,9 @@ class AgentReleaseResponse(ExtensibleResponse):
     rollback_of_release_id: Optional[str] = None
     archive_path: Optional[str] = None
     archive_sha256: Optional[str] = None
+    runtime_agent_id: Optional[str] = None
+    harness_digest: Optional[str] = None
+    workspace_id: Optional[str] = None
     note: Optional[str] = None
     operator: Optional[str] = None
     force_published: bool = False
@@ -182,13 +225,34 @@ class AgentChangeSetCreateRequest(BaseModel):
 
 
 class AgentChangeSetActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     operator: str = "runtime"
     note: Optional[str] = None
+
+
+class AgentChangeSetReviewedFileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=4096)
+    detail_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class AgentChangeSetApproveRequest(AgentChangeSetActionRequest):
+    candidate_commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    diff_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    test_run_id: str = Field(min_length=1, max_length=128)
+    suite_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reviewed_files: list[AgentChangeSetReviewedFileRequest] = Field(min_length=1, max_length=10_000)
 
 
 class AgentChangeSetPublishRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    expected_candidate_commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    expected_diff_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_test_run_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    expected_suite_digest: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     operator: str = "runtime"
     tag_name: Optional[str] = None
     note: Optional[str] = None
@@ -201,29 +265,8 @@ class AgentChangeSetPublishRequest(BaseModel):
             raise ValueError("force_reason is required when force=true")
         if not self.force and self.force_reason is not None:
             raise ValueError("force_reason is only valid when force=true")
+        if self.force and (self.expected_test_run_id is not None or self.expected_suite_digest is not None):
+            raise ValueError("force publication must explicitly omit test evidence because it bypasses the test gate")
+        if not self.force and (self.expected_test_run_id is None or self.expected_suite_digest is None):
+            raise ValueError("normal publication requires exact test_run_id and suite_digest evidence")
         return self
-
-
-class AgentReleaseRollbackRequest(BaseModel):
-    operator: str = "runtime"
-    note: Optional[str] = None
-
-
-class AgentReleaseRestoreRequest(BaseModel):
-    operator: str = "runtime"
-    note: Optional[str] = None
-
-
-class AgentReleaseRestoreResponse(ExtensibleResponse):
-    schema_version: str = "agent-release-restore/v1"
-    release: AgentReleaseResponse
-    restore_result: JsonObject = Field(default_factory=dict)
-
-
-class AgentRepositoryDiscardChangesRequest(BaseModel):
-    paths: list[str] = Field(default_factory=list)
-
-
-class AgentRepositorySnapshotRequest(BaseModel):
-    operator: str = "runtime"
-    note: Optional[str] = None

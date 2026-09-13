@@ -14,14 +14,20 @@ from typing import Any
 
 import yaml
 
+from harness_permission_policy import validate_converted_permission_rules
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agentgov_agentscope_contract import AGENTSCOPE_RUNTIME_CONTRACT  # noqa: E402
 from agentgov_harness_digest import harness_content_digest  # noqa: E402
+from agentgov_subagent_manifest_policy import (  # noqa: E402
+    SubagentManifestIssue,
+    validate_subagent_manifest,
+)
 
 DEFAULT_BOOTSTRAP_ROOT = REPO_ROOT / "docker" / "runtime-bootstrap"
-RUNTIME_CONTRACT = "agentscope-app/2.0.8"
 CONVERTER_ID = "agentgov-claude-to-agentscope/v1"
 ENV_REFERENCE_RE = re.compile(r"\$\{(?P<name>[A-Z][A-Z0-9_]*)\}")
 LEGACY_ENTRY_NAMES = {".claude", ".mcp.json", "CLAUDE.md", "hooks"}
@@ -42,7 +48,10 @@ STATIC_CUTOVER_ROOTS = (
     Path("frontend/src"),
     Path("integrations"),
     Path("docker"),
+    Path("agentgov_agentscope_contract.py"),
     Path("agentgov_harness_digest.py"),
+    Path("agentgov_run_permission.py"),
+    Path("agentgov_subagent_manifest_policy.py"),
     Path("Makefile"),
     Path("README.md"),
     Path("requirements.txt"),
@@ -216,7 +225,7 @@ def _check_manifest(workspace: Path, manifest: HarnessObject) -> list[Finding]:
         return findings + [_manifest_finding(workspace, "agent_contract", "agent 必须是 object")]
     if not isinstance(agent.get("id"), str) or not agent["id"]:
         findings.append(_manifest_finding(workspace, "agent_id", "agent.id 必须是非空字符串"))
-    if agent.get("runtime") != "agentscope" or agent.get("runtime_contract") != RUNTIME_CONTRACT:
+    if agent.get("runtime") != "agentscope" or agent.get("runtime_contract") != AGENTSCOPE_RUNTIME_CONTRACT:
         findings.append(_manifest_finding(workspace, "runtime_contract", "Runtime 必须固定为 AgentScope 2.0.8 公共契约"))
     if agent.get("system_prompt") != "AGENT.md":
         findings.append(_manifest_finding(workspace, "system_prompt", "system_prompt 必须指向 AGENT.md"))
@@ -229,12 +238,7 @@ def _check_manifest(workspace: Path, manifest: HarnessObject) -> list[Finding]:
     if isinstance(policy, dict) and policy.get("allow_for_run") is not False:
         findings.append(_manifest_finding(workspace, "run_permission", "bootstrap Harness 不得默认整轮放权"))
     if isinstance(policy, dict):
-        allowed_tools = policy.get("allowed_tools")
-        if not isinstance(allowed_tools, list) or any(
-            isinstance(item, str) and item.partition("(")[0].startswith("mcp__") and any(character in item.partition("(")[0] for character in "*?[")
-            for item in allowed_tools
-        ):
-            findings.append(_manifest_finding(workspace, "mcp_permission", "MCP allow 规则必须使用精确工具名"))
+        findings.extend(_check_permission_policy(workspace, workspace / "agent.yaml", policy))
     if not isinstance(harness, dict):
         return findings + [_manifest_finding(workspace, "harness_contract", "harness 必须是 object")]
     if harness.get("content_digest") != _harness_content_digest(workspace):
@@ -330,24 +334,76 @@ def _check_subagents(workspace: Path) -> list[Finding]:
     root = workspace / "subagents"
     if not root.exists():
         return findings
-    for subagent in sorted(path for path in root.iterdir() if path.is_dir()):
+    if root.is_symlink() or not root.is_dir():
+        return [_finding(workspace, root, "subagent_contract", "subagents 必须是普通目录")]
+    for subagent in sorted(root.iterdir()):
+        if subagent.is_symlink() or not subagent.is_dir():
+            findings.append(_finding(workspace, subagent, "subagent_contract", "subagent 必须是普通目录"))
+            continue
         manifest_path = subagent / "agent.yaml"
         prompt_path = subagent / "AGENT.md"
-        if not manifest_path.is_file() or not prompt_path.is_file():
+        if manifest_path.is_symlink() or not manifest_path.is_file() or prompt_path.is_symlink() or not prompt_path.is_file():
             findings.append(_finding(workspace, subagent, "subagent_contract", "subagent 缺少 agent.yaml/AGENT.md"))
             continue
         manifest = _load_object(manifest_path, findings, workspace)
-        agent = manifest.get("agent") if manifest else None
-        if not isinstance(agent, dict) or agent.get("runtime") != "agentscope" or agent.get("runtime_contract") != RUNTIME_CONTRACT:
-            findings.append(_finding(workspace, manifest_path, "subagent_runtime", "subagent Runtime 契约非法"))
-        policy = manifest.get("workspace_policy") if manifest else None
-        allowed_tools = policy.get("allowed_tools") if isinstance(policy, dict) else None
-        if not isinstance(allowed_tools, list) or any(
-            isinstance(item, str) and item.partition("(")[0].startswith("mcp__") and any(character in item.partition("(")[0] for character in "*?[")
-            for item in allowed_tools
-        ):
-            findings.append(_finding(workspace, manifest_path, "mcp_permission", "Subagent MCP allow 规则必须使用精确工具名"))
+        if manifest is None:
+            continue
+        findings.extend(
+            _finding(
+                workspace,
+                manifest_path,
+                _cutover_subagent_code(issue),
+                issue.detail,
+            )
+            for issue in validate_subagent_manifest(
+                manifest,
+                directory_name=subagent.name,
+            )
+        )
     return findings
+
+
+def _cutover_subagent_code(issue: SubagentManifestIssue) -> str:
+    if issue.code == "subagent_runtime":
+        return "subagent_runtime"
+    if issue.code == "subagent_policy":
+        return "subagent_policy"
+    if issue.code == "subagent_ask_unsupported":
+        return "subagent_ask_unsupported"
+    if issue.code in {
+        "conflicting_tool_policy",
+        "invalid_tool_policy",
+        "subagent_team_say_required",
+        "wildcard_mcp_permission_forbidden",
+    }:
+        return "tool_permission_policy"
+    return "subagent_contract"
+
+
+def _check_permission_policy(
+    workspace: Path,
+    manifest_path: Path,
+    policy: HarnessObject,
+    *,
+    subagent: bool = False,
+) -> list[Finding]:
+    values: dict[str, list[str]] = {}
+    for field in ("allowed_tools", "denied_tools", "ask_tools"):
+        raw = policy.get(field, []) if field == "ask_tools" else policy.get(field)
+        if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+            return [_finding(workspace, manifest_path, "tool_permission_policy", f"{field} 必须是字符串列表")]
+        values[field] = raw
+    try:
+        validate_converted_permission_rules(
+            allowed_tools=values["allowed_tools"],
+            ask_tools=values["ask_tools"],
+            denied_tools=values["denied_tools"],
+        )
+    except ValueError as exc:
+        return [_finding(workspace, manifest_path, "tool_permission_policy", str(exc))]
+    if subagent and values["ask_tools"]:
+        return [_finding(workspace, manifest_path, "subagent_ask_unsupported", "无人值守 Subagent 不得声明 ask_tools")]
+    return []
 
 
 def _check_report(workspace: Path, report: HarnessObject) -> list[Finding]:

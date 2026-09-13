@@ -1,37 +1,44 @@
-import { Upload } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { FilePlus2, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   exportBusinessAgentWorkspace,
   getCurrentAgentRef,
   importBusinessAgentWorkspace,
   inspectAgentTestSuite,
   listAgentTestRuns,
-  restoreBusinessAgentWorkspace,
 } from "../api/runtime";
 import type {
   AgentSummary,
+  AgentChangeSet,
+  AgentRelease,
+  NativeAgentCandidateResponse,
   RuntimeClientConfig,
   WorkspaceImportResponse,
 } from "../types/runtime";
 import { AgentActionMenu } from "./AgentActionMenu";
 import {
   AgentWorkspaceImportDrawer,
+  type CandidateReceipt,
   WorkspaceOperationNotice,
   type WorkspacePackageNotice,
   type WorkspacePackageOperation,
 } from "./AgentWorkspaceImportDrawer";
 import { BusinessAgentTable, type AgentTestStatus } from "./BusinessAgentTable";
+import { NativeAgentCandidateDrawer } from "./NativeAgentCandidateDrawer";
+import { ReleaseWorkbench } from "./ReleaseWorkbench";
 import { validateAgentId } from "./agentSettingsValidation";
 import "./BusinessAgentManagementPanel.css";
 
 interface BusinessAgentManagementPanelProps {
   config: RuntimeClientConfig;
   agents: AgentSummary[];
+  changeSets: AgentChangeSet[];
+  releases: AgentRelease[];
   loading: boolean;
   externalBusy: boolean;
   pending: string | null;
   reloadAgents: () => Promise<void>;
-  onAgentsChanged: () => void;
+  onGovernanceRefresh: () => void | Promise<void>;
   onBusyChange: (busy: boolean) => void;
   onLifecycle: (agentId: string, status: string) => void;
   onOpenTestAssets: (agentId: string) => void;
@@ -49,6 +56,10 @@ interface PackageRunner {
 type ImportDrawerState =
   | { mode: "create" }
   | { mode: "overwrite"; targetAgent: AgentSummary };
+
+type NativeDrawerState =
+  | { mode: "create" }
+  | { mode: "configure"; targetAgent: AgentSummary };
 
 interface MenuAnchor {
   agent: AgentSummary;
@@ -139,7 +150,7 @@ function prepareWorkspaceImport(
   else if (!overwrite && existing) fail("import", `Agent ID ${targetId} 已存在，请从该 Agent 的操作菜单选择“覆盖导入”。`);
   else if (!overwrite && !name.trim()) fail("import", "创建业务 Agent 时必须填写名称。");
   else if (overwrite && !existing) fail("import", `业务 Agent ${targetId} 已不存在，请刷新后重试。`);
-  else if (overwrite && !window.confirm(`确认原样覆盖 ${drawer.targetAgent.name}（${targetId}）Workspace？变更将在下一 turn 生效。`)) return null;
+  else if (overwrite && !window.confirm(`确认使用导入包为 ${drawer.targetAgent.name}（${targetId}）创建覆盖候选？活动版本和已有 Session 不会改变。`)) return null;
   else return { overwrite, targetId, packageFile: file };
   return null;
 }
@@ -147,6 +158,7 @@ function prepareWorkspaceImport(
 function useWorkspaceImport(
   props: BusinessAgentManagementPanelProps,
   runner: PackageRunner,
+  onCandidateSaved: (receipt: WorkspaceImportResponse) => void,
 ) {
   const [agentId, setAgentId] = useState("");
   const [name, setName] = useState("");
@@ -194,9 +206,9 @@ function useWorkspaceImport(
         reason: prepared.overwrite ? "Settings 覆盖导入 Workspace 包" : "Settings 导入 Workspace 包创建业务 Agent",
       });
       setLastImport(result);
+      onCandidateSaved(result);
       clearSelectedPackage();
-      await props.reloadAgents();
-      props.onAgentsChanged();
+      await Promise.all([props.reloadAgents(), props.onGovernanceRefresh()]);
       return importSuccessMessage(result);
     });
   };
@@ -208,7 +220,6 @@ function useWorkspaceImport(
     lastImport,
     fileInput,
     setName,
-    setLastImport,
     changeAgentId,
     selectFile,
     reset,
@@ -217,9 +228,8 @@ function useWorkspaceImport(
 }
 
 function importSuccessMessage(result: WorkspaceImportResponse): string {
-  if (result.action === "created") return `已从 Workspace 包创建 ${result.agent.name}（下一 turn 生效）`;
-  if (result.action === "unchanged") return `${result.agent.name} Workspace 与导入包一致，无需变更`;
-  return `已覆盖 ${result.agent.name} Workspace（下一 turn 生效）`;
+  if (result.action === "unchanged") return `${result.agent.name} 候选与导入包一致，仍未发布`;
+  return `已保存 ${result.agent.name} 的 Workspace 候选，尚未发布`;
 }
 
 function exportWorkspace(
@@ -248,6 +258,7 @@ function useManagementSurface(
   form: ReturnType<typeof useWorkspaceImport>,
 ) {
   const [drawer, setDrawer] = useState<ImportDrawerState | null>(null);
+  const [nativeDrawer, setNativeDrawer] = useState<NativeDrawerState | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
   const disabled = props.externalBusy || runner.pending !== null;
   useEffect(() => {
@@ -257,6 +268,16 @@ function useManagementSurface(
     form.reset();
     setMenuAnchor(null);
     setDrawer({ mode: "create" });
+  };
+  const openNativeCreateDrawer = () => {
+    setMenuAnchor(null);
+    setDrawer(null);
+    setNativeDrawer({ mode: "create" });
+  };
+  const openNativeConfigureDrawer = (agent: AgentSummary) => {
+    setMenuAnchor(null);
+    setDrawer(null);
+    setNativeDrawer({ mode: "configure", targetAgent: agent });
   };
   const openOverwriteDrawer = (agent: AgentSummary) => {
     form.reset(agent);
@@ -268,44 +289,87 @@ function useManagementSurface(
     setDrawer(null);
     form.reset();
   };
-  const restore = () => {
-    if (!form.lastImport?.rollback_target_commit_sha) return;
-    const receipt = form.lastImport;
-    const agentId = receipt.agent.agent_id;
-    runner.run(`restore:${agentId}`, async () => {
-      const restored = await restoreBusinessAgentWorkspace(props.config, agentId, {
-        target_commit_sha: receipt.rollback_target_commit_sha!,
-        expected_current_commit_sha: receipt.current_commit_sha,
-        reason: "Settings 恢复导入前 Workspace",
-      });
-      form.setLastImport(null);
-      await props.reloadAgents();
-      props.onAgentsChanged();
-      return `已恢复 ${agentId} 导入前 Workspace（新 commit ${restored.current_commit_sha.slice(0, 12)}，下一 turn 生效）`;
-    });
+  const closeNativeDrawer = () => setNativeDrawer(null);
+  return {
+    drawer,
+    nativeDrawer,
+    menuAnchor,
+    disabled,
+    setMenuAnchor,
+    openCreateDrawer,
+    openNativeCreateDrawer,
+    openNativeConfigureDrawer,
+    openOverwriteDrawer,
+    closeDrawer,
+    closeNativeDrawer,
   };
-  return { drawer, menuAnchor, disabled, setMenuAnchor, openCreateDrawer, openOverwriteDrawer, closeDrawer, restore };
 }
 
 export function BusinessAgentManagementPanel(props: BusinessAgentManagementPanelProps) {
   const runner = usePackageRunner(props.onBusyChange);
-  const form = useWorkspaceImport(props, runner);
+  const [governanceAgentId, setGovernanceAgentId] = useState("");
+  const [preferredChangeSetId, setPreferredChangeSetId] = useState<string>();
+  const [lastCandidateReceipt, setLastCandidateReceipt] = useState<CandidateReceipt | null>(null);
+  const selectCandidate = useCallback((receipt: CandidateReceipt) => {
+    setLastCandidateReceipt(receipt);
+    setGovernanceAgentId(receipt.agent.agent_id);
+    setPreferredChangeSetId(receipt.change_set_id);
+  }, []);
+  const form = useWorkspaceImport(props, runner, selectCandidate);
   const statuses = useAgentTestStatuses(props.config, props.agents);
   const surface = useManagementSurface(props, runner, form);
   const { drawer, menuAnchor } = surface;
+  const candidateSaved = async (receipt: NativeAgentCandidateResponse) => {
+    selectCandidate(receipt);
+    await Promise.all([props.reloadAgents(), props.onGovernanceRefresh()]);
+  };
+  const openChangeSets = useMemo(
+    () => props.changeSets.filter((changeSet) => !["published", "abandoned", "rejected", "failed"].includes(changeSet.status)),
+    [props.changeSets],
+  );
+  const governanceAgents = useMemo(() => {
+    const eligibleIds = new Set(openChangeSets.map((changeSet) => changeSet.agent_id));
+    const available = props.agents.filter((agent) => eligibleIds.has(agent.agent_id) || agent.status === "draft");
+    if (lastCandidateReceipt && !available.some((agent) => agent.agent_id === lastCandidateReceipt.agent.agent_id)) {
+      return [...available, lastCandidateReceipt.agent];
+    }
+    return available;
+  }, [lastCandidateReceipt, openChangeSets, props.agents]);
+
+  useEffect(() => {
+    setGovernanceAgentId((current) => {
+      if (current && governanceAgents.some((agent) => agent.agent_id === current)) return current;
+      return governanceAgents[0]?.agent_id || "";
+    });
+  }, [governanceAgents]);
+
+  const refreshGovernance = async () => {
+    await Promise.all([props.reloadAgents(), props.onGovernanceRefresh()]);
+  };
   return (
     <section className="settings-agent-management" data-testid="settings-agent-management">
       <div className="settings-agent-management-toolbar">
         <span>{props.loading ? "正在加载…" : `${props.agents.length} 个业务 Agent`}</span>
-        <button
-          className="primary-button"
-          type="button"
-          data-testid="settings-agent-import-open"
-          disabled={surface.disabled}
-          onClick={surface.openCreateDrawer}
-        >
-          <Upload size={15} />导入 Agent
-        </button>
+        <div className="settings-agent-management-toolbar-actions">
+          <button
+            className="primary-button"
+            type="button"
+            data-testid="settings-native-agent-open"
+            disabled={surface.disabled}
+            onClick={surface.openNativeCreateDrawer}
+          >
+            <FilePlus2 size={15} />表单创建
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            data-testid="settings-agent-import-open"
+            disabled={surface.disabled}
+            onClick={surface.openCreateDrawer}
+          >
+            <Upload size={15} />导入 Workspace 包
+          </button>
+        </div>
       </div>
 
       {runner.notice?.operation === "export" ? <WorkspaceOperationNotice notice={runner.notice} /> : null}
@@ -319,6 +383,16 @@ export function BusinessAgentManagementPanel(props: BusinessAgentManagementPanel
         packagePending={runner.pending}
         openMenuAgentId={menuAnchor?.agent.agent_id}
         onLifecycle={props.onLifecycle}
+        onOpenCandidateGovernance={(agentId) => {
+          setGovernanceAgentId(agentId);
+          setPreferredChangeSetId(
+            openChangeSets.find((changeSet) => changeSet.agent_id === agentId)?.change_set_id,
+          );
+          setLastCandidateReceipt(null);
+          window.requestAnimationFrame(() => {
+            document.querySelector('[data-testid="settings-candidate-governance"]')?.scrollIntoView({ block: "start" });
+          });
+        }}
         onOpenTestAssets={props.onOpenTestAssets}
         onToggleMenu={(agent, element) => {
           surface.setMenuAnchor(menuAnchor?.agent.agent_id === agent.agent_id ? null : { agent, element });
@@ -336,6 +410,7 @@ export function BusinessAgentManagementPanel(props: BusinessAgentManagementPanel
             exportWorkspace(props, runner, menuAnchor.agent.agent_id);
           }}
           onOverwrite={() => surface.openOverwriteDrawer(menuAnchor.agent)}
+          onConfigure={() => surface.openNativeConfigureDrawer(menuAnchor.agent)}
           onDelete={() => {
             const agentId = menuAnchor.agent.agent_id;
             surface.setMenuAnchor(null);
@@ -359,10 +434,72 @@ export function BusinessAgentManagementPanel(props: BusinessAgentManagementPanel
           onNameChange={form.setName}
           onFileChange={form.selectFile}
           onSubmit={() => form.submit(drawer)}
-          onRestore={surface.restore}
+          onOpenGovernance={(receipt) => {
+            selectCandidate(receipt);
+            surface.closeDrawer();
+          }}
           onClose={surface.closeDrawer}
         />
       ) : null}
+      {surface.nativeDrawer ? (
+        <NativeAgentCandidateDrawer
+          config={props.config}
+          existingAgents={props.agents}
+          targetAgent={surface.nativeDrawer.mode === "configure" ? surface.nativeDrawer.targetAgent : undefined}
+          onSaved={(receipt) => { void candidateSaved(receipt); }}
+          onOpenGovernance={(receipt) => {
+            selectCandidate(receipt);
+            surface.closeNativeDrawer();
+          }}
+          onClose={surface.closeNativeDrawer}
+        />
+      ) : null}
+
+      <section className="settings-candidate-governance" data-testid="settings-candidate-governance">
+        <div className="settings-candidate-governance-head">
+          <div>
+            <strong>候选治理</strong>
+            <span>查看真实 Diff，运行候选 commit 的 Workspace suite，按需审批后再发布。</span>
+          </div>
+          {governanceAgents.length ? (
+            <label>
+              <span>业务 Agent</span>
+              <select
+                data-testid="settings-candidate-agent-select"
+                value={governanceAgentId}
+                onChange={(event) => {
+                  setGovernanceAgentId(event.target.value);
+                  setPreferredChangeSetId(undefined);
+                  setLastCandidateReceipt(null);
+                }}
+              >
+                {governanceAgents.map((agent) => (
+                  <option key={agent.agent_id} value={agent.agent_id}>{agent.name} · {agent.agent_id}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </div>
+        {lastCandidateReceipt ? (
+          <div className="settings-candidate-selected" data-testid="settings-candidate-selected" role="status">
+            已选中候选 <code>{lastCandidateReceipt.change_set_id}</code>，尚未发布。
+          </div>
+        ) : null}
+        {governanceAgentId ? (
+          <ReleaseWorkbench
+            clientConfig={props.config}
+            scopeAgentId={governanceAgentId}
+            preferredChangeSetId={preferredChangeSetId}
+            releases={props.releases}
+            changeSets={props.changeSets}
+            onRefresh={refreshGovernance}
+          />
+        ) : (
+          <div className="empty-state" data-testid="settings-candidate-governance-empty">
+            当前没有未完成候选。通过原生表单或 Workspace 包保存候选后，可在此测试、审批与发布。
+          </div>
+        )}
+      </section>
     </section>
   );
 }

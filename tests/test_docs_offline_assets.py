@@ -31,8 +31,8 @@ _DOC_ROUTES = ("/docs", "/redoc")
 
 
 @pytest.fixture()
-def client(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path)
+def client(process_environment, tmp_path):
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as test_client:
         yield test_client
 

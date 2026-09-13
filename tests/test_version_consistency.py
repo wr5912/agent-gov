@@ -26,8 +26,8 @@ def test_app_version_reads_version_file() -> None:
     assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == APP_VERSION
 
 
-def test_health_reports_runtime_version_from_version_file(monkeypatch, tmp_path: Path) -> None:
-    module = load_test_app(monkeypatch, tmp_path)
+def test_health_reports_runtime_version_from_version_file(process_environment, tmp_path: Path) -> None:
+    module = load_test_app(process_environment, tmp_path)
 
     with TestClient(module.app) as client:
         response = client.get("/health")

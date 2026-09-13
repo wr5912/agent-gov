@@ -14,10 +14,60 @@ export interface RuntimeUserConfirmSubmission {
   confirmationScope: RuntimeConfirmationScope;
 }
 
+export interface RuntimeRunPermissionScope {
+  toolName: string;
+  ruleContent: string;
+}
+
+export function runtimeRunPermissionScopes(
+  request: RuntimeUserConfirmRequest,
+): RuntimeRunPermissionScope[] | undefined {
+  const scopes = new Map<string, RuntimeRunPermissionScope>();
+  for (const toolCall of request.toolCalls) {
+    if (!Array.isArray(toolCall.suggested_rules) || !toolCall.suggested_rules.length) return undefined;
+    for (const candidate of toolCall.suggested_rules) {
+      if (!isRecord(candidate)) return undefined;
+      const toolName = candidate.tool_name;
+      const ruleContent = candidate.rule_content;
+      const source = candidate.source;
+      if (
+        toolName !== toolCall.name
+        || candidate.behavior !== "allow"
+        || source !== "workspace_policy.ask_tools"
+        || typeof ruleContent !== "string"
+        || !isBoundedRunPathRule(toolName, ruleContent)
+      ) return undefined;
+      const normalized = ruleContent.trim();
+      scopes.set(`${toolName}\0${normalized}`, { toolName, ruleContent: normalized });
+    }
+  }
+  return scopes.size ? [...scopes.values()] : undefined;
+}
+
+const RUN_SCOPED_PATH_TOOLS = new Set(["Read", "Write", "Edit"]);
+
+function isBoundedRunPathRule(toolName: string, ruleContent: string) {
+  if (!RUN_SCOPED_PATH_TOOLS.has(toolName)) return false;
+  const pattern = ruleContent.trim();
+  if (!pattern || pattern !== ruleContent || pattern.length > 1024 || pattern.includes("\0")) return false;
+  if (/[?\[\]\\]/.test(pattern)) return false;
+  let fixedPrefix = pattern;
+  if (pattern.includes("*")) {
+    if (!pattern.endsWith("/**") || pattern.slice(0, -3).includes("*")) return false;
+    fixedPrefix = pattern.slice(0, -3);
+  }
+  if (["", ".", "./", "/", "~"].includes(fixedPrefix) || fixedPrefix.includes("//")) return false;
+  const parts = fixedPrefix.replace(/^\.\//, "").split("/").filter(Boolean);
+  return parts.length > 0 && parts.every((part) => ![".", "..", "~"].includes(part));
+}
+
 export function buildUserConfirmSubmission(
   request: RuntimeUserConfirmRequest,
   action: RuntimeUserConfirmAction,
 ): RuntimeUserConfirmSubmission {
+  if (action === "allow_for_run" && !runtimeRunPermissionScopes(request)) {
+    throw new Error("Runtime 未提供安全且有边界的建议规则，不能授权整个 run");
+  }
   return {
     input: {
       type: "USER_CONFIRM_RESULT",
@@ -107,4 +157,12 @@ function asToolCall(value: unknown): AgentScopeToolCallBlock | undefined {
     || typeof value.input !== "string"
   ) return undefined;
   return value as unknown as AgentScopeToolCallBlock;
+}
+
+function isOverbroadRunRule(ruleContent: string) {
+  const normalized = ruleContent.trim();
+  if (!normalized) return true;
+  // 仅由路径分隔符和 glob 元字符组成的规则等价于“任意输入”，不能升级为
+  // 整个 run 的权限；用户仍可选择仅放行当前 ToolCall。
+  return !normalized.replace(/[./*?[\]!\\\s]/g, "");
 }

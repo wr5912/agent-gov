@@ -10,7 +10,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app_test_utils import load_test_app as _load_app
-from test_agent_workspace_packages import _import_new_agent, _package_from_workspace, _run_git, _workspace_package
+from test_agent_workspace_packages import (
+    _candidate_workspace,
+    _import_new_agent,
+    _package_from_workspace,
+    _run_git,
+    _seed_active_agent,
+    _workspace_package,
+)
 
 TARGET_AGENT_ID = "identity-target"
 
@@ -38,14 +45,14 @@ TARGET_AGENT_ID = "identity-target"
     ],
 )
 def test_create_rejects_missing_or_invalid_manifest_identity_before_mutation(
-    monkeypatch,
+    process_environment,
     tmp_path: Path,
     manifest: bytes | None,
     expected_code: str,
     detail_fragment: str,
     forbidden_fragment: str | None,
 ) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     files = {"AGENT.md": b"# rejected\n"}
     if manifest is not None:
         files["agent.yaml"] = manifest
@@ -73,8 +80,8 @@ def test_create_rejects_missing_or_invalid_manifest_identity_before_mutation(
     _assert_create_rejection_has_no_target_state(module, expected_code=expected_code)
 
 
-def test_create_rejects_deep_manifest_without_partial_state(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_create_rejects_deep_manifest_without_partial_state(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     lines = ["agent:", f"  id: {TARGET_AGENT_ID}", "nested:"]
     for depth in range(350):
         lines.append(f"{'  ' * (depth + 1)}level_{depth}:")
@@ -100,8 +107,8 @@ def test_create_rejects_deep_manifest_without_partial_state(monkeypatch, tmp_pat
     _assert_create_rejection_has_no_target_state(module, expected_code="WORKSPACE_MANIFEST_INVALID")
 
 
-def test_create_rejects_source_identity_mismatch_with_actionable_error_and_audit(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_create_rejects_source_identity_mismatch_with_actionable_error_and_audit(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     source = Path(__file__).resolve().parents[1] / "docker" / "runtime-bootstrap" / "business-agents" / "security-operations-expert" / "workspace"
     package = _package_from_workspace(source, overrides={})
 
@@ -130,8 +137,8 @@ def test_create_rejects_source_identity_mismatch_with_actionable_error_and_audit
     )
 
 
-def test_create_rejects_case_only_manifest_identity_mismatch(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_create_rejects_case_only_manifest_identity_mismatch(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     package = _workspace_package(
         {
             "AGENT.md": b"# rejected\n",
@@ -160,10 +167,10 @@ def test_create_rejects_case_only_manifest_identity_mismatch(monkeypatch, tmp_pa
 
 
 def test_create_rejects_url_agent_id_with_surrounding_whitespace_before_package_processing(
-    monkeypatch,
+    process_environment,
     tmp_path: Path,
 ) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     package = _workspace_package(
         {
             "agent.yaml": f"agent:\n  id: {TARGET_AGENT_ID}\n".encode(),
@@ -192,13 +199,17 @@ def test_create_rejects_url_agent_id_with_surrounding_whitespace_before_package_
     assert module.agent_registry_store.get_agent(TARGET_AGENT_ID) is None
 
 
-def test_create_accepts_exact_manifest_identity_without_rewriting_package(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_create_accepts_exact_manifest_identity_without_rewriting_package(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     source = Path(__file__).resolve().parents[1] / "docker" / "runtime-bootstrap" / "business-agents" / "security-operations-expert" / "workspace"
-    manifest = (source / "agent.yaml").read_bytes().replace(
-        b"id: security-operations-expert",
-        f"id: {TARGET_AGENT_ID}".encode(),
-        1,
+    manifest = (
+        (source / "agent.yaml")
+        .read_bytes()
+        .replace(
+            b"id: security-operations-expert",
+            f"id: {TARGET_AGENT_ID}".encode(),
+            1,
+        )
     )
     package = _package_from_workspace(source, overrides={"agent.yaml": manifest})
 
@@ -214,9 +225,14 @@ def test_create_accepts_exact_manifest_identity_without_rewriting_package(monkey
     assert response.status_code == 200
     assert body["action"] == "created"
     assert body["agent"]["agent_id"] == TARGET_AGENT_ID
+    assert body["agent"]["status"] == "draft"
+    assert body["published"] is False
     assert body["test_suite_status"] == "ready"
     assert body["test_suite_warnings"] == []
-    target = Path(body["agent"]["workspace_dir"])
+    live = Path(body["agent"]["workspace_dir"])
+    target = _candidate_workspace(module, response)
+    assert _run_git(live, "rev-parse", "HEAD") == body["base_commit_sha"]
+    assert not (live / "agent.yaml").exists()
     assert (target / "agent.yaml").read_bytes() == manifest
     source_files = {path.relative_to(source).as_posix(): path for path in source.rglob("*") if path.is_file()}
     target_files = {path.relative_to(target).as_posix(): path for path in target.rglob("*") if path.is_file() and ".git" not in path.relative_to(target).parts}
@@ -228,11 +244,10 @@ def test_create_accepts_exact_manifest_identity_without_rewriting_package(monkey
         assert stat.S_IMODE(target_files[relative].stat().st_mode) & 0o111 == stat.S_IMODE(source_path.stat().st_mode) & 0o111
 
 
-def test_overwrite_rejects_manifest_mismatch_before_workspace_changes(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_overwrite_rejects_manifest_mismatch_before_workspace_changes(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
+    workspace = _seed_active_agent(module, agent_id=TARGET_AGENT_ID, name="identity target")
     with TestClient(module.app) as client:
-        created = _import_new_agent(client, agent_id=TARGET_AGENT_ID, name="identity target")
-        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline_commit = _run_git(workspace, "rev-parse", "HEAD")
         baseline_tree = _run_git(workspace, "rev-parse", "HEAD^{tree}")
 
@@ -260,11 +275,10 @@ def test_overwrite_rejects_manifest_mismatch_before_workspace_changes(monkeypatc
     assert not workspace.joinpath("must-not-exist").exists()
 
 
-def test_existing_target_without_expected_commit_reports_overwrite_remediation_first(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_existing_target_without_expected_commit_reports_overwrite_remediation_first(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
+    workspace = _seed_active_agent(module, agent_id=TARGET_AGENT_ID, name="identity target")
     with TestClient(module.app) as client:
-        created = _import_new_agent(client, agent_id=TARGET_AGENT_ID, name="identity target")
-        workspace = Path(created.json()["agent"]["workspace_dir"])
         baseline_commit = _run_git(workspace, "rev-parse", "HEAD")
         response = client.post(
             f"/api/agent-registry/{TARGET_AGENT_ID}/workspace/import",

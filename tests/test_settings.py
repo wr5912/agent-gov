@@ -34,9 +34,9 @@ _PROFILE_ENV_KEYS = (
 )
 
 
-def _clear_profile_env(monkeypatch) -> None:
+def _clear_profile_env(process_environment) -> None:
     for key in _PROFILE_ENV_KEYS:
-        monkeypatch.delenv(key, raising=False)
+        process_environment.remove(key)
 
 
 def test_settings_exposes_only_control_plane_credentials() -> None:
@@ -52,10 +52,10 @@ def test_settings_exposes_only_control_plane_credentials() -> None:
     assert not hasattr(settings, "model_provider_api_key")
 
 
-def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_path, monkeypatch) -> None:
-    _clear_profile_env(monkeypatch)
-    monkeypatch.setenv("RUNTIME_CONTAINER", "1")
-    monkeypatch.chdir(tmp_path)
+def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_path, process_environment) -> None:
+    _clear_profile_env(process_environment)
+    process_environment.set("RUNTIME_CONTAINER", "1")
+    process_environment.chdir(tmp_path)
     docker_dir = tmp_path / "docker"
     docker_dir.mkdir()
     (docker_dir / ".env").write_text(
@@ -73,10 +73,10 @@ def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_pa
     assert settings.governor_workspace_dir == Path("/governor-workspace")
 
 
-def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, monkeypatch) -> None:
-    _clear_profile_env(monkeypatch)
-    monkeypatch.setenv("RUNTIME_CONTAINER", "0")
-    monkeypatch.chdir(tmp_path)
+def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, process_environment) -> None:
+    _clear_profile_env(process_environment)
+    process_environment.set("RUNTIME_CONTAINER", "0")
+    process_environment.chdir(tmp_path)
     docker_dir = tmp_path / "docker"
     docker_dir.mkdir()
     (docker_dir / ".env").write_text("API_PORT=58080\n", encoding="utf-8")
@@ -93,8 +93,8 @@ def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, monkey
     assert settings.data_dir == Path("/tmp/test-agentgov/data")
 
 
-def test_explicit_env_file_name_selects_its_runtime_mode(tmp_path, monkeypatch) -> None:
-    _clear_profile_env(monkeypatch)
+def test_explicit_env_file_name_selects_its_runtime_mode(tmp_path, process_environment) -> None:
+    _clear_profile_env(process_environment)
     env_file = tmp_path / ".env.local-debug.example"
     env_file.write_text(
         "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-agentgov\n"
@@ -193,14 +193,14 @@ def test_runtime_and_governance_timeouts_are_bounded() -> None:
         AppSettings(_env_file=None, RUNTIME_REQUEST_TIMEOUT_SECONDS=0)
 
 
-def test_get_settings_is_pure_and_does_not_create_runtime_dirs(tmp_path, monkeypatch) -> None:
+def test_get_settings_is_pure_and_does_not_create_runtime_dirs(tmp_path, process_environment) -> None:
     from app.runtime.settings import get_settings
 
-    _clear_profile_env(monkeypatch)
-    monkeypatch.chdir(tmp_path)
+    _clear_profile_env(process_environment)
+    process_environment.chdir(tmp_path)
     runtime_root = tmp_path / "runtime"
-    monkeypatch.setenv("DATA_DIR", str(runtime_root / "data"))
-    monkeypatch.setenv("GOVERNOR_WORKSPACE_DIR", str(runtime_root / "governor"))
+    process_environment.set("DATA_DIR", str(runtime_root / "data"))
+    process_environment.set("GOVERNOR_WORKSPACE_DIR", str(runtime_root / "governor"))
     get_settings.cache_clear()
 
     settings = get_settings()

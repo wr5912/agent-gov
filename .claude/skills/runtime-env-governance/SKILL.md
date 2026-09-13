@@ -61,12 +61,12 @@ description: "治理 agent-gov 的 AgentScope Runtime/env、本机 PyCharm 调�
 | docs / skill / README 术语同步 | 宿主机仓库环境 | `git diff --check`、`scripts/check_docs_governance.py`、`scripts/check_codex_governance.py --mode fail`、相关 skill 单测 | 不默认跑 `make test`，不使用 `local-debug` |
 | settings/env 选择代码 | 宿主机仓库环境 | `tests/test_settings.py`、`tests/test_repository_env_policy.py`、`tests/test_documentation_contracts.py` | 不用 `docker/.env.local-debug` 伪装容器 |
 | Runtime 健康和凭据边界回归 | 宿主机 + Docker Compose | Runtime/settings/health 单测后运行 `make container-core-smoke` | 不用端口监听或 API 单测替代 Runtime health |
-| live 模型或真实运行态验收 | 隔离 Docker Compose + Langfuse | 显式授权真实模型调用后运行 `REQUIRE_LIVE_RUNTIME=1 make container-live-test`；完整 Trace 使用 `LIVE_ACCEPTANCE_ARGS=--require-trace-complete` | 不直接调用私有 target，不使用 `docker/.env.local-debug` |
+| live 模型或真实运行态验收 | 隔离 Docker Compose + Langfuse | 提供仓库外人工复核场景后运行 `REQUIRE_LIVE_RUNTIME=1 REAL_ACCEPTANCE_AGENT_ID=security-operations-expert REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json make container-live-test`；该公共入口固定要求完整 Trace，可用严格整数环境变量 `LIVE_ACCEPTANCE_RUNS`／`LIVE_ACCEPTANCE_CONCURRENCY` 调整配额 | 不直接调用私有 target，不使用 `docker/.env.local-debug` |
 | core 只读容器 smoke | 隔离 Docker Compose | `make container-core-smoke`；一次重建后并行 readiness、UI 首页和 OpenAPI 检查 | 不并发 build/up/down，不直接调用私有 target |
 | 启动 / 重启 / 重建 / 部署生效 | 所选部署 env / 持久卷 | `make build` 后 `make up` / `make all-up COMPOSE_UP_FLAGS=--force-recreate`；旧库预检先于初始化，readiness 失败必须阻断 | 不用隔离验收或 local-debug 代替正式部署 |
 | local-debug 专项能力 | 宿主机 Python / PyCharm | 明确命名的 local-debug 专项测试和 bootstrap/repair 命令 | 不把结果声明为容器验收 |
-| Langfuse / OTel | 隔离 Docker Compose | `make langfuse-smoke`，并核验 trace root、run/session/reply/trace 关联及无原文泄漏 | 不用任意 trace 存在替代 `agentgov.run` root 完整结束 |
-| 发版或用户要求完整验证 | 发布前工作区 | `make test`，按变更追加 `make container-core-smoke`、`make langfuse-smoke` 和 UI 公共 smoke | 不用单一 coverage 百分比替代主流程或 live 证据 |
+| Langfuse / OTel | 隔离 Docker Compose | 提供仓库外复核成功场景后运行 `REQUIRE_LIVE_RUNTIME=1 REAL_ACCEPTANCE_AGENT_ID=security-operations-expert REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json make langfuse-smoke`，并核验 trace root、run/session/reply/trace 关联及无原文泄漏 | 不用任意 trace 存在替代 `agentgov.run` root 完整结束；不从公开 API 读取 observation payload |
+| 发版或用户要求完整验证 | 发布前工作区 | `make test`，按变更追加 `make container-core-smoke`、绑定外部复核场景的 `make langfuse-smoke` 和 UI 公共 smoke | 不用单一 coverage 百分比替代主流程或 live 证据 |
 
 ## 安全并行边界
 

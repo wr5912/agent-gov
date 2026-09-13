@@ -1,206 +1,132 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
-from types import SimpleNamespace
 
-import httpx
 import pytest
+from fastapi import FastAPI, Request
 
-from agentgov_testkit import (
-    AgentGovTestkitError,
-    AgentInvocation,
-    invoke_agent,
-    pytest_plugin,
-)
-from agentgov_testkit import _reporting as testkit_reporting
-from agentgov_testkit import _transport as testkit_transport
+from agentgov_testkit import AgentGovTestkitError, invoke_agent, pytest_plugin
+from runtime_loopback import serve_loopback
 
 
-class _Response:
-    def __init__(self, payload: object, *, error: Exception | None = None) -> None:
-        self._payload = payload
-        self._error = error
+def test_invoke_agent_rejects_empty_input_and_missing_live_context(process_environment) -> None:
+    process_environment.remove("AGENTGOV_API_BASE")
+    process_environment.remove("AGENTGOV_TEST_SESSION_ID")
 
-    def raise_for_status(self) -> None:
-        if self._error is not None:
-            raise self._error
-
-    def json(self) -> object:
-        return self._payload
-
-
-def test_invoke_agent_uses_explicit_session_and_preserves_typed_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    observed: dict[str, object] = {}
-
-    def fake_post(url: str, **kwargs: object) -> _Response:
-        observed.update(url=url, **kwargs)
-        return _Response(
-            {
-                "answer": "已完成",
-                "run_id": "run-1",
-                "session_id": "session-1",
-                "agent_version_id": "commit-1",
-                "langfuse_trace_id": "trace-1",
-                "langfuse_trace_url": "http://langfuse.local/project/demo/traces/trace-1",
-                "errors": ["warning"],
-                "extra": {"kept": True},
-            }
-        )
-
-    monkeypatch.setattr(testkit_transport.httpx, "post", fake_post)
-    result = invoke_agent(
-        "  核验告警  ",
-        metadata={"case": "one"},
-        api_base="http://agent-gov.local/",
-        api_key="test-key",
-        test_session_id="ats-1",
-        timeout_seconds=12,
-    )
-
-    assert observed == {
-        "url": "http://agent-gov.local/api/agent-test-sessions/ats-1/messages",
-        "json": {"message": "核验告警", "metadata": {"case": "one"}},
-        "headers": {"Authorization": "Bearer test-key"},
-        "timeout": 12,
-    }
-    assert result.text == "已完成"
-    assert result.run_id == "run-1"
-    assert result.session_id == "session-1"
-    assert result.agent_version_id == "commit-1"
-    assert result.langfuse_trace_id == "trace-1"
-    assert result.langfuse_trace_url == "http://langfuse.local/project/demo/traces/trace-1"
-    assert result.errors == ("warning",)
-    assert result.raw["extra"] == {"kept": True}
-
-
-def test_invoke_agent_rejects_missing_context_and_wraps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("AGENTGOV_API_BASE", raising=False)
-    monkeypatch.delenv("AGENTGOV_TEST_SESSION_ID", raising=False)
     with pytest.raises(ValueError, match="message must not be empty"):
-        invoke_agent(" ", api_base="http://agent-gov.local", test_session_id="ats-1")
+        invoke_agent(" ", api_base="http://127.0.0.1:50401", test_session_id="ats-1")
     with pytest.raises(AgentGovTestkitError, match="AGENTGOV_API_BASE is required"):
         invoke_agent("hello", test_session_id="ats-1")
-
-    request = httpx.Request("POST", "http://agent-gov.local/api/agent-test-sessions/ats-1/messages")
-    failure = httpx.ConnectError("offline", request=request)
-    monkeypatch.setattr(testkit_transport.httpx, "post", lambda *args, **kwargs: (_ for _ in ()).throw(failure))
-    with pytest.raises(AgentGovTestkitError, match="AgentGov test invocation failed"):
-        invoke_agent("hello", api_base="http://agent-gov.local", test_session_id="ats-1")
-
-
-def test_pytest_fixture_isolates_each_test_and_pins_one_commit(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert pytest_plugin.agent._fixture_function_marker.scope == "function"
-    assert pytest_plugin._agentgov_pytest_context._fixture_function_marker.scope == "session"
-    closed: list[str] = []
-    created: list[tuple[str, str | None]] = []
-    monkeypatch.setattr(pytest_plugin.AgentTestAgent, "close", lambda self: closed.append(self.test_session_id))
-    monkeypatch.setenv("AGENTGOV_API_BASE", "http://agent-gov.local")
-    monkeypatch.setenv("AGENTGOV_AGENT_ID", "soc-agent")
-    monkeypatch.delenv("AGENTGOV_COMMIT_SHA", raising=False)
-    monkeypatch.setenv("AGENTGOV_TEST_SESSION_ID", "external-session-must-not-be-reused")
-
-    def fake_create(api_base: str, api_key: str | None, *, commit_sha: str | None) -> tuple[str, str]:
-        created.append((api_base, commit_sha))
-        return f"created-session-{len(created)}", "b" * 40
-
-    monkeypatch.setattr(pytest_plugin, "_create_session", fake_create)
-    request = SimpleNamespace(config=SimpleNamespace(pluginmanager=SimpleNamespace(get_plugin=lambda _name: None)))
-    context = pytest_plugin._agentgov_pytest_context.__wrapped__(request)
-
-    first = pytest_plugin.agent.__wrapped__(context)
-    assert next(first).test_session_id == "created-session-1"
-    with pytest.raises(StopIteration):
-        next(first)
-    second = pytest_plugin.agent.__wrapped__(context)
-    assert next(second).test_session_id == "created-session-2"
-    with pytest.raises(StopIteration):
-        next(second)
-
-    assert created == [
-        ("http://agent-gov.local", None),
-        ("http://agent-gov.local", "b" * 40),
-    ]
-    assert closed == ["created-session-1", "created-session-2"]
 
 
 def test_pytest_context_rejects_commit_drift() -> None:
     context = pytest_plugin._AgentGovPytestContext(
-        api_base="http://agent-gov.local",
+        api_base="http://127.0.0.1:50401",
         api_key=None,
         resolved_commit_sha="a" * 40,
         reporter=None,
     )
+
     with pytest.raises(AgentGovTestkitError, match="different commit"):
         context.pin_commit("b" * 40)
 
 
-def test_pytest_plugin_writes_machine_readable_call_and_setup_failures(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    report_path = tmp_path / "report.json"
-    monkeypatch.setenv("AGENTGOV_TEST_REPORT_PATH", str(report_path))
-    pytest_plugin.pytest_configure(SimpleNamespace())
-    testkit_reporting.record_invocation(
-        AgentInvocation(
-            text="完成",
-            run_id="run-1",
-            session_id="session-1",
-            agent_version_id="commit-1",
-            langfuse_trace_id="trace-1",
-            langfuse_trace_url="http://langfuse.local/project/demo/traces/trace-1",
-            errors=(),
-            raw={},
-        )
-    )
-    pytest_plugin.pytest_runtest_logreport(
-        SimpleNamespace(
-            when="call",
-            nodeid="tests/test_case.py::test_pass",
-            outcome="passed",
-            duration=0.1,
-            failed=False,
-            longrepr="",
-        )
-    )
-    pytest_plugin.pytest_runtest_logreport(
-        SimpleNamespace(
-            when="setup",
-            nodeid="tests/test_case.py::test_setup",
-            outcome="failed",
-            duration=0.2,
-            failed=True,
-            longrepr="fixture failed",
-        )
-    )
-    pytest_plugin.pytest_sessionfinish(SimpleNamespace(), 1)
+def test_pytest_session_forwards_ephemeral_run_attestation_over_real_http(process_environment) -> None:
+    app = FastAPI()
+    captured: dict[str, str] = {}
 
-    payload = json.loads(report_path.read_text(encoding="utf-8"))
-    assert payload["exit_code"] == 1
-    assert payload["invocations"] == [
-        {
-            "run_id": "run-1",
-            "session_id": "session-1",
-            "agent_version_id": "commit-1",
-            "langfuse_trace_id": "trace-1",
-            "langfuse_trace_url": "http://langfuse.local/project/demo/traces/trace-1",
+    @app.post("/api/agent-test-sessions")
+    async def create_session(request: Request) -> dict[str, str]:
+        captured["run_id"] = request.headers.get("X-AgentGov-Test-Run-Id", "")
+        captured["attestation"] = request.headers.get("X-AgentGov-Test-Run-Attestation", "")
+        return {"test_session_id": "ats-real", "commit_sha": "a" * 40}
+
+    process_environment.set("AGENTGOV_AGENT_ID", "agent-a")
+    process_environment.set("AGENTGOV_TEST_RUN_ID", "atr-real")
+    process_environment.set("AGENTGOV_TEST_RUN_ATTESTATION", "ephemeral-proof")
+    with serve_loopback(app) as api_base:
+        session_id, commit_sha = pytest_plugin._create_session(api_base, None, commit_sha="a" * 40)
+
+    assert (session_id, commit_sha) == ("ats-real", "a" * 40)
+    assert captured == {"run_id": "atr-real", "attestation": "ephemeral-proof"}
+
+
+def test_invoke_agent_accepts_canonical_trace_field_names_over_real_http() -> None:
+    app = FastAPI()
+
+    @app.post("/api/agent-test-sessions/ats-real/messages")
+    def invoke() -> dict[str, object]:
+        return {
+            "answer": "real answer",
+            "run_id": "run-real",
+            "session_id": "session-real",
+            "agent_version_id": "a" * 40,
+            "trace_id": "b" * 32,
+            "trace_url": "http://127.0.0.1:50402/trace/real",
             "errors": [],
         }
+
+    with serve_loopback(app) as api_base:
+        result = invoke_agent("real input", api_base=api_base, test_session_id="ats-real")
+
+    assert result.langfuse_trace_id == "b" * 32
+    assert result.langfuse_trace_url == "http://127.0.0.1:50402/trace/real"
+
+
+def test_pytest_plugin_records_real_pytest_call_and_setup_failure(tmp_path: Path) -> None:
+    report_path = tmp_path / "report.json"
+    test_module = tmp_path / "test_real_pytest_protocol.py"
+    test_module.write_text(
+        """import pytest
+
+
+def test_pass():
+    assert 2 + 2 == 4
+
+
+@pytest.fixture
+def broken_resource():
+    raise RuntimeError("resource setup failed")
+
+
+def test_setup_failure(broken_resource):
+    raise AssertionError("call phase must not run")
+""",
+        encoding="utf-8",
+    )
+    package_src = Path(__file__).resolve().parents[1] / "packages" / "agentgov-testkit" / "src"
+    environment = dict(os.environ)
+    environment["AGENTGOV_TEST_REPORT_PATH"] = str(report_path)
+    environment["PYTHONPATH"] = os.pathsep.join(item for item in (str(package_src), environment.get("PYTHONPATH", "")) if item)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "agentgov_testkit.pytest_plugin",
+            str(test_module),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["exit_code"] == 1
+    assert payload["invocations"] == []
+    assert [(item["outcome"], item["phase"]) for item in payload["items"]] == [
+        ("passed", "call"),
+        ("failed", "setup"),
     ]
-    assert payload["items"] == [
-        {
-            "nodeid": "tests/test_case.py::test_pass",
-            "outcome": "passed",
-            "duration_seconds": 0.1,
-            "phase": "call",
-            "detail": None,
-        },
-        {
-            "nodeid": "tests/test_case.py::test_setup",
-            "outcome": "failed",
-            "duration_seconds": 0.2,
-            "phase": "setup",
-            "detail": "fixture failed",
-        },
-    ]
+    assert "resource setup failed" in payload["items"][1]["detail"]

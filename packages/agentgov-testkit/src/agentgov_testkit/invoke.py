@@ -75,8 +75,8 @@ def invoke_agent(
         run_id=_optional_text(payload.get("run_id")),
         session_id=_optional_text(payload.get("session_id")),
         agent_version_id=_optional_text(payload.get("agent_version_id")),
-        langfuse_trace_id=_optional_text(payload.get("langfuse_trace_id")),
-        langfuse_trace_url=_optional_text(payload.get("langfuse_trace_url")),
+        langfuse_trace_id=_optional_text(payload.get("langfuse_trace_id") or payload.get("trace_id")),
+        langfuse_trace_url=_optional_text(payload.get("langfuse_trace_url") or payload.get("trace_url")),
         errors=errors,
         raw=payload,
     )

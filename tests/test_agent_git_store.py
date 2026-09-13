@@ -1,10 +1,10 @@
 import stat
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from app.runtime.agent_git_raw_storage import RawGitStorageError, configure_raw_git_storage
+from app.runtime.agent_git_read_helpers import parse_name_status_z
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 
 
@@ -12,46 +12,36 @@ def _git_bytes(repository: Path, *args: str) -> bytes:
     return subprocess.run(["git", *args], cwd=repository, check=True, capture_output=True).stdout
 
 
-def test_git_store_marks_repository_as_safe_before_local_config(tmp_path, monkeypatch):
+def test_git_store_configures_real_repository_without_overwriting_global_safe_directories(
+    process_environment,
+    tmp_path,
+):
+    global_config = tmp_path / "global.gitconfig"
+    process_environment.set("GIT_CONFIG_GLOBAL", str(global_config))
+    subprocess.run(
+        ["git", "config", "--global", "--add", "safe.directory", "/operator-owned/repository"],
+        check=True,
+    )
     repo = tmp_path / "workspace"
     store = GitAgentVersionStore(
         repository_dir=repo,
         worktrees_dir=tmp_path / "worktrees",
         releases_dir=tmp_path / "releases",
     )
-    calls: list[tuple[list[str], object, bool]] = []
+    store.ensure_bootstrap()
 
-    def fake_git(args: list[str], *, cwd, check: bool = True) -> str:
-        calls.append((args, cwd, check))
-        if args == ["rev-parse", "--git-path", "info/attributes"]:
-            return str(repo / ".git" / "info" / "attributes")
-        if args == ["rev-parse", "--git-common-dir"]:
-            return str(repo / ".git")
-        return ""
-
-    monkeypatch.setattr(store, "_git", fake_git)
-    monkeypatch.setattr(
-        "app.runtime.agent_git_store.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=128,
-            stdout="",
-            stderr="fatal: detected dubious ownership; add safe.directory",
-        ),
-    )
-
-    store._configure_repo(repo)
-
-    assert calls[0] == (
-        ["config", "--global", "--get-all", "safe.directory"],
-        repo,
-        False,
-    )
-    assert calls[1] == (
-        ["config", "--global", "--add", "safe.directory", str(repo.resolve())],
-        repo,
-        False,
-    )
-    assert calls[2][0] == ["config", "user.name", "AgentGov"]
+    safe_directories = subprocess.run(
+        ["git", "config", "--global", "--get-all", "safe.directory"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert safe_directories == ["/operator-owned/repository"]
+    assert store._git(["config", "user.name"], cwd=repo).strip() == "AgentGov"
+    assert store._git(["config", "user.email"], cwd=repo).strip() == "agent-runtime@example.local"
+    assert store._git(["config", "core.autocrlf"], cwd=repo).strip() == "false"
+    assert store._git(["config", "core.safecrlf"], cwd=repo).strip() == "false"
+    assert store._git(["config", "core.fileMode"], cwd=repo).strip() == "true"
 
 
 def test_git_store_file_diff_returns_unified_diff(tmp_path):
@@ -64,12 +54,13 @@ def test_git_store_file_diff_returns_unified_diff(tmp_path):
         releases_dir=tmp_path / "releases",
     )
     first = store.ensure_bootstrap()
-    repo.joinpath("CLAUDE.md").write_text("one\ntwo\n", encoding="utf-8")
-    second = store.create_snapshot(reason="diff-test")
+    worktree = store.create_worktree("diff-test", base_ref=str(first["agent_version_id"]))
+    worktree.worktree_path.joinpath("CLAUDE.md").write_text("one\ntwo\n", encoding="utf-8")
+    second = store.commit_worktree(worktree.worktree_path, message="diff-test")
 
     diff = store.diff_version_file(
         str(first["agent_version_id"]),
-        str(second["agent_version_id"]),
+        second,
         "CLAUDE.md",
     )
 
@@ -79,7 +70,51 @@ def test_git_store_file_diff_returns_unified_diff(tmp_path):
     assert "+two" in str(diff["unified_diff"])
 
 
-def test_git_store_snapshots_raw_bytes_and_exec_bit_despite_repository_attributes(tmp_path):
+def test_version_diff_preserves_utf8_and_pathological_git_paths_without_c_quoting(tmp_path) -> None:
+    repo = tmp_path / "workspace"
+    repo.mkdir()
+    repo.joinpath("AGENT.md").write_text("# base\n", encoding="utf-8")
+    store = GitAgentVersionStore(
+        repository_dir=repo,
+        worktrees_dir=tmp_path / "worktrees",
+        releases_dir=tmp_path / "releases",
+    )
+    base = str(store.ensure_bootstrap()["agent_version_id"])
+    worktree = store.create_worktree("pathological-paths", base_ref=base)
+    paths = {
+        "skills/审计/SKILL.md",
+        "skills/tab\tname/SKILL.md",
+        "skills/line\nname/SKILL.md",
+        'skills/"quoted"/SKILL.md',
+    }
+    for relative in paths:
+        target = worktree.worktree_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# governed skill\n", encoding="utf-8")
+    candidate = store.commit_worktree(worktree.worktree_path, message="pathological paths")
+
+    diff = store.diff_versions(base, candidate)
+
+    assert diff is not None
+    assert {str(entry["path"]) for entry in diff["added"]} == paths
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        b"A\x00unterminated",
+        b"R100\x00old\x00new\x00",
+        b"A\x00invalid-\xff\x00",
+        b"A\x00../escape\x00",
+        b"A\x00duplicate\x00M\x00duplicate\x00",
+    ),
+)
+def test_name_status_z_parser_fails_closed_on_ambiguous_or_unsafe_records(raw: bytes) -> None:
+    with pytest.raises(AgentGitError):
+        parse_name_status_z(raw)
+
+
+def test_git_store_candidate_commit_preserves_raw_bytes_and_exec_bit_despite_repository_attributes(tmp_path):
     repo = tmp_path / "workspace"
     repo.mkdir()
     repo.joinpath(".gitignore").write_bytes(b".env\n*.secret\n")
@@ -96,24 +131,24 @@ def test_git_store_snapshots_raw_bytes_and_exec_bit_despite_repository_attribute
         releases_dir=tmp_path / "releases",
     )
 
-    store.ensure_bootstrap()
+    base = str(store.ensure_bootstrap()["agent_version_id"])
     assert _git_bytes(repo, "show", "HEAD:.env") == b"WORKSPACE_OWNED=true\n"
     assert _git_bytes(repo, "show", "HEAD:crlf.txt") == b"first\r\nsecond\r\n"
-    subprocess.run(["git", "config", "core.fileMode", "false"], cwd=repo, check=True)
-    tool.chmod(0o755)
-    repo.joinpath("ignored.secret").write_bytes(b"workspace-owned\n")
-    store.create_snapshot(reason="raw-mode")
+    worktree = store.create_worktree("raw-mode", base_ref=base)
+    subprocess.run(["git", "config", "core.fileMode", "false"], cwd=worktree.worktree_path, check=True)
+    candidate_tool = worktree.worktree_path / "hooks" / "tool"
+    candidate_tool.chmod(0o755)
+    worktree.worktree_path.joinpath("ignored.secret").write_bytes(b"workspace-owned\n")
+    candidate = store.commit_worktree(worktree.worktree_path, message="raw-mode")
 
-    assert _git_bytes(repo, "show", "HEAD:crlf.txt") == b"first\r\nsecond\r\n"
-    assert _git_bytes(repo, "show", "HEAD:ignored.secret") == b"workspace-owned\n"
-    assert _git_bytes(repo, "ls-tree", "HEAD", "hooks/tool").split(maxsplit=1)[0] == b"100755"
-    assert stat.S_IMODE(tool.stat().st_mode) & 0o111
-    tool.unlink()
-    store.create_snapshot(reason="tracked-delete")
-    assert _git_bytes(repo, "ls-tree", "HEAD", "hooks/tool") == b""
+    assert _git_bytes(repo, "show", f"{candidate}:crlf.txt") == b"first\r\nsecond\r\n"
+    assert _git_bytes(repo, "show", f"{candidate}:ignored.secret") == b"workspace-owned\n"
+    assert _git_bytes(repo, "ls-tree", candidate, "hooks/tool").split(maxsplit=1)[0] == b"100755"
+    assert stat.S_IMODE(candidate_tool.stat().st_mode) & 0o111
+    assert store.current_commit_sha() == base
 
 
-def test_git_store_status_tracks_ignored_files_that_snapshots_preserve(tmp_path):
+def test_git_store_status_reports_ignored_live_workspace_drift_without_mutating_it(tmp_path):
     repo = tmp_path / "workspace"
     repo.mkdir()
     repo.joinpath(".gitignore").write_bytes(b"*.secret\n")
@@ -138,7 +173,6 @@ def test_git_store_status_tracks_ignored_files_that_snapshots_preserve(tmp_path)
             "unstaged": False,
             "untracked": True,
             "ignored": True,
-            "discardable": True,
         }
     ]
     status = store.repository_status()
@@ -148,19 +182,11 @@ def test_git_store_status_tracks_ignored_files_that_snapshots_preserve(tmp_path)
     assert status["file_diffs"][0]["status"] == "untracked"
     assert "+workspace-owned" in str(status["file_diffs"][0]["unified_diff"])
 
-    discarded = store.discard_workspace_changes(["ignored.secret"])
-    assert discarded["dirty"] is False
-    assert not ignored_file.exists()
-
-    ignored_file.write_bytes(b"snapshot-owned\n")
-    store.create_snapshot(reason="ignored-raw-mode")
-
-    assert _git_bytes(repo, "show", "HEAD:ignored.secret") == b"snapshot-owned\n"
-    assert store.workspace_changes() == []
-    assert store.repository_status()["dirty"] is False
+    assert ignored_file.read_bytes() == b"workspace-owned\n"
+    assert _git_bytes(repo, "ls-tree", "HEAD", "ignored.secret") == b""
 
 
-def test_git_store_snapshot_commits_deletion_when_no_worktree_files_remain(tmp_path):
+def test_git_store_candidate_commit_records_deletion_when_no_worktree_files_remain(tmp_path):
     repo = tmp_path / "workspace"
     repo.mkdir()
     only_file = repo / "only.txt"
@@ -171,31 +197,41 @@ def test_git_store_snapshot_commits_deletion_when_no_worktree_files_remain(tmp_p
         releases_dir=tmp_path / "releases",
     )
 
-    store.ensure_bootstrap()
-    only_file.unlink()
-    snapshot = store.create_snapshot(reason="delete-last-file")
+    base = str(store.ensure_bootstrap()["agent_version_id"])
+    worktree = store.create_worktree("delete-last-file", base_ref=base)
+    worktree.worktree_path.joinpath("only.txt").unlink()
+    candidate = store.commit_worktree(worktree.worktree_path, message="delete-last-file")
 
-    assert snapshot["agent_version_id"]
-    assert _git_bytes(repo, "ls-tree", "-r", "HEAD") == b""
+    assert candidate
+    assert _git_bytes(repo, "ls-tree", "-r", candidate) == b""
+    assert store.current_commit_sha() == base
 
 
-@pytest.mark.parametrize("attributes_path", ["", "outside"])
-def test_raw_git_storage_rejects_empty_or_out_of_git_metadata_path(tmp_path, attributes_path):
+@pytest.mark.parametrize("unsafe_kind", ["symlink_escape", "directory"])
+def test_raw_git_storage_rejects_unsafe_real_git_attributes_path(tmp_path, unsafe_kind):
     repo = tmp_path / "workspace"
-    git_dir = repo / ".git"
-    resolved_attributes = "" if not attributes_path else str(tmp_path / attributes_path / "attributes")
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    attributes = repo / ".git" / "info" / "attributes"
+    if unsafe_kind == "symlink_escape":
+        outside = tmp_path / "outside" / "attributes"
+        outside.parent.mkdir()
+        outside.write_text("operator-owned\n", encoding="utf-8")
+        attributes.symlink_to(outside)
+    else:
+        attributes.mkdir()
 
-    def fake_git(args: list[str], _repository: Path) -> str:
-        if args[:2] == ["config", "core.autocrlf"] or args[:2] == ["config", "core.safecrlf"] or args[:2] == ["config", "core.fileMode"]:
-            return ""
-        if args == ["rev-parse", "--git-path", "info/attributes"]:
-            return resolved_attributes
-        if args == ["rev-parse", "--git-common-dir"]:
-            return str(git_dir)
-        raise AssertionError(args)
+    def run_real_git(args: list[str], repository: Path) -> str:
+        return subprocess.run(
+            ["git", *args],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
 
     with pytest.raises(RawGitStorageError) as exc_info:
-        configure_raw_git_storage(repo, run_git=fake_git)
+        configure_raw_git_storage(repo, run_git=run_real_git)
 
     assert str(tmp_path) not in str(exc_info.value)
 

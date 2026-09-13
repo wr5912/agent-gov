@@ -2,21 +2,136 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db_base import utc_now
 
-from .contracts import ConfirmationScope, governed_run_permission_rules
+from .contracts import (
+    ConfirmationScope,
+    RuntimeReceipt,
+    RuntimeToolCallFingerprint,
+    governed_run_permission_rules,
+)
 from .models import AgentRunModel, RuntimePendingActionModel
+
+_HITL_RECEIPT_KINDS = {
+    "REQUIRE_USER_CONFIRM": "human",
+    "REQUIRE_EXTERNAL_EXECUTION": "external",
+}
 
 
 class HITLValidationError(ValueError):
     """The continuation differs from the exact persisted pending action."""
+
+
+def tool_call_fingerprint(
+    value: object,
+    *,
+    default_state: str | None = None,
+) -> RuntimeToolCallFingerprint:
+    """Hash one complete canonical ToolCall without retaining any body field."""
+
+    if not isinstance(value, dict):
+        raise HITLValidationError("HITL tool call must be an object")
+    tool_call_id = value.get("id")
+    tool_call_name = value.get("name")
+    tool_call_state = value.get("state", default_state)
+    if not isinstance(tool_call_id, str) or not tool_call_id:
+        raise HITLValidationError("HITL tool call is missing its stable id")
+    if not isinstance(tool_call_name, str) or not tool_call_name:
+        raise HITLValidationError("HITL tool call is missing its stable name")
+    canonical = _canonical_tool_call_bytes(value)
+    try:
+        return RuntimeToolCallFingerprint(
+            tool_call_id=tool_call_id,
+            tool_call_name=tool_call_name,
+            tool_call_state=tool_call_state,
+            tool_call_utf8_length=len(canonical),
+            tool_call_sha256=hashlib.sha256(canonical).hexdigest(),
+        )
+    except ValidationError as exc:
+        raise HITLValidationError("HITL tool call state is invalid") from exc
+
+
+def parse_tool_call_fingerprint(
+    value: object,
+    *,
+    expected_id: str | None = None,
+    expected_name: str | None = None,
+) -> RuntimeToolCallFingerprint:
+    """Validate one current fingerprint without accepting legacy raw ToolCall rows."""
+
+    try:
+        fingerprint = RuntimeToolCallFingerprint.model_validate(value)
+    except ValidationError as exc:
+        raise HITLValidationError(
+            "HITL tool call must use the fingerprint contract",
+        ) from exc
+    if expected_id is not None and fingerprint.tool_call_id != expected_id:
+        raise HITLValidationError("Persisted HITL tool call id does not match its ledger identity")
+    if expected_name is not None and fingerprint.tool_call_name != expected_name:
+        raise HITLValidationError("Persisted HITL tool name does not match its ledger identity")
+    return fingerprint
+
+
+def validate_runtime_receipt_fingerprints(receipt: RuntimeReceipt) -> RuntimeReceipt:
+    """Require canonical fingerprint-only HITL payloads at the online boundary."""
+
+    if receipt.type not in _HITL_RECEIPT_KINDS:
+        return receipt
+    return receipt.model_copy(
+        update={
+            "payload": _validated_hitl_payload(
+                receipt.type,
+                receipt.payload,
+            ),
+        },
+    )
+
+
+def _validated_hitl_payload(event_type: str, payload: object) -> JsonObject:
+    if not isinstance(payload, dict):
+        raise HITLValidationError("HITL receipt payload must be an object")
+    if set(payload) != {"tool_calls"}:
+        raise HITLValidationError(
+            "HITL receipt payload must contain only fingerprinted tool_calls",
+        )
+    tool_calls = payload.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        raise HITLValidationError("HITL receipt is missing tool_calls")
+    if event_type not in _HITL_RECEIPT_KINDS:  # pragma: no cover - caller guards
+        raise HITLValidationError("HITL receipt type is invalid")
+    return {
+        "tool_calls": [parse_tool_call_fingerprint(tool_call).model_dump(mode="json") for tool_call in tool_calls],
+    }
+
+
+def _default_tool_call_state(kind: str) -> str:
+    if kind == "human":
+        return "asking"
+    if kind == "external":
+        return "pending"
+    raise HITLValidationError("Pending action kind is invalid")
+
+
+def _canonical_tool_call_bytes(value: JsonObject) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise HITLValidationError("HITL tool call must be canonical JSON") from exc
 
 
 def validate_pending_actions(
@@ -62,7 +177,7 @@ def validate_pending_actions(
                 if result["confirmed"] is not True:
                     raise HITLValidationError("Run-scoped approval cannot be combined with a denied tool call")
                 try:
-                    rules = governed_run_permission_rules(expected_call.tool_call_json, run.run_id)
+                    rules = governed_run_permission_rules(tool_call, run.run_id)
                 except ValueError as exc:
                     raise HITLValidationError(str(exc)) from exc
                 grants.append((result, expected_call, rules))
@@ -102,9 +217,17 @@ def _validate_confirmation(
         raise HITLValidationError("Confirmation result must include a boolean confirmed value")
     if result.get("rules") not in (None, []):
         raise HITLValidationError("Persistent permission rules cannot be submitted by clients")
-    same_input = _canonical_tool_input(tool_call.get("input")) == _canonical_tool_input(expected.tool_call_json.get("input"))
-    if tool_call.get("name") != expected.tool_call_name or not same_input:
-        raise HITLValidationError("Tool name or normalized input cannot be modified during approval")
+    submitted = tool_call_fingerprint(
+        tool_call,
+        default_state=_default_tool_call_state(expected.kind),
+    )
+    persisted = parse_tool_call_fingerprint(
+        expected.tool_call_json,
+        expected_id=expected.tool_call_id,
+        expected_name=expected.tool_call_name,
+    )
+    if submitted != persisted:
+        raise HITLValidationError("Canonical tool call cannot be modified during approval")
 
 
 def _validate_external_result(tool_call: JsonObject, expected: RuntimePendingActionModel) -> None:
@@ -116,12 +239,3 @@ def _validate_external_result(tool_call: JsonObject, expected: RuntimePendingAct
         raise HITLValidationError("External result must carry a terminal tool state")
     if "output" not in tool_call:
         raise HITLValidationError("External result must include output")
-
-
-def _canonical_tool_input(value: object) -> str:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return value
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

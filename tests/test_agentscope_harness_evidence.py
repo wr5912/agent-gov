@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
 from agentscope.message import UserMsg
 from agentscope.tool import ToolChunk
@@ -43,7 +41,7 @@ async def _invoke_inside_reply(
     values = [
         item
         async for item in middleware.on_reply(
-            SimpleNamespace(),
+            None,
             {"inputs": [message]},
             next_handler,
         )
@@ -104,7 +102,7 @@ def test_harness_read_rejects_escape_and_sensitive_paths(tmp_path: Path, path: s
 
     async def exercise() -> None:
         async for _ in middleware.on_reply(
-            SimpleNamespace(),
+            None,
             {"inputs": {"metadata": {"agentgov_governed_evidence_root": logical_root}}},
             next_handler,
         ):
@@ -127,7 +125,7 @@ def test_harness_list_rejects_any_symlink_in_source(tmp_path: Path) -> None:
 
     async def exercise() -> None:
         async for _ in middleware.on_reply(
-            SimpleNamespace(),
+            None,
             {"inputs": {"metadata": {"agentgov_governed_evidence_root": logical_root}}},
             next_handler,
         ):

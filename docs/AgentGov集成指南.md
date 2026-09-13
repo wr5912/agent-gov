@@ -22,7 +22,7 @@ AgentGov 已原子切换到 AgentScope Runtime，当前只有一条生产执行�
 
 浏览器和外部系统不得直连 AgentScope Runtime 管理面。模型与 MCP 凭据只注入
 `agentscope-runtime`；AgentGov API 只持有 Runtime 共享密钥和可选的 Langfuse 查询凭据。
-Runtime 通过 OTLP 写入 Langfuse，前端再经 AgentGov API 读取 trace。
+Runtime 通过 OTLP 写入 Langfuse，前端只经 AgentGov API 读取受控 trace 引用与完整性状态。
 
 除健康检查外，公共 API 使用：
 
@@ -68,21 +68,34 @@ business Agent + immutable version/Harness
 
 ### 3.1 选择业务 Agent
 
-调用 `GET /api/agent-registry` 获取可运行的业务 Agent。普通 Agent 由 Workspace 包创建：
+调用 `GET /api/agent-registry` 获取业务 Agent。原生 schema 表单和 Workspace 包是两种输入，
+但都只创建同一种 Git 候选：
 
+- `GET /api/runtime/agent-schema`
+- `GET /api/agent-registry/{agent_id}/native-candidate-source`
+- `POST /api/agent-registry/{agent_id}/native-candidate`
 - `POST /api/agent-registry/{agent_id}/workspace/import`
 - `POST /api/agent-registry/{agent_id}/workspace/export`
 - `POST /api/agent-registry/{agent_id}/workspace/restore`
 
 导入包必须只有一个顶层 `workspace/`，且 `agent.yaml` 中的 Agent ID 与路径参数逐字一致。
 平台拒绝路径逃逸、symlink、`.git`、特殊 tar 成员、资源超限和已知无效配置。
+创建或导入成功只表示“候选已保存、尚未发布”；回执包含 `change_set_id`、基准提交和候选提交。
+原生表单读取 source 时，有未完成候选就返回该候选的安全投影，`current_commit_sha` 表示候选提交；
+否则读取当前发布版本并令该字段表示 live 提交。首次编辑只提交
+`expected_current_commit_sha`；继续编辑同一候选则必须成对提交 `change_set_id` 与
+`expected_candidate_commit_sha`，且不得再提交 live SHA。候选已存在、SHA 过期、归属不符或已进入终态时
+分别以 `409` 显式拒绝，不新建第二个候选，也不覆盖他人的变化。
+调用方随后对该精确候选运行平台测试，按敏感路径完成审批，再调用
+`POST /api/agent-change-sets/{change_set_id}/publish`。发布命令负责创建并验证原生 Agent、提交版本绑定
+和活动 Git 指针；不存在独立 Runtime 启用步骤。
 
 ### 3.2 创建版本固定的会话
 
-先调用 `GET /api/runtime/agents/{agent_id}/current` 查询业务 Agent 的当前发布绑定；
-若 `provisioned=false`，调用 `POST /api/runtime/agents/{agent_id}/provision` 幂等创建，取得
-`runtime_agent_id`。这两个路径中的 `agent_id` 是业务 Agent ID；下述会话和 chat 请求的
-同名字段则使用返回的 Runtime ID。
+先调用 `GET /api/runtime/agents/{agent_id}/current` 查询业务 Agent 的当前发布绑定，并要求
+`provisioned=true` 后取得 `runtime_agent_id`。若未激活，应重试同一个发布命令或处理其明确的恢复状态，
+不能由客户端另行创建 Runtime Agent。该查询路径中的 `agent_id` 是业务 Agent ID；下述会话和 chat
+请求的同名字段则使用返回的 Runtime ID。
 
 ```http
 POST /api/runtime/sessions/
@@ -129,15 +142,19 @@ Content-Type: application/json
 ```
 
 响应头 `X-AgentGov-Run-Id` 是本次运行的权威 `run_id`；
-`X-AgentGov-Session-Id` 必须与请求会话一致。SSE 是 AgentScope `AgentEvent` 的原始字节代理：
+`X-AgentGov-Session-Id` 必须与请求会话一致。Gateway 建连后先发送一个无业务语义的
+SSE comment `:\n\n`，使浏览器在上游空闲心跳前即可确认事件流已经建立；其后才是 AgentScope
+`AgentEvent` 的原始字节代理。除这一前导 readiness comment 外，Gateway 不插入、重命名或重编码事件：
 调用方应按 `type` 做前向兼容分派，保留事件顺序和未知事件，业务展示可以跳过不认识的类型，
 原始事件面板仍应可查看；不能把未知事件当成成功终态。最终消息事实以 messages API 为准，
 不应从浏览器气泡另建一份权威 transcript。
 
 `client_operation_id` 标识一次逻辑提交，网络失败后重试必须复用原值。若初次响应是否送达不确定，
 调用 `GET /api/agent-runs/by-client-operation?session_id=...&client_operation_id=...` 定位精确 run，
-不得换一个操作 ID 重触发。刷新后通过 `GET /api/agent-runs/{run_id}/pending-actions` 恢复仍在等待的
-人工确认或外部执行项。
+暂未找到时只能用完全相同的 input、上下文和操作 ID 幂等重试，不得换 ID 或改变 payload。chat
+明确返回不会启动执行的 4xx 且精确 operation 不存在时，可判定该次消息未提交并刷新会话；其他
+网络、超时、解码或 5xx 结果仍保持待核对。刷新后通过
+`GET /api/agent-runs/{run_id}/pending-actions` 恢复仍在等待的人工确认或外部执行项。
 
 ### 3.4 读取消息、状态和运行终态
 
@@ -187,8 +204,10 @@ AgentScope 需要人工确认或外部执行时，会在同一 SSE 中发出原�
   已到期且仍没有完整轨迹。后台对账默认窗口为 60 秒；控制面故障可在 run 尚未 terminal 时
   直接标记不完整，不必等待该窗口。不得用局部事件冒充完整轨迹。
 
-已知 `trace_id` 时也可调用 `GET /api/langfuse/traces/{trace_id}`。前端不得直接持有 Langfuse
-secret。标准安全语义 trace 包含精确根名 `agentgov.run`，AgentScope 子 span 名归一化为
+Trace 只能从已授权的 AgentGov run 调用 `GET /api/agent-runs/{run_id}/trace` 查询；不提供仅凭
+`trace_id` 读取 Langfuse payload 的通用路由，前端也不得持有 Langfuse secret。公开响应只包含
+`run_id`、`trace_id`、`trace_url` 与 `trace_status`，完整性校验使用的 observation 瞬时视图不会返回
+浏览器。标准安全语义 trace 包含精确根名 `agentgov.run`，AgentScope 子 span 名归一化为
 `invoke_agent`、`chat` 和按实际调用出现的 `execute_tool`；名称不携带 Agent、模型或正文。
 根 observation 携带 run、Agent 版本、Harness 与根 session；reply 关联由 stage 和
 `invoke_agent` observation 承载。原始输入输出及 tool/MCP 参数不进入观测持久层，出口保留
@@ -207,8 +226,9 @@ secret。标准安全语义 trace 包含精确根名 `agentgov.run`，AgentScope
    `/optimization-plan/generate`、`/execution/apply`、`/regression-test-design/generate` 生成产物，
    并在对应 `/confirm` 入口完成决策。
 5. 对精确 candidate commit 执行 `POST /api/agent-change-sets/{change_set_id}/test-runs`。
-6. 审批后调用 `POST /api/agent-change-sets/{change_set_id}/publish`；必要时通过
-   `/api/agent-releases/{release_id}/restore` 或 `/rollback` 恢复。
+6. 审批后调用 `POST /api/agent-change-sets/{change_set_id}/publish`。发布响应不确定或发生可恢复的
+   部分失败时，以同一 `change_set_id` 重入该命令并查询同一 release；不得另行切换活动 Git 指针。
+   若要恢复历史行为，应把所需历史内容形成新的候选，重新完成测试、审批和同一发布流程。
 
 治理 Agent 也经同一 AgentScope Runtime 运行。生成产物不能绕过确认、测试和发布门，也不能直接
 修改活动 Harness。高风险动作的业务授权由上层系统负责；AgentGov 负责执行、状态机、审计与原子性。
@@ -260,6 +280,9 @@ Session 创建和 run finalize 都有持久化意图/receipt 恢复；调用方�
 make runtime-validate
 make cutover-check
 make container-core-smoke COMPOSE_ENV_FILE=docker/.env
+REQUIRE_LIVE_RUNTIME=1 \
+REAL_ACCEPTANCE_AGENT_ID=security-operations-expert \
+REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json \
 make langfuse-smoke COMPOSE_ENV_FILE=docker/.env
 make test
 make typecheck

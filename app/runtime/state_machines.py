@@ -107,33 +107,34 @@ AGENT_CHANGE_SET_STATES: set[str] = set(get_args(AgentChangeSetStatus))
 
 AGENT_RELEASE_STATES: set[str] = set(get_args(AgentReleaseStatus))
 
-AGENT_RELEASE_OPERATION_STATES = {
-    "reserved",
-    "git_applied",
-    "completed",
-    "failed",
-}
-
-AGENT_RELEASE_OPERATION_TRANSITIONS: Mapping[str, set[str]] = {
-    "reserved": {"git_applied", "failed"},
-    "git_applied": {"completed", "failed"},
-    "completed": set(),
-    "failed": {"reserved"},
-}
-
 # 业务 Agent 生命周期（AGV-020）。archived 为终态：仍可审计但不参与新运行、不可再转移。
 AGENT_LIFECYCLE_STATES: set[str] = set(get_args(AgentLifecycleStatus))
 
 AGENT_LIFECYCLE_TRANSITIONS: Mapping[str, set[str]] = {
-    "draft": {"active", "archived"},
+    # draft -> active 只能由发布激活编排执行，不属于公共生命周期操作。
+    "draft": {"archived"},
     "active": {"evaluating", "deprecated", "archived"},
     "evaluating": {"active", "deprecated", "archived"},
     "deprecated": {"active", "archived"},
     "archived": set(),
 }
 
+# 发布编排的唯一特权激活边；幂等重试只允许已激活状态原地确认。
+AGENT_RELEASE_ACTIVATION_STATES = {"draft", "active"}
+AGENT_RELEASE_ACTIVATION_TRANSITIONS: Mapping[str, set[str]] = {
+    "draft": {"active"},
+    "active": set(),
+}
+
 # 可参与新运行选择的生命周期状态（AGV-020 criterion 3：archived 等不参与新运行）。
-AGENT_RUNNABLE_LIFECYCLE_STATES = {"active", "evaluating"}
+AGENT_RUNNABLE_LIFECYCLE_STATES = frozenset({"active", "evaluating"})
+
+
+def is_agent_lifecycle_runnable(status: object) -> bool:
+    """判定发布态 Agent 是否可接受新运行；候选 draft 只走隔离测试通道。"""
+
+    return isinstance(status, str) and status in AGENT_RUNNABLE_LIFECYCLE_STATES
+
 
 # Agent registry reservation is deliberately separate from the public lifecycle.
 # A provisioning row is an internal saga intent and must never be listed or run.
@@ -197,7 +198,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     "agent_change_set": {
         "draft": {"execution_ready", "candidate_committed", "pending_approval", "abandoned", "failed"},
         "execution_ready": {"candidate_committed", "pending_approval", "abandoned", "failed"},
-        "candidate_committed": {"pending_approval", "publishing", "rejected", "abandoned", "failed"},
+        "candidate_committed": {"candidate_committed", "pending_approval", "publishing", "rejected", "abandoned", "failed"},
         "pending_approval": {"candidate_committed", "pending_approval", "approved", "rejected", "abandoned", "failed"},
         "approved": {"candidate_committed", "pending_approval", "publishing", "rejected", "abandoned", "failed"},
         "rejected": {"abandoned"},
@@ -207,13 +208,14 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "failed": {"draft", "abandoned"},
     },
     "agent_release": {
-        "published": {"archived", "rolled_back", "rollback_failed"},
-        "archived": {"rolled_back", "rollback_failed"},
+        "published": {"archived"},
+        "archived": set(),
+        # 只为读取历史记录保留旧状态；活动流程不能再写入或离开这些状态。
         "rolled_back": set(),
-        "rollback_failed": {"rolled_back"},
+        "rollback_failed": set(),
     },
-    "agent_release_operation": AGENT_RELEASE_OPERATION_TRANSITIONS,
     "agent_lifecycle": AGENT_LIFECYCLE_TRANSITIONS,
+    "agent_release_activation": AGENT_RELEASE_ACTIVATION_TRANSITIONS,
     "agent_provision": AGENT_PROVISION_TRANSITIONS,
     "improvement_stage": IMPROVEMENT_STAGE_TRANSITIONS,
     "improvement_execution": IMPROVEMENT_EXECUTION_TRANSITIONS,
@@ -226,8 +228,8 @@ _KNOWN_STATES = {
     "pending_correlation": PENDING_CORRELATION_STATES,
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,
-    "agent_release_operation": AGENT_RELEASE_OPERATION_STATES,
     "agent_lifecycle": AGENT_LIFECYCLE_STATES,
+    "agent_release_activation": AGENT_RELEASE_ACTIVATION_STATES,
     "agent_provision": AGENT_PROVISION_STATES,
     "improvement_stage": IMPROVEMENT_STAGES,
     "improvement_execution": IMPROVEMENT_EXECUTION_STATES,

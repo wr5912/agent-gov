@@ -14,6 +14,8 @@ from typing import Protocol, TypedDict
 from urllib.parse import urlsplit
 
 import yaml
+from agentgov_agentscope_contract import AGENTSCOPE_RUNTIME_CONTRACT
+from agentgov_subagent_manifest_policy import validate_subagent_manifest
 
 _MANIFEST_PATH = Path("agent.yaml")
 _PROMPT_PATH = Path("AGENT.md")
@@ -43,6 +45,8 @@ _RESERVED_RESOURCE_TOOL_NAMES = {
     "resource_templates_list",
     "resource_read",
 }
+_PERMISSION_MODES = {"default", "explore", "accept_edits", "dont_ask"}
+_TOOL_POLICY_FIELDS = ("allowed_tools", "ask_tools", "denied_tools")
 
 
 def _mcp_env_prefix(server_name: str) -> str:
@@ -317,7 +321,52 @@ def plan_workspace_policy(*, workspace: Path, agent_id: str) -> WorkspacePolicyP
                     violations.append(item_violation)
                 elif text is not None:
                     violations.extend(validate_mcp_content(text, agent_id=agent_id, path=path.relative_to(workspace).as_posix()))
+    violations.extend(_subagent_policy_violations(workspace, agent_id=agent_id))
     return WorkspacePolicyPlan(agent_id=agent_id, workspace=workspace, violations=tuple(violations))
+
+
+def _subagent_policy_violations(workspace: Path, *, agent_id: str) -> tuple[PolicyViolation, ...]:
+    root = workspace / "subagents"
+    if not root.exists():
+        return ()
+    if root.is_symlink() or not root.is_dir():
+        return (PolicyViolation(agent_id, "subagents", "unsafe_file_type", "subagents must be a regular directory"),)
+    failures: list[PolicyViolation] = []
+    for entry in sorted(root.iterdir()):
+        relative = entry.relative_to(workspace).as_posix()
+        if entry.is_symlink() or not entry.is_dir():
+            failures.append(PolicyViolation(agent_id, relative, "unsafe_file_type", "subagent must be a regular directory"))
+            continue
+        text, violation = _read_regular_text(entry / _MANIFEST_PATH, workspace=workspace, agent_id=agent_id, required=True)
+        if violation is not None:
+            failures.append(violation)
+            continue
+        try:
+            manifest = yaml.safe_load(text or "")
+        except yaml.YAMLError as exc:
+            failures.append(PolicyViolation(agent_id, f"{relative}/agent.yaml", "invalid_manifest", str(exc)))
+            continue
+        _, prompt_violation = _read_regular_text(
+            entry / _PROMPT_PATH,
+            workspace=workspace,
+            agent_id=agent_id,
+            required=True,
+        )
+        if prompt_violation is not None:
+            failures.append(prompt_violation)
+        failures.extend(
+            PolicyViolation(
+                agent_id,
+                f"{relative}/agent.yaml",
+                issue.code,
+                issue.detail,
+            )
+            for issue in validate_subagent_manifest(
+                manifest,
+                directory_name=entry.name,
+            )
+        )
+    return tuple(failures)
 
 
 def _manifest_violations(value: object, *, agent_id: str) -> tuple[PolicyViolation, ...]:
@@ -325,16 +374,73 @@ def _manifest_violations(value: object, *, agent_id: str) -> tuple[PolicyViolati
     if not isinstance(value, dict):
         return (PolicyViolation(agent_id, path, "invalid_manifest", "root must be an object"),)
     agent = value.get("agent")
+    session = value.get("session", {})
     policy = value.get("workspace_policy")
     failures: list[PolicyViolation] = []
     if value.get("schema_version") != 1:
         failures.append(PolicyViolation(agent_id, path, "invalid_schema_version", "schema_version must be 1"))
-    if not isinstance(agent, dict) or agent.get("runtime") != "agentscope" or agent.get("runtime_contract") != "agentscope-app/2.0.8":
+    if not isinstance(agent, dict) or agent.get("runtime") != "agentscope" or agent.get("runtime_contract") != AGENTSCOPE_RUNTIME_CONTRACT:
         failures.append(PolicyViolation(agent_id, path, "invalid_runtime_contract", "AgentScope 2.0.8 contract is required"))
     if not isinstance(policy, dict) or policy.get("fail_closed") is not True or policy.get("immutable_harness") is not True:
         failures.append(PolicyViolation(agent_id, path, "unsafe_workspace_policy", "fail_closed and immutable_harness are required"))
     if isinstance(policy, dict) and policy.get("allow_for_run") is not False:
         failures.append(PolicyViolation(agent_id, path, "persistent_permission_forbidden", "allow_for_run must be false"))
+    if not isinstance(session, dict) or session.get("permission_mode", "default") not in _PERMISSION_MODES:
+        failures.append(PolicyViolation(agent_id, path, "invalid_permission_mode", "permission_mode is invalid or unsafe"))
+    if isinstance(policy, dict):
+        failures.extend(_tool_policy_violations(policy, agent_id=agent_id, path=path))
+    return tuple(failures)
+
+
+def _tool_policy_violations(
+    policy: Mapping[str, object],
+    *,
+    agent_id: str,
+    path: str,
+) -> tuple[PolicyViolation, ...]:
+    parsed: dict[str, set[tuple[str, str | None]]] = {}
+    failures: list[PolicyViolation] = []
+    for field in _TOOL_POLICY_FIELDS:
+        # 历史不可变 Harness 可能尚未写出权限列表；受管发布校验保持既有
+        # 结构兼容，Runtime 加载时仍会对其必需 allow/deny 字段 fail-closed。
+        value = policy.get(field, [])
+        if not isinstance(value, list) or any(not isinstance(item, str) or item != item.strip() or not item or "\0" in item for item in value):
+            failures.append(PolicyViolation(agent_id, path, "invalid_tool_policy", f"{field} must be a string list"))
+            parsed[field] = set()
+            continue
+        rules: list[tuple[str, str | None]] = []
+        invalid = False
+        for item in value:
+            name, separator, content = item.partition("(")
+            if not name or (separator and (not item.endswith(")") or not content[:-1])):
+                invalid = True
+                break
+            if field in {"allowed_tools", "ask_tools"} and name.startswith("mcp__") and any(character in name for character in "*?["):
+                failures.append(
+                    PolicyViolation(
+                        agent_id,
+                        path,
+                        "wildcard_mcp_permission_forbidden",
+                        f"{field} cannot wildcard MCP tools",
+                    ),
+                )
+                invalid = True
+                break
+            rules.append((name, content[:-1] if separator else None))
+        if invalid or len(rules) != len(set(rules)):
+            failures.append(PolicyViolation(agent_id, path, "invalid_tool_policy", f"{field} contains invalid or duplicate rules"))
+        parsed[field] = set(rules)
+    for index, left in enumerate(_TOOL_POLICY_FIELDS):
+        for right in _TOOL_POLICY_FIELDS[index + 1 :]:
+            if parsed[left] & parsed[right]:
+                failures.append(
+                    PolicyViolation(
+                        agent_id,
+                        path,
+                        "conflicting_tool_policy",
+                        f"{left} and {right} contain the same rule",
+                    ),
+                )
     return tuple(failures)
 
 

@@ -9,9 +9,9 @@ from app_test_utils import load_test_app
 from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 
 
-def _load_agent(monkeypatch, tmp_path: Path):
+def _load_agent(process_environment, tmp_path: Path):
     module = load_test_app(
-        monkeypatch,
+        process_environment,
         tmp_path,
         extra_agent_ids=(ORDINARY_TEST_AGENT_ID,),
     )
@@ -21,10 +21,10 @@ def _load_agent(monkeypatch, tmp_path: Path):
 
 
 def test_presentation_projects_only_whitelisted_manifest_fields_and_registry_identity(
-    monkeypatch,
+    process_environment,
     tmp_path: Path,
 ) -> None:
-    module, record, workspace = _load_agent(monkeypatch, tmp_path)
+    module, record, workspace = _load_agent(process_environment, tmp_path)
     workspace.joinpath("agent.yaml").write_text(
         """
 agent:
@@ -80,11 +80,11 @@ mcp:
 
 
 def test_presentation_missing_or_invalid_manifest_returns_registry_fallback(
-    monkeypatch,
+    process_environment,
     tmp_path: Path,
     caplog,
 ) -> None:
-    module, record, workspace = _load_agent(monkeypatch, tmp_path)
+    module, record, workspace = _load_agent(process_environment, tmp_path)
     workspace.joinpath("agent.yaml").unlink()
 
     with caplog.at_level(logging.WARNING, logger="app.services.business_agent_presentation"):
@@ -113,11 +113,11 @@ def test_presentation_missing_or_invalid_manifest_returns_registry_fallback(
 
 
 def test_presentation_symlink_and_oversized_manifest_fail_closed(
-    monkeypatch,
+    process_environment,
     tmp_path: Path,
     caplog,
 ) -> None:
-    module, _, workspace = _load_agent(monkeypatch, tmp_path)
+    module, _, workspace = _load_agent(process_environment, tmp_path)
     manifest = workspace / "agent.yaml"
     outside = tmp_path / "outside-agent.yaml"
     outside.write_text("presentation:\n  summary: must not be read\n", encoding="utf-8")
@@ -140,8 +140,8 @@ def test_presentation_symlink_and_oversized_manifest_fail_closed(
     assert f"agent_id={ORDINARY_TEST_AGENT_ID} reason=too_large" in caplog.text
 
 
-def test_presentation_unknown_agent_returns_404(monkeypatch, tmp_path: Path) -> None:
-    module, _, _ = _load_agent(monkeypatch, tmp_path)
+def test_presentation_unknown_agent_returns_404(process_environment, tmp_path: Path) -> None:
+    module, _, _ = _load_agent(process_environment, tmp_path)
 
     with TestClient(module.app) as client:
         response = client.get("/api/agent-registry/unknown-agent/presentation")

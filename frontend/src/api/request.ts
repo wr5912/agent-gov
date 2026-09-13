@@ -16,6 +16,8 @@ const PREVIOUS_STORED_API_BASES = new Set([
 
 export type RuntimeRequestInit = RequestInit & {
   timeoutMs?: number;
+  /** 对会触发可观察上游工作的 GET，关闭默认的一次自动重试。 */
+  retry?: boolean;
 };
 
 export type RuntimeReadOptions = Pick<RuntimeRequestInit, "signal" | "timeoutMs">;
@@ -101,8 +103,8 @@ export function runtimeHeaders(config: RuntimeClientConfig): HeadersInit {
 
 export async function requestJson<T>(config: RuntimeClientConfig, path: string, init?: RuntimeRequestInit): Promise<T> {
   const method = (init?.method || "GET").toUpperCase();
-  const maxAttempts = method === "GET" ? 2 : 1;
-  const { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...fetchInit } = init || {};
+  const { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, retry = true, ...fetchInit } = init || {};
+  const maxAttempts = method === "GET" && retry ? 2 : 1;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {

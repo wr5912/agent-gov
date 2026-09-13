@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db_base import begin_sqlite_write_transaction, utc_now
 
+from ._resource_lifecycle import transition_ephemeral_resource
 from ._store_support import (
     RuntimeObjectNotFound,
     RuntimeStateConflict,
@@ -236,7 +237,7 @@ class RuntimeResourceStoreMixin:
                 row.workspace_id = workspace_id
                 row.runtime_agent_id = None
                 row.session_id = None
-                row.status = "provisioning"
+                transition_ephemeral_resource(row, "provisioning")
                 row.error_json = None
                 row.created_at = now
                 row.updated_at = now
@@ -272,13 +273,69 @@ class RuntimeResourceStoreMixin:
             db.flush()
             return _detached(db, row)
 
+    def clear_ephemeral_session(self, cache_key: str, session_id: str) -> RuntimeEphemeralResourceModel:
+        """仅在精确上游 Session 已确认删除后清除持久 locator。"""
+
+        with self.Session.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = _require_ephemeral_resource(db, cache_key)
+            if row.session_id not in {None, session_id}:
+                raise RuntimeStateConflict("Ephemeral cleanup tried to clear another Runtime Session")
+            row.session_id = None
+            row.updated_at = utc_now()
+            db.flush()
+            return _detached(db, row)
+
+    def mark_release_activation_bound(self, cache_key: str) -> RuntimeEphemeralResourceModel:
+        with self.Session.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = _require_ephemeral_resource(db, cache_key)
+            if row.source_kind != "release_activation" or not row.runtime_agent_id or row.session_id:
+                raise RuntimeStateConflict("Release activation is not ready for immutable binding")
+            binding = db.get(RuntimeAgentVersionModel, (row.business_agent_id, row.agent_version_id, row.harness_digest))
+            if binding is None or binding.runtime_agent_id != row.runtime_agent_id:
+                raise RuntimeStateConflict("Release activation has no matching immutable Runtime binding")
+            transition_ephemeral_resource(row, "ready")
+            row.error_json = None
+            row.updated_at = utc_now()
+            db.flush()
+            return _detached(db, row)
+
+    def mark_release_activation_active(self, cache_key: str) -> RuntimeEphemeralResourceModel:
+        with self.Session.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = _require_ephemeral_resource(db, cache_key)
+            if row.source_kind != "release_activation" or row.status not in {"ready", "active"}:
+                raise RuntimeStateConflict("Release activation binding is not ready for Git activation")
+            transition_ephemeral_resource(row, "active")
+            row.error_json = None
+            row.updated_at = utc_now()
+            db.flush()
+            return _detached(db, row)
+
+    def complete_release_probe(self, cache_key: str) -> RuntimeEphemeralResourceModel:
+        """完成只借用既有不可变 binding 的 readiness 探针，不触碰该 binding。"""
+
+        with self.Session.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = _require_ephemeral_resource(db, cache_key)
+            if row.source_kind != "release_probe" or row.session_id:
+                raise RuntimeStateConflict("Release probe still owns an undeleted Runtime Session")
+            now = utc_now()
+            transition_ephemeral_resource(row, "cleanup_complete")
+            row.error_json = None
+            row.updated_at = now
+            row.completed_at = now
+            db.flush()
+            return _detached(db, row)
+
     def mark_ephemeral_ready(self, cache_key: str) -> RuntimeEphemeralResourceModel:
         with self.Session.begin() as db:
             begin_sqlite_write_transaction(db.connection())
             row = _require_ephemeral_resource(db, cache_key)
             if not row.runtime_agent_id or not row.session_id:
                 raise RuntimeStateConflict("Ephemeral resource cannot become ready without Agent and Session")
-            row.status = "ready"
+            transition_ephemeral_resource(row, "ready")
             row.error_json = None
             row.updated_at = utc_now()
             db.flush()
@@ -294,7 +351,7 @@ class RuntimeResourceStoreMixin:
         with self.Session.begin() as db:
             begin_sqlite_write_transaction(db.connection())
             row = _require_ephemeral_resource(db, cache_key)
-            row.status = "cleanup_pending"
+            transition_ephemeral_resource(row, "cleanup_pending")
             row.error_json = {"stage": stage, "error_type": error_type}
             row.updated_at = utc_now()
             db.flush()
@@ -312,7 +369,7 @@ class RuntimeResourceStoreMixin:
         with self.Session.begin() as db:
             begin_sqlite_write_transaction(db.connection())
             row = _require_ephemeral_resource(db, cache_key)
-            row.status = "awaiting_restart"
+            transition_ephemeral_resource(row, "awaiting_restart")
             row.error_json = {"stage": stage, "error_type": error_type}
             row.updated_at = utc_now()
             db.flush()
@@ -332,7 +389,7 @@ class RuntimeResourceStoreMixin:
                 if binding or version:
                     raise RuntimeStateConflict("Ephemeral local Runtime bindings still exist")
             now = utc_now()
-            row.status = "cleanup_complete"
+            transition_ephemeral_resource(row, "cleanup_complete")
             row.error_json = None
             row.updated_at = now
             row.completed_at = now
@@ -344,6 +401,7 @@ class RuntimeResourceStoreMixin:
         *,
         include_ready: bool,
         awaiting_restart_before: str | None = None,
+        source_kinds: set[str] | None = None,
     ) -> list[RuntimeEphemeralResourceModel]:
         statuses = ["provisioning", "cleanup_pending"]
         if include_ready:
@@ -357,6 +415,8 @@ class RuntimeResourceStoreMixin:
                     RuntimeEphemeralResourceModel.updated_at <= awaiting_restart_before,
                 ),
             )
+        if source_kinds is not None:
+            recoverable = and_(recoverable, RuntimeEphemeralResourceModel.source_kind.in_(sorted(source_kinds)))
         with self.Session() as db:
             rows = db.scalars(
                 select(RuntimeEphemeralResourceModel).where(recoverable).order_by(RuntimeEphemeralResourceModel.created_at),
@@ -376,7 +436,7 @@ class RuntimeResourceStoreMixin:
             ).all()
             now = utc_now()
             for row in rows:
-                row.status = "cleanup_complete"
+                transition_ephemeral_resource(row, "cleanup_complete")
                 row.error_json = None
                 row.updated_at = now
                 row.completed_at = now

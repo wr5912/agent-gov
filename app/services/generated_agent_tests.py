@@ -6,6 +6,7 @@ import re
 import sys
 from dataclasses import dataclass
 
+from app.agent_testing.suite_integrity import find_suite_integrity_violations
 from app.runtime.errors import BusinessRuleViolation
 
 MAX_GENERATED_TEST_BYTES = 64 * 1024
@@ -82,6 +83,10 @@ def validate_generated_test_code(source: str) -> None:
 
     _validate_imports(module)
     _reject_bypass_constructs(module)
+    violations = find_suite_integrity_violations(module)
+    if violations:
+        first = violations[0]
+        raise GeneratedAgentTestError(f"generated pytest violates test integrity at line {first.line}: {first.message}")
     test_functions = [node for node in module.body if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")]
     if not test_functions:
         raise GeneratedAgentTestError("generated pytest code must define at least one top-level test_* function")
@@ -145,14 +150,18 @@ def _validate_test_function(function: ast.FunctionDef) -> None:
         raise GeneratedAgentTestError(f"{function.name} must declare the agent fixture")
 
     result_names: set[str] = set()
+    run_calls = 0
     for node in ast.walk(function):
         if isinstance(node, ast.Call) and _is_agent_run_call(node):
+            run_calls += 1
             parent_assignment = _assignment_for_call(function, node)
             if parent_assignment is None:
                 raise GeneratedAgentTestError(f"{function.name} must assign agent.run() to a result variable")
             result_names.add(parent_assignment)
     if not result_names:
         raise GeneratedAgentTestError(f"{function.name} must call agent.run()")
+    if run_calls != 1:
+        raise GeneratedAgentTestError(f"{function.name} must call agent.run() exactly once")
 
     assertions = [node for node in function.body if isinstance(node, ast.Assert)]
     if len(assertions) != sum(isinstance(node, ast.Assert) for node in ast.walk(function)):

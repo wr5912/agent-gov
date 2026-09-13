@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
-from collections.abc import Iterator
-from pathlib import Path
-from types import SimpleNamespace
 
-import httpx
 import pytest
 from agentscope.event import (
     ConfirmResult,
@@ -18,38 +13,19 @@ from agentscope.event import (
     UserConfirmResultEvent,
 )
 from agentscope.message import ToolCallBlock, ToolResultBlock, ToolResultState
-from agentscope_runtime.context_registry import RuntimeContext, take_reply_context
+from agentscope_runtime.context_registry import RuntimeContext
 from agentscope_runtime.observability import RedactingSpanProcessor
-from agentscope_runtime.receipt_middleware import CURRENT_RUNTIME_CONTEXT, AgentGovReceiptMiddleware
-from agentscope_runtime.settings import RuntimeSettings
+from agentscope_runtime.receipt_middleware import (
+    _annotate_incoming_event,
+    annotate_tool_result,
+    build_interrupted_receipt,
+    build_runtime_receipt,
+)
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
-
-def _settings(tmp_path: Path) -> RuntimeSettings:
-    roots = [tmp_path / name for name in ("business", "candidates", "workspaces")]
-    for root in roots:
-        root.mkdir()
-    data_dir = tmp_path / "data"
-    return RuntimeSettings(
-        shared_secret="shared-test-secret",
-        provider_api_key="provider-test-secret",
-        agentgov_api_base_url="http://agent-gov-api:8080",
-        provider_api_url="http://model-provider.test/v1",
-        data_dir=data_dir,
-        business_agents_root=roots[0],
-        candidates_root=roots[1],
-        workspaces_root=roots[2],
-        database_url=f"sqlite+aiosqlite:///{data_dir / 'agentscope.db'}",
-    )
-
-
-@pytest.fixture(autouse=True)
-def _clear_reply_context() -> Iterator[None]:
-    take_reply_context("session-1", "reply-1")
-    yield
-    take_reply_context("session-1", "reply-1")
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
 
 
 def _context(trace_id: str) -> RuntimeContext:
@@ -70,66 +46,56 @@ def _context(trace_id: str) -> RuntimeContext:
 def _tracer() -> tuple[object, InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
-    provider.add_span_processor(RedactingSpanProcessor(SimpleSpanProcessor(exporter)))
+    provider.add_span_processor(
+        RedactingSpanProcessor(SimpleSpanProcessor(exporter)),
+    )
     return provider.get_tracer("test-agentgov-receipts"), exporter
 
 
 def _tool_call() -> ToolCallBlock:
-    return ToolCallBlock(id="call-1", name="Read", input='{"file_path":"README.md"}')
+    return ToolCallBlock(
+        id="call-1",
+        name="Read",
+        input='{"file_path":"hitl-private-canary.txt"}',
+    )
 
 
-def test_tool_result_end_posts_body_free_control_receipt_and_annotates_tool_span(tmp_path: Path) -> None:
-    posted: list[dict[str, object]] = []
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        posted.append(json.loads(request.content))
-        return httpx.Response(200, json={"run_id": "run-1", "status": "running"})
-
-    middleware = AgentGovReceiptMiddleware(_settings(tmp_path), transport=httpx.MockTransport(handler))
+def test_tool_result_event_builds_body_free_receipt_and_safe_span() -> None:
     event = ToolResultEndEvent(
         id="tool-end-1",
         reply_id="reply-1",
         tool_call_id="call-1",
         state=ToolResultState.SUCCESS,
     )
-    agent = SimpleNamespace(state=SimpleNamespace(session_id="session-1", reply_id="reply-1"))
     tracer, exporter = _tracer()
 
-    async def tool_handler(**_: object):
-        yield event
-
-    async def with_acting(**kwargs: object):
-        async for item in middleware.on_acting(agent, kwargs, tool_handler):
-            yield item
-
-    async def exercise() -> list[object]:
-        with tracer.start_as_current_span(  # type: ignore[union-attr]
-            "execute_tool Read",
-            attributes={
-                "gen_ai.operation.name": "execute_tool",
-                "gen_ai.tool.call.result": "provider-test-secret",
-            },
-        ) as span:
-            trace_id = f"{span.get_span_context().trace_id:032x}"
-            token = CURRENT_RUNTIME_CONTEXT.set(_context(trace_id))
-            try:
-                return [item async for item in middleware.on_reply(agent, {"inputs": None}, with_acting)]
-            finally:
-                CURRENT_RUNTIME_CONTEXT.reset(token)
-
-    assert asyncio.run(exercise()) == [event]
-    assert posted == [
-        {
-            "event_id": "tool-end-1",
-            "payload": {"state": "success", "tool_call_id": "call-1"},
-            "receipt_id": hashlib.sha256(b"run-1\nsession-1\ntool-end-1").hexdigest(),
-            "reply_id": "reply-1",
-            "run_id": "run-1",
-            "session_id": "session-1",
-            "trace_id": posted[0]["trace_id"],
-            "type": "TOOL_RESULT_END",
+    with tracer.start_as_current_span(
+        "execute_tool Read",
+        attributes={
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.call.result": "provider-test-secret",
         },
-    ]
+    ) as span:
+        trace_id = f"{span.get_span_context().trace_id:032x}"
+        receipt = build_runtime_receipt(
+            _context(trace_id),
+            event,
+            fallback_reply_id="reply-1",
+        )
+        annotate_tool_result("session-1", event)
+
+    assert receipt.model_dump(mode="json") == {
+        "event_id": "tool-end-1",
+        "payload": {"state": "success", "tool_call_id": "call-1"},
+        "receipt_id": hashlib.sha256(
+            b"run-1\nsession-1\ntool-end-1",
+        ).hexdigest(),
+        "reply_id": "reply-1",
+        "run_id": "run-1",
+        "session_id": "session-1",
+        "trace_id": trace_id,
+        "type": "TOOL_RESULT_END",
+    }
     exported = exporter.get_finished_spans()[0]
     assert exported.name == "execute_tool"
     assert exported.attributes["gen_ai.tool.call.id"] == "call-1"
@@ -148,45 +114,57 @@ def test_tool_result_end_posts_body_free_control_receipt_and_annotates_tool_span
     ("event", "attribute"),
     [
         (
-            RequireUserConfirmEvent(reply_id="reply-1", tool_calls=[_tool_call()]),
+            RequireUserConfirmEvent(
+                reply_id="reply-1",
+                tool_calls=[_tool_call()],
+            ),
             "agentscope.agent.hitl_pending_tool_call_ids",
         ),
         (
-            RequireExternalExecutionEvent(reply_id="reply-1", tool_calls=[_tool_call()]),
+            RequireExternalExecutionEvent(
+                reply_id="reply-1",
+                tool_calls=[_tool_call()],
+            ),
             "agentscope.agent.external_execution_pending_tool_call_ids",
         ),
     ],
 )
-def test_pending_action_receipt_annotates_request_with_durable_tool_identity(
-    tmp_path: Path,
+def test_pending_action_receipt_annotates_durable_tool_identity(
     event: object,
     attribute: str,
 ) -> None:
-    middleware = AgentGovReceiptMiddleware(
-        _settings(tmp_path),
-        transport=httpx.MockTransport(
-            lambda _: httpx.Response(200, json={"run_id": "run-1", "status": "running"}),
-        ),
-    )
-    agent = SimpleNamespace(state=SimpleNamespace(session_id="session-1", reply_id="reply-1"))
     tracer, exporter = _tracer()
+    with tracer.start_as_current_span(
+        "invoke_agent",
+        attributes={"gen_ai.operation.name": "invoke_agent"},
+    ) as span:
+        trace_id = f"{span.get_span_context().trace_id:032x}"
+        receipt = build_runtime_receipt(
+            _context(trace_id),
+            event,
+            fallback_reply_id="reply-1",
+        )
 
-    async def next_handler(**_: object):
-        yield event
-
-    async def exercise() -> None:
-        with tracer.start_as_current_span(  # type: ignore[union-attr]
-            "invoke_agent",
-            attributes={"gen_ai.operation.name": "invoke_agent"},
-        ) as span:
-            trace_id = f"{span.get_span_context().trace_id:032x}"
-            token = CURRENT_RUNTIME_CONTEXT.set(_context(trace_id))
-            try:
-                _ = [item async for item in middleware.on_reply(agent, {"inputs": None}, next_handler)]
-            finally:
-                CURRENT_RUNTIME_CONTEXT.reset(token)
-
-    asyncio.run(exercise())
+    native_tool_call = event.tool_calls[0].model_dump(mode="json")
+    canonical = json.dumps(
+        native_tool_call,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    assert receipt.payload == {
+        "tool_calls": [
+            {
+                "tool_call_id": "call-1",
+                "tool_call_name": "Read",
+                "tool_call_state": native_tool_call["state"],
+                "tool_call_utf8_length": len(canonical),
+                "tool_call_sha256": hashlib.sha256(canonical).hexdigest(),
+            },
+        ],
+    }
+    assert "hitl-private-canary" not in receipt.model_dump_json()
     assert exporter.get_finished_spans()[0].attributes[attribute] == ("call-1",)
 
 
@@ -196,7 +174,9 @@ def test_pending_action_receipt_annotates_request_with_durable_tool_identity(
         (
             UserConfirmResultEvent(
                 reply_id="reply-1",
-                confirm_results=[ConfirmResult(confirmed=True, tool_call=_tool_call())],
+                confirm_results=[
+                    ConfirmResult(confirmed=True, tool_call=_tool_call()),
+                ],
             ),
             "USER_CONFIRM_RESULT",
         ),
@@ -216,33 +196,33 @@ def test_pending_action_receipt_annotates_request_with_durable_tool_identity(
         ),
     ],
 )
-def test_continuation_span_records_only_native_event_type_and_reply_id(
-    tmp_path: Path,
+def test_continuation_span_records_only_native_identity(
     event: object,
     event_type: str,
 ) -> None:
-    middleware = AgentGovReceiptMiddleware(_settings(tmp_path))
-    agent = SimpleNamespace(state=SimpleNamespace(session_id="session-1", reply_id="reply-1"))
     tracer, exporter = _tracer()
+    with tracer.start_as_current_span(
+        "invoke_agent",
+        attributes={"gen_ai.operation.name": "invoke_agent"},
+    ):
+        _annotate_incoming_event(event)
 
-    async def no_events(**_: object):
-        if False:  # pragma: no cover - 保持 AsyncGenerator 契约
-            yield None
-
-    async def exercise() -> None:
-        with tracer.start_as_current_span(  # type: ignore[union-attr]
-            "invoke_agent",
-            attributes={"gen_ai.operation.name": "invoke_agent"},
-        ) as span:
-            trace_id = f"{span.get_span_context().trace_id:032x}"
-            token = CURRENT_RUNTIME_CONTEXT.set(_context(trace_id))
-            try:
-                _ = [item async for item in middleware.on_reply(agent, {"inputs": event}, no_events)]
-            finally:
-                CURRENT_RUNTIME_CONTEXT.reset(token)
-
-    asyncio.run(exercise())
     exported = exporter.get_finished_spans()[0]
     assert exported.attributes["agentscope.agent.incoming_event_type"] == event_type
     assert exported.attributes["agentscope.agent.reply_id"] == "reply-1"
     assert "provider-test-secret" not in exported.to_json()
+
+
+def test_interrupted_receipt_is_deterministic_and_contains_no_business_body() -> None:
+    context = _context("a" * 32)
+
+    first = build_interrupted_receipt(context)
+    repeated = build_interrupted_receipt(context)
+
+    assert repeated == first
+    assert first.type == "RUN_INTERRUPTED"
+    assert first.run_id == context.run_id
+    assert first.session_id == context.session_id
+    assert first.trace_id == context.trace_id
+    assert first.reply_id is None
+    assert first.payload == {}

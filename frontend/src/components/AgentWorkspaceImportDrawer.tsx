@@ -1,10 +1,14 @@
-import { Loader2, RotateCcw, Upload } from "lucide-react";
+import { Loader2, Upload } from "lucide-react";
 import type { RefObject } from "react";
-import type { AgentSummary, WorkspaceImportResponse } from "../types/runtime";
+import type {
+  AgentSummary,
+  NativeAgentCandidateResponse,
+  WorkspaceImportResponse,
+} from "../types/runtime";
 import { DrawerShell } from "./DrawerShell";
 
 export type WorkspaceImportMode = "create" | "overwrite";
-export type WorkspacePackageOperation = "export" | "import" | "restore";
+export type WorkspacePackageOperation = "export" | "import";
 
 export interface WorkspacePackageNotice {
   operation: WorkspacePackageOperation;
@@ -26,7 +30,7 @@ interface AgentWorkspaceImportDrawerProps {
   onNameChange: (value: string) => void;
   onFileChange: (file: File | null) => void;
   onSubmit: () => void;
-  onRestore: () => void;
+  onOpenGovernance: (receipt: WorkspaceImportResponse) => void;
   onClose: () => void;
 }
 
@@ -38,8 +42,8 @@ export function AgentWorkspaceImportDrawer(props: AgentWorkspaceImportDrawerProp
     <DrawerShell
       title={overwrite ? "覆盖导入 Workspace" : "导入业务 Agent"}
       description={overwrite
-        ? `使用 Workspace 包覆盖 ${props.targetAgent?.name ?? props.agentId}，变更将在下一 turn 生效。`
-        : "从 Workspace 包创建新的业务 Agent。"}
+        ? `使用 Workspace 包为 ${props.targetAgent?.name ?? props.agentId} 形成隔离候选，不修改活动版本。`
+        : "从 Workspace 包创建业务 Agent 候选；导入完成不代表已发布。"}
       size="medium"
       testId="settings-agent-import-drawer"
       dataState={props.mode}
@@ -56,7 +60,15 @@ export function AgentWorkspaceImportDrawer(props: AgentWorkspaceImportDrawerProp
       >
         <WorkspaceImportFields props={props} busy={busy} overwrite={overwrite} />
         {props.notice && props.notice.operation !== "export" ? <WorkspaceOperationNotice notice={props.notice} /> : null}
-        {props.receipt ? <WorkspaceImportReceipt receipt={props.receipt} /> : null}
+        {props.receipt ? (
+          <>
+            <CandidateReceiptDetails
+              receipt={props.receipt}
+              onOpenGovernance={() => props.onOpenGovernance(props.receipt!)}
+            />
+            <WorkspacePackageDetails receipt={props.receipt} />
+          </>
+        ) : null}
         <WorkspaceImportActions props={props} busy={busy} overwrite={overwrite} submitDisabled={submitDisabled} />
       </form>
     </DrawerShell>
@@ -117,27 +129,20 @@ function WorkspaceImportActions({ props, busy, overwrite, submitDisabled }: {
   submitDisabled: boolean;
 }) {
   const importKey = `import:${props.agentId.trim()}`;
-  const restoreKey = props.receipt ? `restore:${props.receipt.agent.agent_id}` : "";
   return (
     <div className="settings-workspace-import-actions">
-      {props.receipt?.rollback_target_commit_sha ? (
-        <button className="secondary-button" type="button" data-testid="settings-workspace-restore" disabled={busy} aria-busy={props.pending === restoreKey} onClick={props.onRestore}>
-          {props.pending === restoreKey
-            ? <><Loader2 size={14} className="settings-spin" />恢复中…</>
-            : <><RotateCcw size={14} />恢复导入前版本</>}
-        </button>
-      ) : <span />}
+      <span />
       <button className="primary-button" type="submit" data-testid="settings-workspace-import-submit" disabled={submitDisabled} aria-busy={props.pending === importKey}>
         {props.pending === importKey
           ? <><Loader2 size={14} className="settings-spin" />导入中…</>
-          : <><Upload size={14} />{overwrite ? "确认覆盖" : "导入并创建"}</>}
+          : <><Upload size={14} />{overwrite ? "保存覆盖候选" : "导入并创建候选"}</>}
       </button>
     </div>
   );
 }
 
 export function WorkspaceOperationNotice({ notice }: { notice: WorkspacePackageNotice }) {
-  const label = notice.operation === "export" ? "导出" : notice.operation === "restore" ? "恢复" : "导入";
+  const label = notice.operation === "export" ? "导出" : "导入";
   return (
     <div
       className={`settings-workspace-notice ${notice.kind}`}
@@ -152,12 +157,36 @@ export function WorkspaceOperationNotice({ notice }: { notice: WorkspacePackageN
   );
 }
 
-function WorkspaceImportReceipt({ receipt }: { receipt: WorkspaceImportResponse }) {
+export type CandidateReceipt = WorkspaceImportResponse | NativeAgentCandidateResponse;
+
+export function CandidateReceiptDetails({
+  receipt,
+  onOpenGovernance,
+}: {
+  receipt: CandidateReceipt;
+  onOpenGovernance?: () => void;
+}) {
   return (
     <div className="settings-workspace-receipt" data-testid="settings-workspace-import-receipt" role="status">
-      <strong>{receipt.action}</strong>
-      <span>previous <code title={receipt.previous_commit_sha || ""}>{receipt.previous_commit_sha?.slice(0, 12) || "-"}</code></span>
-      <span>current <code title={receipt.current_commit_sha}>{receipt.current_commit_sha.slice(0, 12)}</code></span>
+      <strong>候选已保存，尚未发布</strong>
+      <span>候选记录 <code>{receipt.change_set_id}</code></span>
+      <span>候选状态 <code>{receipt.change_set_status}</code></span>
+      <span>base <code title={receipt.base_commit_sha}>{receipt.base_commit_sha.slice(0, 12)}</code></span>
+      <span>candidate <code title={receipt.candidate_commit_sha}>{receipt.candidate_commit_sha.slice(0, 12)}</code></span>
+      <span>changed <strong>{receipt.changed_paths?.length ?? 0}</strong> files</span>
+      <p>下一步：运行候选测试 → 审批 → 发布。发布成功后仅新 Session 使用新版本。</p>
+      {onOpenGovernance ? (
+        <button className="primary-button" type="button" data-testid="settings-candidate-open-governance" onClick={onOpenGovernance}>
+          查看 Diff 并进入测试审批
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function WorkspacePackageDetails({ receipt }: { receipt: WorkspaceImportResponse }) {
+  return (
+    <div className="settings-workspace-receipt settings-workspace-package-details" data-testid="settings-workspace-package-details">
       <span>package <code title={receipt.package_sha256}>{receipt.package_sha256.slice(0, 12)}</code></span>
       <span>tree <code title={receipt.tree_sha256}>{receipt.tree_sha256.slice(0, 12)}</code></span>
       <span>tests <strong>{receipt.test_suite_status}</strong> · {receipt.test_file_count} files</span>

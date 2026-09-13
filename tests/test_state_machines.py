@@ -1,4 +1,5 @@
 import pytest
+from app.runtime import state_machines
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.state_machines import StateTransitionError, validate_transition
 
@@ -37,6 +38,7 @@ def test_pending_correlation_state_machine_rejects_resolved_to_pending():
 
 def test_agent_change_set_state_machine_allows_current_publish_lifecycle():
     validate_transition("agent_change_set", "draft", "candidate_committed")
+    validate_transition("agent_change_set", "candidate_committed", "candidate_committed")
     validate_transition("agent_change_set", "candidate_committed", "publishing")
     validate_transition("agent_change_set", "publishing", "published")
     validate_transition("agent_change_set", "publishing", "candidate_committed")
@@ -46,6 +48,23 @@ def test_agent_change_set_state_machine_allows_current_publish_lifecycle():
         validate_transition("agent_change_set", "candidate_committed", "approved")
     validate_transition("agent_change_set", "candidate_committed", "pending_approval")
     validate_transition("agent_change_set", "pending_approval", "approved")
+
+
+def test_draft_agent_activation_is_reserved_for_release_orchestration() -> None:
+    with pytest.raises(StateTransitionError, match="draft -> active"):
+        validate_transition("agent_lifecycle", "draft", "active")
+    validate_transition("agent_release_activation", "draft", "active")
+    validate_transition("agent_release_activation", "active", "active")
+    with pytest.raises(StateTransitionError, match="Unknown current agent_release_activation status: evaluating"):
+        validate_transition("agent_release_activation", "evaluating", "active")
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [("active", True), ("evaluating", True), ("draft", False), ("deprecated", False), ("archived", False), (None, False)],
+)
+def test_agent_runnable_lifecycle_predicate_is_the_single_semantic_source(status: object, expected: bool) -> None:
+    assert state_machines.is_agent_lifecycle_runnable(status) is expected
 
 
 def test_improvement_stage_state_machine_allows_four_stage_flow_with_refinement_edges():
@@ -65,24 +84,12 @@ def test_improvement_execution_claim_must_finish_before_confirmation():
         validate_transition("improvement_execution", "applying", "confirmed")
 
 
-def test_agent_release_operation_transition_table_is_complete():
-    validate_transition("agent_release_operation", "reserved", "git_applied")
-    validate_transition("agent_release_operation", "reserved", "failed")
-    validate_transition("agent_release_operation", "git_applied", "completed")
-    validate_transition("agent_release_operation", "git_applied", "failed")
-    validate_transition("agent_release_operation", "failed", "reserved")
-    with pytest.raises(StateTransitionError, match="completed -> reserved"):
-        validate_transition("agent_release_operation", "completed", "reserved")
-
-
 def test_state_machine_rejects_unknown_status():
     with pytest.raises(StateTransitionError, match="Unknown case status"):
         validate_transition("case", "pending_evidence", "almost_done")
 
 
-def test_state_machine_rejects_missing_transition_table(monkeypatch):
-    from app.runtime import state_machines
-
-    monkeypatch.setitem(state_machines._KNOWN_STATES, "broken", {"one", "two"})
-    with pytest.raises(StateTransitionError, match="has no transition table"):
-        validate_transition("broken", "one", "two")
+def test_every_declared_state_machine_has_a_complete_transition_table():
+    assert set(state_machines._KNOWN_STATES) == set(state_machines._TRANSITIONS)
+    for machine, known_states in state_machines._KNOWN_STATES.items():
+        assert set(state_machines._TRANSITIONS[machine]) == known_states

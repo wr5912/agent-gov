@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .legacy_generated_tests import classify_legacy_generated_test
 from .schemas import AgentTestDiagnostic, AgentTestSuiteSummary
+from .suite_integrity import find_suite_integrity_violations
 
 
 def inspect_agent_test_suite(
@@ -45,22 +46,7 @@ def inspect_agent_test_suite(
             )
         )
 
-    test_files: list[Path] = []
-    for path in sorted(tests_dir.rglob("*.py")):
-        relative = path.relative_to(workspace)
-        if path.parent != tests_dir:
-            diagnostics.append(
-                AgentTestDiagnostic(
-                    level="error",
-                    code="AGENT_TEST_LAYOUT_NESTED",
-                    path=relative.as_posix(),
-                    message="第一阶段只接受 tests/ 下的扁平 Python 测试文件。",
-                )
-            )
-        if path.name.startswith("test_") and path.parent == tests_dir:
-            test_files.append(path)
-        _validate_python(path, relative, diagnostics)
-
+    test_files = _collect_test_files(workspace, tests_dir, diagnostics)
     if not test_files:
         diagnostics.append(
             AgentTestDiagnostic(
@@ -83,10 +69,55 @@ def inspect_agent_test_suite(
     )
 
 
+def _collect_test_files(
+    workspace: Path,
+    tests_dir: Path,
+    diagnostics: list[AgentTestDiagnostic],
+) -> list[Path]:
+    test_files: list[Path] = []
+    for path in sorted(tests_dir.rglob("*")):
+        relative = path.relative_to(workspace)
+        if path.is_symlink():
+            diagnostics.append(
+                AgentTestDiagnostic(
+                    level="error",
+                    code="AGENT_TEST_PATH_SYMLINK",
+                    path=relative.as_posix(),
+                    message="Workspace 测试资产禁止符号链接。",
+                )
+            )
+            continue
+        if not path.is_file() or path.suffix != ".py":
+            continue
+        if path.name == "conftest.py":
+            diagnostics.append(
+                AgentTestDiagnostic(
+                    level="error",
+                    code="AGENT_TEST_CONFTEST_FORBIDDEN",
+                    path=relative.as_posix(),
+                    message="平台固定 pytest plugin 已提供真实 agent fixture；Workspace 禁止 conftest.py 覆盖执行边界。",
+                )
+            )
+            continue
+        if path.parent != tests_dir:
+            diagnostics.append(
+                AgentTestDiagnostic(
+                    level="error",
+                    code="AGENT_TEST_LAYOUT_NESTED",
+                    path=relative.as_posix(),
+                    message="第一阶段只接受 tests/ 下的扁平 Python 测试文件。",
+                )
+            )
+        if path.name.startswith("test_") and path.parent == tests_dir:
+            test_files.append(path)
+        _validate_python(path, relative, diagnostics)
+    return test_files
+
+
 def _validate_python(path: Path, relative: Path, diagnostics: list[AgentTestDiagnostic]) -> None:
     try:
         source = path.read_text(encoding="utf-8")
-        ast.parse(source, filename=relative.as_posix())
+        module = ast.parse(source, filename=relative.as_posix())
     except (OSError, UnicodeError, SyntaxError) as exc:
         diagnostics.append(
             AgentTestDiagnostic(
@@ -97,6 +128,15 @@ def _validate_python(path: Path, relative: Path, diagnostics: list[AgentTestDiag
             )
         )
         return
+    for violation in find_suite_integrity_violations(module):
+        diagnostics.append(
+            AgentTestDiagnostic(
+                level="error",
+                code="AGENT_TEST_DOUBLE_FORBIDDEN",
+                path=relative.as_posix(),
+                message=f"第 {violation.line} 行：{violation.message}",
+            )
+        )
     legacy_classification = classify_legacy_generated_test(source, filename=relative.as_posix())
     if legacy_classification != "not_marked":
         diagnostics.append(

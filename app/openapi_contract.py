@@ -35,6 +35,15 @@ REMOVED_RUNTIME_PATHS = frozenset(
         "/api/sessions",
         "/api/claude-user-input-requests",
         "/api/settings/openai-compat-agent",
+        "/api/agents",
+        "/api/skills",
+        "/api/config",
+        "/api/agent-config-file",
+        "/api/agent-repository/discard-changes",
+        "/api/agent-repository/snapshot",
+        "/api/agent-releases/{release_id}/restore",
+        "/api/agent-releases/{release_id}/rollback",
+        "/api/runtime/agents/{governance_agent_id}/provision",
         "/v1/chat/completions",
         "/v1/responses",
         "/v1/conversations",
@@ -85,9 +94,13 @@ _EXPLICIT_ERROR_STATUSES: dict[tuple[str, str], frozenset[int]] = {
     (RUNTIME_SESSIONS_PATH, "post"): frozenset({409, 422, 502, 503}),
     (RUNTIME_SESSIONS_PATH, "get"): frozenset({422, 502, 503}),
     ("/api/runtime/agents/{governance_agent_id}/current", "get"): frozenset({404, 409}),
-    ("/api/runtime/agents/{governance_agent_id}/provision", "post"): frozenset({404, 409, 502, 503}),
     ("/api/runtime/sessions/{session_id}/messages", "get"): frozenset({404, 409, 502, 503}),
     ("/api/runtime/sessions/{session_id}/status", "get"): frozenset({404, 409, 502, 503}),
+    ("/api/runtime/sessions/{session_id}", "patch"): frozenset({404, 409, 422, 502, 503}),
+    ("/api/runtime/sessions/{session_id}/workspace/status", "get"): frozenset({404, 409, 502, 503}),
+    ("/api/runtime/sessions/{session_id}/workspace/mcp", "get"): frozenset({404, 409, 502, 503}),
+    ("/api/runtime/sessions/{session_id}/workspace/skills", "get"): frozenset({404, 409, 502, 503}),
+    ("/api/runtime/agent-schema", "get"): frozenset({502, 503}),
     (RUNTIME_STREAM_PATH, "get"): frozenset({404, 409, 502, 503}),
     (RUNTIME_CHAT_PATH, "post"): frozenset({404, 409, 422, 502, 503}),
     ("/api/runtime/sessions/{session_id}/interrupt", "post"): frozenset({404, 409, 502, 503}),
@@ -210,12 +223,12 @@ def _document_request_examples(path: str, method: str, operation: OpenApiMutable
 def _document_native_runtime_stream(operation: OpenApiMutableMapping) -> None:
     responses = _mapping(operation.setdefault("responses", {}))
     success = _mapping(responses.setdefault("200", {"description": "Successful Response"}))
-    success["description"] = "Byte-for-byte proxy of the AgentScope AgentEvent stream."
+    success["description"] = "AgentGov readiness comment followed by a byte-for-byte proxy of the AgentScope AgentEvent stream."
     success["content"] = {
         "text/event-stream": {
             "schema": {
                 "type": "string",
-                "description": "Native AgentScope SSE bytes; unknown events are preserved.",
+                "description": ("A minimal SSE readiness comment, then native AgentScope SSE bytes; upstream order, bytes, and unknown events are preserved."),
             },
             "examples": {
                 "native_event": {

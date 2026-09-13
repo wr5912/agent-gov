@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -76,9 +78,9 @@ def test_existing_data_and_complete_credentials_do_not_trigger_rotation(tmp_path
     assert update_env(path) == []
 
 
-def test_storage_environment_override_blocks_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_storage_environment_override_blocks_generation(tmp_path: Path, process_environment) -> None:
     path = _private_env(tmp_path)
-    monkeypatch.setenv("LANGFUSE_POSTGRES_DATA_MOUNT", str(tmp_path / "different-volume"))
+    process_environment.set("LANGFUSE_POSTGRES_DATA_MOUNT", str(tmp_path / "different-volume"))
 
     with pytest.raises(ValueError, match="宿主环境覆盖"):
         update_env(path)
@@ -86,11 +88,11 @@ def test_storage_environment_override_blocks_generation(tmp_path: Path, monkeypa
     assert not list(tmp_path.glob(".env.bak-*"))
 
 
-def test_indirect_storage_environment_override_blocks_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_indirect_storage_environment_override_blocks_generation(tmp_path: Path, process_environment) -> None:
     path = _private_env(tmp_path)
     with path.open("a") as stream:
         stream.write(f"DATA_ROOT={tmp_path / 'empty'}\nLANGFUSE_POSTGRES_DATA_MOUNT=${{DATA_ROOT}}\n")
-    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "existing-data"))
+    process_environment.set("DATA_ROOT", str(tmp_path / "existing-data"))
 
     with pytest.raises(ValueError, match="覆盖了存储路径引用"):
         update_env(path)
@@ -161,17 +163,19 @@ def test_dry_run_leaves_private_file_and_backup_directory_unchanged(tmp_path: Pa
     assert not list(tmp_path.glob(".env.bak-*"))
 
 
-def test_cli_never_prints_values_or_private_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_never_prints_values_or_private_paths(tmp_path: Path) -> None:
     path = _private_env(tmp_path)
     with path.open("a") as stream:
         stream.write("LANGFUSE_PUBLIC_KEY=private-value\nLANGFUSE_INIT_PROJECT_PUBLIC_KEY=different-private-value\n")
-    monkeypatch.setattr(sys, "argv", ["initialize_langfuse_env.py", "--env-file", str(path), "--compact"])
-
-    with pytest.raises(SystemExit, match="1"):
-        main()
-    output = capsys.readouterr()
-    assert "private-value" not in output.err + output.out
-    assert str(tmp_path) not in output.err + output.out
+    result = subprocess.run(
+        [sys.executable, str(Path(main.__code__.co_filename)), "--env-file", str(path), "--compact"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "private-value" not in result.stderr + result.stdout
+    assert str(tmp_path) not in result.stderr + result.stdout
 
 
 @pytest.mark.parametrize("link", [False, True])
@@ -194,3 +198,39 @@ def test_private_env_and_backups_are_excluded_from_each_build_context(dockerfile
 
     assert {"**/.env", "**/.env.local", "**/.env.local-debug", "**/.env.bak*"}.issubset(patterns)
     assert not any(pattern.startswith("!") for pattern in patterns), "不得重新将私有配置纳入构建上下文"
+
+
+def test_langfuse_stack_defaults_are_version_and_digest_pinned() -> None:
+    root = Path(__file__).resolve().parents[1]
+    compose = (root / "docker/docker-compose.langfuse.yml").read_text(encoding="utf-8")
+    deploy = (root / "scripts/deploy_agent_gov_to_host").read_text(encoding="utf-8")
+    expected = {
+        "docker.io/langfuse/langfuse:3.225.7@sha256:a27fe525f52984fa6d36fd34e8b8c6e5ae4af43f34134cafc833b467fa9580ae",
+        "docker.io/langfuse/langfuse-worker:3.225.7@sha256:93207bd67d2e789ea55fa3d47eeba065dd6b1869187127ab24201784c52b96bc",
+        "docker.io/postgres:17.9@sha256:347bc4e64006d47bb255b0e28652d08590260a5e97f6b55f6ba1c0b31aef58b3",
+        "docker.io/clickhouse/clickhouse-server:24.3.18.7@sha256:85b97f63dcfff47790d26bb5d5801637aaddb2b93e5e9aee27a686c2fb2b9916",
+        "docker.io/redis:7.4.9@sha256:3e1b24a1a8f24ff926b15e5ace8c38a03e5657fb66e1fc7e5188e315aa5fa094",
+        "cgr.dev/chainguard/minio@sha256:f2cbe739b01145a88176b1b6949fc0d0f568f24dbf27fa801795372d70aab38e",
+    }
+
+    for image in expected:
+        assert image in compose
+        assert image in deploy
+    assert "langfuse/langfuse:3}" not in compose
+    assert "langfuse/langfuse-worker:3}" not in compose
+    assert "docker.io/postgres:17}" not in compose
+    assert compose.count("docker.io/postgres:17.9@sha256:") == 2
+
+
+def test_remote_deploy_image_defaults_match_compose_exactly() -> None:
+    root = Path(__file__).resolve().parents[1]
+    compose = (root / "docker/docker-compose.langfuse.yml").read_text(encoding="utf-8")
+    deploy = (root / "scripts/deploy_agent_gov_to_host").read_text(encoding="utf-8")
+    compose_pairs = re.findall(r"\$\{(LANGFUSE_[A-Z_]+_IMAGE):-([^}]+)\}", compose)
+    deploy_pairs = re.findall(r"^env_value (LANGFUSE_[A-Z_]+_IMAGE) (\S+)$", deploy, flags=re.MULTILINE)
+
+    compose_defaults: dict[str, str] = {}
+    for key, image in compose_pairs:
+        assert key not in compose_defaults or compose_defaults[key] == image
+        compose_defaults[key] = image
+    assert dict(deploy_pairs) == compose_defaults

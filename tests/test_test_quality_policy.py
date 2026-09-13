@@ -6,13 +6,21 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from scripts.container_acceptance_environment import acceptance_allowlisted_targets
 from scripts.run_mutation_lane import mutation_score
 from scripts.test_quality.collection import CollectionResult, collect_pytest_nodeids, collect_pytest_nodes, nodeid_digest
 from scripts.test_quality.coverage import CoverageSnapshot, compare_coverage_snapshots, evaluate_coverage
 from scripts.test_quality.evidence import build_evidence, utc_now, validate_evidence, write_evidence
 from scripts.test_quality.impact import select_impacted_nodes
 from scripts.test_quality.models import PortfolioPolicy, PortfolioRule, QualityPolicy
-from scripts.test_quality.policy import classify_nodes, load_quality_policy, main_flow_bindings, validate_quality_policy
+from scripts.test_quality.policy import (
+    classify_nodes,
+    load_quality_policy,
+    main_flow_bindings,
+    open_gap_errors,
+    real_container_ui_targets,
+    validate_quality_policy,
+)
 from scripts.test_quality.pytest_plugin import pytest_collection_modifyitems
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +56,13 @@ def test_quality_policy_requires_explicit_collection_selectors() -> None:
 
     with pytest.raises(ValidationError, match="collection"):
         QualityPolicy.model_validate(raw)
+
+
+def test_repository_formal_live_targets_exactly_match_runner_allowlist() -> None:
+    declared = _policy().test_evidence.formal_live_targets
+
+    assert len(declared) == len(set(declared))
+    assert frozenset(declared) == acceptance_allowlisted_targets()
 
 
 def test_quality_policy_rejects_coverage_regression() -> None:
@@ -118,10 +133,30 @@ def test_repository_quality_policy_covers_every_collected_leaf() -> None:
 
 def test_main_flow_bindings_are_deduplicated() -> None:
     pytest_selectors, ui_scripts = main_flow_bindings(_policy())
+    live_targets = real_container_ui_targets(_policy())
 
     assert len(pytest_selectors) == len(set(pytest_selectors))
-    assert len(ui_scripts) == len(set(ui_scripts))
-    assert "verify:design-parity" in ui_scripts
+    assert ui_scripts == ["test:unit"]
+    assert live_targets == ["ui-playground-cancel-smoke", "ui-feedback-smoke"]
+    assert len(live_targets) == len(set(live_targets))
+    assert "verify:real-container" not in ui_scripts
+    assert "verify:design-parity" not in ui_scripts
+    assert "verify:improvement-decision" not in ui_scripts
+
+
+def test_open_gap_errors_only_block_the_requested_lane() -> None:
+    policy = _policy()
+
+    assert open_gap_errors(policy, {"main-flow"}) == []
+    release_errors = open_gap_errors(policy, {"container-live-acceptance"})
+    required_gap_ids = {
+        "agentscope-live-cutover-evidence",
+        "playground-real-concurrency-conflict",
+        "asset-registry-real-density",
+    }
+    assert required_gap_ids <= {gap.id for gap in policy.gaps}
+    assert all(any(gap_id in error for error in release_errors) for gap_id in required_gap_ids)
+    assert len(release_errors) == len(policy.gaps)
 
 
 def test_impact_selection_is_targeted_and_unknown_paths_fail_closed() -> None:

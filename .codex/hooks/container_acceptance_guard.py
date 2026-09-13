@@ -8,18 +8,32 @@ from collections.abc import Mapping
 
 PRIVATE_MAKE_TARGETS = (
     "_container-core-smoke",
+    "_container-live-test",
+    "_container-mcp-technical-smoke",
     "_container-openapi-check",
+    "_container-release-candidate",
+    "_container-technical-live-smoke",
+    "_main-flow-live-test",
     "_smoke",
     "_ui-smoke",
     "_ui-feedback-smoke",
+    "_ui-agent-candidate-technical-smoke",
     "_ui-playground-cancel-smoke",
     "_langfuse-smoke",
 )
-PRIVATE_FRONTEND_SCRIPTS = ("verify:real-container:impl",)
+PRIVATE_FRONTEND_SCRIPTS = (
+    "verify:real-container:impl",
+    "verify:playground-cancel:impl",
+    "verify:agent-candidate:impl",
+)
 DIRECT_ACCEPTANCE_SCRIPTS = (
     "scripts/run_container_acceptance.py",
+    "scripts/run_agentgov_testkit_live.py",
+    "scripts/run_agentscope_live_acceptance.py",
+    "scripts/run_main_flow_live_targets.py",
     "scripts/langfuse_smoke.py",
     "scripts/verify_improvement_ui_real_container.mjs",
+    "scripts/verify_agent_candidate_lifecycle.mjs",
     "scripts/verify_playground_cancel.mjs",
 )
 SHELL_BOUNDARY = r"(?:^|(?:&&|\|\||;|\|)\s*)"
@@ -63,7 +77,8 @@ def _matches_private_frontend(command: str) -> bool:
 def _matches_direct_script(command: str) -> bool:
     scripts = "|".join(re.escape(script) for script in DIRECT_ACCEPTANCE_SCRIPTS)
     interpreter = r"(?:python(?:3(?:\.\d+)?)?|node|bash|sh)"
-    interpreted = rf"{SHELL_BOUNDARY}{PREFIX}(?:\S*/)?{interpreter}\b[^;&|]*\b(?:{scripts})(?=\s|$)"
+    interpreter_options = r"(?:\s+--?[A-Za-z0-9_.=-]+)*"
+    interpreted = rf"{SHELL_BOUNDARY}{PREFIX}(?:\S*/)?{interpreter}\b{interpreter_options}\s+(?:{scripts})(?=\s|$)"
     executable = rf"{SHELL_BOUNDARY}{PREFIX}(?:\./|(?:\S*/))?(?:{scripts})(?=\s|$)"
     return re.search(interpreted, command) is not None or re.search(executable, command) is not None
 

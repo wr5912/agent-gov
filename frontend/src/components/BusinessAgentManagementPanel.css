@@ -18,6 +18,12 @@
   font-size: 12px;
 }
 
+.settings-agent-management-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .settings-agent-table {
   overflow: hidden;
   border: 1px solid var(--line);
@@ -299,6 +305,208 @@
   color: var(--text);
 }
 
+.settings-workspace-receipt p {
+  flex: 1 0 100%;
+  margin: 2px 0 0;
+  color: #1e40af;
+  line-height: 1.5;
+}
+
+.settings-workspace-receipt > button {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.settings-candidate-governance {
+  --bg-surface: var(--panel);
+  --bg-surface-muted: var(--panel-2);
+  --text-primary: var(--text);
+  --text-secondary: var(--muted);
+  --text-muted: var(--muted-2);
+  --border-subtle: var(--line);
+  --color-primary: #2563eb;
+  --color-primary-soft: #eff6ff;
+  --color-success: var(--good);
+  --color-warning: var(--warn);
+
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.settings-candidate-governance-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-candidate-governance-head > div {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-candidate-governance-head strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.settings-candidate-governance-head span,
+.settings-candidate-governance-head label {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-candidate-governance-head label {
+  display: grid;
+  flex: 0 1 360px;
+  gap: 4px;
+}
+
+.settings-candidate-governance-head select {
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0 9px;
+}
+
+.settings-candidate-selected {
+  color: var(--good);
+  font-size: 12px;
+}
+
+.settings-agent-draft {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  color: var(--warn);
+  font-size: 11px;
+}
+
+.settings-agent-draft button {
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  padding: 0;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.settings-agent-draft button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-workspace-package-details {
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+
+.settings-native-agent-drawer-body {
+  padding: 18px;
+}
+
+.settings-native-agent-form {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-native-agent-section {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.settings-native-agent-section h4,
+.settings-native-agent-section legend {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.settings-native-agent-section > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-native-agent-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-native-agent-fields .wide {
+  grid-column: 1 / -1;
+}
+
+.settings-native-agent-fields textarea {
+  min-height: 86px;
+  resize: vertical;
+}
+
+.settings-native-agent-section .form-field small,
+.settings-native-agent-toggle small {
+  color: var(--muted-2);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.settings-native-agent-toggle {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 0;
+}
+
+.settings-native-agent-toggle input {
+  margin-top: 2px;
+}
+
+.settings-native-agent-toggle span {
+  display: grid;
+  gap: 3px;
+}
+
+.settings-native-agent-toggle strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.settings-native-agent-validation {
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.settings-native-agent-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
 .settings-workspace-import-actions {
   display: flex;
   align-items: center;
@@ -346,6 +554,11 @@
     align-self: flex-start;
   }
 
+  .settings-agent-management-toolbar-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .settings-agent-row {
     grid-template-columns: minmax(0, 1fr) 34px;
   }
@@ -364,14 +577,23 @@
     grid-template-columns: 1fr;
   }
 
+  .settings-native-agent-fields {
+    grid-template-columns: 1fr;
+  }
+
   .settings-workspace-import-fields label:last-child {
     grid-column: auto;
   }
 
   .settings-workspace-import-actions,
-  .settings-workspace-notice {
+  .settings-workspace-notice,
+  .settings-candidate-governance-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .settings-candidate-governance-head label {
+    flex-basis: auto;
   }
 
   .settings-workspace-import-actions > span {

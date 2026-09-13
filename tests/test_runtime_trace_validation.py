@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from app.runtime.integrations.runtime_langfuse import project_validation_trace
 from app.runtime_gateway.contracts import (
     AgentRunResponse,
     RunStatus,
@@ -513,3 +514,9 @@ def test_content_length_rejects_untyped_or_malformed_values(length) -> None:
     trace = _langfuse_otel_trace()
     _nested_attributes(trace, 3)["agentgov.content.output.length"] = length
     assert not trace_has_complete_governed_run(trace, _run(), _expectations())  # type: ignore[arg-type]
+
+
+def test_langfuse_positive_projection_retains_the_complete_validation_contract() -> None:
+    projected = project_validation_trace(_langfuse_otel_trace())
+
+    assert trace_has_complete_governed_run(projected, _run(), _expectations())

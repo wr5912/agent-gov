@@ -25,12 +25,14 @@ def provision_business_agent(
     validate_workspace: Callable[[Path], None] | None = None,
     finalize_workspace: Callable[[Path], None] | None = None,
     rollback_workspace_finalization: Callable[[Path], bool] | None = None,
+    lifecycle_status: str = "active",
 ) -> AgentRegistryRecord:
     """Coordinate DB reservation, safe Workspace apply and DB finalization."""
     reservation = store.reserve_business_agent(
         name=name,
         agent_id=agent_id,
         workspace_dir=str(workspace_dir),
+        lifecycle_status=lifecycle_status,
     )
     journal: WorkspaceProvisionJournal | None = None
     try:

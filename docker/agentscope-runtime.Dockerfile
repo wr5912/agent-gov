@@ -1,5 +1,5 @@
 # 基础镜像由 Docker daemon mirror 或内网仓库解析；Python 依赖固定走项目国内源。
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -64,7 +64,10 @@ RUN set -eux; \
     rm /tmp/gateway-requirements.txt
 
 COPY agentscope_runtime /app/agentscope_runtime
+COPY agentgov_agentscope_contract.py /app/agentgov_agentscope_contract.py
 COPY agentgov_harness_digest.py /app/agentgov_harness_digest.py
+COPY agentgov_run_permission.py /app/agentgov_run_permission.py
+COPY agentgov_subagent_manifest_policy.py /app/agentgov_subagent_manifest_policy.py
 
 ARG AGENT_GOV_RUNTIME_UID=1000
 ARG AGENT_GOV_RUNTIME_GID=1000
@@ -81,6 +84,11 @@ USER ${AGENT_GOV_RUNTIME_UID}:${AGENT_GOV_RUNTIME_GID}
 EXPOSE 8090
 
 ARG AGENT_GOV_ACCEPTANCE_RUN_ID=unmanaged
-LABEL io.agentgov.acceptance-run-id="${AGENT_GOV_ACCEPTANCE_RUN_ID}"
+ARG AGENTGOV_SOURCE_ARTIFACT_SHA256=unmanaged
+RUN source_digest="${AGENTGOV_SOURCE_ARTIFACT_SHA256}"; \
+    test "${#source_digest}" -eq 64; \
+    case "$source_digest" in *[!0-9a-f]*) exit 1 ;; esac
+LABEL io.agentgov.acceptance-run-id="${AGENT_GOV_ACCEPTANCE_RUN_ID}" \
+      io.agentgov.source-artifact-sha256="${AGENTGOV_SOURCE_ARTIFACT_SHA256}"
 
 ENTRYPOINT ["python", "-m", "agentscope_runtime"]

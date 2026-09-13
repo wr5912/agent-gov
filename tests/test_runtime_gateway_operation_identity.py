@@ -1,84 +1,35 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 import pytest
-from app.routers.error_handlers import register_error_handlers
+from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import make_session_factory
-from app.runtime_gateway.client import RuntimeJsonResponse, RuntimeUpstreamError
+from app.runtime_gateway.client import RuntimeJsonResponse
 from app.runtime_gateway.contracts import (
-    GOVERNED_EVIDENCE_ROOT_METADATA_KEY,
+    AgentRunResponse,
+    ConfirmationScope,
     RunStatus,
     RuntimeChildSessionRegistration,
     RuntimeReceipt,
 )
-from app.runtime_gateway.models import AgentRunModel
-from app.runtime_gateway.provisioning import RuntimeAgentBinding, RuntimeCurrentVersion
-from app.runtime_gateway.router import create_agent_run_router, create_runtime_router
-from app.runtime_gateway.store import RuntimeObjectNotFound, RuntimeRunStore, RuntimeStateConflict, SessionCreationStatus
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from app.runtime_gateway.models import AgentRunModel, RuntimeChatOperationModel
+from app.runtime_gateway.operation_identity import initial_operation_key
+from app.runtime_gateway.run_trigger import (
+    RuntimeChatTriggerResult,
+    admit_and_trigger_chat,
+)
+from app.runtime_gateway.store import (
+    RuntimeInputRejected,
+    RuntimeObjectNotFound,
+    RuntimeRunStore,
+    RuntimeStateConflict,
+)
 from sqlalchemy import text
 
-
-class _Provisioner:
-    def __init__(self, store: RuntimeRunStore) -> None:
-        self.store = store
-
-    def require_current_runtime(self, runtime_agent_id: str) -> RuntimeAgentBinding:
-        version = self.store.get_agent_version_by_runtime_id(runtime_agent_id)
-        if version is None:
-            raise RuntimeObjectNotFound("Runtime Agent is not provisioned")
-        return RuntimeAgentBinding(
-            agent_id=version.governance_agent_id,
-            agent_version_id=version.agent_version_id,
-            runtime_agent_id=runtime_agent_id,
-            harness_digest=version.harness_digest,
-            workspace_id=f"workspace-{runtime_agent_id}",
-            permission_mode="dont_ask",
-            cwd=".",
-            model_profile="default",
-        )
-
-    def require_session(self, session_id: str, runtime_agent_id: str):
-        return self.store.get_session(session_id, runtime_agent_id=runtime_agent_id)
-
-    def inspect_current(self, agent_id: str) -> RuntimeCurrentVersion:
-        versions = self.store.agent_versions_for_agent(agent_id)
-        if not versions:
-            raise RuntimeObjectNotFound("Agent is not provisioned")
-        version = versions[-1]
-        return RuntimeCurrentVersion(agent_id, version.agent_version_id, version.harness_digest, version.runtime_agent_id)
-
-    async def ensure(self, agent_id: str) -> RuntimeAgentBinding:
-        current = self.inspect_current(agent_id)
-        assert current.runtime_agent_id is not None
-        return self.require_current_runtime(current.runtime_agent_id)
-
-
-class _RuntimeClient:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str, dict[str, object]]] = []
-        self.sessions: dict[str, list[object]] = {}
-        self.restart_required = False
-
-    async def request_json(self, method: str, path: str, **kwargs) -> RuntimeJsonResponse:
-        self.calls.append((method, path, kwargs))
-        if method == "POST" and path == "/sessions/" and self.restart_required:
-            raise RuntimeUpstreamError(
-                409,
-                b'{"detail":"published after Runtime startup; restart Runtime","secret":"do-not-leak"}',
-            )
-        if method == "POST" and path == "/sessions/":
-            return RuntimeJsonResponse(201, {}, {"session_id": "created-session"})
-        if method == "PATCH":
-            return RuntimeJsonResponse(200, {}, {"status": "ok"})
-        if method == "POST" and path == "/chat/":
-            return RuntimeJsonResponse(202, {}, {"status": "submitted"})
-        if method == "GET" and path == "/sessions/":
-            runtime_agent_id = str(kwargs["params"]["agent_id"])
-            return RuntimeJsonResponse(200, {}, {"sessions": self.sessions.get(runtime_agent_id, [])})
-        return RuntimeJsonResponse(200, {}, {"status": "ok"})
+from runtime_hitl_test_utils import fingerprinted_hitl_payload
 
 
 def _store(tmp_path) -> RuntimeRunStore:
@@ -88,9 +39,9 @@ def _store(tmp_path) -> RuntimeRunStore:
 def _bind_version(
     store: RuntimeRunStore,
     *,
-    version_id: str,
-    runtime_agent_id: str,
-    digest: str,
+    version_id: str = "version-a",
+    runtime_agent_id: str = "runtime-a",
+    digest: str = "a" * 64,
 ) -> None:
     store.bind_agent_version(
         agent_id="agent-a",
@@ -117,202 +68,149 @@ def _bind_session(
     )
 
 
-def _app(store: RuntimeRunStore, runtime: _RuntimeClient, authorize_run=lambda _run: None) -> tuple[FastAPI, object]:
-    provisioner = _Provisioner(store)
-    runtime_router = create_runtime_router(
-        client=runtime,  # type: ignore[arg-type]
-        store=store,
-        provisioner=provisioner,  # type: ignore[arg-type]
-        model_type="openai_credential",
-        credential_id="provider",
-        model_name="model",
-        model_parameters={},
-        require_api_key=lambda: None,
-    )
-    run_router = create_agent_run_router(
-        client=runtime,  # type: ignore[arg-type]
-        store=store,
-        trace_fetcher=lambda _trace_id: None,
-        authorize_run=authorize_run,
-        require_api_key=lambda: None,
-    )
-    app = FastAPI()
-    register_error_handlers(app)
-    app.include_router(runtime_router)
-    app.include_router(run_router)
-    return app, run_router
-
-
-def _chat_request(*, input_text: str = "hello", operation_id: str = "operation-1") -> dict[str, object]:
-    return {
-        "agent_id": "runtime-a",
-        "session_id": "session-a",
-        "client_operation_id": operation_id,
-        "input": {"role": "user", "content": [{"type": "text", "text": input_text}]},
-        "metadata": {"client": "ui", "client_operation_id": "attacker-value"},
-    }
-
-
-def test_initial_chat_operation_replays_without_second_upstream_trigger(tmp_path) -> None:
-    store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
-    _bind_session(store)
-    runtime = _RuntimeClient()
-    app, _run_router = _app(store, runtime)
-
-    with TestClient(app) as client:
-        created = client.post("/api/runtime/chat/", json=_chat_request())
-        changed = client.post("/api/runtime/chat/", json=_chat_request(input_text="changed"))
-    reopened_store = _store(tmp_path)
-    replay_runtime = _RuntimeClient()
-    replay_app, _run_router = _app(reopened_store, replay_runtime)
-    with TestClient(replay_app) as client:
-        replayed = client.post("/api/runtime/chat/", json=_chat_request())
-
-    assert created.status_code == 202
-    assert replayed.status_code == created.status_code
-    assert replayed.content == created.content
-    assert replayed.headers["content-type"] == created.headers["content-type"]
-    assert replayed.headers["X-AgentGov-Run-Id"] == created.headers["X-AgentGov-Run-Id"]
-    assert changed.status_code == 409
-    assert [(method, path) for method, path, _kwargs in runtime.calls].count(("POST", "/chat/")) == 1
-    assert replay_runtime.calls == []
-    run = store.get_run(created.headers["X-AgentGov-Run-Id"])
-    assert run.client_operation_id == "operation-1"
-    assert run.metadata == {"client": "ui"}
-
-
-def test_replay_without_durable_upstream_response_requires_exact_run_lookup(tmp_path) -> None:
-    store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
-    _bind_session(store)
-    run = store.admit_run(
+def _admit(
+    store: RuntimeRunStore,
+    *,
+    operation_id: str,
+    input_text: str = "hello",
+    metadata: dict[str, object] | None = None,
+):
+    request_metadata = {"client_operation_id": "untrusted", "client": "ui"} if metadata is None else metadata
+    return store.admit_run(
         session_id="session-a",
         runtime_agent_id="runtime-a",
-        input_value=_chat_request()["input"],
-        alert_id=None,
-        case_id=None,
-        metadata={"client": "ui"},
-        client_operation_id="operation-uncertain",
-    ).run
-    runtime = _RuntimeClient()
-    app, _run_router = _app(store, runtime)
+        input_value={"role": "user", "content": [{"type": "text", "text": input_text}]},
+        alert_id="alert-a",
+        case_id="case-a",
+        metadata=request_metadata,
+        client_operation_id=operation_id,
+    )
 
-    with TestClient(app) as client:
-        replay = client.post(
-            "/api/runtime/chat/",
-            json=_chat_request(operation_id="operation-uncertain"),
-        )
-        recovered = client.get(
-            "/api/agent-runs/by-client-operation",
-            params={"session_id": "session-a", "client_operation_id": "operation-uncertain"},
-        )
 
-    assert replay.status_code == 409
-    assert "recover by client operation lookup" in replay.json()["detail"]
-    assert recovered.status_code == 200 and recovered.json()["run_id"] == run.run_id
-    assert runtime.calls == []
+def test_initial_operation_replays_durable_response_after_store_reopen(tmp_path) -> None:
+    store = _store(tmp_path)
+    _bind_version(store)
+    _bind_session(store)
+    created = _admit(store, operation_id="operation-replay")
+    assert created.should_trigger_upstream is True
+    assert created.operation_key == initial_operation_key("operation-replay")
+    store.record_chat_operation_response(
+        created.operation_key,
+        run_id=created.run.run_id,
+        response_status=202,
+        response_body=b'{"status":"submitted"}',
+        response_content_type="application/json",
+        response_headers={"x-runtime": "exact"},
+    )
+
+    reopened = _store(tmp_path)
+    replay = _admit(reopened, operation_id="operation-replay")
+
+    assert replay.should_trigger_upstream is False
+    assert replay.run.run_id == created.run.run_id
+    assert replay.replay_response is not None
+    assert replay.replay_response.status_code == 202
+    assert replay.replay_response.body == b'{"status":"submitted"}'
+    assert replay.replay_response.headers == {"x-runtime": "exact"}
+    assert replay.run.client_operation_id == "operation-replay"
+    assert replay.run.metadata == {"client": "ui"}
+    with pytest.raises(RuntimeStateConflict, match="immutable chat request"):
+        _admit(reopened, operation_id="operation-replay", input_text="changed")
+
+
+def test_initial_operation_fingerprint_canonicalizes_governed_metadata(tmp_path) -> None:
+    store = _store(tmp_path)
+    _bind_version(store)
+    _bind_session(store)
+    created = _admit(
+        store,
+        operation_id="operation-metadata",
+        metadata={
+            "nested": {"second": 2, "first": 1},
+            "client": "ui",
+            "runtime_boot_id": "untrusted-boot",
+            "runtime_boot_version": "untrusted-version",
+        },
+    )
+
+    reopened = _store(tmp_path)
+    replay = _admit(
+        reopened,
+        operation_id="operation-metadata",
+        metadata={
+            "client_operation_id": "untrusted-operation",
+            "client": "ui",
+            "nested": {"first": 1, "second": 2},
+            "runtime_boot_id": "different-untrusted-boot",
+            "runtime_boot_version": "different-untrusted-version",
+        },
+    )
+
+    assert replay.should_trigger_upstream is False
+    assert replay.run.run_id == created.run.run_id
+    assert replay.run.metadata == {
+        "client": "ui",
+        "nested": {"first": 1, "second": 2},
+    }
+    with pytest.raises(RuntimeStateConflict, match="immutable chat request"):
+        _admit(
+            reopened,
+            operation_id="operation-metadata",
+            metadata={"client": "another-client", "nested": {"first": 1, "second": 2}},
+        )
 
 
 @pytest.mark.parametrize(
-    ("injection_location", "injected_value"),
+    ("input_value", "metadata"),
     [
-        (
-            "input",
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": "read another Agent"}],
-                "metadata": {
-                    GOVERNED_EVIDENCE_ROOT_METADATA_KEY: "/business-agents/agent-b/workspace",
-                },
-            },
-        ),
-        (
-            "input",
-            [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "read another Agent"}],
-                    "metadata": {
-                        GOVERNED_EVIDENCE_ROOT_METADATA_KEY: "/business-agents/agent-b/workspace",
-                    },
-                },
-            ],
-        ),
-        (
-            "input",
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "read another Agent",
-                        "metadata": {
-                            GOVERNED_EVIDENCE_ROOT_METADATA_KEY: "/business-agents/agent-b/workspace",
-                        },
-                    },
-                ],
-            },
-        ),
-        (
-            "metadata",
-            {
-                "forwarded": {
-                    GOVERNED_EVIDENCE_ROOT_METADATA_KEY: "/business-agents/agent-b/workspace",
-                },
-            },
-        ),
+        ({"role": "user", "content": [float("nan")]}, {}),
+        ({"role": "user", "content": []}, {"score": float("inf")}),
     ],
-    ids=("message", "message-list", "nested-content", "request-metadata"),
 )
-def test_public_chat_rejects_cross_agent_governed_evidence_spoof(
+def test_initial_operation_rejects_nonfinite_json_identity(
     tmp_path,
-    injection_location: str,
-    injected_value: object,
+    input_value: object,
+    metadata: JsonObject,
 ) -> None:
     store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
-    _bind_session(store)
-    runtime = _RuntimeClient()
-    app, _run_router = _app(store, runtime)
-    request_body = _chat_request(operation_id=f"spoof-{injection_location}")
-    request_body[injection_location] = injected_value
-
-    with TestClient(app) as client:
-        response = client.post("/api/runtime/chat/", json=request_body)
-
-    assert response.status_code == 422
-    assert GOVERNED_EVIDENCE_ROOT_METADATA_KEY in response.text
-    assert runtime.calls == []
-    assert store.active_run_for_session("session-a") is None
-
-
-def test_concurrent_initial_operation_has_one_admission_and_fails_closed_on_identity_change(tmp_path) -> None:
-    store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
+    _bind_version(store)
     _bind_session(store)
 
-    def admit(input_text: str = "hello"):
-        return store.admit_run(
+    with pytest.raises(RuntimeInputRejected, match="canonical JSON"):
+        store.admit_run(
             session_id="session-a",
             runtime_agent_id="runtime-a",
-            input_value={"role": "user", "content": [{"type": "text", "text": input_text}]},
-            alert_id="alert-a",
-            case_id="case-a",
-            metadata={"client_operation_id": "untrusted"},
-            client_operation_id="operation-concurrent",
+            input_value=input_value,
+            alert_id=None,
+            case_id=None,
+            metadata=metadata,
+            client_operation_id="operation-nonfinite",
         )
 
+    with store.Session() as db:
+        assert db.query(AgentRunModel).count() == 0
+        assert db.query(RuntimeChatOperationModel).count() == 0
+
+
+def test_concurrent_initial_operation_has_one_admission_and_exact_identity(tmp_path) -> None:
+    store = _store(tmp_path)
+    _bind_version(store)
+    _bind_session(store)
+
     with ThreadPoolExecutor(max_workers=2) as pool:
-        admissions = list(pool.map(lambda _index: admit(), range(2)))
+        admissions = list(pool.map(lambda _index: _admit(store, operation_id="operation-concurrent"), range(2)))
 
     assert {item.run.run_id for item in admissions} == {admissions[0].run.run_id}
     assert sorted(item.should_trigger_upstream for item in admissions) == [False, True]
     assert admissions[0].run.client_operation_id == "operation-concurrent"
     assert "client_operation_id" not in admissions[0].run.metadata
-    with pytest.raises(RuntimeStateConflict):
-        admit("changed")
-    _bind_version(store, version_id="version-b", runtime_agent_id="runtime-b", digest="b" * 64)
+
+    _bind_version(
+        store,
+        version_id="version-b",
+        runtime_agent_id="runtime-b",
+        digest="b" * 64,
+    )
     _bind_session(
         store,
         session_id="session-b",
@@ -330,36 +228,21 @@ def test_concurrent_initial_operation_has_one_admission_and_fails_closed_on_iden
             metadata={},
             client_operation_id="operation-concurrent",
         )
-    with pytest.raises(RuntimeObjectNotFound):
-        store.admit_run(
-            session_id="session-a",
-            runtime_agent_id="runtime-b",
-            input_value={
-                "role": "user",
-                "content": [],
-            },
-            alert_id=None,
-            case_id=None,
-            metadata={},
-            client_operation_id="operation-other-runtime",
-        )
 
 
 def test_hitl_continuation_uses_expected_run_without_rebinding_initial_operation(tmp_path) -> None:
     store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
+    _bind_version(store)
     _bind_session(store)
-    run = store.admit_run(
-        session_id="session-a",
-        runtime_agent_id="runtime-a",
-        input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
-        metadata={},
-        client_operation_id="initial-operation",
-    ).run
+    run = _admit(store, operation_id="initial-operation").run
     store.mark_trigger_started(run.run_id)
-    tool_call = {"type": "tool_call", "id": "tool-a", "name": "Read", "input": "{}", "state": "asking"}
+    tool_call = {
+        "type": "tool_call",
+        "id": "tool-a",
+        "name": "Read",
+        "input": "{}",
+        "state": "asking",
+    }
     store.apply_receipt(
         RuntimeReceipt(
             receipt_id="receipt-hitl",
@@ -368,7 +251,7 @@ def test_hitl_continuation_uses_expected_run_without_rebinding_initial_operation
             run_id=run.run_id,
             reply_id="reply-hitl",
             type="REQUIRE_USER_CONFIRM",
-            payload={"tool_calls": [tool_call]},
+            payload=fingerprinted_hitl_payload([tool_call]),
             trace_id=run.trace_id,
         ),
     )
@@ -391,34 +274,319 @@ def test_hitl_continuation_uses_expected_run_without_rebinding_initial_operation
     assert resumed.should_trigger_upstream is True
     assert resumed.run.run_id == run.run_id
     assert resumed.run.client_operation_id == "initial-operation"
-    assert "client_operation_id" not in resumed.run.metadata
-    assert (
-        store.run_for_client_operation(
-            session_id="session-a",
-            client_operation_id="initial-operation",
-        ).run_id
-        == run.run_id
+    resolved = store.run_for_client_operation(
+        session_id="session-a",
+        client_operation_id=f"detached:session-a:{run.run_id}",
     )
-    with pytest.raises(RuntimeObjectNotFound):
-        store.run_for_client_operation(
-            session_id="session-a",
-            client_operation_id=f"detached:session-a:{run.run_id}",
+    assert resolved.run_id == run.run_id
+    assert resolved.client_operation_id == "initial-operation"
+
+
+class _ContinuationClient:
+    def __init__(self, *, response_session_id: str) -> None:
+        self.response_session_id = response_session_id
+        self.requests: list[dict[str, object]] = []
+
+    async def request_json(self, method: str, path: str, **kwargs) -> RuntimeJsonResponse:
+        assert (method, path) == ("POST", "/chat/")
+        self.requests.append(kwargs["json"])
+        return RuntimeJsonResponse(
+            status_code=202,
+            headers={"content-type": "application/json", "x-runtime": "continuation"},
+            body={"status": "started", "session_id": self.response_session_id},
         )
+
+
+@dataclass(frozen=True)
+class _ChildHitlScenario:
+    store: RuntimeRunStore
+    run: AgentRunResponse
+    input_value: JsonObject
+    client: _ContinuationClient
+    initial_operation_key: str
+
+
+def _child_hitl_scenario(tmp_path) -> _ChildHitlScenario:
+    store = _store(tmp_path)
+    _bind_version(store)
+    _bind_session(store)
+    initial = _admit(store, operation_id="shared-turn-operation")
+    assert initial.operation_key is not None
+    store.record_chat_operation_response(
+        initial.operation_key,
+        run_id=initial.run.run_id,
+        response_status=202,
+        response_body=b'{"status":"started","session_id":"session-a"}',
+        response_content_type="application/json",
+        response_headers={"x-runtime": "initial"},
+    )
+    run = store.get_run(initial.run.run_id)
+    store.bind_team_child(
+        RuntimeChildSessionRegistration(
+            run_id=run.run_id,
+            parent_session_id="session-a",
+            child_session_id="worker-session",
+            child_runtime_agent_id="worker-agent",
+            team_id="team-a",
+        ),
+    )
+    tool_call: JsonObject = {
+        "type": "tool_call",
+        "id": "worker-tool",
+        "name": "Read",
+        "input": '{"file_path":"worker.txt"}',
+        "state": "asking",
+    }
+    store.apply_receipt(
+        RuntimeReceipt(
+            receipt_id="receipt-worker-hitl",
+            event_id="event-worker-hitl",
+            session_id="worker-session",
+            run_id=run.run_id,
+            reply_id="worker-reply",
+            type="REQUIRE_USER_CONFIRM",
+            payload=fingerprinted_hitl_payload([tool_call]),
+            trace_id=run.trace_id,
+        ),
+    )
+    input_value: JsonObject = {
+        "type": "USER_CONFIRM_RESULT",
+        "reply_id": "worker-reply",
+        "confirm_results": [{"confirmed": True, "tool_call": tool_call}],
+    }
+    client = _ContinuationClient(response_session_id="worker-session")
+    return _ChildHitlScenario(
+        store=store,
+        run=run,
+        input_value=input_value,
+        client=client,
+        initial_operation_key=initial.operation_key,
+    )
+
+
+async def _trigger_child_hitl(
+    scenario: _ChildHitlScenario,
+    current_store: RuntimeRunStore,
+    *,
+    scope: ConfirmationScope = ConfirmationScope.ONCE,
+    value: object | None = None,
+) -> RuntimeChatTriggerResult:
+    return await admit_and_trigger_chat(
+        client=scenario.client,  # type: ignore[arg-type]
+        store=current_store,
+        session_id="session-a",
+        runtime_agent_id="runtime-a",
+        input_value=scenario.input_value if value is None else value,
+        alert_id="alert-a",
+        case_id="case-a",
+        metadata={"client": "ui"},
+        client_operation_id="shared-turn-operation",
+        confirmation_scope=scope,
+        expected_run_id=scenario.run.run_id,
+    )
+
+
+def _assert_child_hitl_ledgers(
+    scenario: _ChildHitlScenario,
+    reopened: RuntimeRunStore,
+    first: RuntimeChatTriggerResult,
+) -> None:
+    with reopened.Session() as db:
+        operations = list(db.query(RuntimeChatOperationModel).all())
+    assert {item.operation_kind for item in operations} == {
+        "initial",
+        "user_confirmation",
+    }
+    continuation = next(item for item in operations if item.operation_kind == "user_confirmation")
+    assert continuation.run_id == scenario.run.run_id
+    assert continuation.root_session_id == "session-a"
+    assert continuation.action_session_id == "worker-session"
+    assert continuation.reply_id == "worker-reply"
+    assert continuation.tool_call_ids_json == ["worker-tool"]
+    assert continuation.confirmation_scope == "once"
+    assert continuation.response_body == first.body
+    initial = reopened.chat_operation_for_key(scenario.initial_operation_key)
+    assert initial.response_headers_json == {"x-runtime": "initial"}
+
+
+def _assert_child_hitl_rebinding_fails(
+    scenario: _ChildHitlScenario,
+    reopened: RuntimeRunStore,
+) -> None:
+    tool_call = scenario.input_value["confirm_results"][0]["tool_call"]
+    assert isinstance(tool_call, dict)
+    changed_tool = {
+        **scenario.input_value,
+        "confirm_results": [
+            {
+                "confirmed": True,
+                "tool_call": {**tool_call, "input": '{"file_path":"other.txt"}'},
+            },
+        ],
+    }
+    with pytest.raises(RuntimeStateConflict, match="immutable continuation request"):
+        asyncio.run(_trigger_child_hitl(scenario, reopened, value=changed_tool))
+    with pytest.raises(RuntimeStateConflict, match="immutable continuation request"):
+        asyncio.run(
+            _trigger_child_hitl(scenario, reopened, scope=ConfirmationScope.RUN),
+        )
+    with pytest.raises(RuntimeStateConflict, match="expected_run_id"):
+        reopened.admit_run(
+            session_id="session-a",
+            runtime_agent_id="runtime-a",
+            input_value=scenario.input_value,
+            alert_id="alert-a",
+            case_id="case-a",
+            metadata={"client": "ui"},
+            client_operation_id="shared-turn-operation",
+            expected_run_id="run-other",
+        )
+
+
+def test_child_hitl_operation_replays_its_own_response_and_rejects_rebinding(
+    tmp_path,
+) -> None:
+    scenario = _child_hitl_scenario(tmp_path)
+
+    first = asyncio.run(_trigger_child_hitl(scenario, scenario.store))
+    reopened = _store(tmp_path)
+    replay = asyncio.run(_trigger_child_hitl(scenario, reopened))
+
+    assert first.replayed is False
+    assert replay.replayed is True
+    assert replay.body == first.body
+    assert replay.status_code == first.status_code == 202
+    assert replay.headers == first.headers
+    assert scenario.client.requests == [
+        {
+            "agent_id": "runtime-a",
+            "session_id": "session-a",
+            "input": scenario.input_value,
+        },
+    ]
+    assert b'"session_id":"session-a"' in replay.body
+    assert b'"worker_session_id":"worker-session"' in replay.body
+    _assert_child_hitl_ledgers(scenario, reopened, first)
+    _assert_child_hitl_rebinding_fails(scenario, reopened)
+
+
+def test_completed_continuation_replays_while_a_newer_run_is_active(tmp_path) -> None:
+    scenario = _child_hitl_scenario(tmp_path)
+    first = asyncio.run(_trigger_child_hitl(scenario, scenario.store))
+    scenario.store.fail_trigger(
+        scenario.run.run_id,
+        error={"type": "test_terminal"},
+    )
+    newer = _admit(scenario.store, operation_id="newer-initial-operation")
+    assert newer.run.run_id != scenario.run.run_id
+
+    replay = asyncio.run(_trigger_child_hitl(scenario, scenario.store))
+
+    assert replay.replayed is True
+    assert replay.run.run_id == scenario.run.run_id
+    assert replay.body == first.body
+    assert len(scenario.client.requests) == 1
+
+
+@pytest.mark.parametrize("nonfinite_in_input", [False, True])
+def test_hitl_operation_rejects_nonfinite_canonical_identity(
+    tmp_path,
+    nonfinite_in_input: bool,
+) -> None:
+    scenario = _child_hitl_scenario(tmp_path)
+    input_value = dict(scenario.input_value)
+    metadata: JsonObject = {"client": "ui"}
+    if nonfinite_in_input:
+        input_value["nonfinite"] = float("nan")
+    else:
+        metadata["nonfinite"] = float("inf")
+
+    with pytest.raises(RuntimeInputRejected, match="canonical JSON"):
+        scenario.store.admit_run(
+            session_id="session-a",
+            runtime_agent_id="runtime-a",
+            input_value=input_value,
+            alert_id="alert-a",
+            case_id="case-a",
+            metadata=metadata,
+            client_operation_id="continuation-nonfinite",
+            expected_run_id=scenario.run.run_id,
+        )
+
+    with scenario.store.Session() as db:
+        assert db.query(RuntimeChatOperationModel).filter_by(operation_kind="user_confirmation").count() == 0
+
+
+def test_same_reply_and_kind_use_distinct_action_operation_keys(tmp_path) -> None:
+    store = _store(tmp_path)
+    _bind_version(store)
+    _bind_session(store)
+    run = _admit(store, operation_id="initial-multi-action").run
+    store.mark_trigger_started(run.run_id)
+    calls = [
+        {
+            "type": "tool_call",
+            "id": tool_id,
+            "name": "Read",
+            "input": f'{{"file_path":"{tool_id}.txt"}}',
+            "state": "asking",
+        }
+        for tool_id in ("tool-a", "tool-b")
+    ]
+    store.apply_receipt(
+        RuntimeReceipt(
+            receipt_id="receipt-multi-action",
+            event_id="event-multi-action",
+            session_id="session-a",
+            run_id=run.run_id,
+            reply_id="reply-shared",
+            type="REQUIRE_USER_CONFIRM",
+            payload=fingerprinted_hitl_payload(calls),
+            trace_id=run.trace_id,
+        ),
+    )
+
+    operation_keys: list[str] = []
+    for index, tool_call in enumerate(calls):
+        if index:
+            store.apply_receipt(
+                RuntimeReceipt(
+                    receipt_id="receipt-multi-action-second",
+                    event_id="event-multi-action-second",
+                    session_id="session-a",
+                    run_id=run.run_id,
+                    reply_id="reply-shared",
+                    type="REQUIRE_USER_CONFIRM",
+                    payload=fingerprinted_hitl_payload([tool_call]),
+                    trace_id=run.trace_id,
+                ),
+            )
+        admission = store.admit_run(
+            session_id="session-a",
+            runtime_agent_id="runtime-a",
+            input_value={
+                "type": "USER_CONFIRM_RESULT",
+                "reply_id": "reply-shared",
+                "confirm_results": [{"confirmed": False, "tool_call": tool_call}],
+            },
+            alert_id=None,
+            case_id=None,
+            metadata={},
+            client_operation_id="shared-continuation-id",
+            expected_run_id=run.run_id,
+        )
+        assert admission.operation_key is not None
+        operation_keys.append(admission.operation_key)
+
+    assert len(set(operation_keys)) == 2
+    assert [store.chat_operation_for_key(key).tool_call_ids_json for key in operation_keys] == [["tool-a"], ["tool-b"]]
 
 
 def test_recovery_quiescent_reset_breaks_the_consecutive_idle_sequence(tmp_path) -> None:
     store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
+    _bind_version(store)
     _bind_session(store)
-    run = store.admit_run(
-        session_id="session-a",
-        runtime_agent_id="runtime-a",
-        input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
-        metadata={},
-        client_operation_id="recovery-sequence",
-    ).run
+    run = _admit(store, operation_id="recovery-sequence").run
     store.reconcile_after_restart()
 
     assert store.note_recovery_quiescent(run.run_id) == 1
@@ -426,99 +594,25 @@ def test_recovery_quiescent_reset_breaks_the_consecutive_idle_sequence(tmp_path)
     assert store.note_recovery_quiescent(run.run_id) == 1
 
 
-def test_session_list_uses_governance_id_and_aggregates_every_pinned_version(tmp_path) -> None:
+def test_exact_operation_lookup_rejects_missing_and_corrupt_duplicate_rows(tmp_path) -> None:
     store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
-    _bind_version(store, version_id="version-b", runtime_agent_id="runtime-b", digest="b" * 64)
+    _bind_version(store)
     _bind_session(store)
-    _bind_session(
-        store,
-        session_id="session-b",
-        version_id="version-b",
-        runtime_agent_id="runtime-b",
-        digest="b" * 64,
+    first = _admit(store, operation_id="operation-lookup").run
+
+    assert (
+        store.run_for_client_operation(
+            session_id="session-a",
+            client_operation_id="operation-lookup",
+        ).run_id
+        == first.run_id
     )
-    runtime = _RuntimeClient()
-    runtime.sessions = {
-        "runtime-a": [{"session": {"id": "session-a", "agent_id": "runtime-a"}}],
-        "runtime-b": [{"session": {"id": "session-b", "agent_id": "runtime-b"}}],
-    }
-    app, _run_router = _app(store, runtime)
-
-    with TestClient(app) as client:
-        listed = client.get("/api/runtime/sessions/?governance_agent_id=agent-a")
-        legacy = client.get("/api/runtime/sessions/?agent_id=runtime-a")
-        empty = client.get("/api/runtime/sessions/?governance_agent_id=unknown")
-
-    assert listed.status_code == 200 and listed.json()["total"] == 2
-    assert {item["session"]["agent_id"] for item in listed.json()["sessions"]} == {"runtime-a", "runtime-b"}
-    assert legacy.status_code == 422
-    assert empty.status_code == 200 and empty.json() == {"sessions": [], "total": 0}
-    queried = [kwargs["params"]["agent_id"] for method, path, kwargs in runtime.calls if (method, path) == ("GET", "/sessions/")]
-    assert queried == ["runtime-a", "runtime-b"]
-
-
-def test_exact_operation_lookup_precedes_dynamic_route_and_enforces_authorization(tmp_path) -> None:
-    store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
-    _bind_session(store)
-    admission = store.admit_run(
-        session_id="session-a",
-        runtime_agent_id="runtime-a",
-        input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
-        metadata={},
-        client_operation_id="operation-lookup",
-    )
-    authorized: list[str] = []
-    denied = False
-
-    def authorize(run) -> None:
-        if denied:
-            raise RuntimeObjectNotFound("Run is outside the active Agent generation")
-        authorized.append(run.run_id)
-
-    app, run_router = _app(store, _RuntimeClient(), authorize)
-    paths = [route.path for route in run_router.routes]
-    assert paths.index("/api/agent-runs/by-client-operation") < paths.index("/api/agent-runs/{run_id}")
-
-    with TestClient(app) as client:
-        found = client.get(
-            "/api/agent-runs/by-client-operation",
-            params={"session_id": "session-a", "client_operation_id": "operation-lookup"},
-        )
-        missing = client.get(
-            "/api/agent-runs/by-client-operation",
-            params={"session_id": "session-a", "client_operation_id": "operation-missing"},
-        )
-        denied = True
-        forbidden = client.get(
-            "/api/agent-runs/by-client-operation",
-            params={"session_id": "session-a", "client_operation_id": "operation-lookup"},
+    with pytest.raises(RuntimeObjectNotFound):
+        store.run_for_client_operation(
+            session_id="session-a",
+            client_operation_id="operation-missing",
         )
 
-    assert found.status_code == 200 and found.json()["run_id"] == admission.run.run_id
-    assert found.json()["client_operation_id"] == "operation-lookup"
-    assert "client_operation_id" not in found.json()["metadata"]
-    assert authorized == [admission.run.run_id]
-    assert missing.status_code == 404
-    assert forbidden.status_code == 404
-
-
-def test_exact_operation_lookup_rejects_corrupt_duplicate_rows(tmp_path) -> None:
-    store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
-    _bind_session(store)
-    first = store.admit_run(
-        session_id="session-a",
-        runtime_agent_id="runtime-a",
-        input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
-        metadata={},
-        client_operation_id="operation-duplicate",
-    ).run
     store.fail_trigger(first.run_id, error={"type": "test"})
     with store.Session.begin() as db:
         db.execute(text("DROP INDEX ux_agent_runs_client_operation"))
@@ -530,35 +624,24 @@ def test_exact_operation_lookup_rejects_corrupt_duplicate_rows(tmp_path) -> None
                 agent_version_id="version-a",
                 runtime_agent_id="runtime-a",
                 harness_digest="a" * 64,
-                client_operation_id="operation-duplicate",
+                client_operation_id="operation-lookup",
                 input_fingerprint="f" * 64,
                 status=RunStatus.FAILED.value,
                 metadata_json={},
             ),
         )
-
-    app, _run_router = _app(store, _RuntimeClient())
-    with TestClient(app) as client:
-        response = client.get(
-            "/api/agent-runs/by-client-operation",
-            params={"session_id": "session-a", "client_operation_id": "operation-duplicate"},
+    with pytest.raises(RuntimeStateConflict, match="multiple AgentGov runs"):
+        store.run_for_client_operation(
+            session_id="session-a",
+            client_operation_id="operation-lookup",
         )
-    assert response.status_code == 409
 
 
-def test_pending_actions_project_root_and_worker_then_disappear_at_terminal(tmp_path) -> None:
+def test_pending_actions_project_root_and_worker_then_expire_at_terminal(tmp_path) -> None:
     store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
+    _bind_version(store)
     _bind_session(store)
-    run = store.admit_run(
-        session_id="session-a",
-        runtime_agent_id="runtime-a",
-        input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
-        metadata={},
-        client_operation_id="operation-pending-actions",
-    ).run
+    run = _admit(store, operation_id="operation-pending-actions").run
     store.mark_trigger_started(run.run_id)
     store.bind_team_child(
         RuntimeChildSessionRegistration(
@@ -571,15 +654,6 @@ def test_pending_actions_project_root_and_worker_then_disappear_at_terminal(tmp_
     )
 
     for suffix, session_id in (("root", "session-a"), ("worker", "worker-session")):
-        tool_call = {
-            "type": "tool_call",
-            "id": f"tool-{suffix}",
-            "name": "Read",
-            "input": f'{{"file_path":"{suffix}.txt"}}',
-            "state": "asking",
-            "suggested_rules": [{"tool_name": "Read", "rule_content": "**", "behavior": "allow"}],
-            "metadata": {"api_key": "must-not-project"},
-        }
         store.apply_receipt(
             RuntimeReceipt(
                 receipt_id=f"receipt-{suffix}",
@@ -588,77 +662,27 @@ def test_pending_actions_project_root_and_worker_then_disappear_at_terminal(tmp_
                 run_id=run.run_id,
                 reply_id=f"reply-{suffix}",
                 type="REQUIRE_USER_CONFIRM",
-                payload={"tool_calls": [tool_call]},
+                payload=fingerprinted_hitl_payload(
+                    [
+                        {
+                            "type": "tool_call",
+                            "id": f"tool-{suffix}",
+                            "name": "Read",
+                            "input": f'{{"file_path":"{suffix}.txt"}}',
+                            "state": "asking",
+                            "metadata": {"api_key": "must-not-project"},
+                        },
+                    ],
+                ),
                 trace_id=run.trace_id,
             ),
         )
 
-    deny = False
-
-    def authorize(candidate) -> None:
-        if deny:
-            raise RuntimeObjectNotFound("Run is outside the authorized Agent boundary")
-        assert candidate.run_id == run.run_id
-
-    app, _run_router = _app(store, _RuntimeClient(), authorize)
-    with TestClient(app) as client:
-        first = client.get(f"/api/agent-runs/{run.run_id}/pending-actions")
-        repeated = client.get(f"/api/agent-runs/{run.run_id}/pending-actions")
-        deny = True
-        forbidden = client.get(f"/api/agent-runs/{run.run_id}/pending-actions")
-        deny = False
-        store.fail_trigger(run.run_id, error={"type": "test"})
-        terminal = client.get(f"/api/agent-runs/{run.run_id}/pending-actions")
-
-    assert first.status_code == 200 and first.json() == repeated.json()
-    assert {item["session_id"] for item in first.json()} == {"session-a", "worker-session"}
-    assert all(set(item) == {"action_id", "session_id", "run_id", "reply_id", "kind", "tool_call", "status", "created_at"} for item in first.json())
-    assert all(set(item["tool_call"]) == {"type", "id", "name", "input", "state"} for item in first.json())
-    assert forbidden.status_code == 404
-    assert terminal.status_code == 200 and terminal.json() == []
-
-
-def test_session_template_restart_failure_has_specific_safe_error_code(tmp_path) -> None:
-    store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
-    runtime = _RuntimeClient()
-    runtime.restart_required = True
-    app, _run_router = _app(store, runtime)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/runtime/sessions/",
-            headers={"Idempotency-Key": "restart-required"},
-            json={"agent_id": "runtime-a"},
-        )
-
-    assert response.status_code == 503
-    assert response.json()["error_code"] == "RUNTIMERESTARTREQUIRED"
-    assert "do-not-leak" not in response.text
-    intent = store.session_creation_for_key("restart-required")
-    assert intent is not None and intent.status == SessionCreationStatus.FAILED_CLEANED.value
-
-
-def test_session_delete_treats_authorized_upstream_404_as_absent(tmp_path) -> None:
-    store = _store(tmp_path)
-    _bind_version(store, version_id="version-a", runtime_agent_id="runtime-a", digest="a" * 64)
-    _bind_session(store)
-
-    class _MissingSessionClient(_RuntimeClient):
-        async def request_json(self, method: str, path: str, **kwargs) -> RuntimeJsonResponse:
-            if method == "DELETE" and path == "/sessions/session-a":
-                self.calls.append((method, path, kwargs))
-                raise RuntimeUpstreamError(404, b'{"detail":"already absent"}')
-            return await super().request_json(method, path, **kwargs)
-
-    runtime = _MissingSessionClient()
-    app, _run_router = _app(store, runtime)
-    with TestClient(app) as client:
-        response = client.delete(
-            "/api/runtime/sessions/session-a",
-            params={"agent_id": "runtime-a"},
-        )
-
-    assert response.status_code == 204
-    assert response.headers["X-AgentGov-Session-Id"] == "session-a"
-    assert store.sessions_for_agent("agent-a") == []
+    actions = store.pending_actions_for_run(run.run_id)
+    assert {item.session_id for item in actions} == {"session-a", "worker-session"}
+    action_payloads = [item.model_dump(mode="json") for item in actions]
+    assert all("tool_call" not in item for item in action_payloads)
+    assert all(len(item["tool_call_sha256"]) == 64 for item in action_payloads)
+    assert "must-not-project" not in str(action_payloads)
+    store.fail_trigger(run.run_id, error={"type": "test"})
+    assert store.pending_actions_for_run(run.run_id) == []

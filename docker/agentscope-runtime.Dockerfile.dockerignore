@@ -3,3 +3,5 @@
 **/.env.local
 **/.env.local-debug
 **/.env.bak*
+**/__pycache__/
+**/*.py[cod]

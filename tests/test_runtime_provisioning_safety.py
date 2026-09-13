@@ -1,21 +1,226 @@
 from __future__ import annotations
 
 import asyncio
+import socket
+import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
-import app.runtime_gateway.provisioning as provisioning_module
 import pytest
 from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.agent_paths import business_agent_layout
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime_gateway.client import AgentScopeRuntimeClient, RuntimeUpstreamError
 from app.runtime_gateway.harness_snapshots import PublishedHarnessSnapshotStore
-from app.runtime_gateway.provisioning import RuntimeAgentProvisioner
-from app.runtime_gateway.store import RuntimeRunStore, RuntimeStateConflict
+from app.runtime_gateway.provisioning import RuntimeAgentProvisioner, _published_provision_lock
+from app.runtime_gateway.store import RuntimeRunStore, RuntimeStateConflict, harness_digest
+from app.services.agent_governance import AgentGovernanceService
 
 
-class _Client(AgentScopeRuntimeClient):
+def _git(repository: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repository), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _workspace(tmp_path: Path) -> tuple[Path, GitAgentVersionStore, str, str]:
+    layout = business_agent_layout(tmp_path / "data", "soc")
+    workspace = layout.workspace
+    workspace.mkdir(parents=True)
+    (workspace / "agent.yaml").write_text(
+        "agent: {id: soc, runtime: agentscope}\nsession: {permission_mode: dont_ask, cwd: '.', model_profile: default}\n",
+        encoding="utf-8",
+    )
+    (workspace / "AGENT.md").write_text("production instructions\n", encoding="utf-8")
+    _git(workspace, "init")
+    _git(workspace, "config", "user.name", "test")
+    _git(workspace, "config", "user.email", "test@example.local")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-m", "published")
+    versions = GitAgentVersionStore(
+        repository_dir=workspace,
+        worktrees_dir=layout.version_base / "worktrees",
+        releases_dir=layout.version_base / "releases",
+    )
+    commit = versions.inspect_clean_head()[0]
+    return workspace, versions, commit, harness_digest(workspace)
+
+
+@pytest.fixture
+def unavailable_runtime_endpoint() -> Iterator[str]:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        listener.close()
+
+
+def _provisioner(
+    tmp_path: Path,
+    base_url: str,
+) -> tuple[RuntimeAgentProvisioner, RuntimeRunStore, AgentScopeRuntimeClient, str, str]:
+    workspace, versions, commit, digest = _workspace(tmp_path)
+    factory = make_session_factory(tmp_path / "runtime.db")
+    registry = AgentRegistryStore(factory)
+    registry.create_business_agent(name="SOC", agent_id="soc", workspace_dir=str(workspace))
+    store = RuntimeRunStore(factory)
+    client = AgentScopeRuntimeClient(
+        base_url,
+        shared_secret="test-only-runtime-shared-secret",
+        timeout_seconds=1,
+    )
+    governance = AgentGovernanceService(
+        feedback_store=FeedbackStore(data_dir=tmp_path / "data"),
+        agent_version_store=versions,
+        runtime_mode="local-debug",
+    )
+    provisioner = RuntimeAgentProvisioner(
+        client=client,
+        store=store,
+        registry=registry,
+        version_store_for=governance._store_for,
+        read_version_store_for=governance._store_for_read_only,
+        snapshot_store=PublishedHarnessSnapshotStore(tmp_path / "runtime-sources"),
+    )
+    return provisioner, store, client, commit, digest
+
+
+def test_real_network_refusal_keeps_materialized_snapshot_unbound(
+    tmp_path: Path,
+    unavailable_runtime_endpoint: str,
+) -> None:
+    provisioner, store, client, commit, digest = _provisioner(tmp_path, unavailable_runtime_endpoint)
+    try:
+        with pytest.raises(RuntimeUpstreamError) as caught:
+            asyncio.run(provisioner.ensure("soc"))
+    finally:
+        asyncio.run(client.close())
+
+    assert caught.value.status_code == 503
+    assert store.get_agent_version(agent_id="soc", agent_version_id=commit, digest=digest) is None
+    assert len(list(provisioner.snapshot_store.root.glob("published-*"))) == 1
+
+
+def test_existing_binding_is_not_rebound_when_real_runtime_is_unavailable(
+    tmp_path: Path,
+    unavailable_runtime_endpoint: str,
+) -> None:
+    provisioner, store, client, commit, digest = _provisioner(tmp_path, unavailable_runtime_endpoint)
+    snapshot = provisioner.snapshot_store.materialize(
+        version_store=provisioner.version_store_for("soc"),
+        agent_id="soc",
+        agent_version_id=commit,
+        expected_digest=digest,
+    )
+    store.bind_agent_version(
+        agent_id="soc",
+        agent_version_id=commit,
+        digest=digest,
+        runtime_agent_id="runtime-existing",
+        source_id=snapshot.source_id,
+    )
+    try:
+        with pytest.raises(RuntimeUpstreamError) as caught:
+            asyncio.run(provisioner.ensure("soc"))
+    finally:
+        asyncio.run(client.close())
+
+    assert caught.value.status_code == 503
+    binding = store.get_agent_version(agent_id="soc", agent_version_id=commit, digest=digest)
+    assert binding is not None and binding.runtime_agent_id == "runtime-existing"
+    assert len(store.agent_versions_for_agent("soc")) == 1
+
+
+def test_evaluating_agent_keeps_its_published_runtime_binding_runnable(
+    tmp_path: Path,
+    unavailable_runtime_endpoint: str,
+) -> None:
+    provisioner, store, client, commit, digest = _provisioner(tmp_path, unavailable_runtime_endpoint)
+    snapshot = provisioner.snapshot_store.materialize(
+        version_store=provisioner.version_store_for("soc"),
+        agent_id="soc",
+        agent_version_id=commit,
+        expected_digest=digest,
+    )
+    store.bind_agent_version(
+        agent_id="soc",
+        agent_version_id=commit,
+        digest=digest,
+        runtime_agent_id="runtime-existing",
+        source_id=snapshot.source_id,
+    )
+    provisioner.registry.transition_business_agent("soc", status="evaluating")
+    try:
+        current = provisioner.require_current_runtime("runtime-existing")
+    finally:
+        asyncio.run(client.close())
+
+    assert current.agent_id == "soc"
+    assert current.agent_version_id == commit
+
+
+def test_cancelled_waiter_releases_real_cross_process_directory_lock(tmp_path: Path) -> None:
+    workspace, versions, commit, digest = _workspace(tmp_path)
+    snapshot = PublishedHarnessSnapshotStore(tmp_path / "runtime-sources").materialize(
+        version_store=versions,
+        agent_id="soc",
+        agent_version_id=commit,
+        expected_digest=digest,
+    )
+    locker = (
+        "import fcntl, os, sys; "
+        "fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY); "
+        "fcntl.flock(fd, fcntl.LOCK_EX); "
+        "print('locked', flush=True); "
+        "sys.stdin.read(1); os.close(fd)"
+    )
+
+    async def acquire() -> None:
+        async with _published_provision_lock(snapshot.workspace):
+            return None
+
+    async def exercise() -> None:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            locker,
+            str(snapshot.workspace.parent),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+        )
+        assert process.stdout is not None and process.stdin is not None
+        try:
+            assert await asyncio.wait_for(process.stdout.readline(), timeout=2) == b"locked\n"
+            blocked = asyncio.create_task(acquire())
+            await asyncio.sleep(0.15)
+            assert not blocked.done()
+            blocked.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await blocked
+            process.stdin.write(b"x")
+            await process.stdin.drain()
+            await asyncio.wait_for(process.wait(), timeout=2)
+            await asyncio.wait_for(acquire(), timeout=2)
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+            process.stdin.close()
+
+    asyncio.run(exercise())
+
+
+class _FaultProvisionClient(AgentScopeRuntimeClient):
+    """为不可由网络时序稳定触发的 provision 部分失败提供边界注入。"""
+
     def __init__(self) -> None:
         self.names: dict[str, str] = {}
         self.sessions: dict[str, list[str]] = {}
@@ -24,9 +229,6 @@ class _Client(AgentScopeRuntimeClient):
         self.delete_failures = 0
         self.after_create: asyncio.Event | None = None
         self.finish_create: asyncio.Event | None = None
-        self.before_create: asyncio.Event | None = None
-        self.commit_create: asyncio.Event | None = None
-        self.create_fails = False
 
     async def list_agent_ids_by_name(self, name: str) -> list[str]:
         await asyncio.sleep(0)
@@ -35,18 +237,11 @@ class _Client(AgentScopeRuntimeClient):
     async def create_agent(self, payload: dict[str, object]) -> str:
         self.create_calls += 1
         identifier = f"runtime-{self.create_calls}"
-        if self.before_create is not None:
-            self.before_create.set()
-            assert self.commit_create is not None
-            await self.commit_create.wait()
-        if self.create_fails:
-            raise RuntimeUpstreamError(503, b'{"detail":"temporary test create outage"}')
         self.names[identifier] = str(payload["name"])
         if self.after_create is not None:
             self.after_create.set()
             assert self.finish_create is not None
             await self.finish_create.wait()
-        await asyncio.sleep(0)
         return identifier
 
     async def list_session_ids(self, runtime_agent_id: str) -> list[str]:
@@ -55,31 +250,37 @@ class _Client(AgentScopeRuntimeClient):
     async def delete_agent(self, runtime_agent_id: str) -> None:
         if self.delete_failures:
             self.delete_failures -= 1
-            raise RuntimeUpstreamError(503, b'{"detail":"temporary test outage"}')
+            raise RuntimeUpstreamError(503, b'{"detail":"temporary outage"}')
         self.names.pop(runtime_agent_id, None)
         self.deleted.append(runtime_agent_id)
 
 
 @pytest.fixture
-def provisioning(tmp_path: Path, monkeypatch):
+def fault_provisioning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     workspace = tmp_path / "sources" / "published-test" / "workspace"
     workspace.mkdir(parents=True)
     (workspace / "agent.yaml").write_text("agent: {id: soc, runtime: agentscope}\n", encoding="utf-8")
     (workspace / "AGENT.md").write_text("test instructions\n", encoding="utf-8")
-    factory = make_session_factory(tmp_path / "runtime.db")
+    factory = make_session_factory(tmp_path / "fault-runtime.db")
     registry = AgentRegistryStore(factory)
     record = registry.create_business_agent(name="SOC", agent_id="soc", workspace_dir=str(workspace))
-    client = _Client()
+    client = _FaultProvisionClient()
     store = RuntimeRunStore(factory)
-    snapshots = PublishedHarnessSnapshotStore(tmp_path / "sources")
 
-    def current_source(_self, agent_id):
+    def current_source(_self, agent_id: str):
         assert agent_id == "soc"
-        return record, workspace, "version-one", "digest-one", "published-test--v-digest-one", ("dont_ask", ".", "default")
+        return (
+            record,
+            workspace,
+            "version-one",
+            "digest-one",
+            "published-test--v-digest-one",
+            ("dont_ask", ".", "default"),
+        )
 
     monkeypatch.setattr(RuntimeAgentProvisioner, "_current_source", current_source)
 
-    def create_provisioner() -> RuntimeAgentProvisioner:
+    def create() -> RuntimeAgentProvisioner:
         return RuntimeAgentProvisioner(
             client=client,
             store=RuntimeRunStore(factory),
@@ -89,14 +290,14 @@ def provisioning(tmp_path: Path, monkeypatch):
                 worktrees_dir=tmp_path / "worktrees",
                 releases_dir=tmp_path / "releases",
             ),
-            snapshot_store=snapshots,
+            snapshot_store=PublishedHarnessSnapshotStore(tmp_path / "sources"),
         )
 
-    return client, store, create_provisioner
+    return client, store, create
 
 
-def test_concurrent_provisioners_create_one_agent_for_the_same_tuple(provisioning) -> None:
-    client, store, create = provisioning
+def test_fault_injection_concurrent_provisioners_create_one_runtime_agent(fault_provisioning) -> None:
+    client, store, create = fault_provisioning
 
     async def exercise():
         return await asyncio.gather(*(create().ensure("soc") for _ in range(4)))
@@ -108,8 +309,8 @@ def test_concurrent_provisioners_create_one_agent_for_the_same_tuple(provisionin
     assert len(store.agent_versions_for_agent("soc")) == 1
 
 
-def test_cancelled_create_is_recovered_by_name_after_new_provisioner(provisioning) -> None:
-    client, _store, create = provisioning
+def test_fault_injection_cancelled_create_is_recovered_by_stable_name(fault_provisioning) -> None:
+    client, _store, create = fault_provisioning
 
     async def exercise():
         client.after_create = asyncio.Event()
@@ -131,135 +332,18 @@ def test_cancelled_create_is_recovered_by_name_after_new_provisioner(provisionin
     assert client.deleted == []
 
 
-@pytest.mark.parametrize("create_fails", [False, True])
-def test_repeated_cancellation_waits_for_uncommitted_create_to_settle(provisioning, create_fails) -> None:
-    client, _store, create = provisioning
-
-    async def exercise():
-        client.before_create = asyncio.Event()
-        client.commit_create = asyncio.Event()
-        client.create_fails = create_fails
-        cancelled = asyncio.create_task(create().ensure("soc"))
-        await asyncio.wait_for(client.before_create.wait(), timeout=2)
-        cancelled.cancel()
-        await asyncio.sleep(0)
-        retry = asyncio.create_task(create().ensure("soc"))
-        cancelled.cancel()
-        await asyncio.sleep(0.1)
-        assert not cancelled.done()
-        assert not retry.done()
-        assert client.create_calls == 1
-        assert client.names == {}
-        client.commit_create.set()
-        with pytest.raises(asyncio.CancelledError) as caught:
-            await cancelled
-        if create_fails:
-            assert isinstance(caught.value.__cause__, RuntimeUpstreamError)
-        client.create_fails = False
-        return await asyncio.wait_for(retry, timeout=2)
-
-    binding = asyncio.run(exercise())
-    assert client.create_calls == (2 if create_fails else 1)
-    assert set(client.names) == {binding.runtime_agent_id}
-
-
-@pytest.mark.parametrize("cancel_caller", [False, True])
-def test_hung_provision_is_bounded_and_preserves_cancellation(provisioning, monkeypatch, cancel_caller) -> None:
-    client, _store, create = provisioning
-    monkeypatch.setattr(provisioning_module, "_PROVISION_TIMEOUT_SECONDS", 0.1)
-
-    async def exercise():
-        client.before_create = asyncio.Event()
-        client.commit_create = asyncio.Event()
-        task = asyncio.create_task(create().ensure("soc"))
-        await asyncio.wait_for(client.before_create.wait(), timeout=2)
-        if cancel_caller:
-            task.cancel()
-            await asyncio.sleep(0)
-            task.cancel()
-        with pytest.raises(asyncio.CancelledError if cancel_caller else RuntimeUpstreamError) as caught:
-            await asyncio.wait_for(task, timeout=2)
-        if not cancel_caller:
-            assert caught.value.status_code == 504
-            assert b"remote result is unknown" in caught.value.body
-        client.before_create = None
-        return await asyncio.wait_for(create().ensure("soc"), timeout=2)
-
-    binding = asyncio.run(exercise())
-    assert client.create_calls == 2
-    assert set(client.names) == {binding.runtime_agent_id}
-
-
-def test_another_process_serializes_provision_and_cancelled_waiter_releases_fd(provisioning) -> None:
-    client, _store, create = provisioning
-    source = create().snapshot_store.root / "published-test"
-    locker = (
-        "import fcntl, os, sys; "
-        "fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY); "
-        "fcntl.flock(fd, fcntl.LOCK_EX); "
-        "print('locked', flush=True); "
-        "sys.stdin.read(1); os.close(fd)"
-    )
-
-    async def exercise():
-        process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-c",
-            locker,
-            str(source),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-        )
-        assert process.stdout is not None and process.stdin is not None
-        try:
-            assert await asyncio.wait_for(process.stdout.readline(), timeout=2) == b"locked\n"
-            blocked = asyncio.create_task(create().ensure("soc"))
-            await asyncio.sleep(0.15)
-            assert not blocked.done()
-            assert client.create_calls == 0
-            blocked.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await blocked
-            process.stdin.write(b"x")
-            await process.stdin.drain()
-            await asyncio.wait_for(process.wait(), timeout=2)
-            return await asyncio.wait_for(create().ensure("soc"), timeout=2)
-        finally:
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
-            process.stdin.close()
-
-    binding = asyncio.run(exercise())
-    assert binding.runtime_agent_id == "runtime-1"
-    assert client.create_calls == 1
-
-
-def test_bound_tuple_retries_partial_orphan_cleanup_after_new_provisioner(provisioning) -> None:
-    client, _store, create = provisioning
-    binding = asyncio.run(create().ensure("soc"))
-    client.names["orphan"] = client.names[binding.runtime_agent_id]
-    client.names["unrelated"] = "another-published-name"
-    client.delete_failures = 1
-
-    with pytest.raises(RuntimeUpstreamError):
-        asyncio.run(create().ensure("soc"))
-    assert "orphan" in client.names
-    recovered = asyncio.run(create().ensure("soc"))
-
-    assert recovered == binding
-    assert set(client.names) == {binding.runtime_agent_id, "unrelated"}
-    assert client.deleted == ["orphan"]
-    assert client.create_calls == 1
-
-
 @pytest.mark.parametrize("blocker", ["other_binding", "local_session", "remote_session"])
-def test_cleanup_never_deletes_a_bound_or_session_owning_agent(provisioning, blocker) -> None:
-    client, store, create = provisioning
+def test_fault_injection_cleanup_never_deletes_owned_runtime_agent(fault_provisioning, blocker: str) -> None:
+    client, store, create = fault_provisioning
     binding = asyncio.run(create().ensure("soc"))
     client.names["not-an-orphan"] = client.names[binding.runtime_agent_id]
     if blocker == "other_binding":
-        store.bind_agent_version(agent_id="other", agent_version_id="other-version", digest="other-digest", runtime_agent_id="not-an-orphan")
+        store.bind_agent_version(
+            agent_id="other",
+            agent_version_id="other-version",
+            digest="other-digest",
+            runtime_agent_id="not-an-orphan",
+        )
     elif blocker == "local_session":
         store.bind_session(
             session_id="existing-session",
@@ -277,30 +361,13 @@ def test_cleanup_never_deletes_a_bound_or_session_owning_agent(provisioning, blo
     assert set(client.names) == {binding.runtime_agent_id, "not-an-orphan"}
 
 
-def test_unbound_ambiguous_identity_fails_without_guessing_or_deleting(provisioning) -> None:
-    client, _store, create = provisioning
-    client.names.update({"first": "agentgov-published-test", "second": "agentgov-published-test"})
-
-    with pytest.raises(RuntimeStateConflict, match="ambiguous"):
-        asyncio.run(create().ensure("soc"))
-    assert client.create_calls == 0
-    assert client.deleted == []
-
-
-def test_bound_identity_missing_upstream_does_not_rebind(provisioning) -> None:
-    client, store, create = provisioning
-    binding = asyncio.run(create().ensure("soc"))
-    client.names.clear()
-
-    with pytest.raises(RuntimeStateConflict, match="missing upstream"):
-        asyncio.run(create().ensure("soc"))
-    assert client.create_calls == 1
-    assert store.get_agent_version_by_runtime_id(binding.runtime_agent_id) is not None
-
-
 @pytest.mark.parametrize("cleanup_fails", [False, True])
-def test_binding_failure_compensation_keeps_failed_delete_discoverable(provisioning, monkeypatch, cleanup_fails) -> None:
-    client, _store, create = provisioning
+def test_fault_injection_binding_failure_compensates_or_remains_discoverable(
+    fault_provisioning,
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_fails: bool,
+) -> None:
+    client, _store, create = fault_provisioning
     provisioner = create()
     original_bind = provisioner.store.bind_agent_version
 

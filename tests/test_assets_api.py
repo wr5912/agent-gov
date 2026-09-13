@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 from app_test_utils import load_test_app as _load_app
 
 
-def test_asset_registry_and_inheritance(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_asset_registry_and_inheritance(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         created = client.post("/api/assets", json={"agent_id": "soc-ops", "asset_type": "methodology", "title": "误报归因法", "body": "步骤"})
         assert created.status_code == 201

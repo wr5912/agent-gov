@@ -314,27 +314,6 @@ def test_committed_bootstrap_is_agentscope_only_and_hooks_are_accounted_for() ->
         assert entry["human_confirmation"] == "approved_by_cutover_plan"
         assert entry["rule"] == f"reviewed_{name}_to_runtime_contract"
 
-    mcp = json.loads((workspace / "mcp" / "sec-ops.json").read_text(encoding="utf-8"))
-    assert not mcp["mcp_config"].get("headers")
-    assert mcp["credential_refs"] == [{"env": "SEC_OPS_MCP_URL", "path": "mcp_config.url"}]
-    assert mcp["enable_tools"]
-    assert mcp["enable_resources"]
-    assert mcp["enable_resource_templates"]
-    assert not any(any(character in name for character in "*?[") for name in mcp["enable_tools"])
-    assert {
-        "mcp__sec-ops__resources_list",
-        "mcp__sec-ops__resource_templates_list",
-        "mcp__sec-ops__resource_read",
-    } <= set(manifest["workspace_policy"]["allowed_tools"])
-    for allowed in manifest["workspace_policy"]["allowed_tools"]:
-        if allowed.startswith("mcp__"):
-            assert not any(character in allowed.partition("(")[0] for character in "*?[")
-    for subagent_manifest in sorted((workspace / "subagents").glob("*/agent.yaml")):
-        subagent = yaml.safe_load(subagent_manifest.read_text(encoding="utf-8"))
-        for allowed in subagent["workspace_policy"]["allowed_tools"]:
-            if allowed.startswith("mcp__"):
-                assert not any(character in allowed.partition("(")[0] for character in "*?[")
-
     governor = BOOTSTRAP_ROOT / "governor-workspace"
     governor_manifest = yaml.safe_load((governor / "agent.yaml").read_text(encoding="utf-8"))
     assert governor_manifest["paths"] == {
@@ -354,6 +333,52 @@ def test_committed_bootstrap_is_agentscope_only_and_hooks_are_accounted_for() ->
     assert "用 Read/Glob/Grep 直接读该业务 Agent" not in governor_skill
 
 
+def test_bootstrap_business_agent_matches_available_read_only_mcp_contract() -> None:
+    workspace = BOOTSTRAP_ROOT / "business-agents" / BUSINESS_AGENT_ID / "workspace"
+    manifest = yaml.safe_load((workspace / "agent.yaml").read_text(encoding="utf-8"))
+    mcp = json.loads((workspace / "mcp" / "sec-ops.json").read_text(encoding="utf-8"))
+    assert not mcp["mcp_config"].get("headers")
+    assert mcp["credential_refs"] == [{"env": "SEC_OPS_MCP_URL", "path": "mcp_config.url"}]
+    assert mcp["enable_tools"] == [
+        "soc_api__dashboard_summary_api_v1_dashboard_summary_get",
+        "soc_api__list_alerts_api_v1_alerts_get",
+        "soc_api__list_assets_api_v1_assets_get",
+        "soc_api__list_detection_findings_api_external_detection_findings_get",
+        "soc_api__list_events_api_v1_events_get",
+        "soc_api__list_incidents_api_v1_incidents_get",
+        "soc_api__list_indicators_api_v1_indicators_get",
+        "soc_api__list_vulnerabilities_api_v1_vulnerabilities_get",
+    ]
+    assert mcp["enable_resources"] == []
+    assert mcp["enable_resource_templates"] == [
+        "openapi://soc_api/api/external/detection-findings/{finding_id}/analysis-result",
+    ]
+    allowed = manifest["workspace_policy"]["allowed_tools"]
+    assert {"mcp__sec-ops__resources_list", "mcp__sec-ops__resource_templates_list", "mcp__sec-ops__resource_read"} <= set(allowed)
+    assert all(f"mcp__sec-ops__{name}" in allowed for name in mcp["enable_tools"])
+    assert not any(any(character in name.partition("(")[0] for character in "*?[") for name in allowed if name.startswith("mcp__"))
+    for subagent_manifest in sorted((workspace / "subagents").glob("*/agent.yaml")):
+        subagent = yaml.safe_load(subagent_manifest.read_text(encoding="utf-8"))
+        subagent_allowed = subagent["workspace_policy"]["allowed_tools"]
+        assert "TeamSay" in subagent_allowed
+        assert "mcp__sec-ops__soc_api__get_resp_playbooks_recommend" not in subagent_allowed
+        assert not any(any(character in name.partition("(")[0] for character in "*?[") for name in subagent_allowed if name.startswith("mcp__"))
+
+
+def test_bootstrap_retires_legacy_workspace_tests_and_keeps_real_chat_test() -> None:
+    workspace = BOOTSTRAP_ROOT / "business-agents" / BUSINESS_AGENT_ID / "workspace"
+    assert (workspace / "tests" / "test_live_chat.py").is_file()
+    assert not (workspace / "tests" / "test_security_operations_expert_agentscope_harness.py").exists()
+    report = json.loads((workspace / "conversion-report.json").read_text(encoding="utf-8"))
+    assert report["source_coverage_percent"] == 100.0
+    assert (report["mapped_count"], report["retired_count"], report["rejected_count"]) == (21, 3, 0)
+    assert {entry["source_path"] for entry in report["entries"] if entry["status"] == "retired"} == {
+        "tests/README.md",
+        "tests/test_hooks.py",
+        "tests/test_native_config.py",
+    }
+
+
 def test_report_tamper_and_production_converter_call_are_detected(tmp_path: Path) -> None:
     workspace = tmp_path / "agentscope"
     convert_workspace(_legacy_workspace(tmp_path / "legacy"), workspace, kind="business")
@@ -363,9 +388,9 @@ def test_report_tamper_and_production_converter_call_are_detected(tmp_path: Path
     report_path.write_text(json.dumps(report), encoding="utf-8")
     assert any(finding.code == "harness_digest" for finding in check_workspace(workspace))
 
-    fake_repo = tmp_path / "repo"
-    _write(fake_repo / "app" / "start.py", "import convert_claude_harness\n")
-    findings = check_production_does_not_call_converter(fake_repo)
+    inspected_repo = tmp_path / "repo"
+    _write(inspected_repo / "app" / "start.py", "import convert_claude_harness\n")
+    findings = check_production_does_not_call_converter(inspected_repo)
     assert [(finding.path, finding.code) for finding in findings] == [("app/start.py", "production_converter_call")]
 
 
@@ -407,3 +432,34 @@ def test_canonical_harness_digest_covers_manifest_without_self_reference(tmp_pat
     manifest["model"]["name"] = "model-b"
     (workspace / "agent.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
     assert harness_content_digest(workspace) != initial
+
+
+def test_canonical_harness_digest_ignores_only_runtime_generated_cache_files(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    tests_dir = workspace / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_policy.py").write_text("def test_policy():\n    assert True\n", encoding="utf-8")
+    initial = harness_content_digest(workspace)
+
+    for cache_name in ("__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache", ".cache"):
+        cache = tests_dir / cache_name
+        cache.mkdir()
+        (cache / "generated.bin").write_bytes(b"runtime-generated")
+    (tests_dir / "test_policy.pyc").write_bytes(b"compiled")
+    (tests_dir / "test_policy.pyo").write_bytes(b"optimized")
+
+    assert harness_content_digest(workspace) == initial
+    (tests_dir / "test_policy.py").write_text("def test_policy():\n    assert False\n", encoding="utf-8")
+    assert harness_content_digest(workspace) != initial
+
+
+def test_canonical_harness_digest_rejects_excluded_name_symlink(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    tests_dir = workspace / "tests"
+    outside = tmp_path / "outside"
+    tests_dir.mkdir(parents=True)
+    outside.mkdir()
+    (tests_dir / "__pycache__").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="non-regular entry"):
+        harness_content_digest(workspace)

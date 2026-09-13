@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiRequestError, requestJson, resolveRuntimeApiBase, shouldMigrateStoredApiBase } from "./request";
+import {
+  ApiRequestError,
+  authHeaders,
+  makeUrl,
+  normalizeBase,
+  requestJson,
+  resolveRuntimeApiBase,
+  shouldMigrateStoredApiBase,
+} from "./request";
 import type { RuntimeClientConfig } from "../types/runtime";
 
 const config: RuntimeClientConfig = { apiBase: "http://runtime.test", apiKey: "" };
@@ -19,24 +27,39 @@ afterEach(() => {
 });
 
 describe("Runtime API 发布地址", () => {
-  it("通过远端 UI 主机访问默认 API 发布端口", () => {
+  it("通过远程 UI 主机访问默认 API 发布端口", () => {
     vi.stubGlobal("window", { location: { hostname: "agentgov.example.test" } });
 
     expect(resolveRuntimeApiBase("")).toBe("http://agentgov.example.test:50400");
-    expect(shouldMigrateStoredApiBase("http://localhost:50400/", "http://agentgov.example.test:50400")).toBe(true);
+    expect(shouldMigrateStoredApiBase(
+      "http://localhost:50400/",
+      "http://agentgov.example.test:50400",
+    )).toBe(true);
   });
 
   it("保留自定义地址和端口，不将其作为默认缓存配置迁移", () => {
     vi.stubGlobal("window", { location: { hostname: "agentgov.example.test" } });
 
     expect(resolveRuntimeApiBase("https://api.example.test:50499/")).toBe("https://api.example.test:50499");
-    expect(shouldMigrateStoredApiBase("http://localhost:50499", "http://agentgov.example.test:50400")).toBe(false);
+    expect(shouldMigrateStoredApiBase(
+      "http://localhost:50499",
+      "http://agentgov.example.test:50400",
+    )).toBe(false);
   });
 
   it("本机访问继续使用回环地址", () => {
     vi.stubGlobal("window", { location: { hostname: "localhost" } });
 
     expect(resolveRuntimeApiBase("")).toBe("http://localhost:50400");
+  });
+
+  it("构造地址和鉴权头时不改变调用方配置", () => {
+    const custom = { apiBase: "https://api.example.test:50499/", apiKey: " token " };
+
+    expect(normalizeBase(" http://localhost:50400/ ")).toBe("http://localhost:50400");
+    expect(makeUrl(custom, "/health")).toBe("https://api.example.test:50499/health");
+    expect(authHeaders(custom)).toEqual({ Authorization: "Bearer token" });
+    expect(authHeaders({ ...custom, apiKey: "" })).toEqual({});
   });
 });
 
@@ -104,9 +127,24 @@ describe("requestJson retry contract", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("honors retry=false for a GET with observable upstream work", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(503));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(requestJson(config, "/resource", { retry: false })).rejects.toMatchObject({
+      kind: "http",
+      status: 503,
+    } satisfies Partial<ApiRequestError>);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("retries a GET timeout once", async () => {
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+      init?.signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      );
     }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -119,7 +157,11 @@ describe("requestJson retry contract", () => {
   it("does not retry caller abort", async () => {
     const controller = new AbortController();
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+      init?.signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      );
     }));
     vi.stubGlobal("fetch", fetchMock);
     const pending = requestJson(config, "/resource", { signal: controller.signal });

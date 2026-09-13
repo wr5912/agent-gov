@@ -1,550 +1,596 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
+from collections.abc import AsyncIterator
+from pathlib import Path
 
 import httpx
 import pytest
+from agentscope_runtime.service import create_runtime_app
+from agentscope_runtime.settings import RuntimeSettings
 from app.routers.error_handlers import register_error_handlers
-from app.runtime.runtime_db import make_session_factory
-from app.runtime_gateway.client import AgentScopeRuntimeClient, RuntimeJsonResponse, RuntimeUpstreamError
-from app.runtime_gateway.contracts import RuntimeChildSessionRegistration, RuntimeReceipt, RuntimeTeamInboxDelivery
-from app.runtime_gateway.provisioning import RuntimeAgentBinding, RuntimeCurrentVersion
-from app.runtime_gateway.router import create_agent_run_router, create_runtime_router
-from app.runtime_gateway.store import RuntimeObjectNotFound, RuntimeRunStore, SessionCreationStatus
-from fastapi import FastAPI
+from app.runtime.agent_workspace_package_schemas import (
+    NativeAgentDataInput,
+    NativeContextConfig,
+    NativeInviteConfig,
+    NativeReactConfig,
+)
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+from app.runtime.published_harness_preparation import prepare_published_harnesses
+from app.runtime_gateway.client import (
+    AgentScopeRuntimeClient,
+    RuntimeJsonResponse,
+    RuntimeUpstreamError,
+    canonical_session_id_from_view,
+)
+from app.runtime_gateway.contracts import (
+    GOVERNED_EVIDENCE_ROOT_METADATA_KEY,
+    RuntimeChatRequest,
+    RuntimeSessionCreateRequest,
+)
+from app.runtime_gateway.native_schema import _project_native_agent_schema
+from app.runtime_gateway.router import _project_session_view, _runtime_stream_body, create_runtime_router
+from app.runtime_gateway.session_resources import (
+    RuntimeSessionRenameRequest,
+    _project_session_rename,
+    _project_workspace_mcps,
+    _project_workspace_skills,
+    _project_workspace_status,
+)
+from app.runtime_gateway.store import RuntimeObjectNotFound, RuntimeRunStore, RuntimeStateConflict, harness_digest
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, ValidationError
+
+from app_test_utils import load_test_app
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+from runtime_gateway_test_utils import store_with_agent_version as _store
+from runtime_loopback import serve_loopback
+
+SECRET = "runtime-router-real-boundary-secret"
+PUBLIC_API_KEY = "runtime-public-read-auth-secret"
+_SCALAR_SCHEMA_KEYS = ("type", "anyOf")
 
 
-class _Provisioner:
-    def __init__(self, store: RuntimeRunStore) -> None:
-        self.calls: list[str] = []
-        self.store = store
-
-    def require_current_runtime(self, runtime_agent_id: str) -> RuntimeAgentBinding:
-        self.calls.append(runtime_agent_id)
-        if runtime_agent_id not in {"runtime-a", "runtime-b"}:
-            raise RuntimeObjectNotFound(f"Runtime Agent is not provisioned: {runtime_agent_id}")
-        agent_id = "agent-b" if runtime_agent_id == "runtime-b" else "agent-a"
-        return RuntimeAgentBinding(
-            agent_id=agent_id,
-            agent_version_id="version-a",
-            runtime_agent_id=runtime_agent_id,
-            harness_digest="a" * 64,
-            workspace_id=f"{agent_id}--v-{'a' * 64}",
-            permission_mode="dont_ask",
-            cwd="outputs",
-            model_profile="default",
-        )
-
-    def inspect_current(self, agent_id: str) -> RuntimeCurrentVersion:
-        return RuntimeCurrentVersion(agent_id, "version-a", "a" * 64, "runtime-a")
-
-    async def ensure(self, agent_id: str) -> RuntimeAgentBinding:
-        return self.require_current_runtime("runtime-a")
-
-    def require_session(self, session_id: str, runtime_agent_id: str):
-        return self.store.get_session(session_id, runtime_agent_id=runtime_agent_id)
-
-
-class _RawResponse:
-    status_code = 200
-    headers = {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-        "x-accel-buffering": "no",
-        "connection": "keep-alive",
+def _form_section_schema(model: type[BaseModel]) -> dict[str, object]:
+    model_properties = model.model_json_schema()["properties"]
+    return {
+        "type": "object",
+        "title": model.__name__,
+        "description": f"{model.__name__} fields",
+        "properties": {name: {key: value[key] for key in _SCALAR_SCHEMA_KEYS if key in value} for name, value in model_properties.items()},
     }
 
-    def __init__(self, chunks: list[bytes]) -> None:
-        self.chunks = chunks
-        self.closed = False
 
-    async def aiter_raw(self):
+def _renderable_native_agent_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "title": "AgentData",
+        "description": "Agent form fields",
+        "required": ["name", "context_config", "react_config"],
+        "properties": {
+            "name": {"type": "string"},
+            "system_prompt": {"type": "string", "format": "textarea"},
+            "context_config": _form_section_schema(NativeContextConfig),
+            "react_config": _form_section_schema(NativeReactConfig),
+            "invite_config": _form_section_schema(NativeInviteConfig),
+        },
+    }
+
+
+def _bind_session(store: RuntimeRunStore, *, session_id: str = "session-a") -> None:
+    store.bind_session(
+        session_id=session_id,
+        agent_id="agent-a",
+        agent_version_id="version-a",
+        runtime_agent_id="runtime-a",
+        digest="a" * 64,
+    )
+
+
+class _ExactChunkStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: tuple[bytes, ...]) -> None:
+        self.chunks = chunks
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
         for chunk in self.chunks:
             yield chunk
 
-    async def aclose(self) -> None:
-        self.closed = True
 
-
-class _RuntimeClient:
-    def __init__(self, *, fail_patch: bool = False) -> None:
-        self.calls: list[tuple[str, str, dict[str, object]]] = []
-        self.fail_patch = fail_patch
-        self.session_counter = 0
-        self.raw_response = _RawResponse(
-            [
-                b'data: {"id":"1","type":"REPLY_START"}\n\n',
-                b": heartbeat\n\n",
-                b'data: {"future":"unknown","type":"NEW_EVENT"}\n\n',
-            ]
-        )
-
-    async def request_json(self, method: str, path: str, **kwargs):
-        self.calls.append((method, path, kwargs))
-        if method == "POST" and path == "/sessions/":
-            self.session_counter += 1
-            return RuntimeJsonResponse(
-                201,
-                {"content-type": "application/json", "connection": "close"},
-                {"session_id": f"upstream-{self.session_counter}"},
-            )
-        if method == "PATCH" and path.startswith("/sessions/"):
-            if self.fail_patch:
-                raise RuntimeUpstreamError(502, b'{"detail":"patch failed"}')
-            return RuntimeJsonResponse(200, {"content-type": "application/json"}, {"id": path.rsplit("/", 1)[-1]})
-        if method == "DELETE" and path.startswith("/sessions/"):
-            return RuntimeJsonResponse(204, {}, None)
-        return RuntimeJsonResponse(200, {"content-type": "application/json"}, {"status": "ok"})
-
-    async def start_stream(self, path: str, **kwargs):
-        self.calls.append(("GET_STREAM", path, kwargs))
-        return self.raw_response
-
-
-def _setup(tmp_path, *, runtime_client: _RuntimeClient | None = None):
-    store = RuntimeRunStore(make_session_factory(tmp_path / "runtime.db"))
-    store.bind_agent_version(
-        agent_id="agent-a",
-        agent_version_id="version-a",
-        digest="a" * 64,
-        runtime_agent_id="runtime-a",
+def test_runtime_stream_starts_with_readiness_comment_then_preserves_upstream_bytes() -> None:
+    upstream_chunks = (
+        b'data: {"id":"known","type":"TEXT_BLOCK_DELTA"}\n\n',
+        b'data: {"id":"future","type":"FUTURE_AGENT_EVENT","value":"\xe4\xb8\xad"}\n\n',
     )
-    upstream = runtime_client or _RuntimeClient()
-    provisioner = _Provisioner(store)
-    router = create_runtime_router(
-        client=upstream,  # type: ignore[arg-type]
-        store=store,
-        provisioner=provisioner,  # type: ignore[arg-type]
-        model_type="openai_credential",
-        credential_id="agentgov-runtime-provider",
-        model_name="deepseek-chat",
-        model_parameters={"temperature": 0},
-        require_api_key=lambda: None,
+
+    async def collect() -> tuple[list[bytes], bool]:
+        upstream = httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_ExactChunkStream(upstream_chunks),
+        )
+        chunks = [chunk async for chunk in _runtime_stream_body(upstream)]
+        return chunks, upstream.is_closed
+
+    chunks, closed = asyncio.run(collect())
+
+    assert chunks == [b":\n\n", *upstream_chunks]
+    assert b"".join(chunks[1:]) == b"".join(upstream_chunks)
+    assert closed is True
+
+
+def _runtime_settings(tmp_path: Path) -> RuntimeSettings:
+    data_dir = tmp_path / "runtime-data"
+    business_root = tmp_path / "business-agents"
+    candidates_root = tmp_path / "candidates"
+    workspaces_root = tmp_path / "workspaces"
+    for directory in (data_dir, business_root, candidates_root, workspaces_root):
+        directory.mkdir(parents=True, exist_ok=True)
+    return RuntimeSettings(
+        shared_secret=SECRET,
+        provider_api_key="runtime-router-provider-key",
+        agentgov_api_base_url="http://127.0.0.1:9",
+        data_dir=data_dir,
+        business_agents_root=business_root,
+        candidates_root=candidates_root,
+        workspaces_root=workspaces_root,
+        database_url=f"sqlite+aiosqlite:///{data_dir / 'agentscope.db'}",
     )
-    app = FastAPI()
-    register_error_handlers(app)
-    app.include_router(router)
-    return app, router, store, upstream, provisioner
 
 
-def test_session_creation_uses_only_governed_runtime_configuration_and_is_idempotent(tmp_path) -> None:
-    app, _, store, upstream, provisioner = _setup(tmp_path)
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/runtime/sessions/",
-            headers={"Idempotency-Key": "create-one"},
-            json={"agent_id": "runtime-a", "name": "First"},
-        )
-        assert response.status_code == 201
-        assert response.json() == {"session_id": "upstream-1"}
-        assert response.headers["X-AgentGov-Session-Id"] == "upstream-1"
-
-        repeated = client.post(
-            "/api/runtime/sessions/",
-            headers={"Idempotency-Key": "create-one"},
-            json={"agent_id": "runtime-a", "name": "Ignored retry name"},
-        )
-        assert repeated.status_code == 200
-        assert repeated.json() == {"session_id": "upstream-1"}
-
-        injected = client.post(
-            "/api/runtime/sessions/",
-            json={"agent_id": "runtime-a", "model": "attacker-model"},
-        )
-        assert injected.status_code == 422
-
-    assert provisioner.calls == ["runtime-a"]
-    post = next(call for call in upstream.calls if call[:2] == ("POST", "/sessions/"))
-    intent = store.session_creation_for_key("create-one")
-    assert intent is not None
-    assert post[2]["json"] == {
-        "agent_id": "runtime-a",
-        "workspace_id": intent.workspace_id,
-        "name": "First",
-        "chat_model_config": {
-            "type": "openai_credential",
-            "credential_id": "agentgov-runtime-provider",
-            "model": "deepseek-chat",
-            "parameters": {"temperature": 0},
-        },
+def test_session_projection_keeps_agentgov_active_run_outside_agentscope_session() -> None:
+    upstream = {
+        "session": {"id": "session-a", "agent_id": "runtime-a"},
+        "is_running": False,
+        "status": "idle",
     }
-    patch_call = next(call for call in upstream.calls if call[0] == "PATCH")
-    assert patch_call[2]["json"] == {"permission_mode": "dont_ask", "cwd": "outputs"}
-    assert intent.status == SessionCreationStatus.BOUND.value
-    assert intent.session_id == "upstream-1"
+
+    projected = _project_session_view(
+        upstream,
+        {"session-a": "run-active"},
+        session_id=canonical_session_id_from_view(upstream),
+    )
+
+    assert projected == {**upstream, "active_run_id": "run-active"}
+    assert "active_run_id" not in upstream["session"]
 
 
-def test_current_version_read_and_explicit_provision_expose_typed_tuple(tmp_path) -> None:
-    app, _, _, _, _ = _setup(tmp_path)
+@pytest.mark.parametrize(
+    "invalid_view",
+    [
+        {"session_id": "legacy-top-level"},
+        {"session": {"id": ""}, "session_id": "legacy-top-level"},
+        {"session": {}},
+        {},
+        None,
+    ],
+    ids=("top-level-only", "empty-canonical", "missing-id", "missing-session", "not-object"),
+)
+def test_session_identity_rejects_every_noncanonical_shape(invalid_view: object) -> None:
+    with pytest.raises(RuntimeUpstreamError) as rejected:
+        canonical_session_id_from_view(invalid_view)
 
-    with TestClient(app) as client:
-        current = client.get("/api/runtime/agents/agent-a/current")
-        provisioned = client.post("/api/runtime/agents/agent-a/provision")
-
-    expected = {
-        "governance_agent_id": "agent-a",
-        "agent_version_id": "version-a",
-        "harness_digest": "a" * 64,
-        "runtime_agent_id": "runtime-a",
-        "provisioned": True,
-    }
-    assert current.status_code == 200 and current.json() == expected
-    assert provisioned.status_code == 200 and provisioned.json() == expected
-
-
-def test_idempotency_key_cannot_cross_agent_boundary(tmp_path) -> None:
-    app, _, _, _, _ = _setup(tmp_path)
-    with TestClient(app) as client:
-        assert (
-            client.post(
-                "/api/runtime/sessions/",
-                headers={"Idempotency-Key": "same-key"},
-                json={"agent_id": "runtime-a"},
-            ).status_code
-            == 201
-        )
-        conflict = client.post(
-            "/api/runtime/sessions/",
-            headers={"Idempotency-Key": "same-key"},
-            json={"agent_id": "runtime-b"},
-        )
-    assert conflict.status_code == 409
-    assert "another Runtime Agent" in conflict.json()["detail"]
+    assert rejected.value.status_code == 502
+    assert rejected.value.body == b'{"detail":"Runtime returned invalid Session entry"}'
 
 
-def test_session_creation_rejects_stable_agentgov_id_without_lazy_provision(tmp_path) -> None:
-    app, _, _, upstream, provisioner = _setup(tmp_path)
+class _SessionListClient:
+    def __init__(self, body: object) -> None:
+        self.body = body
 
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/runtime/sessions/",
-            headers={"Idempotency-Key": "wrong-id-domain"},
-            json={"agent_id": "agent-a"},
+    async def request_json(self, method: str, path: str, **_kwargs) -> RuntimeJsonResponse:
+        assert (method, path) == ("GET", "/sessions/")
+        return RuntimeJsonResponse(200, {"content-type": "application/json"}, self.body)
+
+
+class _SessionListProvisioner:
+    def __init__(self, store: RuntimeRunStore) -> None:
+        self.store = store
+
+    def require_session(self, session_id: str, runtime_agent_id: str):
+        return self.store.get_session(
+            session_id,
+            runtime_agent_id=runtime_agent_id,
         )
 
-    assert response.status_code == 404
-    assert provisioner.calls == ["agent-a"]
-    assert upstream.calls == []
 
-
-def test_failed_governed_session_patch_compensates_upstream_session(tmp_path) -> None:
-    upstream = _RuntimeClient(fail_patch=True)
-    app, _, store, _, _ = _setup(tmp_path, runtime_client=upstream)
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/runtime/sessions/",
-            headers={"Idempotency-Key": "failed-create"},
-            json={"agent_id": "runtime-a"},
-        )
-    assert response.status_code == 502
-    assert [(method, path) for method, path, _ in upstream.calls] == [
-        ("POST", "/sessions/"),
-        ("PATCH", "/sessions/upstream-1"),
-        ("DELETE", "/sessions/upstream-1"),
-    ]
-    assert store.sessions_for_agent("agent-a") == []
-    intent = store.session_creation_for_key("failed-create")
-    assert intent is not None
-    assert intent.status == SessionCreationStatus.FAILED_CLEANED.value
-    assert intent.session_id == "upstream-1"
-    assert intent.cleanup_attempts == 1
-    assert intent.error_json["stage"] == "post_create_finalize"
-
-
-def test_sse_proxy_preserves_raw_frames_and_unknown_events(tmp_path) -> None:
-    _, router, store, upstream, _ = _setup(tmp_path)
-    store.bind_session(
-        session_id="session-a",
-        agent_id="agent-a",
-        agent_version_id="version-a",
-        runtime_agent_id="runtime-a",
-        digest="a" * 64,
-        idempotency_key=None,
-    )
-    route = next(route for route in router.routes if getattr(route, "path", "") == "/api/runtime/sessions/{session_id}/stream")
-
-    async def collect() -> bytes:
-        response = await route.endpoint("session-a", "runtime-a")
-        return b"".join([chunk async for chunk in response.body_iterator])
-
-    raw = asyncio.run(collect())
-    assert raw == b"".join(upstream.raw_response.chunks)
-    assert upstream.raw_response.closed is True
-    stream_call = upstream.calls[-1]
-    assert stream_call == ("GET_STREAM", "/sessions/session-a/stream", {"params": {"agent_id": "runtime-a"}})
-
-
-def test_session_data_plane_rejects_cross_agent_scope(tmp_path) -> None:
-    app, _, store, upstream, _ = _setup(tmp_path)
-    store.bind_session(
-        session_id="session-a",
-        agent_id="agent-a",
-        agent_version_id="version-a",
-        runtime_agent_id="runtime-a",
-        digest="a" * 64,
-        idempotency_key=None,
-    )
-    with TestClient(app) as client:
-        for path in (
-            "/api/runtime/sessions/session-a/messages?agent_id=runtime-b",
-            "/api/runtime/sessions/session-a/status?agent_id=runtime-b",
-        ):
-            response = client.get(path)
-            assert response.status_code == 404
-        interrupt = client.post("/api/runtime/sessions/session-a/interrupt?agent_id=runtime-b")
-        delete = client.delete("/api/runtime/sessions/session-a?agent_id=runtime-b")
-    assert interrupt.status_code == 404
-    assert delete.status_code == 404
-    assert upstream.calls == []
-
-
-def test_session_interrupt_cancels_root_and_every_team_child(tmp_path) -> None:
-    app, _, store, upstream, _ = _setup(tmp_path)
-    store.bind_session(
-        session_id="leader-session",
-        agent_id="agent-a",
-        agent_version_id="version-a",
-        runtime_agent_id="runtime-a",
-        digest="a" * 64,
-        idempotency_key=None,
-    )
-    run = store.begin_run(
-        session_id="leader-session",
-        runtime_agent_id="runtime-a",
-        input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
-        metadata={},
-    )
-    store.mark_trigger_started(run.run_id)
-    store.bind_team_child(
-        RuntimeChildSessionRegistration(
-            run_id=run.run_id,
-            parent_session_id="leader-session",
-            child_session_id="worker-session",
-            child_runtime_agent_id="worker-agent",
-            team_id="team-1",
-        ),
-    )
-    store.record_team_inbox_delivery(
-        RuntimeTeamInboxDelivery(
-            event_id="cancel-worker-delivery",
-            run_id=run.run_id,
-            source_session_id="leader-session",
-            target_session_id="worker-session",
-        ),
-    )
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/runtime/sessions/leader-session/interrupt?agent_id=runtime-a",
-        )
-
-    assert response.status_code == 200
-    interrupt_paths = [path for method, path, _kwargs in upstream.calls if method == "POST" and path.endswith("/interrupt")]
-    assert interrupt_paths == [
-        "/sessions/leader-session/interrupt",
-        "/sessions/worker-session/interrupt",
-    ]
-    assert store.get_run(run.run_id).metadata["cancellation_requested"] is True
-
-
-def test_agent_run_cancel_partial_failure_keeps_all_team_fences_and_redacts(
-    tmp_path,
-) -> None:
-    store = RuntimeRunStore(make_session_factory(tmp_path / "runtime.db"))
-    store.bind_agent_version(
-        agent_id="agent-a",
-        agent_version_id="version-a",
-        digest="a" * 64,
-        runtime_agent_id="runtime-a",
-    )
-    store.bind_session(
-        session_id="leader-session",
-        agent_id="agent-a",
-        agent_version_id="version-a",
-        runtime_agent_id="runtime-a",
-        digest="a" * 64,
-    )
-    run = store.begin_run(
-        session_id="leader-session",
-        runtime_agent_id="runtime-a",
-        input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
-        metadata={},
-    )
-    store.mark_trigger_started(run.run_id)
-    store.bind_team_child(
-        RuntimeChildSessionRegistration(
-            run_id=run.run_id,
-            parent_session_id="leader-session",
-            child_session_id="worker-session",
-            child_runtime_agent_id="worker-agent",
-            team_id="team-1",
-        ),
-    )
-
-    class _PartialFailureClient(_RuntimeClient):
-        async def request_json(self, method: str, path: str, **kwargs):
-            self.calls.append((method, path, kwargs))
-            if "worker-session" in path:
-                raise RuntimeUpstreamError(
-                    503,
-                    b'{"detail":"provider-test-secret"}',
-                )
-            return RuntimeJsonResponse(202, {}, {"status": "interrupting"})
-
-    upstream = _PartialFailureClient()
-    app = FastAPI()
-    register_error_handlers(app)
-    app.include_router(
-        create_agent_run_router(
-            client=upstream,  # type: ignore[arg-type]
+def test_session_list_route_fails_closed_on_top_level_session_id(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _bind_session(store)
+    api = FastAPI()
+    register_error_handlers(api)
+    api.include_router(
+        create_runtime_router(
+            client=_SessionListClient(
+                {"sessions": [{"session_id": "session-a"}], "total": 1},
+            ),  # type: ignore[arg-type]
             store=store,
-            trace_fetcher=lambda _: None,
-            authorize_run=lambda _run: None,
+            provisioner=_SessionListProvisioner(store),  # type: ignore[arg-type]
+            model_type="openai_credential",
+            credential_id="provider",
+            model_name="model",
+            model_parameters={},
             require_api_key=lambda: None,
         ),
     )
 
-    with TestClient(app) as client:
-        response = client.post(f"/api/agent-runs/{run.run_id}/cancel")
+    with TestClient(api) as client:
+        response = client.get(
+            "/api/runtime/sessions/",
+            params={"governance_agent_id": "agent-a"},
+        )
 
-    assert response.status_code == 503
+    assert response.status_code == 502
     assert response.json() == {
         "detail": "AgentScope Runtime request failed",
         "error_code": "RUNTIME_UPSTREAM_ERROR",
     }
-    assert "provider-test-secret" not in response.text
-    assert [path for method, path, _kwargs in upstream.calls if method == "POST"] == [
-        "/sessions/leader-session/interrupt",
-        "/sessions/worker-session/interrupt",
+
+
+def _bind_published_agent(module, *, agent_id: str, runtime_agent_id: str) -> tuple[str, str]:
+    record = module.agent_registry_store.get_agent(agent_id)
+    assert record is not None
+    versions = module.agent_governance._store_for(agent_id)
+    version_id = versions.current_commit_sha()
+    assert version_id is not None
+    digest = harness_digest(Path(record.workspace_dir))
+    snapshot = module.harness_snapshots.require_existing(
+        agent_id=agent_id,
+        agent_version_id=version_id,
+        expected_digest=digest,
+    )
+    module.run_store.bind_agent_version(
+        agent_id=agent_id,
+        agent_version_id=version_id,
+        digest=digest,
+        runtime_agent_id=runtime_agent_id,
+        source_id=snapshot.source_id,
+    )
+    return version_id, digest
+
+
+def test_runtime_session_create_contract_forbids_client_model_configuration() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RuntimeSessionCreateRequest.model_validate(
+            {
+                "agent_id": "runtime-a",
+                "name": "Session",
+                "model": "attacker-model",
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"name": ""},
+        {"name": "   "},
+        {"name": None},
+        {"name": "renamed", "permission_mode": "bypassPermissions"},
+        {"name": "renamed", "cwd": "/tmp/attacker"},
+    ],
+    ids=("empty", "blank", "null", "permission-mode", "cwd"),
+)
+def test_session_rename_contract_only_accepts_a_nonblank_name(payload: object) -> None:
+    with pytest.raises(ValidationError):
+        RuntimeSessionRenameRequest.model_validate(payload)
+
+
+def test_session_rename_response_is_a_minimal_safe_projection() -> None:
+    projected = _project_session_rename(
+        {
+            "id": "session-a",
+            "config": {
+                "name": "Reviewed title",
+                "permission_mode": "dont_ask",
+                "chat_model_config": {"credential_id": "private-credential-reference"},
+            },
+            "state": {"context": [{"content": "private message"}]},
+        },
+        session_id="session-a",
+        expected_name="Reviewed title",
+    )
+
+    assert projected.model_dump() == {"session_id": "session-a", "name": "Reviewed title"}
+
+
+def test_session_rename_sends_only_agent_id_query_to_real_runtime(
+    process_environment,
+    tmp_path: Path,
+) -> None:
+    process_environment.set("RUNTIME_CANDIDATES_DIR", str(tmp_path / "candidate-workspaces"))
+    module = load_test_app(process_environment, tmp_path)
+    assert prepare_published_harnesses(module.settings) == 1
+    version_id, digest = _bind_published_agent(
+        module,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        runtime_agent_id="runtime-rename-query",
+    )
+    module.run_store.bind_session(
+        session_id="session-rename-query",
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        agent_version_id=version_id,
+        runtime_agent_id="runtime-rename-query",
+        digest=digest,
+    )
+    observed_queries: list[tuple[str, bytes]] = []
+    runtime_app = create_runtime_app(_runtime_settings(tmp_path / "native-runtime"))
+
+    @runtime_app.middleware("http")
+    async def capture_runtime_query(request: Request, call_next):
+        if request.method == "PATCH" and request.url.path == "/sessions/session-rename-query":
+            observed_queries.append((request.url.path, request.scope["query_string"]))
+        return await call_next(request)
+
+    with serve_loopback(runtime_app, lifespan="on") as runtime_url:
+
+        async def exercise() -> httpx.Response:
+            runtime_client = AgentScopeRuntimeClient(runtime_url, shared_secret=SECRET)
+            api = FastAPI()
+            register_error_handlers(api)
+            api.include_router(
+                create_runtime_router(
+                    client=runtime_client,
+                    store=module.run_store,
+                    provisioner=module.provisioner,
+                    model_type="openai_credential",
+                    credential_id="provider",
+                    model_name="model",
+                    model_parameters={},
+                    require_api_key=lambda: None,
+                ),
+            )
+            try:
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=api),
+                    base_url="http://agentgov.test",
+                ) as client:
+                    return await client.patch(
+                        "/api/runtime/sessions/session-rename-query",
+                        params={"agent_id": "runtime-rename-query"},
+                        json={"name": "Reviewed title"},
+                    )
+            finally:
+                await runtime_client.close()
+
+        response = asyncio.run(exercise())
+
+    assert response.status_code == 404
+    assert observed_queries == [
+        ("/sessions/session-rename-query", b"agent_id=runtime-rename-query"),
     ]
-    active = store.get_run(run.run_id)
-    assert active.metadata["recovery_required"] is True
-    assert active.metadata["cancellation_uncertain"] is True
-    assert active.error == {"type": "RuntimeUpstreamError"}
-    assert store.get_session("leader-session").active_run_id == run.run_id
-    assert store.get_session("worker-session").active_run_id == run.run_id
 
 
-def test_confirmation_scope_run_is_rejected_for_non_confirmation_input(tmp_path) -> None:
-    app, _, _, upstream, _ = _setup(tmp_path)
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/runtime/chat/",
-            json={
+def test_workspace_resource_projections_remove_paths_configuration_and_skill_bodies() -> None:
+    status = _project_workspace_status(
+        {
+            "workdir": "/private/runtime/workspace-a",
+            "cwd": "/private/runtime/workspace-a",
+            "git": {"staged": 0, "unstaged": 1, "untracked": 0, "conflicted": 0},
+        },
+    )
+    mcps = _project_workspace_mcps(
+        [
+            {
+                "name": "local-mcp",
+                "is_stateful": False,
+                "is_healthy": False,
+                "error": "Authorization: private-secret",
+                "mcp_config": {"headers": {"Authorization": "private-secret"}},
+                "tools": [{"name": "lookup", "description": "Lookup a resource", "inputSchema": {}}],
+            },
+        ],
+    )
+    skills = _project_workspace_skills(
+        [
+            {
+                "name": "review",
+                "description": "Review one input",
+                "markdown": "private instructions",
+                "skill_dir": "/private/runtime/skills/review",
+            },
+        ],
+    )
+
+    assert status.model_dump() == {
+        "available": True,
+        "at_workspace_root": True,
+        "git_repository": True,
+        "git_dirty": True,
+    }
+    assert [item.model_dump() for item in mcps] == [
+        {
+            "name": "local-mcp",
+            "is_stateful": False,
+            "is_healthy": False,
+            "error": "connection_failed",
+            "tools": [{"name": "lookup", "description": "Lookup a resource"}],
+        },
+    ]
+    assert [item.model_dump() for item in skills] == [
+        {"name": "review", "description": "Review one input"},
+    ]
+
+
+def test_native_agent_schema_projection_accepts_only_the_supported_public_field_set() -> None:
+    projected = _project_native_agent_schema({"schema": _renderable_native_agent_schema()})
+    assert set(projected.schema_["properties"]) == {
+        "name",
+        "system_prompt",
+        "context_config",
+        "react_config",
+        "invite_config",
+    }
+
+    assert set(projected.schema_["properties"]["context_config"]["properties"]) == set(
+        NativeContextConfig.model_fields,
+    )
+
+
+def test_native_agent_schema_projection_rejects_unowned_or_unrenderable_drift() -> None:
+    top_level_drift = _renderable_native_agent_schema()
+    top_level_properties = top_level_drift["properties"]
+    assert isinstance(top_level_properties, dict)
+    top_level_properties["id"] = {"type": "string"}
+
+    summary_schema_drift = _renderable_native_agent_schema()
+    sections = summary_schema_drift["properties"]
+    assert isinstance(sections, dict)
+    context_schema = sections["context_config"]
+    assert isinstance(context_schema, dict)
+    context_properties = context_schema["properties"]
+    assert isinstance(context_properties, dict)
+    context_properties["summary_schema"] = {"type": "object", "properties": {}}
+
+    nested_object_drift = _renderable_native_agent_schema()
+    nested_sections = nested_object_drift["properties"]
+    assert isinstance(nested_sections, dict)
+    nested_context = nested_sections["context_config"]
+    assert isinstance(nested_context, dict)
+    nested_fields = nested_context["properties"]
+    assert isinstance(nested_fields, dict)
+    nested_fields["compression_prompt"] = {"type": "object", "properties": {}}
+
+    for unsafe_schema in (top_level_drift, summary_schema_drift, nested_object_drift):
+        with pytest.raises(RuntimeUpstreamError) as rejected:
+            _project_native_agent_schema({"schema": unsafe_schema})
+        assert b"unsupported Agent schema" in rejected.value.body
+
+
+def test_native_agent_schema_route_reads_the_real_pinned_runtime_contract(tmp_path: Path) -> None:
+    settings = _runtime_settings(tmp_path)
+    store = _store(tmp_path)
+
+    with serve_loopback(create_runtime_app(settings), lifespan="on") as runtime_url:
+
+        async def exercise() -> httpx.Response:
+            runtime_client = AgentScopeRuntimeClient(runtime_url, shared_secret=SECRET)
+            api = FastAPI()
+            api.include_router(
+                create_runtime_router(
+                    client=runtime_client,
+                    store=store,
+                    provisioner=object(),  # type: ignore[arg-type]
+                    model_type="openai_credential",
+                    credential_id="provider",
+                    model_name="model",
+                    model_parameters={},
+                    require_api_key=lambda: None,
+                ),
+            )
+            try:
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=api),
+                    base_url="http://agentgov.test",
+                ) as client:
+                    return await client.get("/api/runtime/agent-schema")
+            finally:
+                await runtime_client.close()
+
+        response = asyncio.run(exercise())
+
+    assert response.status_code == 200
+    assert set(response.json()["schema"]["properties"]) == {
+        "name",
+        "system_prompt",
+        "context_config",
+        "react_config",
+        "invite_config",
+    }
+    native_schema = response.json()["schema"]
+    assert set(native_schema["required"]) == {name for name, field in NativeAgentDataInput.model_fields.items() if field.is_required()}
+    for section_name, model in {
+        "context_config": NativeContextConfig,
+        "react_config": NativeReactConfig,
+        "invite_config": NativeInviteConfig,
+    }.items():
+        nested = native_schema["properties"][section_name]["properties"]
+        assert set(nested) == set(model.model_fields)
+        assert all(field.get("type") != "object" for field in nested.values())
+
+
+@pytest.mark.parametrize(
+    ("input_value", "metadata"),
+    [
+        (
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "read another Agent"}],
+                "metadata": {GOVERNED_EVIDENCE_ROOT_METADATA_KEY: "/business-agents/agent-b/workspace"},
+            },
+            {},
+        ),
+        (
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "read another Agent",
+                        "metadata": {GOVERNED_EVIDENCE_ROOT_METADATA_KEY: "/business-agents/agent-b/workspace"},
+                    },
+                ],
+            },
+            {},
+        ),
+        (
+            {"role": "user", "content": []},
+            {"forwarded": {GOVERNED_EVIDENCE_ROOT_METADATA_KEY: "/business-agents/agent-b/workspace"}},
+        ),
+    ],
+    ids=("message", "nested-content", "request-metadata"),
+)
+def test_chat_contract_rejects_cross_agent_governed_evidence(
+    input_value: object,
+    metadata: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match=GOVERNED_EVIDENCE_ROOT_METADATA_KEY):
+        RuntimeChatRequest.model_validate(
+            {
                 "agent_id": "runtime-a",
                 "session_id": "session-a",
-                "client_operation_id": "validation-scope",
+                "client_operation_id": "spoof-evidence",
+                "input": input_value,
+                "metadata": metadata,
+            },
+        )
+
+
+def test_chat_contract_requires_exact_hitl_run_and_scopes_confirmation_only() -> None:
+    confirmation = {
+        "type": "USER_CONFIRM_RESULT",
+        "reply_id": "reply-a",
+        "confirm_results": [],
+    }
+    with pytest.raises(ValidationError, match="expected_run_id is required"):
+        RuntimeChatRequest.model_validate(
+            {
+                "agent_id": "runtime-a",
+                "session_id": "session-a",
+                "client_operation_id": "hitl-without-run",
+                "input": confirmation,
+            },
+        )
+    with pytest.raises(ValidationError, match="only applies to USER_CONFIRM_RESULT"):
+        RuntimeChatRequest.model_validate(
+            {
+                "agent_id": "runtime-a",
+                "session_id": "session-a",
+                "client_operation_id": "invalid-run-scope",
                 "input": {"role": "user", "content": []},
                 "confirmation_scope": "run",
             },
         )
-    assert response.status_code == 422
-    assert "only applies to USER_CONFIRM_RESULT" in response.text
-    assert upstream.calls == []
 
 
-def test_hitl_continuation_requires_expected_run_id(tmp_path) -> None:
-    app, _, _, upstream, _ = _setup(tmp_path)
+def test_session_and_cancel_store_boundaries_are_exact_and_idempotent(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _bind_session(store)
+    with pytest.raises(RuntimeObjectNotFound):
+        store.get_session("session-a", runtime_agent_id="runtime-b")
 
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/runtime/chat/",
-            json={
-                "agent_id": "runtime-a",
-                "session_id": "session-a",
-                "client_operation_id": "validation-hitl",
-                "input": {"type": "USER_CONFIRM_RESULT", "reply_id": "reply-a", "confirm_results": []},
-            },
-        )
-
-    assert response.status_code == 422
-    assert "expected_run_id is required" in response.text
-    assert upstream.calls == []
-
-
-def test_runtime_client_normalizes_transport_failure_without_leaking_target() -> None:
-    def unavailable(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("private-host.example refused secret=abc", request=request)
-
-    async def call() -> None:
-        async with httpx.AsyncClient(
-            base_url="http://private-host.example",
-            transport=httpx.MockTransport(unavailable),
-        ) as transport_client:
-            runtime_client = AgentScopeRuntimeClient(
-                "http://private-host.example",
-                shared_secret="shared-test-secret",
-                client=transport_client,
-            )
-            with pytest.raises(RuntimeUpstreamError) as caught:
-                await runtime_client.request_json("GET", "/health")
-        assert caught.value.status_code == 503
-        assert caught.value.body == b'{"detail":"AgentScope Runtime unavailable","error_code":"RUNTIME_UNAVAILABLE"}'
-
-    asyncio.run(call())
-
-
-def test_runtime_client_signature_binds_encoded_query_and_internal_user() -> None:
-    observed: list[httpx.Request] = []
-
-    def inspect_request(request: httpx.Request) -> httpx.Response:
-        observed.append(request)
-        return httpx.Response(200, json={"status": "ok"})
-
-    async def call() -> None:
-        async with httpx.AsyncClient(
-            base_url="http://runtime.test",
-            transport=httpx.MockTransport(inspect_request),
-        ) as transport_client:
-            runtime_client = AgentScopeRuntimeClient(
-                "http://runtime.test",
-                shared_secret="shared-test-secret",
-                client=transport_client,
-            )
-            await runtime_client.request_json(
-                "GET",
-                "/sessions/session-1/status",
-                params={"agent_id": "agent id/one"},
-            )
-
-    asyncio.run(call())
-    request = observed[0]
-    timestamp = request.headers["X-AgentGov-Timestamp"]
-    raw_target = request.url.raw_path
-    expected = hmac.new(
-        b"shared-test-secret",
-        b"\n".join(
-            (
-                timestamp.encode("ascii"),
-                b"agentgov-runtime",
-                b"GET",
-                raw_target,
-                b"",
-            ),
-        ),
-        hashlib.sha256,
-    ).hexdigest()
-    assert raw_target == b"/sessions/session-1/status?agent_id=agent+id%2Fone"
-    assert request.headers["X-AgentGov-Signature"] == expected
-
-
-def _terminal_run(store: RuntimeRunStore):
-    store.bind_session(
-        session_id="trace-session",
-        agent_id="agent-a",
-        agent_version_id="version-a",
-        runtime_agent_id="runtime-a",
-        digest="a" * 64,
-    )
     run = store.begin_run(
-        session_id="trace-session",
+        session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": []},
         alert_id=None,
@@ -552,246 +598,194 @@ def _terminal_run(store: RuntimeRunStore):
         metadata={},
     )
     store.mark_trigger_started(run.run_id)
-    for index, (event_type, payload) in enumerate(
-        (
-            ("REPLY_END", {"finished_reason": "completed"}),
-            ("MESSAGE_PERSISTED", {"message_persisted": True, "finished_reason": "completed"}),
-            (
-                "SESSION_PERSISTED",
-                {"reply_ids": ["trace-reply"], "message_count": 1, "team_generation": 0},
-            ),
-        ),
-    ):
-        store.apply_receipt(
-            RuntimeReceipt(
-                receipt_id=f"trace-receipt-{index}",
-                event_id=f"trace-event-{index}",
-                session_id=run.session_id,
-                run_id=run.run_id,
-                reply_id=None if event_type == "SESSION_PERSISTED" else "trace-reply",
-                type=event_type,
-                payload=payload,
-                trace_id=run.trace_id,
-            ),
-        )
-    return store.get_run(run.run_id)
+    first = store.mark_cancel_requested(run.run_id)
+    repeated = store.mark_cancel_requested(run.run_id)
+
+    assert first.metadata["cancellation_requested"] is True
+    assert first.metadata["recovery_required"] is True
+    assert first.metadata["recovery_quiescent_observations"] == 0
+    assert repeated.metadata == first.metadata
+    assert store.recovery_required_runs()[0].run_id == run.run_id
 
 
-def _complete_trace_for_run(run) -> dict[str, object]:
-    ended = "2026-09-09T00:00:00Z"
-    return {
-        "id": run.trace_id,
-        "url": "https://langfuse.example/run",
-        "observations": [
-            {
-                "id": "root-span",
-                "name": "agentgov.run",
-                "trace_id": run.trace_id,
-                "parent_observation_id": None,
-                "end_time": ended,
-                "attributes": {
-                    "agentgov.run.id": run.run_id,
-                    "agentgov.agent.id": run.agent_id,
-                    "agentgov.agent.version_id": run.agent_version_id,
-                    "agentgov.harness.digest": run.harness_digest,
-                    "agentgov.runtime.version": "v1",
-                    "agentscope.agent.id": run.runtime_agent_id,
-                    "agentscope.runtime.version": "2.0.8",
-                    "agentscope.session.id": run.session_id,
-                    "agentgov.run.finished_reason": run.terminal_reason,
-                },
-            },
-            {
-                "id": "stage-span",
-                "name": "agentgov.run.stage",
-                "trace_id": run.trace_id,
-                "parent_observation_id": "root-span",
-                "end_time": ended,
-                "attributes": {
-                    "agentscope.agent.id": run.runtime_agent_id,
-                    "agentscope.session.id": run.session_id,
-                    "agentscope.agent.reply_id": run.reply_ids[0],
-                },
-            },
-            {
-                "id": "invoke-span",
-                "name": "invoke_agent",
-                "trace_id": run.trace_id,
-                "parent_observation_id": "stage-span",
-                "end_time": ended,
-                "attributes": {
-                    "gen_ai.conversation.id": run.session_id,
-                    "agentscope.agent.reply_id": run.reply_ids[0],
-                    "agentgov.content.input.length": 5,
-                    "agentgov.content.input.sha256": "b" * 64,
-                },
-            },
-            {
-                "id": "chat-span",
-                "name": "chat",
-                "trace_id": run.trace_id,
-                "parent_observation_id": "invoke-span",
-                "end_time": ended,
-                "attributes": {
-                    "gen_ai.conversation.id": run.session_id,
-                    "gen_ai.request.model": "model-1",
-                    "gen_ai.provider.name": "provider-1",
-                    "agentgov.content.output.length": 7,
-                    "agentgov.content.output.sha256": "c" * 64,
-                },
-            },
-        ],
-    }
-
-
-@pytest.mark.parametrize(
-    "trace",
-    [
-        {"id": "TRACE_ID", "name": "agentgov.run"},
-        {"fetch_status": "failed", "error": "not ready"},
-        {
-            "id": "TRACE_ID",
-            "observations": [{"name": "chat", "end_time": "2026-09-09T00:00:00Z"}],
-        },
-        {
-            "id": "TRACE_ID",
-            "observations": [{"name": "agentgov.run", "end_time": None}],
-        },
-        {
-            "id": "TRACE_ID",
-            "observations": [
-                {"name": "invoke_agent", "end_time": "2026-09-09T00:00:00Z"},
-                {"name": "chat", "end_time": "2026-09-09T00:00:00Z"},
-                {
-                    "name": "agentgov.run",
-                    "end_time": "2026-09-09T00:00:00Z",
-                    "attributes": {
-                        "agentgov.run.id": "wrong-run",
-                        "agentgov.run.finished_reason": "completed",
-                    },
-                },
-            ],
-        },
-        {
-            "id": "TRACE_ID",
-            "observations": [
-                {"name": "invoke_agent", "end_time": "2026-09-09T00:00:00Z"},
-                {"name": "chat", "end_time": "2026-09-09T00:00:00Z"},
-                {
-                    "name": "agentgov.run",
-                    "end_time": "2026-09-09T00:00:00Z",
-                    "attributes": {
-                        "agentgov.run.id": "RUN_ID",
-                        "agentgov.run.finished_reason": "interrupted",
-                    },
-                },
-            ],
-        },
-    ],
-    ids=["core-only", "fetch-failed", "no-root", "root-not-ended", "wrong-run-root", "old-stage-reason"],
-)
-def test_trace_stays_pending_until_finished_agentgov_run_root_is_observed(tmp_path, trace) -> None:
-    store = RuntimeRunStore(make_session_factory(tmp_path / "runtime.db"))
-    store.bind_agent_version(
-        agent_id="agent-a",
-        agent_version_id="version-a",
-        digest="a" * 64,
-        runtime_agent_id="runtime-a",
-    )
-    run = _terminal_run(store)
-    resolved_trace = _replace_trace_id(trace, run.trace_id)
-    for observation in resolved_trace.get("observations", []):
-        if not isinstance(observation, dict):
-            continue
-        attributes = observation.get("attributes")
-        if isinstance(attributes, dict) and attributes.get("agentgov.run.id") == "RUN_ID":
-            attributes["agentgov.run.id"] = run.run_id
-    app = FastAPI()
-    app.include_router(
-        create_agent_run_router(
-            client=_RuntimeClient(),  # type: ignore[arg-type]
-            store=store,
-            trace_fetcher=lambda _trace_id: resolved_trace,
-            authorize_run=lambda _run: None,
-            require_api_key=lambda: None,
-        ),
-    )
-    with TestClient(app) as client:
-        response = client.get(f"/api/agent-runs/{run.run_id}/trace")
-    assert response.status_code == 200
-    assert response.json()["trace_status"] == "pending"
-    assert store.get_run(run.run_id).trace_status == "pending"
-
-
-def test_trace_completes_only_after_matching_finished_agentgov_run_root(tmp_path) -> None:
-    store = RuntimeRunStore(make_session_factory(tmp_path / "runtime.db"))
-    store.bind_agent_version(
-        agent_id="agent-a",
-        agent_version_id="version-a",
-        digest="a" * 64,
-        runtime_agent_id="runtime-a",
-    )
-    run = _terminal_run(store)
-    trace = _complete_trace_for_run(run)
-    app = FastAPI()
-    app.include_router(
-        create_agent_run_router(
-            client=_RuntimeClient(),  # type: ignore[arg-type]
-            store=store,
-            trace_fetcher=lambda _trace_id: trace,
-            authorize_run=lambda _run: None,
-            require_api_key=lambda: None,
-        ),
-    )
-    with TestClient(app) as client:
-        response = client.get(f"/api/agent-runs/{run.run_id}/trace")
-    assert response.status_code == 200
-    assert response.json()["trace_status"] == "complete"
-    assert response.json()["trace_url"] == "https://langfuse.example/run"
-
-
-def test_old_run_cannot_interrupt_a_new_active_run_on_the_same_session(tmp_path) -> None:
-    store = RuntimeRunStore(make_session_factory(tmp_path / "runtime.db"))
-    store.bind_agent_version(
-        agent_id="agent-a",
-        agent_version_id="version-a",
-        digest="a" * 64,
-        runtime_agent_id="runtime-a",
-    )
-    old_run = _terminal_run(store)
-    new_run = store.begin_run(
-        session_id=old_run.session_id,
+def test_old_terminal_run_cannot_cancel_new_active_run_on_same_session(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _bind_session(store)
+    old_run = store.begin_run(
+        session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": []},
         alert_id=None,
         case_id=None,
         metadata={},
     )
-    upstream = _RuntimeClient()
-    app = FastAPI()
-    register_error_handlers(app)
-    app.include_router(
-        create_agent_run_router(
-            client=upstream,  # type: ignore[arg-type]
-            store=store,
-            trace_fetcher=lambda _: None,
-            authorize_run=lambda _run: None,
-            require_api_key=lambda: None,
-        ),
+    store.fail_trigger(old_run.run_id, error={"type": "test"})
+    new_run = store.begin_run(
+        session_id="session-a",
+        runtime_agent_id="runtime-a",
+        input_value={"role": "user", "content": []},
+        alert_id=None,
+        case_id=None,
+        metadata={},
     )
 
-    with TestClient(app) as client:
-        response = client.post(f"/api/agent-runs/{old_run.run_id}/cancel")
-
-    assert response.status_code == 409
-    active = store.active_run_for_session(old_run.session_id)
-    assert active is not None and active.run_id == new_run.run_id
-    assert not any(path.endswith("/interrupt") for _, path, _ in upstream.calls)
+    with pytest.raises(RuntimeStateConflict, match="exact active run"):
+        store.mark_cancel_requested(old_run.run_id)
+    assert store.active_run_for_session("session-a").run_id == new_run.run_id
 
 
-def _replace_trace_id(value, trace_id: str | None):
-    if isinstance(value, dict):
-        return {key: _replace_trace_id(item, trace_id) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_replace_trace_id(item, trace_id) for item in value]
-    return trace_id if value == "TRACE_ID" else value
+def test_runtime_client_signature_covers_real_encoded_query_target(tmp_path: Path) -> None:
+    settings = _runtime_settings(tmp_path)
+    with serve_loopback(create_runtime_app(settings), lifespan="on") as runtime_url:
+
+        async def exercise() -> int:
+            client = AgentScopeRuntimeClient(runtime_url, shared_secret=SECRET)
+            try:
+                response = await client.request_json(
+                    "GET",
+                    "/health",
+                    params={"agent_id": "agent id/one"},
+                )
+                return response.status_code
+            finally:
+                await client.close()
+
+        assert asyncio.run(exercise()) == 200
+
+
+def test_client_operation_lookup_keeps_static_route_and_single_principal_auth(
+    process_environment,
+    tmp_path: Path,
+) -> None:
+    process_environment.set("RUNTIME_CANDIDATES_DIR", str(tmp_path / "candidate-workspaces"))
+    module = load_test_app(
+        process_environment,
+        tmp_path,
+        api_key=PUBLIC_API_KEY,
+        extra_agent_ids=(ORDINARY_TEST_AGENT_ID,),
+    )
+    assert prepare_published_harnesses(module.settings) == 2
+    version_id, digest = _bind_published_agent(
+        module,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        runtime_agent_id="runtime-public-a",
+    )
+    other_version_id, other_digest = _bind_published_agent(
+        module,
+        agent_id=ORDINARY_TEST_AGENT_ID,
+        runtime_agent_id="runtime-public-b",
+    )
+    module.run_store.bind_session(
+        session_id="session-public-a",
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        agent_version_id=version_id,
+        runtime_agent_id="runtime-public-a",
+        digest=digest,
+    )
+    module.run_store.bind_session(
+        session_id="session-public-b",
+        agent_id=ORDINARY_TEST_AGENT_ID,
+        agent_version_id=other_version_id,
+        runtime_agent_id="runtime-public-b",
+        digest=other_digest,
+    )
+    run = module.run_store.admit_run(
+        session_id="session-public-a",
+        runtime_agent_id="runtime-public-a",
+        input_value={"role": "user", "content": []},
+        alert_id=None,
+        case_id=None,
+        metadata={},
+        client_operation_id="operation-public-a",
+    ).run
+    headers = {"Authorization": f"Bearer {PUBLIC_API_KEY}"}
+    params = {
+        "session_id": "session-public-a",
+        "client_operation_id": "operation-public-a",
+    }
+
+    with serve_loopback(module.app) as api_url:
+        with httpx.Client(base_url=api_url, trust_env=False, timeout=5) as client:
+            assert client.get("/api/agent-runs/by-client-operation", params=params).status_code == 401
+            assert (
+                client.get(
+                    "/api/agent-runs/by-client-operation",
+                    params=params,
+                    headers={"Authorization": "Bearer invalid-principal"},
+                ).status_code
+                == 401
+            )
+            resolved = client.get(
+                "/api/agent-runs/by-client-operation",
+                params=params,
+                headers=headers,
+            )
+            wrong_session = client.get(
+                "/api/agent-runs/by-client-operation",
+                params={**params, "session_id": "session-public-b"},
+                headers=headers,
+            )
+
+    assert resolved.status_code == 200
+    assert resolved.json()["run_id"] == run.run_id
+    assert wrong_session.status_code == 404
+    assert "by-client-operation" not in wrong_session.json()["detail"]
+
+
+def test_session_reads_reject_another_bound_runtime_agent_before_upstream(
+    process_environment,
+    tmp_path: Path,
+) -> None:
+    process_environment.set("RUNTIME_CANDIDATES_DIR", str(tmp_path / "candidate-workspaces"))
+    module = load_test_app(
+        process_environment,
+        tmp_path,
+        api_key=PUBLIC_API_KEY,
+        extra_agent_ids=(ORDINARY_TEST_AGENT_ID,),
+    )
+    assert prepare_published_harnesses(module.settings) == 2
+    first_version, first_digest = _bind_published_agent(
+        module,
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        runtime_agent_id="runtime-public-a",
+    )
+    _bind_published_agent(
+        module,
+        agent_id=ORDINARY_TEST_AGENT_ID,
+        runtime_agent_id="runtime-public-b",
+    )
+    module.run_store.bind_session(
+        session_id="session-public-a",
+        agent_id=DEFAULT_BUSINESS_AGENT_ID,
+        agent_version_id=first_version,
+        runtime_agent_id="runtime-public-a",
+        digest=first_digest,
+    )
+    headers = {"Authorization": f"Bearer {PUBLIC_API_KEY}"}
+    paths = (
+        "/api/runtime/sessions/session-public-a/messages",
+        "/api/runtime/sessions/session-public-a/status",
+        "/api/runtime/sessions/session-public-a/stream",
+        "/api/runtime/sessions/session-public-a/workspace/status",
+        "/api/runtime/sessions/session-public-a/workspace/mcp",
+        "/api/runtime/sessions/session-public-a/workspace/skills",
+    )
+
+    with serve_loopback(module.app) as api_url:
+        with httpx.Client(base_url=api_url, trust_env=False, timeout=5) as client:
+            unauthenticated = client.get(
+                paths[0],
+                params={"agent_id": "runtime-public-b"},
+            )
+            responses = [
+                client.get(
+                    path,
+                    params={"agent_id": "runtime-public-b"},
+                    headers=headers,
+                )
+                for path in paths
+            ]
+
+    assert unauthenticated.status_code == 401
+    assert [response.status_code for response in responses] == [404, 404, 404, 404, 404, 404]
+    assert {response.json()["detail"] for response in responses} == {"Runtime session not found: session-public-a"}

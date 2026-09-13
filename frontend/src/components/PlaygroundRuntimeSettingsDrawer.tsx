@@ -1,183 +1,204 @@
-import { FileJson, Server } from "lucide-react";
-import { useState, type ReactNode } from "react";
-import { AgentConfigFileEditor } from "./AgentConfigFileEditor";
-import { DrawerShell } from "./DrawerShell";
+import { Bot, Boxes, PlugZap, RefreshCw } from "lucide-react";
 import type {
-  AgentInfo,
-  ConfigMappingResponse,
-  RuntimeClientConfig,
-  RuntimeHealth,
-  SkillInfo,
+  AgentSummary,
+  RuntimeWorkspaceMcp,
+  RuntimeWorkspaceSkill,
+  RuntimeWorkspaceStatus,
+  SessionInfo,
 } from "../types/runtime";
+import { DrawerShell } from "./DrawerShell";
+
+export interface RuntimeWorkspaceResources {
+  status: RuntimeWorkspaceStatus | null;
+  mcps: RuntimeWorkspaceMcp[];
+  skills: RuntimeWorkspaceSkill[];
+  loading: {
+    status: boolean;
+    mcp: boolean;
+    skills: boolean;
+  };
+  errors: {
+    status?: string;
+    mcp?: string;
+    skills?: string;
+  };
+}
 
 interface PlaygroundRuntimeSettingsDrawerProps {
-  clientConfig: RuntimeClientConfig;
-  agents: AgentInfo[];
-  skills: SkillInfo[];
-  alertId: string;
-  caseId: string;
-  streaming: boolean;
-  onAlertIdChange: (v: string) => void;
-  onCaseIdChange: (v: string) => void;
-  health: RuntimeHealth | null;
-  configMapping: ConfigMappingResponse | null;
-  selectedBusinessAgentId: string;
-  lastError?: string;
-  onConfigApplied?: () => void;
+  session: SessionInfo | null;
+  businessAgent: AgentSummary | null;
+  resources: RuntimeWorkspaceResources;
+  onRefresh: () => void;
   onClose: () => void;
 }
 
-type MappingItem = ConfigMappingResponse["mappings"][number];
-
 export function PlaygroundRuntimeSettingsDrawer(props: PlaygroundRuntimeSettingsDrawerProps) {
-  const [editingPath, setEditingPath] = useState<string | null>(null);
-  const mappings = props.configMapping?.mappings || [];
-  const existingMappings = mappings.filter((item) => item.exists);
-  const projectMappings = mappings.filter(
-    (item) => item.display_group === "harness" && item.safe_to_edit,
+  const session = props.session;
+  const currentRuntimeAgentId = props.businessAgent?.runtime_agent_id || null;
+  const usesCurrentVersion = Boolean(
+    session?.agent_id
+    && currentRuntimeAgentId
+    && session.agent_id === currentRuntimeAgentId,
   );
-  const runtimeMappings = existingMappings.filter((item) => item.display_group === "versioning");
-  const userStateMappings = existingMappings.filter((item) => item.display_group === "hidden_debug");
-  const runtimeReadiness = props.health?.runtime_service;
+  const loading = Object.values(props.resources.loading).some(Boolean);
 
   return (
     <DrawerShell
-      title="运行设置"
-      description="查看当前业务 Agent 的 AgentScope Runtime 能力和任务上下文。"
+      title="当前 Session 运行资源"
+      description="只读展示当前 Session 固定的版本归属，以及 AgentScope Workspace 的安全投影。"
       size="wide"
       testId="playground-runtime-settings-drawer"
       className="playground-runtime-settings-drawer"
       bodyClassName="playground-runtime-settings-body"
+      headerActions={session ? (
+        <button className="secondary-button" type="button" disabled={loading} onClick={props.onRefresh}>
+          <RefreshCw size={14} />刷新运行资源
+        </button>
+      ) : null}
       onClose={props.onClose}
     >
-      {props.lastError ? <div className="error-box">{props.lastError}</div> : null}
-
-      <section className="runtime-settings-section" data-testid="runtime-agent-settings">
-        <div className="runtime-settings-head">
-          <h4>能力发现</h4>
-          <span>{props.agents.length} subagents · {props.skills.length} skills</span>
+      {!session ? (
+        <div className="empty-state runtime-session-empty" data-testid="runtime-session-empty">
+          请先新建或选择一个 Session，再查看它固定的版本、MCP 与 skills。
         </div>
-        <div className="runtime-capability-grid">
-          <CapabilityList title="Subagents" items={props.agents.map((agent) => ({ name: agent.name, title: agent.description || agent.path }))} />
-          <CapabilityList title="Skills" items={props.skills.map((skill) => ({ name: skill.name, title: skill.description || skill.path }))} />
-        </div>
-      </section>
-
-      <section className="runtime-settings-section" data-testid="runtime-parameter-settings">
-        <div className="runtime-settings-head">
-          <h4>运行参数</h4>
-          <span>本次会话请求参数</span>
-        </div>
-        <div className="runtime-settings-grid">
-          <label className="form-field">
-            <span>Alert ID</span>
-            <input value={props.alertId} onChange={(event) => props.onAlertIdChange(event.target.value)} placeholder="alert-001" />
-          </label>
-          <label className="form-field">
-            <span>Case ID</span>
-            <input value={props.caseId} onChange={(event) => props.onCaseIdChange(event.target.value)} placeholder="case-001" />
-          </label>
-        </div>
-      </section>
-
-      <details className="runtime-debug-section" data-testid="runtime-debug-section">
-        <summary>高级调试信息</summary>
-        <div className="runtime-debug-grid">
-          <DebugPanel icon={<Server size={15} />} title="Runtime">
-            <Metric label="Status" value={props.health?.status || "unknown"} tone={props.health?.status === "ok" ? "good" : "warn"} />
-            <Metric label="Model" value={props.health?.model || "-"} />
-            <Metric label="Business Agent" value={props.configMapping?.agent_id || props.selectedBusinessAgentId || "-"} />
-            <Metric label="Workspace" value={props.configMapping?.workspace || props.health?.workspace_dir || "-"} mono />
-            <Metric
-              label="AgentScope Runtime"
-              value={runtimeReadiness?.status || "not checked"}
-              tone={runtimeReadiness?.status === "ready" ? "good" : "warn"}
-            />
-            {runtimeReadiness?.error_code ? (
-              <div className="runtime-provider-diagnostic" data-testid="runtime-service-diagnostic">
-                <strong>{runtimeReadiness.error_code}</strong>
-                <span>
-                  probe={runtimeReadiness.probe || "unknown"} · reason={runtimeReadiness.reason || "unknown"}
-                </span>
-                {runtimeReadiness.action ? <p>{runtimeReadiness.action}</p> : null}
-              </div>
+      ) : (
+        <>
+          <section className="runtime-settings-section" data-testid="runtime-session-ownership">
+            <div className="runtime-settings-head">
+              <h4>Session 与版本归属</h4>
+              <span>{usesCurrentVersion ? "当前发布版本" : "固定历史版本"}</span>
+            </div>
+            <div className="runtime-ownership-grid">
+              <Metric label="Business Agent" value={session.business_agent_id || props.businessAgent?.agent_id || "-"} mono />
+              <Metric label="Session" value={session.session_id} mono />
+              <Metric label="Session Runtime Agent" value={session.agent_id || "-"} mono />
+              <Metric label="当前发布 commit" value={props.businessAgent?.agent_version_id || "未发布"} mono />
+              <Metric label="当前发布 Runtime Agent" value={currentRuntimeAgentId || "未绑定"} mono />
+              <Metric label="Session 状态" value={sessionStatusLabel(session.status)} />
+            </div>
+            {!usesCurrentVersion ? (
+              <p className="runtime-version-note" data-testid="runtime-session-version-note">
+                该 Session 保持创建时的 Runtime Agent 绑定；发布新版本不会替换已有 Session。
+              </p>
             ) : null}
-          </DebugPanel>
+          </section>
 
-          <DebugPanel icon={<FileJson size={15} />} title="Agent 配置">
-            {projectMappings.length ? projectMappings.map((item) => (
-              <div className="runtime-debug-card" key={`${item.scope}-${item.kind}-${item.container_path}`}>
-                <strong>{item.scope} · {item.kind}</strong>
-                {item.kind === "manifest" || item.kind === "instructions" ? (
-                  <button
-                    className="runtime-config-path-button"
-                    type="button"
-                    data-testid={`runtime-config-edit-${item.kind}`}
-                    onClick={() => setEditingPath(item.kind === "manifest" ? "agent.yaml" : "AGENT.md")}
-                  >
-                    <code>{item.container_path}</code>
-                  </button>
-                ) : (
-                  <code>{item.container_path}</code>
-                )}
-                <span>{item.git_policy} · {mappingLoadLabel(item)}</span>
-              </div>
-            )) : <div className="empty-state">暂无可编辑项目配置。</div>}
-          </DebugPanel>
-
-          <DebugPanel icon={<FileJson size={15} />} title="版本治理运行态">
-            {runtimeMappings.length ? runtimeMappings.map((item) => (
-              <div className="runtime-debug-card" key={`${item.scope}-${item.kind}-${item.container_path}`}>
-                <strong>{item.kind}</strong>
-                <code>{item.container_path}</code>
-                <span>{item.git_policy} · {mappingLoadLabel(item)}</span>
-              </div>
-            )) : <div className="empty-state">暂无版本治理运行态路径。</div>}
-            {userStateMappings.length ? (
-              <Metric label="User State" value={`${userStateMappings.length} hidden`} />
-            ) : null}
-          </DebugPanel>
-        </div>
-      </details>
-      {editingPath ? (
-        <AgentConfigFileEditor
-          clientConfig={props.clientConfig}
-          agentId={props.selectedBusinessAgentId}
-          path={editingPath}
-          streaming={props.streaming}
-          onApplied={props.onConfigApplied}
-          onClose={() => setEditingPath(null)}
-        />
-      ) : null}
+          <WorkspaceStatusPanel
+            status={props.resources.status}
+            loading={props.resources.loading.status}
+            error={props.resources.errors.status}
+          />
+          <McpPanel
+            mcps={props.resources.mcps}
+            loading={props.resources.loading.mcp}
+            error={props.resources.errors.mcp}
+          />
+          <SkillPanel
+            skills={props.resources.skills}
+            loading={props.resources.loading.skills}
+            error={props.resources.errors.skills}
+          />
+        </>
+      )}
     </DrawerShell>
   );
 }
 
-function CapabilityList({ title, items }: { title: string; items: Array<{ name: string; title?: string }> }) {
+function WorkspaceStatusPanel({ status, loading, error }: {
+  status: RuntimeWorkspaceStatus | null;
+  loading: boolean;
+  error?: string;
+}) {
   return (
-    <div className="runtime-capability-list">
-      <strong>{title}</strong>
-      <div className="runtime-skill-grid">
-        {items.length ? items.map((item) => (
-          <span className="skill-chip runtime-chip-static" key={item.name} title={item.title}>
-            {item.name}
-          </span>
-        )) : <div className="empty-state">未发现。</div>}
+    <section className="runtime-settings-section" data-testid="runtime-workspace-status">
+      <div className="runtime-settings-head">
+        <h4>Workspace 状态</h4>
+        <span>{status?.available ? "可用" : "不可用"}</span>
       </div>
-    </div>
-  );
-}
-
-function DebugPanel({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
-  return (
-    <section className="runtime-debug-panel">
-      <h5>{icon}{title}</h5>
-      <div className="runtime-debug-panel-body">{children}</div>
+      {loading ? <div className="empty-state" data-testid="runtime-workspace-status-loading">正在读取 Workspace 状态…</div> : null}
+      {error ? <div className="error-box" data-testid="runtime-workspace-status-error" role="alert">{error}</div> : null}
+      {!loading && !error && status ? (
+        <div className="runtime-ownership-grid">
+          <Metric label="位于 Workspace 根目录" value={booleanLabel(status.at_workspace_root)} />
+          <Metric label="Git 仓库" value={booleanLabel(status.git_repository)} />
+          <Metric label="存在未提交变更" value={booleanLabel(status.git_dirty)} tone={status.git_dirty ? "warn" : "good"} />
+        </div>
+      ) : null}
+      {!loading && !error && !status ? <div className="empty-state">Runtime 未返回 Workspace 状态。</div> : null}
     </section>
   );
 }
 
-function Metric({ label, value, mono, tone }: { label: string; value: string; mono?: boolean; tone?: "good" | "warn" }) {
+function McpPanel({ mcps, loading, error }: {
+  mcps: RuntimeWorkspaceMcp[];
+  loading: boolean;
+  error?: string;
+}) {
+  return (
+    <section className="runtime-settings-section" data-testid="runtime-workspace-mcp">
+      <div className="runtime-settings-head">
+        <h4><PlugZap size={15} />MCP 连接与工具目录</h4>
+        <span>{mcps.length} 个连接</span>
+      </div>
+      <p className="runtime-resource-disclaimer">
+        connected 仅表示 Workspace 已连接并发现工具，不代表该 MCP 已在业务回复中被调用或产生业务效果。
+      </p>
+      {loading ? <div className="empty-state" data-testid="runtime-workspace-mcp-loading">正在连接并读取 MCP…</div> : null}
+      {error ? <div className="error-box" data-testid="runtime-workspace-mcp-error" role="alert">{error}</div> : null}
+      <div className="runtime-resource-list">
+        {!loading && !error && mcps.length ? mcps.map((mcp) => (
+          <article className="runtime-resource-card" key={mcp.name}>
+            <div>
+              <strong>{mcp.name}</strong>
+              <span className={mcp.is_healthy ? "good" : "warn"}>{mcp.is_healthy ? "connected" : "connection failed"}</span>
+            </div>
+            <small>{mcp.is_stateful ? "stateful" : "stateless"} · {(mcp.tools ?? []).length} tools</small>
+            {mcp.error ? <p className="is-warning">{mcp.error}</p> : null}
+            <div className="runtime-skill-grid">
+              {(mcp.tools ?? []).map((tool) => (
+                <span className="skill-chip runtime-chip-static" key={tool.name} title={tool.description || undefined}>{tool.name}</span>
+              ))}
+            </div>
+          </article>
+        )) : null}
+        {!loading && !error && !mcps.length ? <div className="empty-state">当前 Session Workspace 未配置 MCP。</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function SkillPanel({ skills, loading, error }: {
+  skills: RuntimeWorkspaceSkill[];
+  loading: boolean;
+  error?: string;
+}) {
+  return (
+    <section className="runtime-settings-section" data-testid="runtime-workspace-skills">
+      <div className="runtime-settings-head">
+        <h4><Boxes size={15} />Workspace skills</h4>
+        <span>{skills.length} 个</span>
+      </div>
+      {loading ? <div className="empty-state" data-testid="runtime-workspace-skills-loading">正在读取 Workspace skills…</div> : null}
+      {error ? <div className="error-box" data-testid="runtime-workspace-skills-error" role="alert">{error}</div> : null}
+      <div className="runtime-resource-list">
+        {!loading && !error && skills.length ? skills.map((skill) => (
+          <article className="runtime-resource-card" key={skill.name}>
+            <div><strong><Bot size={14} />{skill.name}</strong></div>
+            <p>{skill.description}</p>
+          </article>
+        )) : null}
+        {!loading && !error && !skills.length ? <div className="empty-state">当前 Session Workspace 未加载 skill。</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function Metric({ label, value, mono, tone }: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  tone?: "good" | "warn";
+}) {
   return (
     <div className="metric">
       <span>{label}</span>
@@ -186,11 +207,13 @@ function Metric({ label, value, mono, tone }: { label: string; value: string; mo
   );
 }
 
-function mappingLoadLabel(item: MappingItem) {
-  if (item.load_semantics === "runtime_loaded") return "Runtime 直接加载";
-  if (item.load_semantics === "runtime_materialized") return "Runtime 物化加载";
-  if (item.load_semantics === "governance_only") return "仅治理使用";
-  if (item.loaded_by_default) return "Runtime 默认加载";
-  if (item.safe_to_edit) return "项目配置";
-  return "不直接加载";
+function sessionStatusLabel(status: SessionInfo["status"]) {
+  if (status === "running") return "运行中";
+  if (status === "awaiting_permission") return "等待确认";
+  if (status === "awaiting_external_result") return "等待外部结果";
+  return "空闲";
+}
+
+function booleanLabel(value: boolean) {
+  return value ? "是" : "否";
 }

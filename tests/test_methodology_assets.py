@@ -41,6 +41,4 @@ def test_methodology_assets_are_carried_by_version_governed_governance_agents():
     """AGV-012/006：方法论由治理 Agent 承载，治理 Agent 受版本治理（提供版本/修订记录）。"""
     for job_type in _GOVERNANCE_METHODS:
         profile_name = AGENT_JOB_SPECS[job_type].profile_name
-        assert profile_name == GOVERNOR_PROFILE, (
-            f"治理方法 {job_type} 的承载 profile {profile_name!r} 应是受版本治理的 governor"
-        )
+        assert profile_name == GOVERNOR_PROFILE, f"治理方法 {job_type} 的承载 profile {profile_name!r} 应是受版本治理的 governor"

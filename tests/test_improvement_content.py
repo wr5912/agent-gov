@@ -13,6 +13,8 @@ from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.generated_agent_tests import build_generated_agent_test
 from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app_test_utils import load_test_app as _load_app
 from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
@@ -98,9 +100,9 @@ def test_reassign_feedback_and_delete_improvement_cascade(tmp_path: Path) -> Non
     assert items.get_improvement(a.improvement_id) is not None
 
 
-def test_part_b_reassign_attachable_delete_endpoints(monkeypatch, tmp_path: Path) -> None:
+def test_part_b_reassign_attachable_delete_endpoints(process_environment, tmp_path: Path) -> None:
     """Part B API：reassign / attachable / deletion-impact / DELETE 端到端。"""
-    module = _load_app(monkeypatch, tmp_path, extra_agent_ids=(ORDINARY_TEST_AGENT_ID,))
+    module = _load_app(process_environment, tmp_path, extra_agent_ids=(ORDINARY_TEST_AGENT_ID,))
     with TestClient(module.app) as client:
         a = client.post("/api/improvements", json={"agent_id": ORDINARY_TEST_AGENT_ID, "title": "事项A"}).json()
         b = client.post("/api/improvements", json={"agent_id": ORDINARY_TEST_AGENT_ID, "title": "事项B"}).json()
@@ -124,8 +126,8 @@ def test_part_b_reassign_attachable_delete_endpoints(monkeypatch, tmp_path: Path
         assert client.get(f"/api/improvements/{a['improvement_id']}").status_code == 200
 
 
-def test_reassign_feedback_rejects_foreign_feedback_id_without_side_effects(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_reassign_feedback_rejects_foreign_feedback_id_without_side_effects(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         alpha_source = client.post("/api/improvements", json={"agent_id": "agent-alpha", "title": "Alpha 来源"}).json()
         alpha_target = client.post("/api/improvements", json={"agent_id": "agent-alpha", "title": "Alpha 目标"}).json()
@@ -161,8 +163,8 @@ def test_reassign_feedback_rejects_foreign_feedback_id_without_side_effects(monk
     assert alpha_feedbacks == []
 
 
-def test_attach_feedback_case_accepts_same_business_agent(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_attach_feedback_case_accepts_same_business_agent(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     feedback_case = _create_feedback_case(module, agent_id="soc-ops")
 
     with TestClient(module.app) as client:
@@ -179,8 +181,8 @@ def test_attach_feedback_case_accepts_same_business_agent(monkeypatch, tmp_path:
     assert attached.json()["case_id"] == feedback_case["feedback_case_id"]
 
 
-def test_generic_feedback_api_rejects_feedback_case_semantics_without_side_effects(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_generic_feedback_api_rejects_feedback_case_semantics_without_side_effects(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     feedback_case = _create_feedback_case(module, agent_id="soc-ops")
     case_id = feedback_case["feedback_case_id"]
 
@@ -278,8 +280,8 @@ def test_generic_feedback_store_rejects_feedback_case_semantics_without_side_eff
     assert items.get_improvement(target.improvement_id).source_feedback_refs == []
 
 
-def test_feedback_case_assignment_is_unique_and_reassign_moves_authoritative_ref(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_feedback_case_assignment_is_unique_and_reassign_moves_authoritative_ref(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     feedback_case = _create_feedback_case(module, agent_id="soc-ops")
     case_id = feedback_case["feedback_case_id"]
 
@@ -346,8 +348,8 @@ def test_merge_and_split_keep_feedback_case_assignment_and_feedback_row_colocate
     assert content.list_feedbacks(target.improvement_id) == []
 
 
-def test_attach_feedback_case_rejects_cross_business_agent_without_side_effects(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_attach_feedback_case_rejects_cross_business_agent_without_side_effects(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     foreign_case = _create_feedback_case(module, agent_id="agent-alpha")
     local_case = _create_feedback_case(module, agent_id="agent-beta")
 
@@ -387,19 +389,26 @@ def test_normalized_feedback_upsert_is_1to1_and_confirmable(tmp_path: Path) -> N
         store.set_normalized_feedback_status("imp-none", status="confirmed")
 
 
-def test_artifact_and_stage_roll_back_together_when_stage_write_fails(tmp_path: Path, monkeypatch) -> None:
-    import app.runtime.stores.improvement_content_store as content_store_module
-
+def test_artifact_and_stage_roll_back_together_on_real_database_abort(tmp_path: Path) -> None:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     items = ImprovementStore(factory)
     content = ImprovementContentStore(factory)
     item = items.create_improvement(agent_id=ORDINARY_TEST_AGENT_ID, title="原子产物")
+    with factory.begin() as db:
+        db.execute(
+            text(
+                """
+                CREATE TRIGGER reject_triage_transition
+                BEFORE UPDATE OF improvement_stage ON improvement_items
+                WHEN NEW.improvement_stage = 'triage'
+                BEGIN
+                    SELECT RAISE(ABORT, 'triage transition rejected');
+                END
+                """
+            )
+        )
 
-    def fail_stage(db, improvement_id, *, stage):
-        raise RuntimeError("injected stage failure")
-
-    monkeypatch.setattr(content_store_module, "advance_improvement_stage_in_transaction", fail_stage)
-    with pytest.raises(RuntimeError, match="injected stage failure"):
+    with pytest.raises(IntegrityError, match="triage transition rejected"):
         content.upsert_normalized_feedback(
             item.improvement_id,
             problem="不应部分提交",
@@ -412,8 +421,8 @@ def test_artifact_and_stage_roll_back_together_when_stage_write_fails(tmp_path: 
     assert unchanged.improvement_stage == "feedback_intake"
 
 
-def test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_advance(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_advance(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         item = client.post(
             "/api/improvements",
@@ -500,8 +509,8 @@ def test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_ad
     assert after["improvement_stage"] == "optimization"
 
 
-def test_advanced_item_rejects_upstream_artifact_and_source_scope_mutation(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_advanced_item_rejects_upstream_artifact_and_source_scope_mutation(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         item = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "阶段围栏"}).json()
         improvement_id = item["improvement_id"]
@@ -584,8 +593,8 @@ def test_structural_artifacts_reject_whitespace_only_business_fields(tmp_path: P
         )
 
 
-def test_content_api_lifecycle(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_content_api_lifecycle(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警误报治理"}).json()["improvement_id"]
         # 系统理解 upsert → get → confirm
@@ -604,9 +613,9 @@ def test_content_api_lifecycle(monkeypatch, tmp_path: Path) -> None:
         assert client.get(f"/api/improvements/{other}/attribution").status_code == 404
 
 
-def test_feedback_table_create_and_list(monkeypatch, tmp_path: Path) -> None:
+def test_feedback_table_create_and_list(process_environment, tmp_path: Path) -> None:
     """四阶段改进治理 §8.4：来源反馈一等内容（摘要/来源/状态），1:多，未知事项 404。"""
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警误报治理"}).json()["improvement_id"]
         a = client.post(
@@ -638,25 +647,10 @@ def test_feedback_table_create_and_list(monkeypatch, tmp_path: Path) -> None:
         assert client.post("/api/improvements/imp-none/feedbacks", json={"summary": "x"}).status_code == 404
 
 
-def test_optimization_plan_and_execution(monkeypatch, tmp_path: Path) -> None:
-    """四阶段改进治理 §106/§107：优化方案 + 执行记录 1:1 子资源，upsert→get→confirm，未知事项/无内容 404。"""
-    module = _load_app(monkeypatch, tmp_path)
+def test_optimization_plan_and_persisted_execution_contract(process_environment, tmp_path: Path) -> None:
+    """方案 API 与真实 SQLite 执行记录的读取/确认契约；自动 apply 由容器验收负责。"""
+    module = _load_app(process_environment, tmp_path)
 
-    async def apply_execution(improvement_id: str):
-        return _seed_execution_record(
-            module.improvement_content_store,
-            improvement_id,
-            summary="已应用并生成版本",
-            changes_applied=["prompt 更新"],
-            agent_version="v1.2.0",
-            generated_by="governor",
-            change_set_id="agc-test",
-            applied_agent_version_id="v1.2.0",
-            applied_diff={"changed_files": ["AGENT.md"]},
-            advance_to_stage="execution",
-        )
-
-    monkeypatch.setattr(module.improvement_execution_service, "generate_and_apply_execution", apply_execution)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "误报治理"}).json()["improvement_id"]
         client.put(f"/api/improvements/{iid}/normalized-feedback", json={"problem": "告警误报"})
@@ -673,8 +667,19 @@ def test_optimization_plan_and_execution(monkeypatch, tmp_path: Path) -> None:
         )
         assert op.status_code == 200 and op.json()["changes"][0]["target"] == "prompt" and op.json()["status"] == "draft"
         assert client.post(f"/api/improvements/{iid}/optimization-plan/confirm").json()["status"] == "confirmed"
-        # 执行记录
-        ex = client.post(f"/api/improvements/{iid}/execution/apply")
+        _seed_execution_record(
+            module.improvement_content_store,
+            iid,
+            summary="已应用并生成版本",
+            changes_applied=["prompt 更新"],
+            agent_version="v1.2.0",
+            generated_by="governor",
+            change_set_id="agc-test",
+            applied_agent_version_id="v1.2.0",
+            applied_diff={"changed_files": ["AGENT.md"]},
+            advance_to_stage="execution",
+        )
+        ex = client.get(f"/api/improvements/{iid}/execution")
         assert ex.status_code == 200 and ex.json()["agent_version"] == "v1.2.0"
         assert client.post(f"/api/improvements/{iid}/execution/confirm").json()["status"] == "confirmed"
         assert client.get(f"/api/improvements/{iid}").json()["improvement_stage"] == "execution"
@@ -690,9 +695,9 @@ def test_optimization_plan_and_execution(monkeypatch, tmp_path: Path) -> None:
         assert client.get(f"/api/improvements/{other}/execution").status_code == 404
 
 
-def test_backend_generates_initial_attribution_and_plan(monkeypatch, tmp_path: Path) -> None:
+def test_backend_generates_initial_attribution_and_plan(process_environment, tmp_path: Path) -> None:
     """P2：归因/方案生成走后端治理端点，不由浏览器拼接后直接 upsert。"""
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     feedback_case = _create_feedback_case(module, agent_id="soc-ops")
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警误报治理"}).json()["improvement_id"]
@@ -726,27 +731,41 @@ def test_backend_generates_initial_attribution_and_plan(monkeypatch, tmp_path: P
         assert client.get(f"/api/improvements/{iid}").json()["improvement_stage"] == "optimization"
 
 
-def test_failed_business_artifact_does_not_advance_stage(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_attribution_and_stage_roll_back_together_on_real_database_abort(tmp_path: Path) -> None:
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    items = ImprovementStore(factory)
+    content = ImprovementContentStore(factory)
+    item = items.create_improvement(agent_id="soc-ops", title="失败不前推")
+    content.upsert_normalized_feedback(item.improvement_id, problem="误报", advance_to_stage="triage")
+    with factory.begin() as db:
+        db.execute(
+            text(
+                """
+                CREATE TRIGGER reject_attribution_transition
+                BEFORE UPDATE OF improvement_stage ON improvement_items
+                WHEN NEW.improvement_stage = 'attribution'
+                BEGIN
+                    SELECT RAISE(ABORT, 'attribution transition rejected');
+                END
+                """
+            )
+        )
 
-    async def fail_attribution(_improvement_id: str, **_kwargs):
-        raise BusinessRuleViolation("forced attribution failure")
+    with pytest.raises(IntegrityError, match="attribution transition rejected"):
+        content.upsert_attribution(
+            item.improvement_id,
+            summary="不应部分提交",
+            advance_to_stage="attribution",
+        )
 
-    monkeypatch.setattr(module.improvement_governor_service, "generate_attribution", fail_attribution)
-    with TestClient(module.app) as client:
-        iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "失败不前推"}).json()["improvement_id"]
-        assert client.put(f"/api/improvements/{iid}/normalized-feedback", json={"problem": "误报"}).status_code == 200
-        assert client.post(f"/api/improvements/{iid}/normalized-feedback/confirm").status_code == 200
-        failed = client.post(f"/api/improvements/{iid}/attribution/generate")
-        item = client.get(f"/api/improvements/{iid}").json()
-
-    assert failed.status_code == 400
-    assert item["improvement_stage"] == "triage"
-    assert module.improvement_content_store.get_attribution(iid) is None
+    assert content.get_attribution(item.improvement_id) is None
+    unchanged = items.get_improvement(item.improvement_id)
+    assert unchanged is not None
+    assert unchanged.improvement_stage == "triage"
 
 
-def test_business_artifact_prerequisites_fail_closed(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_business_artifact_prerequisites_fail_closed(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "禁止跳产物"}).json()["improvement_id"]
         assert client.post(f"/api/improvements/{iid}/attribution/generate").status_code == 400
@@ -768,20 +787,9 @@ def test_business_artifact_prerequisites_fail_closed(monkeypatch, tmp_path: Path
     assert module.improvement_content_store.get_regression_test_design(iid) is None
 
 
-def test_unapplied_execution_record_does_not_advance_or_unlock_regression(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
+def test_unapplied_execution_record_does_not_advance_or_unlock_regression(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
 
-    async def no_action_execution(improvement_id: str):
-        return _seed_execution_record(
-            module.improvement_content_store,
-            improvement_id,
-            summary="未自动应用：没有安全的可执行操作。",
-            changes_applied=[],
-            agent_version="",
-            generated_by="heuristic",
-        )
-
-    monkeypatch.setattr(module.improvement_execution_service, "generate_and_apply_execution", no_action_execution)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "无动作不前推"}).json()["improvement_id"]
         client.put(f"/api/improvements/{iid}/normalized-feedback", json={"problem": "误报"})
@@ -796,7 +804,14 @@ def test_unapplied_execution_record_does_not_advance_or_unlock_regression(monkey
             json={"summary": "增加校验", "changes": [{"target": "prompt", "change": "校验时间"}]},
         )
         client.post(f"/api/improvements/{iid}/optimization-plan/confirm")
-        no_action = client.post(f"/api/improvements/{iid}/execution/apply")
+        no_action = _seed_execution_record(
+            module.improvement_content_store,
+            iid,
+            summary="未自动应用：没有安全的可执行操作。",
+            changes_applied=[],
+            agent_version="",
+            generated_by="heuristic",
+        )
         manual_without_evidence = client.put(
             f"/api/improvements/{iid}/execution",
             json={"summary": "声称执行", "changes_applied": ["prompt"], "agent_version": ""},
@@ -804,128 +819,31 @@ def test_unapplied_execution_record_does_not_advance_or_unlock_regression(monkey
         regression = client.post(f"/api/improvements/{iid}/regression-test-design/generate")
         item = client.get(f"/api/improvements/{iid}").json()
 
-    assert no_action.status_code == 200
-    assert no_action.json()["changes_applied"] == []
+    assert no_action.changes_applied == []
     assert manual_without_evidence.status_code == 405
     assert regression.status_code == 400
     assert item["improvement_stage"] == "optimization"
 
 
-def test_regression_test_design_generate_get_confirm(monkeypatch, tmp_path: Path) -> None:
-    """生成代码、确认待发布 commit、运行测试是三个独立动作。"""
-    module = _load_app(monkeypatch, tmp_path)
+def test_regression_test_design_roundtrips_in_real_sqlite(tmp_path: Path) -> None:
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    items = ImprovementStore(factory)
+    content = ImprovementContentStore(factory)
+    item = items.create_improvement(agent_id="soc-ops", title="误报治理")
+    candidate = _regression_test_payload(item.improvement_id, "告警误报")
 
-    async def apply_execution(improvement_id: str):
-        return _seed_execution_record(
-            module.improvement_content_store,
-            improvement_id,
-            summary="已执行",
-            changes_applied=["prompt"],
-            agent_version="v-test",
-            generated_by="governor",
-            change_set_id="agc-regression",
-            applied_agent_version_id="v-test",
-            applied_diff={"changed_files": ["AGENT.md"]},
-            advance_to_stage="execution",
-        )
+    created = content.upsert_regression_test_design(
+        item.improvement_id,
+        summary="生成可执行 pytest",
+        tests=[candidate],
+        generated_by="governor",
+    )
+    persisted = content.get_regression_test_design(item.improvement_id)
 
-    def materialize_regression_tests(improvement_id: str) -> dict:
-        module.improvement_content_store.rebind_execution_candidate(
-            improvement_id,
-            change_set_id="agc-regression",
-            previous_commit_sha="v-test",
-            candidate_commit_sha="a" * 40,
-            applied_diff={"changed_files": ["AGENT.md", "tests/test_feedback_regression.py"]},
-            generated_test_files=["tests/test_feedback_regression.py"],
-        )
-        return {
-            "agent_id": "soc-ops",
-            "change_set_id": "agc-regression",
-            "candidate_commit_sha": "a" * 40,
-            "generated_test_files": ["tests/test_feedback_regression.py"],
-        }
-
-    async def generate_regression_test_design(improvement_id: str, *, advance_to_stage: str | None = None):
-        candidate = build_generated_agent_test(
-            improvement_id=improvement_id,
-            index=1,
-            test_code=(
-                "def test_time_consistency(agent):\n"
-                "    result = agent.run('仅依据以下已给定事实回答，不调用任何工具或读取文件。请判断告警是否应升级；回答必须包含核验。')\n"
-                "    assert not result.errors\n"
-                "    normalized_text = ''.join(result.text.split())\n"
-                "    assert '核验' in normalized_text\n"
-                "    assert result.raw['agent_activity']['tool_calls'] == []\n"
-            ),
-            test_intent="验证升级前核验时间",
-            assertion_rationale="回答必须出现核验动作",
-        )
-        return module.improvement_content_store.upsert_regression_test_design(
-            improvement_id,
-            summary="生成可执行 pytest",
-            tests=[candidate.to_payload()],
-            generated_by="governor",
-            advance_to_stage=advance_to_stage,
-        )
-
-    test_run = {
-        "test_run_id": "atr-feedback",
-        "agent_id": "soc-ops",
-        "commit_sha": "a" * 40,
-        "change_set_id": "agc-regression",
-        "source": "feedback_optimization",
-        "status": "queued",
-        "cancel_requested": False,
-        "created_at": "2026-07-18T00:00:00Z",
-    }
-
-    test_runs: list[dict] = []
-    monkeypatch.setattr(module.improvement_execution_service, "generate_and_apply_execution", apply_execution)
-    monkeypatch.setattr(module.improvement_execution_service, "materialize_regression_tests", materialize_regression_tests)
-    monkeypatch.setattr(module.improvement_governor_service, "generate_regression_test_design", generate_regression_test_design)
-
-    def create_change_set_run(_change_set_id: str) -> dict:
-        test_runs.append(test_run)
-        return test_run
-
-    monkeypatch.setattr(module.agent_testing_service, "create_change_set_run", create_change_set_run)
-    monkeypatch.setattr(module.agent_testing_service.store, "list_runs", lambda **_kwargs: list(test_runs))
-    monkeypatch.setattr(module.agent_testing_service.store, "get_run", lambda _test_run_id: test_run)
-    with TestClient(module.app) as client:
-        iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "误报治理"}).json()["improvement_id"]
-        client.post(
-            f"/api/improvements/{iid}/feedbacks",
-            json={"summary": "告警误报", "raw_text": "原始用户输入：请判断这条告警是否应升级处置。"},
-        )
-        client.put(f"/api/improvements/{iid}/normalized-feedback", json={"problem": "告警误报"})
-        client.post(f"/api/improvements/{iid}/normalized-feedback/confirm")
-        client.put(
-            f"/api/improvements/{iid}/attribution",
-            json={"summary": "数据时间不一致", "responsibility_boundary": [], "evidence": []},
-        )
-        client.post(f"/api/improvements/{iid}/attribution/confirm")
-        client.put(
-            f"/api/improvements/{iid}/optimization-plan",
-            json={"summary": "增加校验", "changes": [{"target": "prompt", "change": "校验时间"}]},
-        )
-        client.post(f"/api/improvements/{iid}/optimization-plan/confirm")
-        client.post(f"/api/improvements/{iid}/execution/apply")
-        client.post(f"/api/improvements/{iid}/execution/confirm")
-        gen = client.post(f"/api/improvements/{iid}/regression-test-design/generate")
-        assert gen.status_code == 200 and gen.json()["generated_by"] == "governor" and gen.json()["tests"]
-        assert client.get(f"/api/improvements/{iid}/regression-test-design").json()["status"] == "draft"
-        confirmed = client.post(f"/api/improvements/{iid}/regression-test-design/confirm")
-        assert confirmed.status_code == 200
-        assert confirmed.json()["status"] == "confirmed"
-        assert confirmed.json()["generated_test_files"] == ["tests/test_feedback_regression.py"]
-        assert confirmed.json()["test_run"] is None
-        started = client.post("/api/agent-change-sets/agc-regression/test-runs")
-        assert started.status_code == 202 and started.json()["status"] == "queued"
-        refreshed = client.get(f"/api/improvements/{iid}/regression-test-design").json()
-        assert refreshed["candidate_commit_sha"] == "a" * 40
-        assert refreshed["generated_test_files"] == ["tests/test_feedback_regression.py"]
-        assert refreshed["test_run"]["test_run_id"] == "atr-feedback"
-        assert client.get(f"/api/improvements/{iid}").json()["improvement_stage"] == "regression"
-        assert client.post("/api/improvements/imp-none/regression-test-design/generate").status_code == 404
-        other = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "空"}).json()["improvement_id"]
-        assert client.get(f"/api/improvements/{other}/regression-test-design").status_code == 404
+    assert created.status == "draft"
+    assert persisted is not None
+    assert len(persisted.tests) == 1
+    assert persisted.tests[0]["target_path"] == candidate["target_path"]
+    assert persisted.tests[0]["test_code"] == candidate["test_code"].strip()
+    assert persisted.tests[0]["test_intent"] == candidate["test_intent"]
+    assert persisted.generated_by == "governor"

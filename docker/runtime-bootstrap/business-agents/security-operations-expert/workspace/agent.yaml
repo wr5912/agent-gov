@@ -44,10 +44,7 @@ workspace_policy:
   - mcp__sec-ops__resource_read
   - mcp__sec-ops__resource_templates_list
   - mcp__sec-ops__resources_list
-  - mcp__sec-ops__response_orchestration_agent_tools__get_case_revision_context_api_v1_agent_tools_cases_case_id_context_get
-  - mcp__sec-ops__response_orchestration_agent_tools__request_case_revision_api_v1_agent_tools_cases_case_id_revisions_post
   - mcp__sec-ops__soc_api__dashboard_summary_api_v1_dashboard_summary_get
-  - mcp__sec-ops__soc_api__get_resp_playbooks_recommend
   - mcp__sec-ops__soc_api__list_alerts_api_v1_alerts_get
   - mcp__sec-ops__soc_api__list_assets_api_v1_assets_get
   - mcp__sec-ops__soc_api__list_detection_findings_api_external_detection_findings_get
@@ -148,42 +145,42 @@ harness:
   system_prompt:
     name: system_prompt
     path: AGENT.md
-    sha256: 26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743
+    sha256: b9f6d16302df29245d7f55999b916e65e492851b90fa859b7b3c580e325168b0
   skills:
   - name: dispose-threat
     path: skills/dispose-threat
     sha256: 9f23ade1e3a7bb4f94711f837ab9d1eda40387f6f5b0d1b30b4f7d26f84fd8d2
   - name: playbook-dry-run
     path: skills/playbook-dry-run
-    sha256: bafb08e9f040222bc18ddf097c8e8acfed8d3ec1639ba400ae1d88f0978d8dc7
+    sha256: ba61f3b1268384c770f979d5d8574669ba59026b6fc16eea4935a81747deb36e
   - name: secops-investigate
     path: skills/secops-investigate
     sha256: e33ddeda1b74554a3bf0fee0937edcb97e92f2b5e13d105075647bf04fa1b54f
   - name: security-operations-analysis
     path: skills/security-operations-analysis
-    sha256: c06ba96746b02d09b1e04782581fc9d7c14fd7f543fedadecacbdf3dc54e405c
+    sha256: 95eb1d540ae8fc680a15d3d924f35d5a0716ea912ca86cb03fd026297cc13e7f
   - name: threat-response-disposition
     path: skills/threat-response-disposition
-    sha256: b99a40ea7119598844e3c323bbf474a17825e44e64ad745cf3de5e7a733e21d0
+    sha256: e7ec23919c5f89c14189f7478809cb0bb2f478a5fefa8618f6e3a1515e4804d2
   mcps:
   - name: sec-ops
     path: mcp/sec-ops.json
-    sha256: 856b47e949900b8ed00d85863bf1ce59effc46c0c5076d113669132b92ad703a
+    sha256: 5106caa810d98f76ca25ecb100608d4813ec22947c722da02919436269111dd9
   subagents:
   - name: response-playbook-builder
     path: subagents/response-playbook-builder
-    sha256: 061cfe1a0060598011043bb8d74312e065179d44c09742d9970c4c832980e1ed
+    sha256: 7231825faf969030f840859da35fb09cda8e8470e7cf7894f4ccd9d10b96b72c
   - name: response-playbook-planning
     path: subagents/response-playbook-planning
-    sha256: 758d835557ef8f1a5e358d3eb4ce05e7199ea1de50782c3659d952d59b016566
+    sha256: 7dbf94abe32f8977ef518d24fa61f376a56f5e314eb492601854eff4886c6b8f
   - name: response-playbook-summarizer
     path: subagents/response-playbook-summarizer
-    sha256: cf99cdcf17e04ab6c21269ac8268ff40b6d7146ab9cd0ef3d5c83b6ca2242212
+    sha256: 9d9185dedfbcd4da8bf33c8f70085907b684c0b0fe8c74a6ab0a5e22efc7c77a
   tests:
     name: tests
     path: tests
-    sha256: af96b40fc9e27bed5f9f6de5808e827cdd86027f2fb822035fb73045c5c292b2
-  content_digest: 57e02e36602b95f7effbbda4bd2a5966a64eefa46c854416e0a04e06f6fb7085
+    sha256: ae1ffd1009f39e77031a515c5daa1ace7f559cd37a73468c66a60e0e19e7d08b
+  content_digest: 99772137a5dfbbca603af7c4171e8778c90b2b07e1216070a46803679e2ec340
 extension_points:
   add_skill: skills/<skill-name>/SKILL.md
   add_mcp_server: mcp/<name>.json
@@ -198,24 +195,22 @@ capabilities:
 - containment_recommendation
 - response_case_intake
 - disposition_planning
-- playbook_resolution
-- playbook_dry_run
 presentation:
-  summary: 聚焦安全运营事实分析、事件调查、威胁狩猎和响应剧本建议。
-  welcome_message: '我可以基于告警、事件、资产、账号和现有响应剧本开展只读分析，并给出调查结论或处置建议。
+  summary: 聚焦安全运营事实分析、事件调查和威胁狩猎；仅依据 RO 已核实材料提出响应剧本候选。
+  welcome_message: '我可以基于你提供的信息和已配置的只读 SOC 数据开展安全运营研判，并给出调查结论或处置建议。
 
 
-    请提供需要分析的对象、时间范围和期望产出；涉及保存或执行的动作仍由平台确认流程负责。
+    请提供需要分析的对象、时间范围和期望产出。若需要响应剧本候选，请提供 RO 已核实的剧本与动作材料；我不会直接保存或执行处置。
 
     '
-  composer_placeholder: 输入告警、事件、资产或响应剧本相关任务
+  composer_placeholder: 输入告警、事件、资产或只读研判任务
   starter_prompts:
   - label: 分析当前告警
     prompt: 请分析我接下来提供的告警，区分已知事实、合理推断和建议动作，并说明还需要哪些证据。
   - label: 调查安全事件
     prompt: 请基于我接下来提供的事件信息建立调查时间线，识别受影响对象、关键证据和优先处置建议。
   - label: 审查响应剧本
-    prompt: 请审查我接下来提供的响应剧本，说明适用条件、缺失步骤、风险和建议修改。
+    prompt: 请审查我接下来提供的响应剧本资料，区分已核实信息与待核实事项，说明风险和建议修改，不要声称已完成 SOC 目录校验。
   - label: 说明能力边界
     prompt: 请说明你的主要能力、需要的输入、输出形式，以及不会直接执行的操作。
 operational_model:
@@ -261,17 +256,6 @@ approval_policy:
   poll_execution_result: false
   evaluate_effect: false
   close_response_case: false
-conversation_revision_policy:
-  owner: response-orchestration
-  mode: same-agent-conversation
-  context_tool: mcp__sec-ops__response_orchestration_agent_tools__get_case_revision_context_api_v1_agent_tools_cases_case_id_context_get
-  revision_tool: mcp__sec-ops__response_orchestration_agent_tools__request_case_revision_api_v1_agent_tools_cases_case_id_revisions_post
-  require_explicit_user_acceptance: true
-  stable_message_provenance_required: true
-  trusted_actor_source: ai-console-proof
-  creates_new_whole_playbook_approval: true
-  soc_preflight_mode: embedded-in-execution-api
-  soc_execution_side_effects: deny
 observability:
   output_dir: /workspace/outputs/security-operations-expert
   response_case_dir: /workspace/outputs/security-operations-expert/response

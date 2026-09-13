@@ -3,25 +3,25 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import Annotated
 
+import httpx
+from agentgov_agentscope_contract import is_runtime_template_restart_response
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.runtime.json_types import JsonObject
+from app.version import APP_VERSION
 
 from ._router_operations import (
-    PROVEN_UNSCHEDULED_CHAT_STATUSES,
     RUN_ID_HEADER,
     SESSION_ID_HEADER,
     _audit_error,
     _call,
+    _cancel_response,
     _compensate_session_creation,
-    _interrupt_active_run,
     _json_upstream,
-    _session_id_from_view,
 )
 from ._router_recovery import (
     RuntimeGatewayRecoveryReport as RuntimeGatewayRecoveryReport,
@@ -29,7 +29,12 @@ from ._router_recovery import (
 from ._router_recovery import (
     reconcile_runtime_gateway as reconcile_runtime_gateway,
 )
-from .client import AgentScopeRuntimeClient, RuntimeUpstreamError, copy_response_headers
+from .client import (
+    AgentScopeRuntimeClient,
+    RuntimeUpstreamError,
+    canonical_session_id_from_view,
+    copy_response_headers,
+)
 from .contracts import (
     TERMINAL_RUN_STATUSES,
     AgentRunResponse,
@@ -47,8 +52,11 @@ from .contracts import (
     RuntimeTeamInboxDelivery,
 )
 from .models import RuntimeSessionCreationIntentModel
+from .native_schema import register_native_agent_schema_route
 from .provisioning import RuntimeAgentProvisioner
+from .run_trigger import admit_and_trigger_chat, interrupt_active_run
 from .security import verify_internal_request
+from .session_resources import register_session_resource_routes
 from .store import (
     RuntimeAuthenticationError,
     RuntimeObjectNotFound,
@@ -61,6 +69,7 @@ from .store import (
 from .trace_validation import trace_has_complete_governed_run
 
 _MAX_INTERNAL_BODY_BYTES = 1024 * 1024
+_RUNTIME_SSE_READINESS_COMMENT = b":\n\n"
 
 
 @dataclass(frozen=True)
@@ -137,7 +146,11 @@ class _SessionCreator:
     async def create(self, payload: RuntimeSessionCreateRequest, key: str | None) -> Response:
         async with self.locks.hold(key):
             if key:
-                existing = self.store.session_creation_for_key(key)
+                existing = self.store.session_creation_for_request(
+                    key=key,
+                    runtime_agent_id=payload.agent_id,
+                    requested_name=payload.name,
+                )
                 if existing is not None:
                     return _intent_replay_response(existing, payload.agent_id)
             binding = self.provisioner.require_current_runtime(payload.agent_id)
@@ -148,7 +161,7 @@ class _SessionCreator:
                 runtime_agent_id=binding.runtime_agent_id,
                 digest=binding.harness_digest,
                 workspace_id=binding.workspace_id,
-                session_name=payload.name,
+                requested_name=payload.name,
             )
             if not owned:
                 return _intent_replay_response(intent, payload.agent_id)
@@ -178,7 +191,7 @@ class _SessionCreator:
                 json=self.config.request_body(runtime_agent_id=runtime_agent_id, workspace_id=workspace_id, name=name),
             )
         except RuntimeUpstreamError as exc:
-            if b"published after Runtime startup; restart Runtime" in exc.body:
+            if is_runtime_template_restart_response(exc.status_code, exc.body):
                 self.store.mark_session_creation(
                     intent_id,
                     status=SessionCreationStatus.FAILED_CLEANED,
@@ -252,6 +265,8 @@ def create_runtime_router(
     _register_session_creation_route(router, session_creator)
     _register_session_listing_route(router, client, store, provisioner)
     _register_session_read_routes(router, client, provisioner)
+    register_session_resource_routes(router, client=client, provisioner=provisioner)
+    register_native_agent_schema_route(router, client=client)
     _register_chat_route(router, client, store, provisioner)
     _register_session_write_routes(router, client, store, provisioner)
     return router
@@ -271,21 +286,6 @@ def _register_agent_version_routes(router: APIRouter, provisioner: RuntimeAgentP
             harness_digest=current.harness_digest,
             runtime_agent_id=current.runtime_agent_id,
             provisioned=current.provisioned,
-        )
-
-    @router.post(
-        "/agents/{governance_agent_id}/provision",
-        response_model=RuntimeCurrentVersionResponse,
-        summary="Provision the exact current governed version before Session admission",
-    )
-    async def provision_runtime_version(governance_agent_id: str) -> RuntimeCurrentVersionResponse:
-        binding = await provisioner.ensure(governance_agent_id)
-        return RuntimeCurrentVersionResponse(
-            governance_agent_id=binding.agent_id,
-            agent_version_id=binding.agent_version_id,
-            harness_digest=binding.harness_digest,
-            runtime_agent_id=binding.runtime_agent_id,
-            provisioned=True,
         )
 
 
@@ -310,7 +310,8 @@ def _register_session_listing_route(
         governance_agent_id: Annotated[str, Query(min_length=1, max_length=128)],
     ) -> Response:
         versions = store.agent_versions_for_agent(governance_agent_id)
-        allowed_by_runtime = {version.runtime_agent_id: set() for version in versions}
+        allowed_by_runtime = {version.runtime_agent_id: set() for version in versions if version.source_kind == "published"}
+        active_run_by_session: dict[str, str | None] = {}
         for candidate in store.sessions_for_agent(governance_agent_id):
             if candidate.runtime_agent_id not in allowed_by_runtime:
                 continue
@@ -319,14 +320,40 @@ def _register_session_listing_route(
             except RuntimeObjectNotFound:
                 continue
             allowed_by_runtime[binding.runtime_agent_id].add(binding.session_id)
+            active_run_by_session[binding.session_id] = binding.active_run_id
         sessions: list[object] = []
         for runtime_agent_id, allowed_ids in allowed_by_runtime.items():
             upstream = await _call(client, "GET", "/sessions/", params={"agent_id": runtime_agent_id})
             values = upstream.body.get("sessions") if isinstance(upstream.body, dict) else None
             if not isinstance(values, list):
-                continue
-            sessions.extend(value for value in values if _session_id_from_view(value) in allowed_ids)
+                raise RuntimeUpstreamError(
+                    502,
+                    b'{"detail":"Runtime returned invalid Session list"}',
+                )
+            for value in values:
+                session_id = canonical_session_id_from_view(value)
+                if session_id in allowed_ids:
+                    sessions.append(
+                        _project_session_view(
+                            value,
+                            active_run_by_session,
+                            session_id=session_id,
+                        ),
+                    )
         return JSONResponse({"sessions": sessions, "total": len(sessions)})
+
+
+def _project_session_view(
+    value: object,
+    active_run_by_session: dict[str, str | None],
+    *,
+    session_id: str,
+) -> object:
+    """在 AgentScope SessionView 外层投影 AgentGov 拥有的活动 run fence。"""
+
+    if not isinstance(value, dict) or session_id not in active_run_by_session:
+        return value
+    return {**value, "active_run_id": active_run_by_session[session_id]}
 
 
 def _register_session_read_routes(
@@ -357,7 +384,14 @@ def _register_session_read_routes(
         upstream = await _call(client, "GET", f"/sessions/{session_id}/status", params={"agent_id": binding.runtime_agent_id})
         return _json_upstream(upstream)
 
-    @router.get("/sessions/{session_id}/stream", summary="Raw-byte proxy of AgentScope AgentEvent SSE")
+    @router.get(
+        "/sessions/{session_id}/stream",
+        summary="Readiness comment followed by raw AgentScope AgentEvent SSE",
+        description=(
+            "Immediately emits one minimal SSE comment so browser fetch observes readiness; "
+            "every subsequent upstream chunk is forwarded in order without modification."
+        ),
+    )
     async def stream(
         session_id: str,
         agent_id: Annotated[str, Query(min_length=1, max_length=128)],
@@ -365,17 +399,26 @@ def _register_session_read_routes(
         binding = provisioner.require_session(session_id, agent_id)
         upstream = await client.start_stream(f"/sessions/{session_id}/stream", params={"agent_id": binding.runtime_agent_id})
 
-        async def body():
-            try:
-                async for chunk in upstream.aiter_raw():
-                    yield chunk
-            finally:
-                await upstream.aclose()
-
         headers = copy_response_headers(dict(upstream.headers))
         headers.setdefault("Cache-Control", "no-cache")
         headers.setdefault("X-Accel-Buffering", "no")
-        return StreamingResponse(body(), status_code=upstream.status_code, headers=headers, media_type="text/event-stream")
+        return StreamingResponse(
+            _runtime_stream_body(upstream),
+            status_code=upstream.status_code,
+            headers=headers,
+            media_type="text/event-stream",
+        )
+
+
+async def _runtime_stream_body(upstream: httpx.Response) -> AsyncIterator[bytes]:
+    """只增加建连 comment；上游事件块、顺序和字节保持原样。"""
+
+    try:
+        yield _RUNTIME_SSE_READINESS_COMMENT
+        async for chunk in upstream.aiter_raw():
+            yield chunk
+    finally:
+        await upstream.aclose()
 
 
 def _register_chat_route(
@@ -387,11 +430,12 @@ def _register_chat_route(
     @router.post("/chat/", summary="Trigger one governed AgentScope run")
     async def chat(request_data: RuntimeChatRequest) -> Response:
         provisioner.require_session(request_data.session_id, request_data.agent_id)
-        governed_input = deepcopy(request_data.input)
-        admission = store.admit_run(
+        triggered = await admit_and_trigger_chat(
+            client=client,
+            store=store,
             session_id=request_data.session_id,
             runtime_agent_id=request_data.agent_id,
-            input_value=governed_input,
+            input_value=request_data.input,
             alert_id=request_data.alert_id,
             case_id=request_data.case_id,
             metadata=request_data.metadata,
@@ -399,48 +443,16 @@ def _register_chat_route(
             confirmation_scope=request_data.confirmation_scope,
             expected_run_id=request_data.expected_run_id,
         )
-        run = admission.run
-        headers = {RUN_ID_HEADER: run.run_id, SESSION_ID_HEADER: run.session_id}
-        if not admission.should_trigger_upstream:
-            replay = admission.replay_response
-            if replay is None:
-                raise RuntimeStateConflict(
-                    "Initial Runtime response is not durably available; recover by client operation lookup",
-                )
-            return Response(
-                content=replay.body,
-                status_code=replay.status_code,
-                headers={**headers, "Content-Type": replay.content_type},
-            )
-        try:
-            upstream = await _call(
-                client,
-                "POST",
-                "/chat/",
-                json={"agent_id": run.runtime_agent_id, "session_id": run.session_id, "input": governed_input},
-            )
-        except RuntimeUpstreamError as exc:
-            error = {"type": exc.__class__.__name__}
-            if exc.status_code in PROVEN_UNSCHEDULED_CHAT_STATUSES:
-                store.fail_trigger(run.run_id, error=error)
-            else:
-                store.mark_trigger_uncertain(run.run_id, error=error)
-            raise
-        except Exception as exc:
-            store.mark_trigger_uncertain(run.run_id, error={"type": exc.__class__.__name__})
-            raise
-        response = JSONResponse(
-            upstream.body,
-            status_code=upstream.status_code,
-            headers={**copy_response_headers(upstream.headers), **headers},
+        return Response(
+            content=triggered.body,
+            status_code=triggered.status_code,
+            headers={
+                **triggered.headers,
+                "Content-Type": triggered.content_type,
+                RUN_ID_HEADER: triggered.run.run_id,
+                SESSION_ID_HEADER: triggered.run.session_id,
+            },
         )
-        store.mark_trigger_started(
-            run.run_id,
-            response_status=response.status_code,
-            response_body=response.body,
-            response_content_type=response.headers["content-type"],
-        )
-        return response
 
 
 def _register_session_write_routes(
@@ -458,7 +470,7 @@ def _register_session_write_routes(
         run = store.active_run_for_session(session_id)
         if run is not None:
             store.mark_cancel_requested(run.run_id)
-            upstream = await _interrupt_active_run(client, store, run, primary_session_id=session_id)
+            upstream = await interrupt_active_run(client, store, run, primary_session_id=session_id)
         else:
             upstream = await _call(
                 client,
@@ -515,6 +527,7 @@ def create_agent_run_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/api/agent-runs", tags=["agent-runs"], dependencies=[Depends(require_api_key)])
     _register_pending_action_route(router, store, authorize_run)
+    _register_run_cancel_route(router, client, store, authorize_run)
 
     @router.get(
         "/by-client-operation",
@@ -562,24 +575,6 @@ def create_agent_run_router(
             trace_id=run.trace_id,
             trace_url=run.trace_url,
             trace_status=run.trace_status,
-            trace=trace,
-        )
-
-    @router.post("/{run_id}/cancel", status_code=202, summary="Cancel one exact AgentGov run")
-    async def cancel(run_id: str) -> Response:
-        run = store.get_run(run_id)
-        authorize_run(run)
-        store.mark_cancel_requested(run_id)
-        upstream = await _interrupt_active_run(
-            client,
-            store,
-            run,
-            primary_session_id=run.session_id,
-        )
-        return JSONResponse(
-            {"run_id": run_id, "session_id": run.session_id, "status": store.get_run(run_id).status},
-            status_code=upstream.status_code,
-            headers={RUN_ID_HEADER: run_id, SESSION_ID_HEADER: run.session_id},
         )
 
     return router
@@ -599,6 +594,37 @@ def _register_pending_action_route(
         run = store.get_run(run_id)
         authorize_run(run)
         return store.pending_actions_for_run(run_id)
+
+
+def _register_run_cancel_route(
+    router: APIRouter,
+    client: AgentScopeRuntimeClient,
+    store: RuntimeRunStore,
+    authorize_run: Callable[[AgentRunResponse], None],
+) -> None:
+    @router.post("/{run_id}/cancel", status_code=202, summary="Cancel one exact AgentGov run")
+    async def cancel(run_id: str) -> Response:
+        run = store.get_run(run_id)
+        authorize_run(run)
+        was_requested = run.metadata.get("cancellation_requested") is True
+        requested = store.mark_cancel_requested(run_id)
+        if requested.status in TERMINAL_RUN_STATUSES:
+            return _cancel_response(requested)
+        if was_requested and requested.metadata.get("recovery_interrupt_requested") is True:
+            return _cancel_response(requested)
+        try:
+            await interrupt_active_run(
+                client,
+                store,
+                requested,
+                primary_session_id=requested.session_id,
+            )
+        except RuntimeStateConflict:
+            settled = store.get_run(run_id)
+            if settled.status in TERMINAL_RUN_STATUSES and settled.metadata.get("cancellation_requested") is True:
+                return _cancel_response(settled)
+            raise
+        return _cancel_response(store.get_run(run_id))
 
 
 def create_internal_runtime_router(*, store: RuntimeRunStore, shared_secret: str) -> APIRouter:
@@ -632,10 +658,14 @@ def create_internal_runtime_router(*, store: RuntimeRunStore, shared_secret: str
             announcement = RuntimeBootAnnouncement.model_validate_json(body)
         except ValueError as exc:
             raise RuntimeStoreError("Invalid Runtime boot announcement") from exc
+        if announcement.runtime_version != APP_VERSION:
+            raise RuntimeStateConflict("Runtime version does not match AgentGov")
         return RuntimeBootAck(
             boot_id=announcement.boot_id,
+            runtime_version=APP_VERSION,
             recovery_run_ids=store.reconcile_after_runtime_boot(
                 announcement.boot_id,
+                announcement.runtime_version,
             ),
         )
 

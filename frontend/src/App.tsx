@@ -1,17 +1,33 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
-import { defaultRuntimeConfig, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getCurrentAgentRef, getHealth, getRuntimeSessionMessages, getRuntimeSessionStatus, getSessions, listBusinessAgents, provisionRuntimeAgent, shouldMigrateStoredApiBase } from "./api/runtime";
+import {
+  defaultRuntimeConfig,
+  deleteRuntimeSession,
+  getAgentChangeSets,
+  getAgentReleases,
+  getHealth,
+  getRuntimeSessionMessages,
+  getRuntimeSessionStatus,
+  getRuntimeWorkspaceMcps,
+  getRuntimeWorkspaceSkills,
+  getRuntimeWorkspaceStatus,
+  getSessions,
+  listBusinessAgents,
+  renameRuntimeSession,
+  shouldMigrateStoredApiBase,
+} from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
 import { AssetRegistry } from "./components/AssetRegistry";
 import { EVIDENCE_PANEL_DEFAULT_WIDTH, PlaygroundEvidencePanel } from "./components/PlaygroundEvidencePanel";
-import { PlaygroundRuntimeSettingsDrawer } from "./components/PlaygroundRuntimeSettingsDrawer";
+import {
+  PlaygroundRuntimeSettingsDrawer,
+  type RuntimeWorkspaceResources,
+} from "./components/PlaygroundRuntimeSettingsDrawer";
 import { PlaygroundSessionSidebar } from "./components/PlaygroundSessionSidebar";
 import { FeedbackDrawer, type FeedbackContext } from "./components/FeedbackDrawer";
 import { SettingsModal } from "./components/SettingsModal";
 import { Topbar } from "./components/Topbar";
-import { useAgentCatalog } from "./hooks/useAgentCatalog";
 import { useAgentPresentation } from "./hooks/useAgentPresentation";
-import { useConfigMapping } from "./hooks/useConfigMapping";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { usePlaygroundSessionScope } from "./hooks/usePlaygroundSessionScope";
 import { usePlaygroundTrace } from "./hooks/usePlaygroundTrace";
@@ -21,14 +37,14 @@ import {
   cancelWaitingExternalExecutionRequests,
   patchExternalExecutionRequest,
 } from "./runtimeExternalExecutionState";
-import { messagesFromAgentScopeMessages } from "./playgroundHistory";
+import { activeAgentGovRun, messagesFromAgentScopeMessages } from "./playgroundHistory";
 import { usePromptSuggestion } from "./hooks/usePromptSuggestion";
 import {
   initialPlaygroundRunState,
   isPlaygroundRunLocked,
   playgroundRunReducer,
 } from "./playgroundRunState";
-import type { AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, RuntimeClientConfig, RuntimeExternalExecutionRequest, RuntimeHealth, RuntimeUserConfirmRequest, SessionInfo } from "./types/runtime";
+import type { AgentChangeSet, AgentRelease, AgentSummary, ChatMessage, RuntimeClientConfig, RuntimeExternalExecutionRequest, RuntimeHealth, RuntimeUserConfirmRequest, SessionInfo } from "./types/runtime";
 import { getAgentRunPendingActions, getAgentRuns } from "./api/feedback";
 import { defaultLangfuseUrl, makeApiDocsUrl } from "./runtimeUrls";
 import "./styles.css";
@@ -40,8 +56,6 @@ export default function App() {
 
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [agentRepository, setAgentRepository] = useState<AgentRepositoryStatus | null>(null);
-  const [currentAgentRef, setCurrentAgentRef] = useState<AgentGitRef | null>(null);
   const [agentChangeSets, setAgentChangeSets] = useState<AgentChangeSet[]>([]);
   const [agentReleases, setAgentReleases] = useState<AgentRelease[]>([]);
   const [businessAgents, setBusinessAgents] = useState<AgentSummary[]>([]);
@@ -54,7 +68,8 @@ export default function App() {
     startNewSession,
     selectSession: selectScopedSession,
     claimLocalSession,
-  } = usePlaygroundSessionScope({ sessions, messagesBySession });
+    forgetSession,
+  } = usePlaygroundSessionScope({ sessions });
   const [alertId, setAlertId] = useState("");
   const [caseId, setCaseId] = useState("");
   const [input, setInput] = useState("");
@@ -64,13 +79,20 @@ export default function App() {
   const [userInputErrors, setUserInputErrors] = useState<Record<string, string>>({});
   const [submittingUserInputRequests, setSubmittingUserInputRequests] = useState<Set<string>>(() => new Set());
   const [lastError, setLastError] = useState<string | undefined>();
+  const [refreshError, setRefreshError] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
-  const [runtimeProvisioning, setRuntimeProvisioning] = useState(false);
-  const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeWindow, setActiveWindow] = useState<"chat" | "improvement" | "asset">("chat");
   const [assetRefreshRevision, setAssetRefreshRevision] = useState(0);
   const [playgroundDrawer, setPlaygroundDrawer] = useState<"runtime-settings" | null>(null);
+  const [runtimeResources, setRuntimeResources] = useState<RuntimeWorkspaceResources>({
+    status: null,
+    mcps: [],
+    skills: [],
+    loading: { status: false, mcp: false, skills: false },
+    errors: {},
+  });
+  const [runtimeResourcesRevision, setRuntimeResourcesRevision] = useState(0);
   const [sessionSidebarOpen, setSessionSidebarOpen] = useState(false);
   const [evidencePanelOpen, setEvidencePanelOpen] = useState(false);
   const [evidencePanelWidth, setEvidencePanelWidth] = useState(EVIDENCE_PANEL_DEFAULT_WIDTH);
@@ -91,8 +113,6 @@ export default function App() {
     apiBase: migratedClientConfig.apiBase || runtimeDefaults.apiBase,
     apiKey: migratedClientConfig.apiKey || runtimeDefaults.apiKey,
   }), [migratedClientConfig, runtimeDefaults]);
-  const configMapping = useConfigMapping(effectiveClientConfig, selectedBusinessAgentId, setLastError);
-  const { agents, skills } = useAgentCatalog(effectiveClientConfig, selectedBusinessAgentId, setLastError);
   const agentPresentation = useAgentPresentation(effectiveClientConfig, selectedBusinessAgentId);
   const promptSuggestion = usePromptSuggestion(activeSessionId, setInput);
   const calibrateTrace = usePlaygroundTrace(effectiveClientConfig, setMessagesBySession);
@@ -138,6 +158,84 @@ export default function App() {
   );
   const activeRuntimeAgentId = activeBackendSession?.agent_id || selectedBusinessAgent?.runtime_agent_id || "";
   const activeBackendRunId = activeBackendSession?.active_run_id || undefined;
+
+  useEffect(() => {
+    if (playgroundDrawer !== "runtime-settings" || !activeBackendSession?.agent_id) {
+      setRuntimeResources({
+        status: null,
+        mcps: [],
+        skills: [],
+        loading: { status: false, mcp: false, skills: false },
+        errors: {},
+      });
+      return;
+    }
+    const controller = new AbortController();
+    setRuntimeResources({
+      status: null,
+      mcps: [],
+      skills: [],
+      loading: { status: true, mcp: true, skills: true },
+      errors: {},
+    });
+    const load = async <K extends "status" | "mcp" | "skills", T>(
+      key: K,
+      request: Promise<T>,
+      apply: (current: RuntimeWorkspaceResources, value: T) => RuntimeWorkspaceResources,
+    ) => {
+      try {
+        const value = await request;
+        if (!controller.signal.aborted) setRuntimeResources((current) => apply(current, value));
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          const message = error instanceof Error ? error.message : String(error);
+          setRuntimeResources((current) => ({
+            ...current,
+            errors: { ...current.errors, [key]: message },
+          }));
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setRuntimeResources((current) => ({
+            ...current,
+            loading: { ...current.loading, [key]: false },
+          }));
+        }
+      }
+    };
+    void load(
+      "status",
+      getRuntimeWorkspaceStatus(
+        effectiveClientConfig,
+        activeBackendSession.agent_id,
+        activeBackendSession.session_id,
+        controller.signal,
+      ),
+      (current, status) => ({ ...current, status }),
+    );
+    void load(
+      "mcp",
+      getRuntimeWorkspaceMcps(
+        effectiveClientConfig,
+        activeBackendSession.agent_id,
+        activeBackendSession.session_id,
+        controller.signal,
+      ),
+      (current, mcps) => ({ ...current, mcps }),
+    );
+    void load(
+      "skills",
+      getRuntimeWorkspaceSkills(
+        effectiveClientConfig,
+        activeBackendSession.agent_id,
+        activeBackendSession.session_id,
+        controller.signal,
+      ),
+      (current, skills) => ({ ...current, skills }),
+    );
+    return () => controller.abort();
+  }, [activeBackendSession, effectiveClientConfig, playgroundDrawer, runtimeResourcesRevision]);
+
   const activeTraceMessage = useMemo(() => {
     if (activeTraceMessageId) {
       const selected = activeMessages.find((message) => message.id === activeTraceMessageId);
@@ -153,56 +251,46 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    setLastError(undefined);
+    setRefreshError(undefined);
     try {
-      const [healthRes, businessAgentsRes] = await Promise.all([
+      const [healthResult, agentsResult, changeSetsResult, releasesResult] = await Promise.allSettled([
         getHealth(effectiveClientConfig),
         listBusinessAgents(effectiveClientConfig),
-      ]);
-      setHealth(healthRes);
-      const sessionGroups = await Promise.all(
-        businessAgentsRes.map((agent) => getSessions(effectiveClientConfig, agent.agent_id)),
-      );
-      const sessionsRes = sessionGroups.flat();
-      setSessions(sessionsRes);
-      setBusinessAgents(businessAgentsRes);
-      if (reconcilePlaygroundScope(businessAgentsRes, sessionsRes)) resetPlaygroundTransientState();
-      const [repositoryRes, currentRefRes, changeSetsRes, releasesRes] = await Promise.all([
-        getAgentRepositoryStatus(effectiveClientConfig),
-        getCurrentAgentRef(effectiveClientConfig),
         getAgentChangeSets(effectiveClientConfig),
         getAgentReleases(effectiveClientConfig),
       ]);
-      setAgentRepository(repositoryRes);
-      setCurrentAgentRef(currentRefRes);
-      setAgentChangeSets(changeSetsRes);
-      setAgentReleases(releasesRes);
+      const errors: string[] = [];
+      if (healthResult.status === "fulfilled") setHealth(healthResult.value);
+      else errors.push(`Runtime 状态加载失败：${errorMessage(healthResult.reason)}`);
+      if (changeSetsResult.status === "fulfilled") setAgentChangeSets(changeSetsResult.value);
+      else errors.push(`待发布更新加载失败：${errorMessage(changeSetsResult.reason)}`);
+      if (releasesResult.status === "fulfilled") setAgentReleases(releasesResult.value);
+      else errors.push(`发布版本加载失败：${errorMessage(releasesResult.reason)}`);
+      if (agentsResult.status === "fulfilled") {
+        const agents = agentsResult.value;
+        setBusinessAgents(agents);
+        const sessionResult = resolveSessionGroups(
+          agents.map((agent) => agent.agent_id),
+          await Promise.allSettled(agents.map((agent) => getSessions(effectiveClientConfig, agent.agent_id))),
+        );
+        if (sessionResult.ok) {
+          setSessions(sessionResult.sessions);
+          if (reconcilePlaygroundScope(agents, sessionResult.sessions)) resetPlaygroundTransientState();
+        } else {
+          errors.push(sessionResult.message);
+        }
+      } else {
+        errors.push(`业务 Agent 列表加载失败，会话列表未刷新：${errorMessage(agentsResult.reason)}`);
+      }
+      if (errors.length > 0) setRefreshError(errors.join("；"));
     } catch (error) {
-      setLastError(error instanceof Error ? error.message : String(error));
+      setRefreshError(`刷新失败：${errorMessage(error)}`);
     } finally {
       setLoading(false);
     }
   }, [effectiveClientConfig, reconcilePlaygroundScope, resetPlaygroundTransientState]);
 
   const refreshAll = useCallback(() => { setAssetRefreshRevision((value) => value + 1); return refresh(); }, [refresh]);
-
-  const refreshVersions = useCallback(async () => {
-    setVersionLoading(true);
-    try {
-      const [repositoryRes, currentRefRes, changeSetsRes, releasesRes] = await Promise.all([
-        getAgentRepositoryStatus(effectiveClientConfig),
-        getCurrentAgentRef(effectiveClientConfig),
-        getAgentChangeSets(effectiveClientConfig),
-        getAgentReleases(effectiveClientConfig),
-      ]);
-      setAgentRepository(repositoryRes);
-      setCurrentAgentRef(currentRefRes);
-      setAgentChangeSets(changeSetsRes);
-      setAgentReleases(releasesRes);
-    } finally {
-      setVersionLoading(false);
-    }
-  }, [effectiveClientConfig]);
 
   useEffect(() => {
     refresh();
@@ -255,11 +343,8 @@ export default function App() {
             ? { ...session, status: status.status, is_running: history.is_running }
             : session
         )));
-        const activeRun = [...runs].reverse().find((run) => {
-          const value = typeof run.status === "string" ? run.status : run.turn_status;
-          return ["queued", "running", "waiting_human", "waiting_external", "finalizing"].includes(String(value || ""));
-        });
-        if (status.status !== "idle" && activeRun?.run_id) {
+        const activeRun = activeAgentGovRun(runs);
+        if (activeRun?.run_id) {
           const operationId = `detached:${activeSessionId}:${activeRun.run_id}`;
           if (runState.phase === "idle") {
             dispatchRun({
@@ -317,23 +402,6 @@ export default function App() {
       setLastError(error instanceof Error ? `刷新会话失败：${error.message}` : `刷新会话失败：${String(error)}`);
     }
   }, [activeRuntimeAgentId, activeSessionId, effectiveClientConfig, refresh, streaming]);
-
-  const provisionSelectedRuntime = useCallback(async () => {
-    if (!selectedBusinessAgentId || streaming || runtimeProvisioning) return;
-    setRuntimeProvisioning(true);
-    setLastError(undefined);
-    try {
-      const current = await provisionRuntimeAgent(effectiveClientConfig, selectedBusinessAgentId);
-      if (!current.provisioned || !current.runtime_agent_id) {
-        throw new Error("Runtime 供给完成后未返回 AgentScope Agent ID。");
-      }
-      await refresh();
-    } catch (error) {
-      setLastError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRuntimeProvisioning(false);
-    }
-  }, [effectiveClientConfig, refresh, runtimeProvisioning, selectedBusinessAgentId, streaming]);
 
   function updateSessionMessages(sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) {
     setMessagesBySession((prev) => ({
@@ -439,6 +507,27 @@ export default function App() {
     if (selectScopedSession(sessionId)) resetPlaygroundTransientState();
   }
 
+  async function renameSession(sessionId: string, name: string) {
+    const session = scopedSessions.find((item) => item.session_id === sessionId);
+    if (!session?.agent_id) throw new Error("当前会话缺少 Runtime Agent 绑定，无法重命名。");
+    await renameRuntimeSession(effectiveClientConfig, session.agent_id, sessionId, name);
+    await refresh();
+  }
+
+  async function deleteSession(sessionId: string) {
+    const session = scopedSessions.find((item) => item.session_id === sessionId);
+    if (!session?.agent_id) throw new Error("当前会话缺少 Runtime Agent 绑定，无法删除。");
+    await deleteRuntimeSession(effectiveClientConfig, session.agent_id, sessionId);
+    setSessions((current) => current.filter((item) => item.session_id !== sessionId));
+    setMessagesBySession((current) => {
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    forgetSession(sessionId);
+    if (activeSessionId === sessionId) resetPlaygroundTransientState();
+  }
+
   function showPlaygroundWindow() {
     setActiveWindow("chat");
   }
@@ -464,7 +553,7 @@ export default function App() {
     setFeedbackContext({
       runId: message?.runId,
       sessionId: message?.sessionId || activeSessionId,
-      agentVersionId: message?.agentVersionId || currentAgentRef?.agent_version_id,
+      agentVersionId: message?.agentVersionId || selectedBusinessAgent?.agent_version_id || undefined,
       scenario: feedbackCaseId ? `case:${feedbackCaseId}` : feedbackAlertId ? `alert:${feedbackAlertId}` : "playground",
       taskId: message?.runId || activeSessionId || undefined,
       alertId: feedbackAlertId,
@@ -482,7 +571,7 @@ export default function App() {
       "# Playground 上下文",
       "",
       `Agent: ${currentAgentName}`,
-      `Agent Version: ${message.agentVersionId || currentAgentRef?.agent_version_id || "-"}`,
+      `Agent Version: ${message.agentVersionId || selectedBusinessAgent?.agent_version_id || "-"}`,
       `Session: ${message.sessionId || activeSessionId || "-"}`,
       `Run: ${message.runId || "-"}`,
       `Alert: ${message.alertId || alertId.trim() || "-"}`,
@@ -524,6 +613,7 @@ export default function App() {
         onOpenAsset={showAssetWindow}
         onOpenSettings={() => setSettingsOpen(true)}
       />
+      {refreshError ? <div className="error-box app-refresh-error" role="alert" data-testid="app-refresh-error">{refreshError}</div> : null}
       {activeWindow === "asset" ? (
         <AssetRegistry
           clientConfig={effectiveClientConfig}
@@ -549,6 +639,8 @@ export default function App() {
               onSelectSession={selectSession}
               onNewSession={createSession}
               onRefresh={refreshPlayground}
+              onRenameSession={renameSession}
+              onDeleteSession={deleteSession}
               streaming={streaming}
             />
           ) : null}
@@ -563,12 +655,10 @@ export default function App() {
             agentName={currentAgentName}
             agentPresentation={agentPresentation}
             runtimeReady={Boolean(activeRuntimeAgentId)}
-            runtimeProvisioning={runtimeProvisioning}
             promptSuggestions={promptSuggestion.suggestions}
             onInputChange={promptSuggestion.handleInputChange}
             onUsePromptSuggestion={promptSuggestion.apply}
             onSend={sendMessage}
-            onProvisionRuntime={() => { void provisionSelectedRuntime(); }}
             onStop={stopStream}
             onToggleSession={() => { setSessionSidebarOpen((open) => !open); setPlaygroundDrawer(null); }}
             onOpenRuntimeSettings={() => { setSessionSidebarOpen(false); setPlaygroundDrawer("runtime-settings"); }}
@@ -595,19 +685,10 @@ export default function App() {
           ) : null}
           {playgroundDrawer === "runtime-settings" ? (
             <PlaygroundRuntimeSettingsDrawer
-              clientConfig={effectiveClientConfig}
-              agents={agents}
-              skills={skills}
-              alertId={alertId}
-              caseId={caseId}
-              streaming={streaming}
-              onAlertIdChange={setAlertId}
-              onCaseIdChange={setCaseId}
-              health={health}
-              configMapping={configMapping}
-              selectedBusinessAgentId={selectedBusinessAgentId}
-              lastError={lastError}
-              onConfigApplied={() => setTimeout(refresh, 0)}
+              session={activeBackendSession || null}
+              businessAgent={selectedBusinessAgent || null}
+              resources={runtimeResources}
+              onRefresh={() => setRuntimeResourcesRevision((value) => value + 1)}
               onClose={() => setPlaygroundDrawer(null)}
             />
           ) : null}
@@ -623,6 +704,8 @@ export default function App() {
       <SettingsModal
         open={settingsOpen}
         config={effectiveClientConfig}
+        changeSets={agentChangeSets}
+        releases={agentReleases}
         apiDocsUrl={apiDocsUrl}
         langfuseUrl={langfuseUrl}
         onClose={() => setSettingsOpen(false)}
@@ -632,10 +715,28 @@ export default function App() {
           setTimeout(refresh, 0);
         }}
         onAgentsChanged={() => setTimeout(refresh, 0)}
+        onGovernanceRefresh={refreshAll}
         onOpenAgentTestAssets={(agentId) => { selectBusinessAgent(agentId); setSettingsOpen(false); setActiveWindow("asset"); }}
       />
     </div>
   );
+}
+
+export function resolveSessionGroups(
+  agentIds: string[],
+  results: PromiseSettledResult<SessionInfo[]>[],
+): { ok: true; sessions: SessionInfo[] } | { ok: false; message: string } {
+  const failures = results.flatMap((result, index) => (
+    result.status === "rejected" ? [`${agentIds[index]}：${errorMessage(result.reason)}`] : []
+  ));
+  if (failures.length > 0) {
+    return { ok: false, message: `会话列表加载失败，保留上次成功加载的会话；${failures.join("；")}` };
+  }
+  return { ok: true, sessions: results.flatMap((result) => result.status === "fulfilled" ? result.value : []) };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function precedingUserInput(messages: ChatMessage[], messageId: string) {
@@ -665,6 +766,6 @@ async function loadPlaygroundHistory(
     history,
     status,
     runs,
-    restoredMessages: messagesFromAgentScopeMessages(history.messages, sessionId, runs, pendingActions),
+    restoredMessages: await messagesFromAgentScopeMessages(history.messages, sessionId, runs, pendingActions),
   };
 }

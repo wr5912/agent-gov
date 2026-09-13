@@ -67,9 +67,9 @@ def test_agv_018_business_agents_do_not_special_case_historical_main_id() -> Non
     assert "不再是默认、内置、受保护、模板或隐式兜底" in terms
 
 
-def test_agv_037_047_governance_scope_not_business_ownership(monkeypatch, tmp_path: Path) -> None:
+def test_agv_037_047_governance_scope_not_business_ownership(process_environment, tmp_path: Path) -> None:
     """AGV-037/047：AgentGov 只暴露治理端点，不复制外部业务系统信息架构与生产责任。"""
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
     paths = {r.path for r in module.app.routes if getattr(r, "path", "").startswith(("/api", "/v1"))}
 
     # 不接管用户/角色/租户/权限/生产处置等外部业务系统所有权（不复制信息架构）。

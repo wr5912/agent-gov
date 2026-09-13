@@ -1,23 +1,26 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pytest
+from agentscope_runtime.context_registry import RuntimeContext
 from agentscope_runtime.run_trace import AgentGovRunTraceRegistry, AgentGovTraceIdGenerator
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 
-@dataclass(frozen=True)
-class _Context:
-    run_id: str = "run-1"
-    session_id: str = "session-1"
-    agent_id: str = "business-agent"
-    agent_version_id: str = "f" * 40
-    runtime_agent_id: str = "runtime-agent"
-    harness_digest: str = "a" * 64
-    trace_id: str = "1" * 32
+def _context(*, trace_id: str = "1" * 32) -> RuntimeContext:
+    return RuntimeContext(
+        run_id="run-1",
+        session_id="session-1",
+        root_session_id="session-1",
+        role="root",
+        agent_id="business-agent",
+        agent_version_id="f" * 40,
+        runtime_agent_id="runtime-agent",
+        harness_digest="a" * 64,
+        trace_id=trace_id,
+        team_generation=0,
+    )
 
 
 def _registry() -> tuple[AgentGovRunTraceRegistry, InMemorySpanExporter]:
@@ -29,7 +32,7 @@ def _registry() -> tuple[AgentGovRunTraceRegistry, InMemorySpanExporter]:
 
 def test_initial_and_hitl_stages_share_one_governed_root() -> None:
     registry, exporter = _registry()
-    context = _Context()
+    context = _context()
     initial = registry.start_stage(
         context,
         stage="initial",
@@ -72,7 +75,7 @@ def test_initial_and_hitl_stages_share_one_governed_root() -> None:
 
 def test_terminal_confirmation_is_idempotent_and_blocks_reopen() -> None:
     registry, exporter = _registry()
-    context = _Context()
+    context = _context()
     registry.finish_run(
         context,
         terminal_reason="completed",
@@ -101,7 +104,7 @@ def test_terminal_confirmation_is_idempotent_and_blocks_reopen() -> None:
 
 def test_trace_id_mismatch_fails_closed_without_second_root() -> None:
     registry, exporter = _registry()
-    context = _Context()
+    context = _context()
     stage = registry.start_stage(
         context,
         stage="initial",
@@ -113,7 +116,7 @@ def test_trace_id_mismatch_fails_closed_without_second_root() -> None:
 
     with pytest.raises(ValueError, match="another trace_id"):
         registry.start_stage(
-            _Context(trace_id="2" * 32),
+            _context(trace_id="2" * 32),
             stage="resume",
             reply_id="reply-1",
             runtime_version="v1",

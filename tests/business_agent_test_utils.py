@@ -41,6 +41,7 @@ def create_test_business_agent_workspace(
                     "fail_closed": True,
                     "immutable_harness": True,
                     "allow_for_run": False,
+                    "ask_tools": ["ReviewAction"] if requires_web_hitl else [],
                 },
             },
             sort_keys=False,

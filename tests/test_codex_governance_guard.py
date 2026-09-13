@@ -4,6 +4,9 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
+from contextlib import redirect_stderr, redirect_stdout
+from importlib import import_module
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -47,6 +50,19 @@ def _init_repo(root: Path) -> None:
 
 
 def _run_guard(root: Path, mode: str = "fail", *extra: str) -> subprocess.CompletedProcess[str]:
+    argv = ["--root", str(root), "--mode", mode, *extra]
+    sys.path.insert(0, str(SCRIPT.parent))
+    try:
+        guard_main = import_module("check_codex_governance").main
+    finally:
+        sys.path.pop(0)
+    stdout, stderr = StringIO(), StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        returncode = guard_main(argv)
+    return subprocess.CompletedProcess([sys.executable, str(SCRIPT), *argv], returncode, stdout.getvalue(), stderr.getvalue())
+
+
+def _run_guard_cli(root: Path, mode: str = "fail", *extra: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--root", str(root), "--mode", mode, *extra],
         check=False,
@@ -56,76 +72,63 @@ def _run_guard(root: Path, mode: str = "fail", *extra: str) -> subprocess.Comple
 
 
 def _dict_return_source(name: str) -> str:
-    return f"def {name}() -> " "dict[str, object]:\n    return {}\n"
+    return f"def {name}() -> dict[str, object]:\n    return {{}}\n"
 
 
 def _dict_any_arg_source(name: str) -> str:
-    return "from typing import Any\n\n" f"def {name}(payload: " "dict[str, Any]) -> None:\n    return None\n"
+    return f"from typing import Any\n\ndef {name}(payload: dict[str, Any]) -> None:\n    return None\n"
 
 
 def _typing_dict_any_arg_source(name: str) -> str:
-    return "import typing\n\n" f"def {name}(payload: " "typing.Dict[str, typing.Any]) -> None:\n    return None\n"
+    return f"import typing\n\ndef {name}(payload: typing.Dict[str, typing.Any]) -> None:\n    return None\n"
 
 
 def _dict_any_key_arg_source(name: str) -> str:
-    return "from typing import Any\n\n" f"def {name}(payload: " "dict[Any, str]) -> None:\n    return None\n"
+    return f"from typing import Any\n\ndef {name}(payload: dict[Any, str]) -> None:\n    return None\n"
 
 
 def _nested_dict_any_arg_source(name: str) -> str:
-    return "from typing import Any\n\n" f"def {name}(payload: " "list[dict[str, Any]]) -> None:\n    return None\n"
+    return f"from typing import Any\n\ndef {name}(payload: list[dict[str, Any]]) -> None:\n    return None\n"
 
 
 def _quoted_dict_any_arg_source(name: str) -> str:
-    return "from typing import Any\n\n" f"def {name}(payload: " '"dict[str, Any]"' ") -> None:\n    return None\n"
+    return f'from typing import Any\n\ndef {name}(payload: "dict[str, Any]") -> None:\n    return None\n'
 
 
 def _dict_optional_any_arg_source(name: str) -> str:
-    return (
-        "from typing import Any, Optional\n\n"
-        f"def {name}(payload: "
-        "dict[str, Optional[Any]]) -> None:\n    return None\n"
-    )
+    return f"from typing import Any, Optional\n\ndef {name}(payload: dict[str, Optional[Any]]) -> None:\n    return None\n"
 
 
 def _mapping_any_arg_source(name: str) -> str:
-    return (
-        "from collections.abc import Mapping\n"
-        "from typing import Any\n\n"
-        f"def {name}(payload: "
-        "Mapping[str, Any]) -> None:\n    return None\n"
-    )
+    return f"from collections.abc import Mapping\nfrom typing import Any\n\ndef {name}(payload: Mapping[str, Any]) -> None:\n    return None\n"
 
 
 def _mutable_mapping_any_arg_source(name: str) -> str:
-    return (
-        "from typing import Any, MutableMapping\n\n"
-        f"def {name}(payload: "
-        "MutableMapping[str, Any]) -> None:\n    return None\n"
-    )
+    return f"from typing import Any, MutableMapping\n\ndef {name}(payload: MutableMapping[str, Any]) -> None:\n    return None\n"
 
 
 def _dict_any_return_source(name: str) -> str:
-    return "from typing import Any\n\n" f"def {name}() -> " "dict[str, Any]:\n    return {}\n"
+    return f"from typing import Any\n\ndef {name}() -> dict[str, Any]:\n    return {{}}\n"
 
 
 def _dict_any_union_return_source(name: str) -> str:
-    return "from typing import Any\n\n" f"def {name}() -> " "dict[str, Any | None]:\n    return {}\n"
+    return f"from typing import Any\n\ndef {name}() -> dict[str, Any | None]:\n    return {{}}\n"
 
 
 def _dict_any_field_source(_name: str) -> str:
-    return "from typing import Any\n\n" "class Response:\n" "    payload: " "dict[str, Any]\n"
+    return "from typing import Any\n\nclass Response:\n    payload: dict[str, Any]\n"
 
 
 def _dict_any_alias_source(_name: str) -> str:
-    return "from typing import Any\n\n" "Payload = " "dict[str, Any]\n"
+    return "from typing import Any\n\nPayload = dict[str, Any]\n"
 
 
 def _defaultdict_any_alias_source(_name: str) -> str:
-    return "from typing import Any, DefaultDict\n\n" "Payload = " "DefaultDict[str, Any]\n"
+    return "from typing import Any, DefaultDict\n\nPayload = DefaultDict[str, Any]\n"
 
 
 def _payload_dict_return_source() -> str:
-    return "class Record:\n" "    def to_payload(self) -> " "dict[str, object]:\n" "        return {}\n"
+    return "class Record:\n    def to_payload(self) -> dict[str, object]:\n        return {}\n"
 
 
 def _formatter_result_basemodel_source() -> str:
@@ -139,7 +142,7 @@ def _formatter_result_basemodel_source() -> str:
 
 
 def _runner_basemodel_return_source() -> str:
-    return "from pydantic import BaseModel\n\n" "async def run_profile_json() -> BaseModel:\n" "    return BaseModel()\n"
+    return "from pydantic import BaseModel\n\nasync def run_profile_json() -> BaseModel:\n    return BaseModel()\n"
 
 
 def _completion_raw_output_basemodel_source() -> str:
@@ -156,7 +159,7 @@ def test_existing_oversized_file_is_allowed_when_not_growing(tmp_path: Path) -> 
     _write_lines(tmp_path / "app" / "large.py", 5)
     _commit_all(tmp_path)
 
-    result = _run_guard(tmp_path, "fail", "--python-file-lines", "2")
+    result = _run_guard_cli(tmp_path, "fail", "--python-file-lines", "2")
 
     assert result.returncode == 0
     assert "BASELINE: app/large.py" in result.stdout
@@ -181,7 +184,7 @@ def test_new_oversized_file_fails(tmp_path: Path) -> None:
     _commit_all(tmp_path)
     _write_lines(tmp_path / "frontend" / "src" / "Large.tsx", 3)
 
-    result = _run_guard(tmp_path, "fail", "--frontend-file-lines", "2")
+    result = _run_guard_cli(tmp_path, "fail", "--frontend-file-lines", "2")
 
     assert result.returncode == 1
     assert "new oversized file: 3 > 2" in result.stdout
@@ -194,8 +197,7 @@ def test_generated_oversized_file_is_ignored(tmp_path: Path) -> None:
     generated = tmp_path / "frontend" / "src" / "types" / "api.ts"
     generated.parent.mkdir(parents=True, exist_ok=True)
     generated.write_text(
-        "/**\n * This file was auto-generated by openapi-typescript.\n */\n"
-        + "export type X = string;\n" * 10,
+        "/**\n * This file was auto-generated by openapi-typescript.\n */\n" + "export type X = string;\n" * 10,
         encoding="utf-8",
     )
 
@@ -265,17 +267,12 @@ def test_existing_large_class_growth_fails(tmp_path: Path) -> None:
     path = tmp_path / "app" / "large_class.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "class Large:\n"
-        "    def one(self):\n        return 1\n"
-        "    def two(self):\n        return 2\n",
+        "class Large:\n    def one(self):\n        return 1\n    def two(self):\n        return 2\n",
         encoding="utf-8",
     )
     _commit_all(tmp_path)
     path.write_text(
-        "class Large:\n"
-        "    def one(self):\n        return 1\n"
-        "    def two(self):\n        return 2\n"
-        "    def three(self):\n        return 3\n",
+        "class Large:\n    def one(self):\n        return 1\n    def two(self):\n        return 2\n    def three(self):\n        return 3\n",
         encoding="utf-8",
     )
 
@@ -290,9 +287,7 @@ def test_existing_router_count_growth_fails(tmp_path: Path) -> None:
     path = tmp_path / "app" / "routers" / "many_routes.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "router = object()\n"
-        "@router.get('/one')\ndef one():\n    return None\n"
-        "@router.get('/two')\ndef two():\n    return None\n",
+        "router = object()\n@router.get('/one')\ndef one():\n    return None\n@router.get('/two')\ndef two():\n    return None\n",
         encoding="utf-8",
     )
     _commit_all(tmp_path)
@@ -315,8 +310,7 @@ def test_existing_state_machine_missing_transition_is_allowed(tmp_path: Path) ->
     path = tmp_path / "app" / "runtime" / "state_machines.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        '_KNOWN_STATES = {"job": {"queued"}, "batch": {"draft"}}\n'
-        '_TRANSITIONS = {"job": {"queued": set()}}\n',
+        '_KNOWN_STATES = {"job": {"queued"}, "batch": {"draft"}}\n_TRANSITIONS = {"job": {"queued": set()}}\n',
         encoding="utf-8",
     )
     _commit_all(tmp_path)
@@ -332,14 +326,12 @@ def test_new_state_machine_missing_transition_fails(tmp_path: Path) -> None:
     path = tmp_path / "app" / "runtime" / "state_machines.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        '_KNOWN_STATES = {"job": {"queued"}}\n'
-        '_TRANSITIONS = {"job": {"queued": set()}}\n',
+        '_KNOWN_STATES = {"job": {"queued"}}\n_TRANSITIONS = {"job": {"queued": set()}}\n',
         encoding="utf-8",
     )
     _commit_all(tmp_path)
     path.write_text(
-        '_KNOWN_STATES = {"job": {"queued"}, "batch": {"draft"}}\n'
-        '_TRANSITIONS = {"job": {"queued": set()}}\n',
+        '_KNOWN_STATES = {"job": {"queued"}, "batch": {"draft"}}\n_TRANSITIONS = {"job": {"queued": set()}}\n',
         encoding="utf-8",
     )
 
@@ -510,9 +502,7 @@ def test_new_record_non_boundary_jsonobject_field_fails(tmp_path: Path) -> None:
     path = tmp_path / "app" / "runtime" / "records" / "record.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "from app.runtime.json_types import JsonObject\n\n"
-        "class Record:\n"
-        "    stable_entity: JsonObject\n",
+        "from app.runtime.json_types import JsonObject\n\nclass Record:\n    stable_entity: JsonObject\n",
         encoding="utf-8",
     )
 
@@ -529,9 +519,7 @@ def test_new_record_boundary_jsonobject_field_is_allowed(tmp_path: Path) -> None
     path = tmp_path / "app" / "runtime" / "records" / "record.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "from app.runtime.json_types import JsonObject\n\n"
-        "class Record:\n"
-        "    raw_output_json: JsonObject\n",
+        "from app.runtime.json_types import JsonObject\n\nclass Record:\n    raw_output_json: JsonObject\n",
         encoding="utf-8",
     )
 
@@ -548,10 +536,7 @@ def test_new_store_public_jsonobject_return_fails(tmp_path: Path) -> None:
     path = tmp_path / "app" / "runtime" / "stores" / "store.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "from app.runtime.json_types import JsonObject\n\n"
-        "class Store:\n"
-        "    def get_entity(self) -> JsonObject:\n"
-        "        return {}\n",
+        "from app.runtime.json_types import JsonObject\n\nclass Store:\n    def get_entity(self) -> JsonObject:\n        return {}\n",
         encoding="utf-8",
     )
 
@@ -707,10 +692,7 @@ def test_broken_local_markdown_link_fails(tmp_path: Path) -> None:
     result = _run_guard(tmp_path)
 
     assert result.returncode == 1
-    assert (
-        "FAIL: docs/current.md: local Markdown link target does not exist at line 3: ./missing.md"
-        in result.stdout
-    )
+    assert "FAIL: docs/current.md: local Markdown link target does not exist at line 3: ./missing.md" in result.stdout
 
 
 def test_external_and_anchor_markdown_links_pass(tmp_path: Path) -> None:
@@ -784,9 +766,7 @@ def test_removing_existing_archive_doc_from_index_fails(tmp_path: Path) -> None:
     _write_text(tmp_path / "docs" / "README.md", "# Docs\n")
     _write_text(
         tmp_path / "docs" / "archive" / "README.md",
-        "| 原路径 | 归档路径 | 替代文档 | 归档日期 |\n"
-        "| --- | --- | --- | --- |\n"
-        "| docs/old.md | docs/archive/old.md | docs/current.md | 2026-07-10 |\n",
+        "| 原路径 | 归档路径 | 替代文档 | 归档日期 |\n| --- | --- | --- | --- |\n| docs/old.md | docs/archive/old.md | docs/current.md | 2026-07-10 |\n",
     )
     _write_text(tmp_path / "docs" / "archive" / "old.md", "# Old\n")
     _commit_all(tmp_path)
@@ -816,10 +796,7 @@ def test_archived_original_path_in_active_docs_fails(tmp_path: Path) -> None:
     result = _run_guard(tmp_path)
 
     assert result.returncode == 1
-    assert (
-        "FAIL: docs/README.md: archived original path is still referenced from active docs: docs/old-plan.md"
-        in result.stdout
-    )
+    assert "FAIL: docs/README.md: archived original path is still referenced from active docs: docs/old-plan.md" in result.stdout
 
 
 def test_documentation_contract_reading_archived_original_path_fails(tmp_path: Path) -> None:
@@ -834,19 +811,14 @@ def test_documentation_contract_reading_archived_original_path_fails(tmp_path: P
     )
     _write_text(
         tmp_path / "tests" / "test_documentation_contracts.py",
-        'def _read_repo_text(path: str) -> str:\n    return ""\n\n'
-        'def test_old_doc():\n    _read_repo_text("docs/old-plan.md")\n',
+        'def _read_repo_text(path: str) -> str:\n    return ""\n\ndef test_old_doc():\n    _read_repo_text("docs/old-plan.md")\n',
     )
     _commit_all(tmp_path)
 
     result = _run_guard(tmp_path)
 
     assert result.returncode == 1
-    assert (
-        "FAIL: tests/test_documentation_contracts.py: "
-        "documentation contract test still reads archived original path: docs/old-plan.md"
-        in result.stdout
-    )
+    assert "FAIL: tests/test_documentation_contracts.py: documentation contract test still reads archived original path: docs/old-plan.md" in result.stdout
 
 
 def test_documentation_contract_literal_archived_path_check_passes(tmp_path: Path) -> None:
@@ -895,8 +867,7 @@ def test_long_term_authority_legacy_governance_agent_terms_fail(tmp_path: Path) 
     _write_lines(tmp_path / "app" / "small.py", 1)
     _write_text(
         tmp_path / "docs" / "AgentGov核心功能测试用例.md",
-        "# Core Cases\n\n"
-        "前置条件：系统存在业务 Agent 与 attribution、proposal、execution、eval-case、regression-impact 等治理 Agent。\n",
+        "# Core Cases\n\n前置条件：系统存在业务 Agent 与 attribution、proposal、execution、eval-case、regression-impact 等治理 Agent。\n",
     )
     _commit_all(tmp_path)
 
@@ -906,8 +877,7 @@ def test_long_term_authority_legacy_governance_agent_terms_fail(tmp_path: Path) 
     assert (
         "FAIL: docs/AgentGov核心功能测试用例.md: "
         "long-term authority doc uses legacy governance-agent terminology at line 3; "
-        "use `governor` plus job type"
-        in result.stdout
+        "use `governor` plus job type" in result.stdout
     )
 
 
@@ -920,8 +890,7 @@ def test_current_baseline_legacy_governance_agent_terms_pass(tmp_path: Path) -> 
     )
     _write_text(
         tmp_path / "docs" / "反馈闭环当前实现基线.md",
-        "# Current Baseline\n\n"
-        "`attribution-analyzer` 是迁移前历史 profile 名，当前已合并为 `governor`。\n",
+        "# Current Baseline\n\n`attribution-analyzer` 是迁移前历史 profile 名，当前已合并为 `governor`。\n",
     )
     _commit_all(tmp_path)
 
@@ -948,9 +917,9 @@ def test_docs_governance_handles_tracked_binary_assets(tmp_path: Path) -> None:
 def test_docs_governance_skill_mirror_drift_fails(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)
-    codex_skill = "---\nname: \"docs-governance\"\ndescription: \"docs\"\n---\n\n# Docs\n\nKeep synced.\n"
+    codex_skill = '---\nname: "docs-governance"\ndescription: "docs"\n---\n\n# Docs\n\nKeep synced.\n'
     claude_skill = (
-        "---\nname: \"docs-governance\"\ndescription: \"docs\"\n---\n\n# Docs\n\n"
+        '---\nname: "docs-governance"\ndescription: "docs"\n---\n\n# Docs\n\n'
         "> 本技能与 `.codex/skills/docs-governance/SKILL.md` 同源镜像，修改需两侧同步。\n\nKeep synced.\n"
     )
     _write_text(tmp_path / ".codex" / "skills" / "docs-governance" / "SKILL.md", codex_skill)
@@ -995,10 +964,7 @@ def test_new_project_skill_missing_mirror_fails(tmp_path: Path) -> None:
     result = _run_guard(tmp_path)
 
     assert result.returncode == 1
-    assert (
-        "mirrored skill pair is incomplete: missing .claude/skills/new-project-governance/SKILL.md"
-        in result.stdout
-    )
+    assert "mirrored skill pair is incomplete: missing .claude/skills/new-project-governance/SKILL.md" in result.stdout
 
 
 def test_skill_mirror_exclusions_are_not_forced_to_match(tmp_path: Path) -> None:

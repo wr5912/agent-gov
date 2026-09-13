@@ -64,7 +64,7 @@ class Classification(StrictModel):
     lifecycle: Lifecycle
     level: Literal["static", "unit", "component", "contract", "integration", "e2e", "performance", "security", "resilience"]
     purpose: Literal[
-        "requirement-acceptance",
+        "requirement-regression",
         "defect-regression",
         "security-boundary",
         "compatibility-migration",
@@ -184,6 +184,12 @@ class Budgets(StrictModel):
     evidence_retention_days: Annotated[int, Field(ge=1)]
 
 
+class TestEvidencePolicy(StrictModel):
+    fault_injection_selectors: Annotated[list[NonEmpty], Field(min_length=1)]
+    formal_live_selectors: Annotated[list[NonEmpty], Field(min_length=1)]
+    formal_live_targets: Annotated[list[NonEmpty], Field(min_length=1)]
+
+
 class QualityPolicy(StrictModel):
     collection: CollectionPolicy
     coverage: CoveragePolicy
@@ -198,4 +204,5 @@ class QualityPolicy(StrictModel):
     parallel: ParallelPolicy
     mutation: MutationPolicy
     budgets: Budgets
+    test_evidence: TestEvidencePolicy
     main_flows: Annotated[list[MainFlow], Field(min_length=1)]

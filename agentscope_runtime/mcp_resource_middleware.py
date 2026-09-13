@@ -50,12 +50,9 @@ class MCPResourceMiddleware(MiddlewareBase):
         self,
         clients: list[MCPClient],
         policies: tuple[MCPResourcePolicy, ...],
-        *,
-        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._clients = {client.name: client for client in clients}
         self._policies = {policy.server_name: policy for policy in policies}
-        self._transport = transport
         self._advertised: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
         self._roster_lock = asyncio.Lock()
         if set(self._policies) - set(self._clients):
@@ -254,7 +251,6 @@ class MCPResourceMiddleware(MiddlewareBase):
         async with httpx.AsyncClient(
             headers=config.headers or {},
             timeout=timeout,
-            transport=self._transport,
             follow_redirects=False,
             trust_env=False,
         ) as http_client:

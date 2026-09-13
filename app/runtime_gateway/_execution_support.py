@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from agentgov_agentscope_contract import is_runtime_template_restart_response
+
 from app.runtime.agent_job_types import FormatterOutputModel, agent_job_spec
 from app.runtime.agent_paths import InvalidAgentId, validate_agent_id
 from app.runtime.json_types import JsonObject
@@ -168,7 +170,7 @@ def _requires_runtime_restart(exc: Exception, source_root: Path) -> bool:
     """只识别 AgentScope 明确给出的启动期 template 缺失，不吞其他失败。"""
 
     subagents = source_root / "workspace" / "subagents"
-    return isinstance(exc, RuntimeUpstreamError) and subagents.is_dir() and b"published after Runtime startup; restart Runtime" in exc.body
+    return isinstance(exc, RuntimeUpstreamError) and subagents.is_dir() and is_runtime_template_restart_response(exc.status_code, exc.body)
 
 
 def _json_digest(value: JsonObject) -> str:

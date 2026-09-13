@@ -1,4 +1,5 @@
 import process from "node:process";
+import { execFileSync } from "node:child_process";
 
 export function requireContainerAcceptance(enabled = true) {
   if (!enabled) return;
@@ -7,6 +8,18 @@ export function requireContainerAcceptance(enabled = true) {
   if (!active || !runId) {
     throw new Error(
       "Real-container verification must run through its public Make target so images and services are refreshed first.",
+    );
+  }
+  const python = String(process.env.PYTHON || ".venv/bin/python").trim();
+  try {
+    execFileSync(python, ["scripts/verify_container_acceptance_context.py"], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  } catch {
+    throw new Error(
+      "Real-container verification context is stale or did not come from the public Make runner.",
     );
   }
 }

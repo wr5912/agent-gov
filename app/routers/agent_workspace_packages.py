@@ -11,14 +11,20 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.agent_testing.service import AgentTestingService
 from app.runtime.agent_workspace_package_schemas import (
+    NativeAgentCandidateRequest,
+    NativeAgentCandidateResponse,
+    NativeAgentCandidateSourceResponse,
     WorkspaceImportResponse,
     WorkspaceRestoreRequest,
     WorkspaceRestoreResponse,
 )
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
-from app.runtime_gateway.store import RuntimeRunStore
+from app.runtime_gateway.client import AgentScopeRuntimeClient, RuntimeUpstreamError
+from app.runtime_gateway.native_schema import validate_native_agent_form_schema
 from app.services import agent_workspace_package_codec as package_codec
+from app.services.agent_candidate_creation import AgentCandidateCreationService
+from app.services.agent_candidate_writer import AgentCandidateWriter
 from app.services.agent_change_set_queries import has_open_change_sets
 from app.services.agent_governance import TERMINAL_CHANGE_SET_STATES, AgentGovernanceService
 from app.services.agent_workspace_packages import AgentWorkspacePackageService
@@ -59,8 +65,8 @@ def create_agent_workspace_packages_router(
     settings: AppSettings,
     agent_registry_store: AgentRegistryStore,
     agent_governance: AgentGovernanceService,
-    run_store: RuntimeRunStore,
     agent_testing: AgentTestingService,
+    runtime_client: AgentScopeRuntimeClient,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agents"], dependencies=[Depends(require_api_key)])
@@ -68,12 +74,13 @@ def create_agent_workspace_packages_router(
         settings=settings,
         agent_registry_store=agent_registry_store,
         agent_governance=agent_governance,
-        run_store=run_store,
         agent_testing=agent_testing,
     )
     _register_export_route(router, service)
     _register_import_route(router, service)
     _register_restore_route(router, service)
+    _register_native_candidate_source_route(router, service, runtime_client)
+    _register_native_candidate_route(router, service, runtime_client)
     return router
 
 
@@ -82,21 +89,30 @@ def _create_workspace_package_service(
     settings: AppSettings,
     agent_registry_store: AgentRegistryStore,
     agent_governance: AgentGovernanceService,
-    run_store: RuntimeRunStore,
     agent_testing: AgentTestingService,
 ) -> AgentWorkspacePackageService:
+    def open_change_sets(agent_id: str) -> bool:
+        return has_open_change_sets(
+            agent_governance.feedback_store.Session,
+            agent_id=agent_id,
+            terminal_states=TERMINAL_CHANGE_SET_STATES,
+        )
+
+    candidate_creation = AgentCandidateCreationService(
+        settings=settings,
+        registry_store=agent_registry_store,
+        governance=agent_governance,
+        candidate_writer=AgentCandidateWriter(agent_governance),
+        has_open_change_sets=open_change_sets,
+    )
     return AgentWorkspacePackageService(
         settings=settings,
         registry_store=agent_registry_store,
         store_for=agent_governance._store_for,
         version_maintenance=agent_governance.version_maintenance,
-        run_store=run_store,
         agent_testing=agent_testing,
-        has_open_change_sets=lambda agent_id: has_open_change_sets(
-            agent_governance.feedback_store.Session,
-            agent_id=agent_id,
-            terminal_states=TERMINAL_CHANGE_SET_STATES,
-        ),
+        candidate_creation=candidate_creation,
+        has_open_change_sets=open_change_sets,
     )
 
 
@@ -179,6 +195,62 @@ def _register_restore_route(router: APIRouter, service: AgentWorkspacePackageSer
     )
     def restore_workspace(agent_id: str, request: WorkspaceRestoreRequest) -> WorkspaceRestoreResponse:
         return service.restore_workspace(agent_id=agent_id, request=request)
+
+
+def _register_native_candidate_route(
+    router: APIRouter,
+    service: AgentWorkspacePackageService,
+    runtime_client: AgentScopeRuntimeClient,
+) -> None:
+    @router.post(
+        "/agent-registry/{agent_id}/native-candidate",
+        response_model=NativeAgentCandidateResponse,
+        summary="Create a Git candidate from the pinned AgentScope AgentData schema",
+    )
+    async def create_native_candidate(
+        agent_id: str,
+        request: NativeAgentCandidateRequest,
+    ) -> NativeAgentCandidateResponse:
+        upstream = await runtime_client.request_json("GET", "/agent/schema/v2")
+        try:
+            schema = validate_native_agent_form_schema(upstream.body)
+        except RuntimeUpstreamError as exc:
+            raise package_codec.WorkspacePackageError(502, "NATIVE_AGENT_SCHEMA_UNSUPPORTED", str(exc)) from exc
+        return await run_in_threadpool(
+            lambda: service.native_candidate(
+                agent_id=agent_id,
+                agent_data=request.agent_data,
+                schema=schema,
+                expected_current_commit_sha=request.expected_current_commit_sha,
+                change_set_id=request.change_set_id,
+                expected_candidate_commit_sha=request.expected_candidate_commit_sha,
+                reason=request.reason,
+            )
+        )
+
+
+def _register_native_candidate_source_route(
+    router: APIRouter,
+    service: AgentWorkspacePackageService,
+    runtime_client: AgentScopeRuntimeClient,
+) -> None:
+    @router.get(
+        "/agent-registry/{agent_id}/native-candidate-source",
+        response_model=NativeAgentCandidateSourceResponse,
+        summary="Read safe native AgentData fields from an open candidate or current live Git commit",
+    )
+    async def native_candidate_source(agent_id: str) -> NativeAgentCandidateSourceResponse:
+        upstream = await runtime_client.request_json("GET", "/agent/schema/v2")
+        try:
+            schema = validate_native_agent_form_schema(upstream.body)
+        except RuntimeUpstreamError as exc:
+            raise package_codec.WorkspacePackageError(502, "NATIVE_AGENT_SCHEMA_UNSUPPORTED", str(exc)) from exc
+        return await run_in_threadpool(
+            lambda: service.native_candidate_source(
+                agent_id=agent_id,
+                schema=schema,
+            )
+        )
 
 
 def _require_import_content_length(request: Request) -> None:

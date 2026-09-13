@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.runtime.state_machines import AgentTestRunStatus
 
@@ -154,9 +154,15 @@ def _register_test_run_routes(router: APIRouter, service: AgentTestingService) -
 
 def _register_test_session_routes(router: APIRouter, service: AgentTestingService) -> None:
     @router.post("/agent-test-sessions", response_model=AgentTestSessionResponse, status_code=status.HTTP_201_CREATED)
-    def create_agent_test_session(request: AgentTestSessionCreateRequest) -> AgentTestSessionResponse:
+    def create_agent_test_session(request_data: AgentTestSessionCreateRequest, request: Request) -> AgentTestSessionResponse:
         return AgentTestSessionResponse.model_validate(
-            service.create_session(agent_id=request.agent_id, commit_sha=request.commit_sha, change_set_id=request.change_set_id)
+            service.create_session(
+                agent_id=request_data.agent_id,
+                commit_sha=request_data.commit_sha,
+                change_set_id=request_data.change_set_id,
+                test_run_id=request.headers.get("X-AgentGov-Test-Run-Id"),
+                test_run_attestation=request.headers.get("X-AgentGov-Test-Run-Attestation"),
+            )
         )
 
     @router.post("/agent-test-sessions/{test_session_id}/messages", response_model=AgentTestMessageResponse)

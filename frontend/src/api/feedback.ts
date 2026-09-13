@@ -50,6 +50,13 @@ export function getAgentRun(config: RuntimeClientConfig, runId: string, signal?:
   );
 }
 
+export async function cancelAgentRun(config: RuntimeClientConfig, runId: string, signal?: AbortSignal): Promise<void> {
+  await requestJson<unknown>(config, `/api/agent-runs/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
+    signal,
+  });
+}
+
 export function getAgentRunPendingActions(
   config: RuntimeClientConfig,
   runId: string,

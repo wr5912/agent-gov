@@ -1,5 +1,5 @@
 # 基础镜像拉取由 Docker daemon registry mirror 或内网仓库处理；本项目没有统一可用的国内基础镜像仓库可直接写死。
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
 
 # 构建阶段依赖源固定使用国内镜像，避免 docker/.env 或宿主环境覆盖。
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -43,7 +43,10 @@ RUN set -eux; \
 
 COPY requirements-api.txt /app/requirements-api.txt
 COPY VERSION /app/VERSION
+COPY agentgov_agentscope_contract.py /app/agentgov_agentscope_contract.py
 COPY agentgov_harness_digest.py /app/agentgov_harness_digest.py
+COPY agentgov_run_permission.py /app/agentgov_run_permission.py
+COPY agentgov_subagent_manifest_policy.py /app/agentgov_subagent_manifest_policy.py
 COPY packages/agentgov-testkit /app/packages/agentgov-testkit
 # python:slim 不内置 uv；这里仅用阿里 PyPI bootstrap uv，项目依赖安装仍统一走 uv。
 RUN python -m pip install --no-cache-dir \
@@ -63,7 +66,12 @@ COPY docker/runtime-bootstrap /app/docker/runtime-bootstrap
 RUN mkdir -p /governor-workspace /data
 
 ARG AGENT_GOV_ACCEPTANCE_RUN_ID=unmanaged
-LABEL io.agentgov.acceptance-run-id="${AGENT_GOV_ACCEPTANCE_RUN_ID}"
+ARG AGENTGOV_SOURCE_ARTIFACT_SHA256=unmanaged
+RUN source_digest="${AGENTGOV_SOURCE_ARTIFACT_SHA256}"; \
+    test "${#source_digest}" -eq 64; \
+    case "$source_digest" in *[!0-9a-f]*) exit 1 ;; esac
+LABEL io.agentgov.acceptance-run-id="${AGENT_GOV_ACCEPTANCE_RUN_ID}" \
+      io.agentgov.source-artifact-sha256="${AGENTGOV_SOURCE_ARTIFACT_SHA256}"
 
 ENTRYPOINT ["python", "-m", "app.runtime.service_launcher"]
 CMD ["api"]

@@ -355,7 +355,11 @@
 .release-stage-heading > span:last-child { color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
 .release-candidate-detail { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); }
 .release-candidate-detail strong { color: var(--text-primary); font-size: 15px; }
-.release-diff-summary { max-height: 260px; border-radius: 8px; margin-top: 6px; }
+.release-diff-summary { display: grid; gap: 6px; max-height: 260px; overflow: auto; padding: 10px; border: 1px solid var(--border-subtle); border-radius: 8px; margin-top: 6px; background: var(--bg-surface-muted); }
+.release-diff-identity { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-secondary); }
+.release-diff-file { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.release-diff-file span { color: var(--text-secondary); font-size: 11px; }
+.release-diff-file code { min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); }
 .release-review-items { display: grid; gap: 8px; }
 .release-review-item {
   display: grid;

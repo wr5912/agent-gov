@@ -1,10 +1,9 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { AgentSummary, ChatMessage, SessionInfo } from "../types/runtime";
+import type { AgentSummary, SessionInfo } from "../types/runtime";
 import { useLocalStorage } from "./useLocalStorage";
 
 interface PlaygroundSessionScopeOptions {
   sessions: SessionInfo[];
-  messagesBySession: Record<string, ChatMessage[]>;
 }
 
 interface LocalSessionOwner {
@@ -14,7 +13,6 @@ interface LocalSessionOwner {
 
 export function usePlaygroundSessionScope({
   sessions,
-  messagesBySession,
 }: PlaygroundSessionScopeOptions) {
   const [selectedBusinessAgentId, setStoredBusinessAgentId] = useLocalStorage(
     "playground-selected-business-agent",
@@ -124,27 +122,8 @@ export function usePlaygroundSessionScope({
 
   const scopedSessions = useMemo(() => {
     if (!selectedBusinessAgentId) return [];
-    const canonicalIds = new Set(sessions.map((session) => session.session_id));
-    const localOnly = Object.entries(messagesBySession)
-      .filter(([sessionId]) => !canonicalIds.has(sessionId))
-      .filter(([sessionId]) => localSessionOwners[sessionId]?.businessAgentId === selectedBusinessAgentId)
-      .map<SessionInfo>(([sessionId, messages]) => ({
-        session_id: sessionId,
-        agent_id: localSessionOwners[sessionId].runtimeAgentId,
-        business_agent_id: selectedBusinessAgentId,
-        created_at: messages[0]?.createdAt || new Date().toISOString(),
-        updated_at: messages.at(-1)?.createdAt || new Date().toISOString(),
-        title: messages.find((message) => message.role === "user")?.content.slice(0, 80) || "本地新会话",
-        turns: Math.max(0, Math.floor(messages.length / 2)),
-        metadata: { localOnly: true },
-        is_running: false,
-        status: "idle",
-      }));
-    return [
-      ...sessions.filter((session) => session.business_agent_id === selectedBusinessAgentId),
-      ...localOnly,
-    ];
-  }, [localSessionOwners, messagesBySession, selectedBusinessAgentId, sessions]);
+    return sessions.filter((session) => session.business_agent_id === selectedBusinessAgentId);
+  }, [selectedBusinessAgentId, sessions]);
 
   return {
     selectedBusinessAgentId,

@@ -78,13 +78,13 @@ def test_governance_and_agentscope_examples_cover_high_risk_journeys() -> None:
 
     expected_example_names = {
         ("/api/runtime/sessions/", "post"): {"create_published_agent_session"},
+        ("/api/runtime/sessions/{session_id}", "patch"): {"rename_session"},
         ("/api/runtime/chat/", "post"): {"agent_scope_message", "resume_user_confirmation"},
         ("/api/feedback-cases", "post"): {"from_feedback_signal"},
         ("/api/improvements", "post"): {"from_feedback"},
         ("/api/agent-change-sets", "post"): {"current_published_base", "explicit_base"},
         ("/api/agent-change-sets/{change_set_id}/approve", "post"): {"approve_reviewed_change_set"},
         ("/api/agent-change-sets/{change_set_id}/publish", "post"): {"normal_publish", "force_publish"},
-        ("/api/agent-releases/{release_id}/rollback", "post"): {"rollback_release"},
     }
     for (path, method), expected in expected_example_names.items():
         examples = schema["paths"][path][method]["requestBody"]["content"]["application/json"]["examples"]

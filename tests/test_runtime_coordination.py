@@ -19,6 +19,7 @@ from app.runtime.runtime_coordination import (
 )
 from app.runtime.settings import AppSettings
 
+
 def _settings(tmp_path: Path, *, initialize_workspace: bool = True) -> AppSettings:
     root = tmp_path / "runtime"
     settings = AppSettings(
@@ -89,10 +90,16 @@ def _default_store(settings: AppSettings) -> GitAgentVersionStore:
 
 def _narrow_allowed_tools(settings: AppSettings, *, commit: bool) -> GitAgentVersionStore:
     store = _default_store(settings)
-    path = settings.default_workspace_dir / "agent.yaml"
+    workspace = settings.default_workspace_dir
+    path = workspace / "agent.yaml"
+    if commit:
+        base = str(store.current_commit_sha() or store.ensure_bootstrap()["agent_version_id"])
+        candidate = store.create_worktree("historical-policy", base_ref=base)
+        path = candidate.worktree_path / "agent.yaml"
     path.write_text(path.read_text(encoding="utf-8").replace(", Skill", ""), encoding="utf-8")
     if commit:
-        store.create_snapshot(reason="historical_policy", note="historical managed policy")
+        commit_sha = store.commit_worktree(candidate.worktree_path, message="historical managed policy")
+        store.publish_commit(commit_sha, tag_name=f"historical-policy-{commit_sha[:12]}", message="historical managed policy")
     return store
 
 

@@ -1,14 +1,4 @@
-WORKSPACE_EXCLUDED_NAMES = frozenset(
-    {
-        ".cache",
-        ".git",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".venv",
-        "__pycache__",
-        "dist",
-        "node_modules",
-    }
-)
-WORKSPACE_EXCLUDED_PATTERNS = ("*.pyc", "*.pyo")
+from agentgov_harness_digest import HARNESS_EXCLUDED_NAMES, HARNESS_EXCLUDED_PATTERNS
+
+WORKSPACE_EXCLUDED_NAMES = HARNESS_EXCLUDED_NAMES
+WORKSPACE_EXCLUDED_PATTERNS = HARNESS_EXCLUDED_PATTERNS

@@ -94,7 +94,7 @@
     },
     {
       "id": "main-flow",
-      "description": "产品主流程绑定的后端与浏览器验收",
+      "description": "产品主流程绑定的后端与浏览器自动化回归",
       "enforcement": "blocking"
     },
     {
@@ -125,7 +125,7 @@
         "classification": {
           "lifecycle": "KEEP",
           "level": "component",
-          "purpose": "requirement-acceptance",
+          "purpose": "requirement-regression",
           "owner": "agent-lifecycle",
           "capabilities": ["agent-lifecycle"],
           "lanes": ["main-full"],
@@ -137,7 +137,6 @@
         "id": "runtime-platform-suite",
         "selectors": [
           "tests/test_agentscope*.py",
-          "tests/test_config_mapping.py",
           "tests/test_container_acceptance*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
           "tests/test_harness_conversion.py",
@@ -171,7 +170,7 @@
         "classification": {
           "lifecycle": "KEEP",
           "level": "component",
-          "purpose": "requirement-acceptance",
+          "purpose": "requirement-regression",
           "owner": "improvement-governance",
           "capabilities": ["feedback-improvement-loop"],
           "lanes": ["main-full"],
@@ -208,7 +207,7 @@
         "classification": {
           "lifecycle": "KEEP",
           "level": "contract",
-          "purpose": "requirement-acceptance",
+          "purpose": "requirement-regression",
           "owner": "frontend-experience",
           "capabilities": ["frontend-workflows"],
           "lanes": ["main-full"],
@@ -243,7 +242,6 @@
           "tests/test_agv_acceptance.py",
           "tests/test_bootstrap_business_agent_protection.py",
           "tests/test_business_agent*.py",
-          "tests/test_config_mapping.py",
           "tests/test_container_acceptance*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
           "tests/test_execution_content_guards.py",
@@ -285,15 +283,224 @@
       "capability": "runtime-deployment",
       "owner": "runtime-platform",
       "risk": "critical",
-      "description": "当前仅有隔离 core smoke 和可执行的显式 opt-in live provider 入口；尚未取得 50 个实质不同 run、10 并发、3 次真实浏览器、2 小时 soak 以及带真实 OTLP secret 的 trace completeness 证据。",
+      "description": "当前仅有隔离 core smoke 和可执行的显式 opt-in live provider 入口；尚未取得 50 个实质不同 generic_runtime run、10 并发、3 次真实浏览器以及带真实 OTLP secret 的 trace completeness 证据。generic 50-run 只是传输与身份配额，不证明 tool、HITL、team、restart、MCP、多轮或改进效果。",
       "target_lane": "container-live-acceptance",
       "issue": "follow-up:agentscope-live-acceptance",
       "acceptance": [
-        "准备至少 50 条质量复核后实质不同且不可循环复制的场景，执行 50 个真实 AgentScope run 并验证 session、SSE、canonical message、run、reply、trace 与反馈关联",
+        "经公共 API 用已发布 Harness 创建真实 AgentScope Session，验证模型、凭据、权限和 workspace 只来自治理绑定，并对响应丢失的同一 Idempotency-Key 重放不产生重复 Session",
+        "准备至少 50 条质量复核后实质不同且不可循环复制的 generic_runtime 场景，执行 50 个真实 AgentScope run 并验证 session、SSE、canonical message、run、reply 与 trace；其他 capability 单独计数且不得补足该配额",
+        "tool、HITL、team、restart、MCP、多轮与改进效果必须分别有精确 action plan、expected events 及终态断言；普通非空回复不得作为平台能力证据",
         "在隔离临时 Compose project 中以 10 并发执行真实 provider 验收，保存零错配、零丢事件和终态证据",
         "真实浏览器主链连续执行至少 3 次，验证运行、停止、消息、轨迹和反馈交互且不直连 Runtime 管理面",
-        "连续运行 2 小时 soak，记录成功率、延迟、资源增长、恢复和清理证据",
         "使用受保护 OTLP secret 验证 agentgov.run 根 span、AgentScope 子 span、必要关联属性、脱敏与 terminal trace_status=complete"
+      ]
+    },
+    {
+      "id": "playground-real-concurrency-conflict",
+      "capability": "frontend-workflows",
+      "owner": "frontend-experience",
+      "risk": "high",
+      "description": "已删除通过浏览器请求拦截伪造 409 的旧测试；当前尚缺真实同一 Session 并发发送触发服务端 409，并在 Playground 展示可恢复失败状态的容器浏览器证据。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:playground-real-concurrency-conflict",
+      "acceptance": [
+        "在隔离真实容器中由 Chromium 与 Firefox 对同一 Runtime Session 发起真实重叠运行，观测 AgentGov 公共 API 返回 409",
+        "确认 Playground 保留已提交 run 身份、展示并发冲突且在执行槽释放后可使用真实输入重试成功"
+      ]
+    },
+    {
+      "id": "agent-testing-public-api-real-runtime",
+      "capability": "agent-lifecycle",
+      "owner": "agent-lifecycle",
+      "risk": "high",
+      "description": "schema、真实 Git/pytest/SQLite 以及受控故障注入的组件回归仍覆盖测试消息、manual/change-set test run、历史查询与定时策略；这些证据不能替代公共 HTTP 链在真实 AgentScope 与当前工作树容器中的端到端验收。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:agent-testing-public-api-real-runtime",
+      "acceptance": [
+        "通过公共 schema/Workspace 候选 API 创建临时真实业务 Agent，运行精确 commit 测试并完成审批与发布激活，再经 /api/runtime/sessions/ 创建真实 AgentScope Session，确认治理 agent_id 不能冒充 runtime_agent_id",
+        "经公共 test-session/message API 在精确 Git commit 上发送真实消息，核对 AgentScope 返回的 run_id、session_id、answer、stop_reason 及候选 checkout 清理",
+        "经公共 manual 与 change-set test-run API 执行真实 pytest 并轮询终态，确认历史查询、精确 commit 发布闸门和 backend-owned 字段污染 422",
+        "经公共 schedule API 写入、读取并停用真实每 Agent 策略，确认 next_run_at 由后端计算且客户端不能写入 test_run_id 等执行字段；结束后通过公共 API 清理临时 Agent 与 Runtime 资源"
+      ]
+    },
+    {
+      "id": "asset-registry-real-density",
+      "capability": "frontend-workflows",
+      "owner": "frontend-experience",
+      "risk": "high",
+      "description": "已删除在脚本内伪造 24 个 Agent 与 DOM 的资产目录测试；当前真实容器浏览器链只覆盖真实空态和响应式，尚无多 Agent 密度与源码交互证据。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:asset-registry-real-density",
+      "acceptance": [
+        "通过 AgentGov 公共 API 在隔离容器中导入或创建至少 24 个临时真实 Agent，并记录每个不可变 Git 身份",
+        "使用 Chromium 与 Firefox 验证资产目录密度、筛选、选择和源码交互，再通过公共 API 完整清理并确认无残留"
+      ]
+    },
+    {
+      "id": "container-acceptance-real-failure-cleanup",
+      "capability": "runtime-deployment",
+      "owner": "runtime-platform",
+      "risk": "high",
+      "description": "标准回归已以真实端口耗尽验证 prepare 失败回收、以真实 Docker 权限验证 root-owned 卷修复，并用确定性故障注入验证 cleanup 分支；尚缺在已成功 recreate 的真实隔离栈中让子验收进程失败后确认容器、卷与临时根全部回收的运行证据。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:container-acceptance-real-failure-cleanup",
+      "acceptance": [
+        "在隔离 Compose project 完成当前工作树镜像重建与 force-recreate 后，执行真实返回非零的子验收命令",
+        "确认 Compose down 成功、无验收标签容器或网络残留、临时 runtime root 和 Compose env 均已回收，正式卷字节未改变"
+      ]
+    },
+    {
+      "id": "atomic-cutover-process-crash-boundaries",
+      "capability": "runtime-deployment",
+      "owner": "runtime-platform",
+      "risk": "critical",
+      "description": "自动 execute/finalize/restore 已 fail closed；尚缺在可丢弃 VM 上证明整根原子换入、崩溃恢复、跨入口互斥和 root filesystem custody 的新实现。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:atomic-cutover-process-crash-boundaries",
+      "acceptance": [
+        "在可丢弃 VM 上实现且验证同盘整根原子换入，在每个 journal/fsync 边界强制终止进程",
+        "验证普通 build/up/down/bootstrap 入口与 cutover 共享持久化互斥，且旧根全程不被递归删除或路径解包"
+      ]
+    },
+    {
+      "id": "agentscope-workspace-real-isolation",
+      "capability": "runtime-deployment",
+      "owner": "runtime-platform",
+      "risk": "high",
+      "description": "普通组件回归以受控 Agent 对象验证 policy 的 allow/deny、路径穿越和 fail-closed 语义；它不能证明 Bubblewrap、真实 MCP gateway、固定版本 AgentScope 容器与已发布 Harness 共同形成了运行态隔离。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:agentscope-workspace-real-isolation",
+      "acceptance": [
+        "在隔离容器中由真实 AgentScope Agent、Bubblewrap backend 和 MCP gateway 运行已发布业务 Harness，不替换权限回调或跳过初始化",
+        "通过真实 Agent run 验证 /workspace/data 只读输入与 /workspace/outputs/<agent_id> 写入成功，同时对 /runtime-data、相邻 Agent 目录和宿主机路径的读写均被拒绝",
+        "保存 AgentScope 事件、工具结果、容器挂载检查和宿主机文件字节证据，并在结束后清理隔离资源"
+      ]
+    },
+    {
+      "id": "offline-gateway-real-image-lifecycle",
+      "capability": "runtime-deployment",
+      "owner": "runtime-platform",
+      "risk": "critical",
+      "description": "确定性单元/组件故障注入覆盖 initialize/close、MCP roster、进程创建、超时与 symlink 拒绝，真实文件系统与静态离线环境契约也保留；这些证据仍不能证明当前重建镜像的离线初始化、取消清理或 warm restart。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:offline-gateway-real-image-lifecycle",
+      "acceptance": [
+        "从当前工作树重建 Runtime 镜像，在断开外网和禁用共享 cache 的隔离 Compose project 中启动真实 Bubblewrap、内置 wheelhouse、uv/rg 与 MCP gateway",
+        "验证首次初始化、同 Session 复用、Runtime 重启后的 warm workspace、MCP roster，以及未批准 symlink 的真实拒绝",
+        "分别在 initialize 与 MCP 建连期间终止真实子进程，确认进程组、workspace、端口和临时目录清理完成，并保存容器日志与进程树证据"
+      ]
+    },
+    {
+      "id": "runtime-resource-sagas-live-faults",
+      "capability": "runtime-deployment",
+      "owner": "runtime-platform",
+      "risk": "critical",
+      "description": "真实 Git、文件系统并发、SQLite 账本、维护租约和 Runtime 不可达已进入标准回归；确定性组件故障注入另覆盖发布激活并发/取消/补偿、candidate 团队 interrupt 部分失败及删除 saga 重启续跑。这些证据仍不能替代固定版本 AgentScope 隔离容器中的跨服务语义验收。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:runtime-resource-sagas-live-faults",
+      "acceptance": [
+        "通过 AgentGov 公共 API 对同一 change set 发起至少 4 个真实并发发布重试，并在真实请求取消、响应丢失、同名 orphan、绑定持久化失败、快照 rename/fsync I/O 失败和 subagent 模板需重启场景中验证唯一绑定、补偿、恢复定位及不可变快照保留",
+        "通过真实 candidate API 创建精确 commit 的 Agent 与 Session，验证团队全部 Session 的精确 interrupt、部分失败 fence、进程重启续建、awaiting_restart TTL 对账，以及 terminal release 按 Session、Agent、binding、snapshot 顺序完整清理",
+        "通过公共删除 API 对同时拥有 published 与 candidate 资源的临时业务 Agent 执行真实部分 Session 删除失败和进程重启，验证 404 幂等确认、删除进度持久化、历史 run 保留、旧 generation 失效及同 id 重建隔离",
+        "让真实 AgentScope 团队完成至少一次 worker 往返和 leader follow-up，核对原生 SSE 未知事件透传、完整 persistence batch、最后 canonical reply、usage、run input fingerprint 与 terminal trace"
+      ]
+    },
+    {
+      "id": "agentscope-mcp-resource-live-policy",
+      "capability": "runtime-deployment",
+      "owner": "integrations",
+      "risk": "high",
+      "description": "标准回归覆盖生产 MCPClient 的策略解析、联网前拒绝以及受控 MCP Session 的 roster/分页/resource read/缺失工具故障注入；尚缺真实 MCP 服务与已发布 Harness 的动态资源策略证据。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:agentscope-mcp-resource-live-policy",
+      "acceptance": [
+        "在隔离 Runtime 中连接真实 MCP 服务，使用已发布 Harness 的精确 resources、resource templates 和 tool allowlist 完成 initialize、分页枚举与 resource read，确认只注册三个固定只读 facade tool，并证明服务端新增未审核 URI 不会穿透 allowlist",
+        "真实移除或重命名 Harness 声明的 MCP tool/resource 后重启 Runtime，确认 Workspace 建立 fail-closed、错误不泄露 Authorization header，恢复 roster 后同一公开流程成功"
+      ]
+    },
+    {
+      "id": "workspace-package-atomic-real-fault-boundaries",
+      "capability": "agent-lifecycle",
+      "owner": "agent-lifecycle",
+      "risk": "high",
+      "description": "Workspace 标准回归使用真实 Git、SQLite、文件权限、锁、Git hook、归档和生产 API，并以确定性故障注入覆盖临界 rename/fsync、Git batch、并发写入及 Git/DB 补偿；仍缺在可丢弃真实文件系统或 VM 上强制 I/O/进程失败的运行证据。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:workspace-package-atomic-real-fault-boundaries",
+      "acceptance": [
+        "在可丢弃 fault-injection 文件系统中让 config 临时文件创建成功后分别于 rename 和目录 fsync 产生真实 I/O 失败，确认原字节或完整回滚结果、mode 与临时文件清理",
+        "对真实仓库的 git cat-file --batch 子进程执行实际信号终止或对象存储故障，并用真实畸形归档语料触发解析器异常，确认错误脱敏且 HEAD、注册表和 Workspace 不变",
+        "用独立真实写入进程在激活前最后一次 clean-check 后创建被忽略同名文件，确认 --no-overwrite-ignore 拒绝覆盖并保留并发写入字节",
+        "在可丢弃 VM 或受控回环卷中于 Git fast-forward 后制造真实 SQLite commit I/O 失败或进程终止，重启后确认 Git 补偿、租约释放、注册表一致和幂等重试"
+      ]
+    },
+    {
+      "id": "runtime-receipt-loss-recovery",
+      "capability": "runtime-deployment",
+      "owner": "runtime-platform",
+      "risk": "critical",
+      "description": "本地协议回归不能证明真实 Runtime 与 API 之间发生 503、响应丢失或 shutdown 时，REPLY_END、MESSAGE_PERSISTED 与 SESSION_PERSISTED 回执仍会以稳定事件身份重试并由 canonical Message 收敛；在真实故障演练前不得宣称运行终态恢复通过。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:runtime-receipt-loss-recovery",
+      "acceptance": [
+        "在隔离真实容器中分别于 REPLY_END、MESSAGE_PERSISTED 和 SESSION_PERSISTED 回执前后断开 Runtime 到 API 的网络，并验证稳定 event_id 重试不重复推进状态",
+        "在回执 retry/outbox 尚未清空时终止并重启 Runtime 与 API，确认 canonical AgentScope Message 能让精确 run 收敛到唯一终态且全部 Session fence 释放",
+        "保存公共 run 查询、AgentScope Message、SQLite receipt 账本、容器日志和 trace_status 证据，确认正文与凭据未进入控制回执"
+      ]
+    },
+    {
+      "id": "runtime-chat-uncertain-submit-recovery",
+      "capability": "frontend-workflows",
+      "owner": "runtime-platform",
+      "risk": "critical",
+      "description": "精确 client_operation_id 恢复已进入实现和组件回归，但尚缺真实 chat POST 已被服务端受理而响应在浏览器收到前丢失的跨进程证据。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:runtime-chat-uncertain-submit-recovery",
+      "acceptance": [
+        "在 Chromium 与 Firefox 中真实提交 chat，并在 API 已持久化 admission 后中断响应连接，不拦截或伪造请求结果",
+        "仅通过原 session_id 与 client_operation_id 找回同一 run_id，重试不创建第二个 run、Session 或模型调用",
+        "确认 Playground 保持恢复态直到精确 run 终态与 Runtime Session idle 均成立"
+      ]
+    },
+    {
+      "id": "runtime-signature-future-skew-replay-window",
+      "capability": "security-boundaries",
+      "owner": "security-response",
+      "risk": "critical",
+      "description": "本地签名回归需要覆盖未来时钟容忍边界；在真实多进程 API 和完整剩余有效窗口演练前，不能证明同一签名始终只执行一次。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:runtime-signature-future-skew-replay-window",
+      "acceptance": [
+        "以容忍边界内的未来 timestamp 向真实内部端点发送合法签名，并在当前时间跨过 timestamp 后重复发送完全相同请求",
+        "在签名完整剩余有效窗口及多 API worker 并发条件下确认只有一次业务副作用，随后稳定返回 replay 拒绝",
+        "确认超出过去与未来 skew、body/path/method 篡改均 fail-closed 且日志不包含 shared secret 或 Authorization"
+      ]
+    },
+    {
+      "id": "playground-hitl-external-real-continuation",
+      "capability": "frontend-workflows",
+      "owner": "frontend-experience",
+      "risk": "high",
+      "description": "HITL 与 external execution 的投影和摘要校验可由本地真实存储验证，但断线恢复态下的完整 AgentScope continuation 仍需真实浏览器、真实工具和精确 run 取证。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:playground-hitl-external-real-continuation",
+      "acceptance": [
+        "由真实已发布 Harness 触发 REQUIRE_USER_CONFIRM 与 REQUIRE_EXTERNAL_EXECUTION，并在页面收到事件后断开再恢复",
+        "恢复时先连接原生 SSE、绑定 exact run、arm reply，再向同一 run 提交完整 canonical ToolCallBlock；摘要不匹配或正文不可得时 fail-closed",
+        "确认 AgentGov API、SQLite、日志与 Langfuse 均不出现工具 input/args canary，成功 continuation 只产生一个结果"
+      ]
+    },
+    {
+      "id": "runtime-public-read-authorization-negatives",
+      "capability": "security-boundaries",
+      "owner": "security-response",
+      "risk": "high",
+      "description": "公共读取路由的本地鉴权回归不能替代真实部署中错误 Agent、错误 Session、错误 operation 和未授权 principal 的跨进程拒绝证据。",
+      "target_lane": "container-live-acceptance",
+      "issue": "follow-up:runtime-public-read-authorization-negatives",
+      "acceptance": [
+        "对真实 /by-client-operation 使用缺失、错误及跨 Session operation 身份，确认静态路由优先级正确且不会落入 /{run_id}",
+        "使用错误 runtime_agent_id 读取或流式订阅真实 Session messages/status/stream，确认在任何上游数据返回前拒绝",
+        "使用缺失和无效 principal/API key 重放上述请求，确认统一 401/403/404 边界且响应与日志不泄露资源存在性或凭据"
       ]
     }
   ],
@@ -327,6 +534,8 @@
         ],
         "test_selectors": [
           "tests/test_agentscope_runtime_service.py",
+          "tests/test_agentscope_worker_permissions.py",
+          "tests/test_subagent_manifest_contract.py",
           "tests/test_runtime_gateway_*.py",
           "tests/test_health_endpoints.py"
         ]
@@ -392,7 +601,8 @@
           "agentscope_runtime/otel_config.py",
           "agentscope_runtime/trace_context_middleware.py",
           "app/runtime/integrations/runtime_langfuse.py",
-          "app/routers/langfuse_traces.py",
+          "app/runtime_gateway/contracts.py",
+          "app/runtime_gateway/trace_*.py",
           "scripts/langfuse_smoke.py",
           "scripts/initialize_langfuse_env.py",
           "docker/docker-compose.langfuse.yml"
@@ -442,6 +652,67 @@
     "max_quarantine_days": 14,
     "evidence_retention_days": 30
   },
+  "test_evidence": {
+    "fault_injection_selectors": [
+      "tests/test_*.py",
+      "frontend/src/**/*.test.*",
+      "scripts/**/*.test.mjs",
+      "docker/runtime-bootstrap/governor-workspace/tests/test_*.py"
+    ],
+    "formal_live_selectors": [
+      "scripts/agentscope_live_acceptance_cli.py",
+      "scripts/agentscope_live_acceptance_scenarios.py",
+      "scripts/agentscope_live_acceptance_report.py",
+      "scripts/agentscope_mcp_live_acceptance.py",
+      "scripts/container_acceptance_inputs.py",
+      "scripts/improvement_ui_e2e/browser_acceptance_contract.mjs",
+      "scripts/improvement_ui_e2e/page_audit.mjs",
+      "scripts/improvement_ui_e2e/playground_cancel_evidence.mjs",
+      "scripts/improvement_ui_e2e/playground_cancel_runtime.mjs",
+      "scripts/improvement_ui_e2e/real_container_flow.mjs",
+      "scripts/improvement_ui_e2e/reviewed_scenarios.mjs",
+      "scripts/improvement_ui_e2e/runtime_client.mjs",
+      "scripts/langfuse_smoke.py",
+      "scripts/run_agentgov_testkit_live.py",
+      "scripts/run_agentscope_live_acceptance.py",
+      "scripts/run_container_acceptance.py",
+      "scripts/run_main_flow_live_targets.py",
+      "scripts/validate_live_acceptance_scenarios.py",
+      "scripts/verify_container_acceptance_context.py",
+      "scripts/verify_agent_candidate_lifecycle.mjs",
+      "scripts/verify_improvement_ui_real_container.mjs",
+      "scripts/verify_playground_cancel.mjs"
+    ],
+    "formal_live_targets": [
+      "smoke",
+      "_smoke",
+      "ui-smoke",
+      "_ui-smoke",
+      "container-core-smoke",
+      "_container-core-smoke",
+      "container-openapi-check",
+      "_container-openapi-check",
+      "container-live-test",
+      "_container-live-test",
+      "container-technical-live-smoke",
+      "_container-technical-live-smoke",
+      "container-mcp-technical-smoke",
+      "_container-mcp-technical-smoke",
+      "container-release-candidate",
+      "_container-release-candidate",
+      "main-flow-live-test",
+      "_main-flow-live-test",
+      "ui-feedback-smoke",
+      "_ui-feedback-smoke",
+      "ui-playground-cancel-smoke",
+      "_ui-playground-cancel-smoke",
+      "ui-playground-technical-smoke",
+      "ui-agent-candidate-technical-smoke",
+      "_ui-agent-candidate-technical-smoke",
+      "langfuse-smoke",
+      "_langfuse-smoke"
+    ]
+  },
   "main_flows": [
     {
       "id": "agentscope_runtime_cutover",
@@ -452,11 +723,22 @@
           "description": "会话、聊天、事件流、run/reply/trace 映射和重启恢复遵循 AgentScope 契约。",
           "pytest": [
             "tests/test_runtime_provisioning_safety.py",
+            "tests/test_runtime_release_workspace_contract.py",
+            "tests/test_runtime_template_restart_contract.py",
+            "tests/test_release_activation_saga.py",
+            "tests/test_release_activation_response_loss.py",
+            "tests/test_release_activation_committed_recovery.py",
+            "tests/test_release_restart_store.py",
             "tests/test_agentscope_runtime_service.py",
             "tests/test_agentscope_team_coordination.py",
             "tests/test_runtime_gateway_router.py",
+            "tests/test_runtime_gateway_session_listing.py",
             "tests/test_runtime_gateway_recovery.py",
+            "tests/test_runtime_gateway_operation_identity.py",
             "tests/test_runtime_gateway_store.py",
+            "tests/test_runtime_receipt_identity.py",
+            "tests/test_runtime_candidate_resources.py",
+            "tests/test_runtime_agent_deletion_saga.py",
             "tests/test_runtime_fresh_schema.py"
           ]
         },
@@ -465,6 +747,10 @@
           "description": "活动 Harness 只有 AgentScope 资产，三服务 Compose 和 secret 边界保持 fail-closed。",
           "pytest": [
             "tests/test_agentscope_policy_bash.py",
+            "tests/test_agentscope_hitl_policy.py",
+            "tests/test_agentscope_worker_permissions.py",
+            "tests/test_subagent_manifest_contract.py",
+            "tests/test_agentscope_workspace_contract.py",
             "tests/test_harness_conversion.py",
             "tests/test_main_agentscope_cutover.py",
             "tests/test_repository_env_policy.py",
@@ -473,7 +759,7 @@
             "tests/test_container_acceptance_startup.py",
             "tests/test_runtime_published_harness_preparation.py",
             "tests/test_runtime_offline_gateway.py",
-            "tests/test_runtime_acceptance_fixture.py",
+            "tests/test_runtime_technical_integration_seed.py",
             "tests/test_agentscope_live_acceptance_contract.py",
             "tests/test_langfuse_env.py",
             "docker/runtime-bootstrap/governor-workspace/tests/test_governor_agentscope_harness.py"
@@ -481,17 +767,20 @@
         },
         {
           "id": "health_trace_and_cancel",
-          "description": "API readiness 反映 Runtime 状态，AgentScope semantic trace 可查询且浏览器可取消精确 run。",
+          "description": "API readiness 反映 Runtime 状态；SSE 保持 AgentScope 原始字节，Firefox 接受原生约 30 秒心跳并使用 60 秒连接预算；未提交失败可重试，已提交运行保持精确终态核对并等待 Runtime Session 释放执行槽；semantic trace 可查询且浏览器可取消精确 run。",
           "pytest": [
             "tests/test_runtime_signature_security.py",
             "tests/test_runtime_access_boundary.py",
+            "tests/test_runtime_control_receipt_delivery.py",
+            "tests/test_runtime_trace_reconciliation.py",
             "tests/test_health_endpoints.py",
             "tests/test_runtime_health_diagnose.py",
             "tests/test_langfuse_smoke_contract.py",
             "tests/test_runtime_otel_config.py",
             "tests/test_langfuse_query_client.py"
           ],
-          "ui_scripts": ["test:browser-audit-unit", "verify:playground-cancel"]
+          "ui_scripts": ["test:unit"],
+          "real_container_ui_target": "ui-playground-cancel-smoke"
         }
       ]
     },
@@ -503,6 +792,7 @@
           "id": "improvement_lifecycle_and_execution",
           "pytest": [
             "tests/test_improvement_api.py",
+            "tests/test_improvement_core_workflow.py",
             "tests/test_improvement_content.py",
             "tests/test_improvement_execution_service.py",
             "tests/test_improvement_governor_service.py"
@@ -513,11 +803,8 @@
           "pytest": [
             "tests/test_release_workbench_contract.py"
           ],
-          "ui_scripts": [
-            "test:unit",
-            "verify:design-parity",
-            "verify:improvement-decision"
-          ]
+          "ui_scripts": ["test:unit"],
+          "real_container_ui_target": "ui-feedback-smoke"
         }
       ]
     },

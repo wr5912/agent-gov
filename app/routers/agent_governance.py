@@ -9,6 +9,7 @@ from app.runtime.json_types import JsonObject
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.response_schemas.agent_governance_response_schemas import (
     AgentChangeSetActionRequest,
+    AgentChangeSetApproveRequest,
     AgentChangeSetCreateRequest,
     AgentChangeSetEventResponse,
     AgentChangeSetPublishRequest,
@@ -17,11 +18,6 @@ from app.runtime.response_schemas.agent_governance_response_schemas import (
     AgentGitFileDiffResponse,
     AgentGitRefResponse,
     AgentReleaseResponse,
-    AgentReleaseRestoreRequest,
-    AgentReleaseRestoreResponse,
-    AgentReleaseRollbackRequest,
-    AgentRepositoryDiscardChangesRequest,
-    AgentRepositorySnapshotRequest,
     AgentRepositoryStatusResponse,
 )
 from app.runtime.state_machines import AgentChangeSetStatus, AgentReleaseStatus
@@ -51,24 +47,6 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
         agent_id: str | None = Query(default=None, description=f"Defaults to {DEFAULT_BUSINESS_AGENT_ID}."),
     ) -> AgentRepositoryStatusResponse:
         return agent_governance.repository_status(agent_id)
-
-    @router.post(
-        "/agent-repository/discard-changes",
-        response_model=AgentRepositoryStatusResponse,
-        summary="Discard confirmed uncommitted changes from the selected business Agent workspace",
-    )
-    def discard_agent_repository_changes(
-        req: AgentRepositoryDiscardChangesRequest, agent_id: str | None = Query(default=None)
-    ) -> AgentRepositoryStatusResponse:
-        return agent_governance.discard_repository_changes(req.paths, agent_id)
-
-    @router.post(
-        "/agent-repository/snapshot",
-        response_model=AgentGitRefResponse,
-        summary="Save the selected business Agent workspace as an Agent version",
-    )
-    def snapshot_agent_repository(req: AgentRepositorySnapshotRequest, agent_id: str | None = Query(default=None)) -> AgentGitRefResponse:
-        return agent_governance.snapshot_repository(operator=req.operator, note=req.note, agent_id=agent_id)
 
     @router.get(
         "/agent-repository/current",
@@ -152,8 +130,17 @@ def _register_change_set_action_routes(
         response_model=AgentChangeSetResponse,
         summary="批准 Agent 待发布变更进入发布",
     )
-    def approve_agent_change_set(change_set_id: str, req: AgentChangeSetActionRequest) -> AgentChangeSetResponse:
-        return agent_governance.approve_change_set(change_set_id, operator=req.operator, note=req.note)
+    def approve_agent_change_set(change_set_id: str, req: AgentChangeSetApproveRequest) -> AgentChangeSetResponse:
+        return agent_governance.approve_change_set(
+            change_set_id,
+            candidate_commit_sha=req.candidate_commit_sha,
+            diff_digest=req.diff_digest,
+            test_run_id=req.test_run_id,
+            suite_digest=req.suite_digest,
+            reviewed_files=[item.model_dump(mode="json") for item in req.reviewed_files],
+            operator=req.operator,
+            note=req.note,
+        )
 
     @router.post(
         "/agent-change-sets/{change_set_id}/reject",
@@ -176,13 +163,17 @@ def _register_change_set_action_routes(
         response_model=AgentReleaseResponse,
         summary="发布已批准的 Agent 待发布变更",
     )
-    def publish_agent_change_set(change_set_id: str, req: AgentChangeSetPublishRequest) -> AgentReleaseResponse:
-        return agent_governance.publish_change_set(
+    async def publish_agent_change_set(change_set_id: str, req: AgentChangeSetPublishRequest) -> AgentReleaseResponse:
+        return await agent_governance.publish_change_set_async(
             change_set_id,
             operator=req.operator,
             tag_name=req.tag_name,
             note=req.force_reason if req.force else req.note,
             force=req.force,
+            expected_candidate_commit_sha=req.expected_candidate_commit_sha,
+            expected_diff_digest=req.expected_diff_digest,
+            expected_test_run_id=req.expected_test_run_id,
+            expected_suite_digest=req.expected_suite_digest,
         )
 
     @router.post(
@@ -220,22 +211,6 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
     )
     def get_agent_release(release_id: str) -> AgentReleaseResponse:
         return ensure_found(agent_governance.get_release(release_id), "Agent release not found")
-
-    @router.post(
-        "/agent-releases/{release_id}/restore",
-        response_model=AgentReleaseRestoreResponse,
-        summary="Restore one business Agent Workspace to a release",
-    )
-    def restore_agent_release(release_id: str, req: AgentReleaseRestoreRequest) -> AgentReleaseRestoreResponse:
-        return agent_governance.restore_release(release_id, operator=req.operator, note=req.note)
-
-    @router.post(
-        "/agent-releases/{release_id}/rollback",
-        response_model=AgentReleaseResponse,
-        summary="Rollback one business Agent Workspace to a release",
-    )
-    def rollback_agent_release(release_id: str, req: AgentReleaseRollbackRequest) -> AgentReleaseResponse:
-        return agent_governance.rollback_release(release_id, operator=req.operator, note=req.note)
 
 
 def _require_candidate_commit(change_set: JsonObject) -> str:

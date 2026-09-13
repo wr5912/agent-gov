@@ -1,109 +1,61 @@
 import { useEffect, useRef } from "react";
-import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import {
   connectAgentScopeSessionStream,
-  createRuntimeSession,
-  getRuntimeSessionStatus,
-  interruptRuntimeSession,
   startRuntimeChat,
-  type SubagentHitlProjection,
-  type SubagentHitlResolution,
 } from "../api/runtime";
-import { getAgentRun, getAgentRunByClientOperation } from "../api/feedback";
-import { ApiRequestError } from "../api/request";
 import { mergeChatMessageRunContext } from "../chatMessageRunContext";
-import {
-  clearProjectedExternalExecutionRequest,
-  externalExecutionRequestsFromEvent,
-  mergeExternalExecutionRequests,
-} from "../runtimeExternalExecutionState";
 import {
   connectedConfirmationTurn,
   ensureDetachedTurn,
   type DetachedRunController,
-  type DetachedRunRefs,
-  type PlaygroundActiveTurn,
 } from "../playgroundDetachedRun";
+import {
+  mergeRecoveredPendingRequests,
+  reconcilePendingRequestCards,
+} from "../playgroundPendingProjection";
+import {
+  mergeExactRunEventsIntoCanonicalMessages,
+  terminalAssistantMessageId,
+} from "../playgroundHistory";
 import {
   assistantWithOutcome,
   bindLogEventRunId,
+  buildInitialChatSubmission,
+  createSessionForIntent,
   loadSnapshot,
   loadTerminalSnapshot,
   postExternalExecution,
   postUserConfirm,
-  runContext,
+  waitForTurnSessionIdle,
 } from "../playgroundRunHelpers";
-import { runOutcome, waitForAgentGovRunTerminal } from "../playgroundRunTerminal";
+import type {
+  ActiveTurn,
+  AssistantUpdater,
+  PlaygroundRunOptions,
+  RunRefs,
+} from "../playgroundRunContract";
+import { createPlaygroundRunStreamHandlers } from "../playgroundRunStream";
+import { recoverPlaygroundTurn } from "../playgroundRunRecovery";
+import { runOutcome } from "../playgroundRunTerminal";
+import { stopPlaygroundRun } from "../playgroundRunStop";
 import {
   isPlaygroundRunLocked,
-  type PlaygroundRunAction,
   type PlaygroundRunOutcome,
-  type PlaygroundRunState,
 } from "../playgroundRunState";
-import { traceLogEvent, upsertTraceEvent } from "../playgroundTrace";
-import {
-  cancelWaitingUserConfirmRequests,
-  clearProjectedUserConfirmRequest,
-  mergeUserConfirmRequests,
-  userConfirmRequestsFromEvent,
-} from "../runtimeUserConfirmState";
+import { upsertTraceEvent } from "../playgroundTrace";
+import { cancelWaitingUserConfirmRequests } from "../runtimeUserConfirmState";
 import type {
-  AgentScopeAgentEvent,
   AgentScopeToolResultState,
   ChatMessage,
-  RuntimeClientConfig,
   RuntimeExternalExecutionRequest,
   RuntimeUserConfirmAction,
   RuntimeUserConfirmRequest,
   StreamLogEvent,
 } from "../types/runtime";
 import { newId } from "../utils/ids";
+import type { FeedbackRunRecord } from "../types/feedback";
 
-type MessageUpdater = (messages: ChatMessage[]) => ChatMessage[];
-type AssistantUpdater = (message: ChatMessage) => ChatMessage;
-
-interface PromptSuggestionController {
-  clear: (sessionId: string | undefined) => void;
-}
-
-export interface PlaygroundRunOptions {
-  clientConfig: RuntimeClientConfig;
-  input: string;
-  runState: PlaygroundRunState;
-  dispatchRun: Dispatch<PlaygroundRunAction>;
-  activeSessionId: string | undefined;
-  activeMessages: ChatMessage[];
-  activeMessagesLoaded: boolean;
-  selectedBusinessAgentId: string;
-  runtimeAgentId: string;
-  alertId: string;
-  caseId: string;
-  promptSuggestion: PromptSuggestionController;
-  setInput: Dispatch<SetStateAction<string>>;
-  setStreamingAssistantMessageId: Dispatch<SetStateAction<string | undefined>>;
-  setLastError: Dispatch<SetStateAction<string | undefined>>;
-  setSessionSidebarOpen: Dispatch<SetStateAction<boolean>>;
-  setEvidencePanelOpen: Dispatch<SetStateAction<boolean>>;
-  setActiveTraceMessageId: Dispatch<SetStateAction<string | undefined>>;
-  setUserInputErrors: Dispatch<SetStateAction<Record<string, string>>>;
-  setSubmittingUserInputRequests: Dispatch<SetStateAction<Set<string>>>;
-  claimLocalSession: (sessionId: string, businessAgentId: string, runtimeAgentId: string) => void;
-  updateSessionMessages: (sessionId: string, updater: MessageUpdater) => void;
-  updateUserConfirmRequest: (requestId: string, patch: Partial<RuntimeUserConfirmRequest>) => void;
-  updateExternalExecutionRequest: (requestId: string, patch: Partial<RuntimeExternalExecutionRequest>) => void;
-  cancelUserConfirmForMessage: (sessionId: string, messageId: string) => void;
-  cancelExternalExecutionForMessage: (sessionId: string, messageId: string) => void;
-  calibrateTrace: (sessionId: string, messageId: string, runId: string) => Promise<void>;
-  refresh: () => Promise<void>;
-}
-
-interface RunRefs extends DetachedRunRefs {
-  creatingSession: MutableRefObject<boolean>;
-  sessionCreationIntent: MutableRefObject<{ agentId: string; key: string } | null>;
-  detachedInterrupt: MutableRefObject<Promise<void> | null>;
-}
-
-type ActiveTurn = PlaygroundActiveTurn;
+export type { PlaygroundRunOptions, RunRefs } from "../playgroundRunContract";
 
 export function usePlaygroundRun(options: PlaygroundRunOptions) {
   const refs: RunRefs = {
@@ -111,7 +63,8 @@ export function usePlaygroundRun(options: PlaygroundRunOptions) {
     activeTurn: useRef<ActiveTurn | null>(null),
     creatingSession: useRef(false),
     sessionCreationIntent: useRef(null),
-    detachedInterrupt: useRef<Promise<void> | null>(null),
+    detachedStop: useRef<Promise<void> | null>(null),
+    detachedStopController: useRef<AbortController | null>(null),
     detachedAttach: useRef<Promise<ActiveTurn> | null>(null),
   };
 
@@ -125,13 +78,11 @@ export function usePlaygroundRun(options: PlaygroundRunOptions) {
       || !options.activeMessagesLoaded
     ) return;
     let cancelled = false;
-    // React StrictMode immediately cleans up and replays mount effects. Delay
-    // the transport side effect one microtask so the discarded pass never
-    // opens a duplicate SSE connection.
+    // StrictMode 的废弃首轮不能打开重复 SSE。
     queueMicrotask(() => {
       if (cancelled) return;
       void ensureDetachedTurn(detachedRunController(options, refs)).catch((error: unknown) => {
-        if (cancelled) return;
+        if (cancelled || refs.activeToken.current !== options.runState.operationId) return;
         const message = `恢复运行连接失败：${error instanceof Error ? error.message : String(error)}`;
         options.setLastError(message);
         options.dispatchRun({
@@ -154,6 +105,7 @@ export function usePlaygroundRun(options: PlaygroundRunOptions) {
   ]);
 
   useEffect(() => () => {
+    refs.detachedStopController.current?.abort("playground_unmounted");
     const turn = refs.activeTurn.current;
     if (!turn) return;
     turn.sealed = true;
@@ -163,7 +115,13 @@ export function usePlaygroundRun(options: PlaygroundRunOptions) {
 
   return {
     sendMessage: () => sendPlaygroundMessage(options, refs),
-    stopStream: () => stopPlaygroundStream(options, refs),
+    stopStream: () => stopPlaygroundRun(options, refs, {
+      bindRunHandle: (turn, runId) => bindRunHandle(options, turn, runId),
+      completeRun: (turn, signal) => completeFromAgentGovRun(options, refs, turn, signal),
+      releaseUnsubmitted: (turn) => finishUnsubmittedTurn(options, refs, turn),
+      reportActiveError: (turn, message) => reportActiveStopError(options, turn, message),
+      isMutableTurn: (turn) => isMutableTurn(refs, turn),
+    }),
     submitUserConfirm: (request: RuntimeUserConfirmRequest, action: RuntimeUserConfirmAction) => (
       submitPlaygroundUserConfirm(options, refs, request, action)
     ),
@@ -183,14 +141,18 @@ async function sendPlaygroundMessage(options: PlaygroundRunOptions, refs: RunRef
     return;
   }
   if (!options.runtimeAgentId) {
-    options.setLastError("当前业务 Agent 尚未显式启用 Runtime。");
+    options.setLastError("当前业务 Agent 没有可用的已发布 Runtime 绑定，请先完成候选测试、审批与发布。");
     return;
   }
 
   refs.creatingSession.current = true;
   let turn: ActiveTurn | undefined;
   try {
-    const sessionId = options.activeSessionId || await createSessionForIntent(options, refs);
+    const sessionId = options.activeSessionId || await createSessionForIntent(
+      options,
+      options.runtimeAgentId,
+      refs.sessionCreationIntent,
+    );
     if (!options.activeSessionId) {
       options.claimLocalSession(sessionId, options.selectedBusinessAgentId, options.runtimeAgentId);
     }
@@ -201,42 +163,7 @@ async function sendPlaygroundMessage(options: PlaygroundRunOptions, refs: RunRef
     else options.setLastError(error instanceof Error ? error.message : String(error));
   } finally {
     refs.creatingSession.current = false;
-    if (turn) finishTransport(options, refs, turn);
   }
-}
-
-async function createSessionForIntent(options: PlaygroundRunOptions, refs: RunRefs): Promise<string> {
-  const agentId = options.runtimeAgentId;
-  let intent = refs.sessionCreationIntent.current;
-  if (intent?.agentId !== agentId) {
-    intent = { agentId, key: newId("session-create") };
-    refs.sessionCreationIntent.current = intent;
-  }
-  try {
-    const sessionId = await createRuntimeSession(options.clientConfig, agentId, intent.key);
-    refs.sessionCreationIntent.current = null;
-    return sessionId;
-  } catch (error) {
-    // AgentScope has proven this fixed template cannot succeed until Runtime
-    // restarts. Only that explicit response permits a new logical intent/key.
-    if (
-      error instanceof ApiRequestError
-      && error.errorCode === "RUNTIMERESTARTREQUIRED"
-      && refs.sessionCreationIntent.current?.key === intent.key
-    ) {
-      refs.sessionCreationIntent.current = null;
-    }
-    throw error;
-  }
-}
-
-function stopPlaygroundStream(options: PlaygroundRunOptions, refs: RunRefs) {
-  const turn = refs.activeTurn.current;
-  if (turn && isCurrentTurn(refs, turn)) {
-    requestActiveTurnStop(options, refs, turn);
-    return;
-  }
-  requestDetachedStop(options, refs);
 }
 
 async function submitPlaygroundUserConfirm(
@@ -337,8 +264,8 @@ function detachedRunController(
     refs,
     createStreamHandlers: (turn) => createStreamHandlers(options, refs, turn),
     bindRunHandle: (turn, runId) => bindRunHandle(options, turn, runId),
-    completeRun: (turn) => completeFromAgentGovRun(options, refs, turn),
-    recoverRun: (turn, error) => recoverTurn(options, refs, turn, error),
+    monitorRun: (turn) => monitorAgentGovRun(options, refs, turn),
+    ensureConnection: (turn) => ensurePresentationStream(options, refs, turn, true),
     isMutableTurn: (turn) => isMutableTurn(refs, turn),
   };
 }
@@ -358,11 +285,12 @@ function startTurn(
   options.setSessionSidebarOpen(false);
   options.setEvidencePanelOpen(true);
 
+  const userMessageId = newId("msg");
   const assistantMessageId = newId("msg");
   const createdAt = new Date().toISOString();
   options.updateSessionMessages(sessionId, (current) => [
     ...current,
-    { id: newId("msg"), role: "user", content: message, createdAt, sessionId },
+    { id: userMessageId, role: "user", content: message, createdAt, sessionId },
     {
       id: assistantMessageId,
       role: "assistant",
@@ -380,13 +308,17 @@ function startTurn(
   const turn: ActiveTurn = {
     sessionId,
     agentId: options.runtimeAgentId,
+    userMessageId,
     assistantMessageId,
+    inputText: message,
     operationId,
     controller: new AbortController(),
     completed: false,
     sealed: false,
     stopRequested: false,
     chatSubmitted: false,
+    observedPendingActionIds: new Set(),
+    presentedTextEventIds: new Set(),
   };
   refs.activeToken.current = operationId;
   refs.activeTurn.current = turn;
@@ -399,104 +331,97 @@ async function executeTurn(
   turn: ActiveTurn,
   message: string,
 ) {
-  turn.connection = await connectAgentScopeSessionStream(
-    options.clientConfig,
-    turn.agentId,
-    turn.sessionId,
-    createStreamHandlers(options, refs, turn),
-    turn.controller.signal,
-  );
+  await waitForTurnSessionIdle(options, turn);
   if (!isMutableTurn(refs, turn)) return;
-  const replyEnd = turn.connection.armReply();
-  // The POST may fail before execution reaches `await replyEnd`; keep the
-  // already-armed stream waiter observed while exact-operation recovery runs.
-  void replyEnd.catch(() => undefined);
+  // SSE 仅承载展示；exact AgentGov run monitor 才决定生命周期。
+  void ensurePresentationStream(options, refs, turn, false);
   turn.chatSubmitted = true;
+  const submission = buildInitialChatSubmission(options, turn, message);
   const receipt = await startRuntimeChat(
     options.clientConfig,
     turn.agentId,
     turn.sessionId,
-    { name: "user", role: "user", content: [{ type: "text", text: message }] },
-    { ...runContext(options), clientOperationId: turn.operationId },
+    submission.input,
+    submission.context,
     turn.controller.signal,
   );
   bindRunHandle(options, turn, receipt.runId);
-  if (turn.stopRequested) requestActiveTurnInterrupt(options, refs, turn);
-  await replyEnd;
-  if (isMutableTurn(refs, turn)) await completeFromAgentGovRun(options, refs, turn);
+  if (turn.streamError && isMutableTurn(refs, turn)) void ensurePresentationStream(options, refs, turn, true);
+  if (turn.stopRequested) stopPlaygroundRun(options, refs, {
+    bindRunHandle: (activeTurn, runId) => bindRunHandle(options, activeTurn, runId),
+    completeRun: (activeTurn, signal) => completeFromAgentGovRun(options, refs, activeTurn, signal),
+    releaseUnsubmitted: (activeTurn) => finishUnsubmittedTurn(options, refs, activeTurn),
+    reportActiveError: (activeTurn, errorMessage) => reportActiveStopError(options, activeTurn, errorMessage),
+    isMutableTurn: (activeTurn) => isMutableTurn(refs, activeTurn),
+  });
+  ensureTerminalMonitor(options, refs, turn);
+  await turn.terminalMonitor;
+}
+
+async function connectInitialTurnStream(
+  options: PlaygroundRunOptions,
+  refs: RunRefs,
+  turn: ActiveTurn,
+) {
+  let connection: Awaited<ReturnType<typeof connectAgentScopeSessionStream>> | undefined;
+  try {
+    connection = await connectAgentScopeSessionStream(
+      options.clientConfig,
+      turn.agentId,
+      turn.sessionId,
+      createStreamHandlers(options, refs, turn),
+      turn.controller.signal,
+    );
+    if (!isMutableTurn(refs, turn)) {
+      connection.close();
+      return;
+    }
+    if (turn.connection && turn.connection !== connection) {
+      connection.close();
+      return;
+    }
+    turn.connection = connection;
+    if (turn.runtimeRunId) connection.setRunId(turn.runtimeRunId);
+    watchPresentationStream(refs, turn, connection);
+    turn.streamError = undefined;
+  } catch (error) {
+    if (!isMutableTurn(refs, turn)) return;
+    if (connection && turn.connection === connection) turn.connection = undefined;
+    turn.streamError = error;
+  }
+}
+
+function watchPresentationStream(
+  refs: RunRefs,
+  turn: ActiveTurn,
+  connection: NonNullable<ActiveTurn["connection"]>,
+) {
+  const replyMonitor = connection.armReply()
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      if (!isMutableTurn(refs, turn) || turn.connection !== connection) return;
+      turn.connection = undefined;
+      turn.streamError = error;
+    })
+    .finally(() => {
+      if (turn.replyMonitor === replyMonitor) turn.replyMonitor = undefined;
+    });
+  turn.replyMonitor = replyMonitor;
+  void connection.closed.then(() => {
+    if (!isMutableTurn(refs, turn) || turn.connection !== connection) return;
+    turn.connection = undefined;
+    turn.streamError = new Error("Runtime 事件流已关闭。");
+  });
 }
 
 function createStreamHandlers(options: PlaygroundRunOptions, refs: RunRefs, turn: ActiveTurn) {
-  return {
-    onTraceEvent: (event: Parameters<typeof traceLogEvent>[0]) => {
-      if (isMutableTurn(refs, turn)) appendTraceEvent(options, turn, traceLogEvent(event));
-    },
-    onText: (text: string) => {
-      if (!isMutableTurn(refs, turn)) return;
-      updateAssistant(options, turn, (current) => ({ ...current, content: `${current.content}${text}` }));
-    },
-    onUserConfirmRequired: (
-      event: AgentScopeAgentEvent,
-      projection?: SubagentHitlProjection,
-    ) => {
-      if (!isMutableTurn(refs, turn)) return;
-      const requests = userConfirmRequestsFromEvent(event, projection?.worker_session_id);
-      if (!requests.length) {
-        updateAssistant(options, turn, (current) => ({
-          ...current,
-          controlError: "Runtime 返回了无法识别的工具确认请求。",
-        }));
-        return;
-      }
-      updateAssistant(options, turn, (current) => ({
-        ...current,
-        userConfirmRequests: mergeUserConfirmRequests(current.userConfirmRequests, requests),
-      }));
-      options.dispatchRun({ type: "awaiting_input", operationId: turn.operationId });
-    },
-    onUserConfirmResolved: (projection: SubagentHitlResolution) => {
-      if (!isMutableTurn(refs, turn)) return;
-      updateAssistant(options, turn, (current) => ({
-        ...current,
-        userConfirmRequests: clearProjectedUserConfirmRequest(
-          current.userConfirmRequests,
-          projection.worker_session_id,
-          projection.reply_id,
-        ),
-        externalExecutionRequests: clearProjectedExternalExecutionRequest(
-          current.externalExecutionRequests,
-          projection.worker_session_id,
-          projection.reply_id,
-        ),
-      }));
-    },
-    onExternalExecutionRequired: (
-      event: AgentScopeAgentEvent,
-      projection?: SubagentHitlProjection,
-    ) => {
-      if (!isMutableTurn(refs, turn)) return;
-      const requests = externalExecutionRequestsFromEvent(event, projection?.worker_session_id);
-      if (!requests.length) {
-        updateAssistant(options, turn, (current) => ({
-          ...current,
-          controlError: "Runtime 返回了无法识别的外部执行请求。",
-        }));
-        return;
-      }
-      updateAssistant(options, turn, (current) => ({
-        ...current,
-        externalExecutionRequests: mergeExternalExecutionRequests(
-          current.externalExecutionRequests,
-          requests,
-        ),
-      }));
-      options.dispatchRun({ type: "awaiting_input", operationId: turn.operationId });
-    },
-    onMalformedFrame: (_data: string, error: Error) => {
-      if (!isMutableTurn(refs, turn)) return;
-      updateAssistant(options, turn, (current) => ({ ...current, controlError: error.message }));
-    },
-  };
+  return createPlaygroundRunStreamHandlers({
+    options,
+    turn,
+    isMutable: () => isMutableTurn(refs, turn),
+    updateAssistant: (updater) => updateAssistant(options, turn, updater),
+    appendTraceEvent: (event) => appendTraceEvent(options, turn, event),
+  });
 }
 
 function bindRunHandle(options: PlaygroundRunOptions, turn: ActiveTurn, runId: string) {
@@ -518,86 +443,192 @@ async function completeFromAgentGovRun(
   options: PlaygroundRunOptions,
   refs: RunRefs,
   turn: ActiveTurn,
+  signal: AbortSignal = turn.controller.signal,
+  monitorOptions: {
+    announce?: boolean;
+    maxAttempts?: number | null;
+    onRunObserved?: (run: FeedbackRunRecord) => void | Promise<void>;
+  } = {},
 ) {
-  const snapshot = await loadTerminalSnapshot(options, turn);
   if (!isMutableTurn(refs, turn)) return;
-  options.updateSessionMessages(turn.sessionId, () => snapshot.messages);
-  const canonicalAssistant = [...snapshot.messages].reverse().find((message) => (
-    message.role === "assistant" && message.runId === snapshot.run.run_id
+  if (monitorOptions.announce !== false) {
+    options.dispatchRun({
+      type: "reconciling", operationId: turn.operationId,
+      message: "正在核对运行终态和 Runtime 会话收尾状态。",
+    });
+  }
+  const snapshot = await loadTerminalSnapshot(
+    options,
+    turn,
+    signal,
+    monitorOptions.maxAttempts,
+    monitorOptions.onRunObserved,
+  );
+  if (!isMutableTurn(refs, turn)) return;
+  options.setLastError(undefined);
+  const canonicalAssistantId = terminalAssistantMessageId(snapshot.messages, snapshot.run.run_id);
+  options.updateSessionMessages(turn.sessionId, (current) => mergeExactRunEventsIntoCanonicalMessages(
+    current, snapshot.messages, snapshot.run.run_id, canonicalAssistantId,
   ));
-  if (canonicalAssistant) turn.assistantMessageId = canonicalAssistant.id;
+  if (canonicalAssistantId) {
+    turn.assistantMessageId = canonicalAssistantId;
+    options.setActiveTraceMessageId(canonicalAssistantId);
+  }
   finalizeTurn(options, refs, turn, runOutcome(snapshot.run));
 }
 
-function requestActiveTurnStop(options: PlaygroundRunOptions, refs: RunRefs, turn: ActiveTurn) {
-  if (turn.completed || turn.sealed) return;
-  turn.stopRequested = true;
-  options.setLastError(undefined);
-  options.dispatchRun({ type: "stop_requested", operationId: turn.operationId });
-  if (!turn.chatSubmitted) {
-    finalizeTurn(options, refs, turn, "cancelled");
-    return;
-  }
-  requestActiveTurnInterrupt(options, refs, turn);
-}
-
-function requestActiveTurnInterrupt(options: PlaygroundRunOptions, refs: RunRefs, turn: ActiveTurn) {
-  if (turn.interruptPromise || turn.completed) return;
-  turn.interruptPromise = interruptRuntimeSession(
-    options.clientConfig,
-    turn.agentId,
-    turn.sessionId,
-  )
-    .then((response) => {
-      if (!isMutableTurn(refs, turn) || response.session_id !== turn.sessionId) return;
-      updateAssistant(options, turn, (current) => ({ ...current, controlError: undefined }));
-    })
-    .catch((error: unknown) => {
-      if (!isMutableTurn(refs, turn)) return;
-      const message = `停止状态待核对：${error instanceof Error ? error.message : String(error)}`;
+async function monitorAgentGovRun(
+  options: PlaygroundRunOptions,
+  refs: RunRefs,
+  turn: ActiveTurn,
+) {
+  while (isMutableTurn(refs, turn)) {
+    try {
+      await completeFromAgentGovRun(options, refs, turn, turn.controller.signal, {
+        announce: false,
+        maxAttempts: null,
+        onRunObserved: (run) => observeAgentGovRun(options, refs, turn, run),
+      });
+      return;
+    } catch (error) {
+      if (!isMutableTurn(refs, turn) || turn.controller.signal.aborted) return;
+      const detail = error instanceof Error ? error.message : String(error);
+      const message = `AgentGov run 终态监控暂时失败，将继续按精确 run_id 重试：${detail}`;
       options.setLastError(message);
+      turn.monitorError = message;
       options.dispatchRun({ type: "reconciling", operationId: turn.operationId, message });
       updateAssistant(options, turn, (current) => ({ ...current, controlError: message }));
-    })
-    .finally(() => {
-      turn.interruptPromise = undefined;
-    });
+      try {
+        await waitForMonitorRetry(turn.controller.signal);
+      } catch {
+        return;
+      }
+    }
+  }
 }
 
-function requestDetachedStop(options: PlaygroundRunOptions, refs: RunRefs) {
-  const { operationId, sessionId, runId } = options.runState;
-  if (!operationId || !sessionId || refs.detachedInterrupt.current) return;
-  if (!runId) {
-    const message = "缺少精确的 AgentGov run_id，无法确认停止结果。";
-    options.setLastError(message);
-    options.dispatchRun({ type: "reconciling", operationId, message });
+function ensureTerminalMonitor(
+  options: PlaygroundRunOptions,
+  refs: RunRefs,
+  turn: ActiveTurn,
+) {
+  if (turn.terminalMonitor) return;
+  const terminalMonitor = monitorAgentGovRun(options, refs, turn).finally(() => {
+    if (turn.terminalMonitor === terminalMonitor) turn.terminalMonitor = undefined;
+  });
+  turn.terminalMonitor = terminalMonitor;
+  void terminalMonitor.catch(() => undefined);
+}
+
+async function observeAgentGovRun(
+  options: PlaygroundRunOptions,
+  refs: RunRefs,
+  turn: ActiveTurn,
+  run: FeedbackRunRecord,
+) {
+  if (!isMutableTurn(refs, turn)) return;
+  if (turn.monitorError) {
+    const recoveredError = turn.monitorError;
+    turn.monitorError = undefined;
+    options.setLastError((current) => current === recoveredError ? undefined : current);
+    updateAssistant(options, turn, (current) => ({
+      ...current,
+      controlError: current.controlError === recoveredError ? undefined : current.controlError,
+    }));
+  }
+  const waitingKind = run.status === "waiting_human"
+    ? "human"
+    : run.status === "waiting_external"
+      ? "external"
+      : undefined;
+  if (!waitingKind) {
+    options.dispatchRun({ type: "monitor_recovered", operationId: turn.operationId });
+    turn.observedPendingActionIds?.clear();
+    turn.lastPendingRecoveryAt = undefined;
+    turn.missingPendingActionKey = undefined;
+    turn.missingPendingFirstSeenAt = undefined;
+    reconcilePendingRequestCards(turn, [], (updater) => updateAssistant(options, turn, updater));
+    if (!turn.connection && turn.streamError) {
+      void ensurePresentationStream(options, refs, turn, true);
+    }
     return;
   }
-  options.dispatchRun({ type: "stop_requested", operationId });
-  refs.detachedInterrupt.current = interruptRuntimeSession(
-    options.clientConfig,
-    options.runtimeAgentId,
-    sessionId,
-  )
-    .then(async () => {
-      const terminal = await waitForAgentGovRunTerminal({
-        runId,
-        sessionId,
-        signal: undefined,
-        getRun: (exactRunId, signal) => getAgentRun(options.clientConfig, exactRunId, signal),
-      });
-      const outcome = runOutcome(terminal);
-      options.dispatchRun({ type: "terminal", operationId, outcome });
-      await options.refresh();
-    })
-    .catch((error: unknown) => {
-      const message = `停止状态待核对：${error instanceof Error ? error.message : String(error)}`;
-      options.setLastError(message);
-      options.dispatchRun({ type: "reconciling", operationId, message });
-    })
-    .finally(() => {
-      refs.detachedInterrupt.current = null;
-    });
+
+  const now = Date.now();
+  if (turn.lastPendingRecoveryAt && now - turn.lastPendingRecoveryAt < 2_000) return;
+  turn.lastPendingRecoveryAt = now;
+  try {
+    const snapshot = await loadSnapshot(options, turn);
+    if (!isMutableTurn(refs, turn) || snapshot.outcome) return;
+    const pendingActions = snapshot.pendingActions.filter((action) => (
+      action.run_id === run.run_id && action.kind === waitingKind && action.status === "pending"
+    ));
+    reconcilePendingRequestCards(
+      turn,
+      pendingActions,
+      (updater) => updateAssistant(options, turn, updater),
+    );
+    const recoveredActionIds = mergeRecoveredPendingRequests(
+      turn,
+      snapshot.messages,
+      pendingActions,
+      (updater) => updateAssistant(options, turn, updater),
+      waitingKind,
+    );
+    const currentActionIds = new Set(pendingActions.map((action) => action.action_id));
+    const observedActionIds = new Set(
+      [...(turn.observedPendingActionIds || [])].filter((actionId) => currentActionIds.has(actionId)),
+    );
+    for (const actionId of recoveredActionIds) observedActionIds.add(actionId);
+    turn.observedPendingActionIds = observedActionIds;
+    const missingActions = pendingActions.filter((action) => !observedActionIds.has(action.action_id));
+    if (pendingActions.length && !missingActions.length) {
+      turn.missingPendingActionKey = undefined;
+      turn.missingPendingFirstSeenAt = undefined;
+      if (!turn.connection) await ensurePresentationStream(options, refs, turn, true);
+      if (!isMutableTurn(refs, turn) || !turn.connection) return;
+      options.setLastError(undefined);
+      options.dispatchRun({ type: "awaiting_input", operationId: turn.operationId });
+      return;
+    }
+    const missingActionKey = missingActions.map((action) => action.action_id).sort().join("\0") || "ledger-empty";
+    if (turn.missingPendingActionKey !== missingActionKey) {
+      turn.missingPendingActionKey = missingActionKey;
+      turn.missingPendingFirstSeenAt = now;
+      if (turn.connection && !turn.streamError) return;
+    }
+    if (
+      turn.connection
+      && !turn.streamError
+      && now - (turn.missingPendingFirstSeenAt || now) < 2_000
+    ) return;
+    const message = waitingKind === "human"
+      ? "AgentGov run 正在等待人工确认，但尚未取得匹配的 AgentScope 原始工具调用；正在重连事件投影。"
+      : "AgentGov run 正在等待外部执行，但尚未取得匹配的 AgentScope 原始工具调用；正在重连事件投影。";
+    options.setLastError(message);
+    updateAssistant(options, turn, (current) => ({ ...current, controlError: message }));
+    await ensurePresentationStream(options, refs, turn, true);
+  } catch {
+    // 精确 run 轮询继续进行；下一轮再次读取 durable pending actions。
+  }
+}
+
+function waitForMonitorRetry(signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Run monitor aborted", "AbortError"));
+      return;
+    }
+    const timeout = globalThis.setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, 1_000);
+    const abort = () => {
+      globalThis.clearTimeout(timeout);
+      reject(new DOMException("Run monitor aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 async function recoverTurn(
@@ -606,113 +637,76 @@ async function recoverTurn(
   turn: ActiveTurn,
   error: unknown,
 ) {
-  if (turn.completed || !isCurrentTurn(refs, turn)) return;
-  if (turn.controller.signal.aborted && turn.stopRequested) return;
-  const transportMessage = error instanceof Error ? error.message : String(error);
-  try {
-    if (!turn.runtimeRunId) await recoverInitialRunHandle(options, turn);
-    const snapshot = await loadSnapshot(options, turn);
-    if (snapshot.outcome) {
-      options.updateSessionMessages(turn.sessionId, () => snapshot.messages);
-      const canonicalAssistant = [...snapshot.messages].reverse().find((message) => (
-        message.role === "assistant" && message.runId === snapshot.runId
-      ));
-      if (canonicalAssistant) turn.assistantMessageId = canonicalAssistant.id;
-      finalizeTurn(options, refs, turn, snapshot.outcome);
-      return;
-    }
-    mergeRecoveredPendingRequests(options, turn, snapshot.messages);
-    const message = `事件流中断，已用 messages/status 恢复；Runtime 当前为 ${snapshot.status}。`;
-    options.setLastError(message);
-    options.dispatchRun({ type: "reconciling", operationId: turn.operationId, message });
-    updateAssistant(options, turn, (current) => ({ ...current, controlError: message }));
-    await reconnectActiveTurn(options, refs, turn);
-  } catch (recoveryError) {
-    const detail = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
-    const message = `${transportMessage}；messages/status 恢复失败：${detail}`;
-    options.setLastError(message);
-    options.dispatchRun({ type: "reconciling", operationId: turn.operationId, message });
-    updateAssistant(options, turn, (current) => ({ ...current, controlError: message }));
-  }
-}
-
-async function recoverInitialRunHandle(options: PlaygroundRunOptions, turn: ActiveTurn) {
-  if (!turn.chatSubmitted) {
-    throw new Error("初始 chat 尚未提交，不能通过运行列表猜测 run_id。");
-  }
-  let run;
-  try {
-    run = await getAgentRunByClientOperation(
-      options.clientConfig,
-      turn.sessionId,
-      turn.operationId,
-      turn.controller.signal,
-    );
-  } catch (error) {
-    if (error instanceof ApiRequestError && error.status === 404) {
-      throw new Error(
-        `尚未找到 session_id/client_operation_id 唯一对应的 AgentGov run（${turn.operationId}），状态待核对。`,
-      );
-    }
-    throw error;
-  }
-  if (
-    run.run_id == null
-    || run.session_id !== turn.sessionId
-    || (run.runtime_agent_id && run.runtime_agent_id !== turn.agentId)
-    || run.client_operation_id !== turn.operationId
-  ) {
-    throw new Error("client_operation_id 查询结果与当前 chat 意图不一致，拒绝绑定。");
-  }
-  bindRunHandle(options, turn, run.run_id);
+  await recoverPlaygroundTurn({
+    options,
+    turn,
+    isCurrent: () => isCurrentTurn(refs, turn),
+    isMutable: () => isMutableTurn(refs, turn),
+    finishUnsubmitted: (message) => finishUnsubmittedTurn(options, refs, turn, message),
+    bindRunHandle: (runId) => bindRunHandle(options, turn, runId),
+    completeRun: () => completeFromAgentGovRun(options, refs, turn),
+    ensureTerminalMonitor: () => ensureTerminalMonitor(options, refs, turn),
+    reconnect: () => reconnectActiveTurn(options, refs, turn),
+    updateAssistant: (updater) => updateAssistant(options, turn, updater),
+  }, error);
 }
 
 async function reconnectActiveTurn(options: PlaygroundRunOptions, refs: RunRefs, turn: ActiveTurn) {
-  turn.connection?.close();
-  turn.connection = await connectAgentScopeSessionStream(
+  const previous = turn.connection;
+  if (previous) {
+    turn.connection = undefined;
+    previous.close();
+  }
+  const connection = await connectAgentScopeSessionStream(
     options.clientConfig,
     turn.agentId,
     turn.sessionId,
     createStreamHandlers(options, refs, turn),
     turn.controller.signal,
+    {
+      captureReplyBeforeArm: true,
+      expectedReplyId: turn.replayTextReplyId,
+    },
   );
-  if (turn.runtimeRunId) turn.connection.setRunId(turn.runtimeRunId);
-  const replyEnd = turn.connection.armReply();
-  const status = await getRuntimeSessionStatus(
-    options.clientConfig,
-    turn.agentId,
-    turn.sessionId,
-    turn.controller.signal,
-  );
-  if (status.status === "idle") {
-    turn.connection.close();
-    await completeFromAgentGovRun(options, refs, turn);
+  if (!isMutableTurn(refs, turn)) {
+    connection.close();
     return;
   }
-  if (turn.runtimeRunId) bindRunHandle(options, turn, turn.runtimeRunId);
-  if (status.status === "awaiting_permission" || status.status === "awaiting_external_result") {
-    options.dispatchRun({ type: "awaiting_input", operationId: turn.operationId });
+  if (turn.connection && turn.connection !== connection) {
+    connection.close();
+    return;
   }
-  await replyEnd;
-  if (isMutableTurn(refs, turn)) await completeFromAgentGovRun(options, refs, turn);
+  turn.connection = connection;
+  if (turn.runtimeRunId) connection.setRunId(turn.runtimeRunId);
+  watchPresentationStream(refs, turn, connection);
+  turn.streamError = undefined;
 }
 
-function mergeRecoveredPendingRequests(
+function ensurePresentationStream(
   options: PlaygroundRunOptions,
+  refs: RunRefs,
   turn: ActiveTurn,
-  messages: ChatMessage[],
-) {
-  const recoveredConfirm = [...messages].reverse().find((message) => message.userConfirmRequests?.length)?.userConfirmRequests;
-  const recoveredExternal = [...messages].reverse().find((message) => message.externalExecutionRequests?.length)?.externalExecutionRequests;
-  if (!recoveredConfirm?.length && !recoveredExternal?.length) return;
-  updateAssistant(options, turn, (current) => ({
-    ...current,
-    userConfirmRequests: mergeUserConfirmRequests(current.userConfirmRequests, recoveredConfirm || []),
-    externalExecutionRequests: mergeExternalExecutionRequests(
-      current.externalExecutionRequests,
-      recoveredExternal || [],
-    ),
-  }));
+  reconnect: boolean,
+): Promise<void> {
+  if (!isMutableTurn(refs, turn)) return Promise.resolve();
+  if (turn.streamReconnect) return turn.streamReconnect;
+  if (!reconnect && turn.connection) return Promise.resolve();
+  const now = Date.now();
+  if (reconnect && turn.lastStreamReconnectAt && now - turn.lastStreamReconnectAt < 5_000) {
+    return Promise.resolve();
+  }
+  if (reconnect) turn.lastStreamReconnectAt = now;
+  const attaching = (reconnect
+    ? reconnectActiveTurn(options, refs, turn)
+    : connectInitialTurnStream(options, refs, turn))
+    .catch((error: unknown) => {
+      if (isMutableTurn(refs, turn)) turn.streamError = error;
+    })
+    .finally(() => {
+      if (turn.streamReconnect === attaching) turn.streamReconnect = undefined;
+    });
+  turn.streamReconnect = attaching;
+  return attaching;
 }
 
 function finalizeTurn(
@@ -743,9 +737,27 @@ function finalizeTurn(
   void options.refresh();
 }
 
-function finishTransport(options: PlaygroundRunOptions, refs: RunRefs, turn: ActiveTurn) {
-  if (turn.completed || !isCurrentTurn(refs, turn)) return;
-  const message = "尚未确认精确的 AgentGov run 终态，已锁定发送并等待状态核对。";
+function finishUnsubmittedTurn(options: PlaygroundRunOptions, refs: RunRefs, turn: ActiveTurn, message?: string) {
+  if (turn.chatSubmitted || turn.completed || !isMutableTurn(refs, turn)) return;
+  turn.completed = true;
+  turn.sealed = true;
+  turn.connection?.close();
+  turn.controller.abort("chat_not_submitted");
+  refs.activeToken.current = null;
+  refs.activeTurn.current = null;
+  options.dispatchRun({ type: "not_submitted", operationId: turn.operationId });
+  options.setStreamingAssistantMessageId(undefined);
+  options.setActiveTraceMessageId(undefined);
+  options.setSubmittingUserInputRequests(new Set());
+  options.updateSessionMessages(turn.sessionId, (messages) => messages.filter((candidate) => (
+    candidate.id !== turn.userMessageId && candidate.id !== turn.assistantMessageId
+  )));
+  options.setInput((current) => current || turn.inputText || "");
+  options.setLastError(message);
+  void options.refresh();
+}
+
+function reportActiveStopError(options: PlaygroundRunOptions, turn: ActiveTurn, message: string) {
   options.setLastError(message);
   options.dispatchRun({ type: "reconciling", operationId: turn.operationId, message });
   updateAssistant(options, turn, (current) => ({ ...current, controlError: message }));

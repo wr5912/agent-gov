@@ -15,18 +15,12 @@ from app.services.business_agent_deletion import purge_business_agent_storage
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app as _load_app
-from test_agent_workspace_packages import _import_new_agent
+from test_agent_workspace_packages import _candidate_workspace, _import_new_agent, _seed_active_agent
 
 
 @pytest.fixture()
-def app_module(monkeypatch, tmp_path: Path):
-    return _load_app(monkeypatch, tmp_path)
-
-
-def _create(client: TestClient, agent_id: str, name: str = "受测 Agent") -> Path:
-    created = _import_new_agent(client, agent_id=agent_id, name=name)
-    assert created.status_code == 200, created.text
-    return Path(created.json()["agent"]["workspace_dir"])
+def app_module(process_environment, tmp_path: Path):
+    return _load_app(process_environment, tmp_path)
 
 
 def test_delete_purges_disk_and_recreate_does_not_inherit(app_module) -> None:
@@ -35,8 +29,8 @@ def test_delete_purges_disk_and_recreate_does_not_inherit(app_module) -> None:
     这条断言的是先前实测的缺陷不再成立——删除只 tombstone、磁盘保留时，重建会继承旧内容。
     """
 
+    workspace = _seed_active_agent(app_module, agent_id="probe-agent", name="受测 Agent")
     with TestClient(app_module.app) as client:
-        workspace = _create(client, "probe-agent")
         (workspace / "AGENT.md").write_text("前一个 Agent 的私有内容\n", encoding="utf-8")
 
         deleted = client.request("DELETE", "/api/agent-registry/probe-agent")
@@ -47,8 +41,10 @@ def test_delete_purges_disk_and_recreate_does_not_inherit(app_module) -> None:
         assert not workspace.exists()
         assert not workspace.parent.exists()  # 整个 Agent root（含 version）都清掉
 
-        recreated = _create(client, "probe-agent", name="重建的 Agent")
-        content = (recreated / "AGENT.md").read_text(encoding="utf-8")
+        recreated = _import_new_agent(client, agent_id="probe-agent", name="重建的 Agent")
+        assert recreated.status_code == 200, recreated.text
+        assert recreated.json()["published"] is False
+        content = (_candidate_workspace(app_module, recreated) / "AGENT.md").read_text(encoding="utf-8")
         assert "前一个 Agent 的私有内容" not in content
         assert "重建的 Agent" in content
 
@@ -56,13 +52,38 @@ def test_delete_purges_disk_and_recreate_does_not_inherit(app_module) -> None:
 def test_delete_reports_workspace_cleanup_outcome(app_module) -> None:
     """删除响应必须暴露清理结果——部分失败不能被吞掉。"""
 
+    _seed_active_agent(app_module, agent_id="outcome-agent", name="受测 Agent")
     with TestClient(app_module.app) as client:
-        _create(client, "outcome-agent")
         body = client.request("DELETE", "/api/agent-registry/outcome-agent").json()
 
     assert set(body) >= {"deleted", "impact", "workspace_removed", "cleanup_complete"}
     assert "seed_removed" not in body
     assert body["deleted"]["agent_id"] == "outcome-agent"
+
+
+def test_delete_rejects_open_change_set_then_allows_abandon_and_same_id_rebuild(app_module) -> None:
+    with TestClient(app_module.app) as client:
+        created = _import_new_agent(client, agent_id="candidate-delete-agent", name="候选删除 Agent")
+        assert created.status_code == 200, created.text
+        change_set_id = created.json()["change_set_id"]
+
+        blocked = client.request("DELETE", "/api/agent-registry/candidate-delete-agent")
+        assert blocked.status_code == 409, blocked.text
+        assert app_module.agent_registry_store.get_agent("candidate-delete-agent") is not None
+        assert Path(app_module.agent_registry_store.get_agent("candidate-delete-agent").workspace_dir).exists()
+
+        abandoned = client.post(
+            f"/api/agent-change-sets/{change_set_id}/abandon",
+            json={"operator": "deletion-test", "note": "candidate cancelled before delete"},
+        )
+        assert abandoned.status_code == 200, abandoned.text
+        deleted = client.request("DELETE", "/api/agent-registry/candidate-delete-agent")
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["cleanup_complete"] is True
+
+        rebuilt = _import_new_agent(client, agent_id="candidate-delete-agent", name="重建 Agent")
+        assert rebuilt.status_code == 200, rebuilt.text
+        assert rebuilt.json()["change_set_id"] != change_set_id
 
 
 def test_protected_agent_delete_is_rejected(app_module) -> None:
@@ -81,8 +102,8 @@ def test_protected_agent_delete_is_rejected(app_module) -> None:
 def test_deleted_agent_is_not_runnable(app_module) -> None:
     """删除后该 agent_id 不可运行——resolver 走注册表，tombstone 后 404。"""
 
+    _seed_active_agent(app_module, agent_id="gone-agent", name="受测 Agent")
     with TestClient(app_module.app) as client:
-        _create(client, "gone-agent")
         client.request("DELETE", "/api/agent-registry/gone-agent")
 
         response = client.post("/api/runtime/sessions/", json={"agent_id": "gone-agent"})

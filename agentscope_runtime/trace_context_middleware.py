@@ -30,12 +30,10 @@ class AgentGovTraceContextMiddleware(MiddlewareBase):
         self,
         settings: RuntimeSettings,
         *,
-        transport: httpx.AsyncBaseTransport | None = None,
         tracer: Tracer | None = None,
         trace_registry: AgentGovRunTraceRegistry | None = None,
     ) -> None:
         self._settings = settings
-        self._transport = transport
         self._trace_registry = trace_registry or AgentGovRunTraceRegistry(tracer)
 
     async def on_reply(
@@ -47,7 +45,7 @@ class AgentGovTraceContextMiddleware(MiddlewareBase):
         async with httpx.AsyncClient(
             base_url=self._settings.agentgov_api_base_url,
             timeout=self._settings.request_timeout_seconds,
-            transport=self._transport,
+            trust_env=False,
         ) as client:
             runtime_context = await fetch_runtime_context(
                 client,

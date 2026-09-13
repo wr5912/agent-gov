@@ -27,7 +27,7 @@ def test_readme_api_index_uses_current_improvement_and_agent_routes():
         "/api/improvements/{improvement_id}/optimization-plan/generate",
         "/api/improvements/{improvement_id}/execution/apply",
         "/api/improvements/{improvement_id}/regression-test-design/generate",
-        "/api/langfuse/traces/{trace_id}",
+        "/api/agent-runs/{run_id}/trace",
         "/api/agent-change-sets/{change_set_id}/publish",
     ]
     for route in current_routes:
@@ -146,9 +146,9 @@ def test_openapi_exposes_current_improvement_trace_routes_and_hides_legacy_optim
         "/api/improvements/{improvement_id}/optimization-plan/generate",
         "/api/improvements/{improvement_id}/execution/apply",
         "/api/improvements/{improvement_id}/regression-test-design/generate",
-        "/api/langfuse/traces/{trace_id}",
     }
     assert current_paths <= paths
+    assert "/api/langfuse/traces/{trace_id}" not in paths
 
 
 def test_readme_directory_structure_matches_actual_repo_layout():
@@ -196,6 +196,7 @@ def test_project_level_docs_and_skills_do_not_embed_business_agent_behavior():
 
 def test_container_acceptance_docs_require_fresh_current_worktree_and_public_targets():
     readme = _read_repo_text("README.md")
+    runtime_acceptance = _read_repo_text("docs/engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md")
     test_governance = _read_repo_text("docs/engineering/测试资产组合治理.md")
     core_cases = _read_repo_text("docs/AgentGov核心功能测试用例.md")
 
@@ -206,7 +207,12 @@ def test_container_acceptance_docs_require_fresh_current_worktree_and_public_tar
     assert "随机回环端口" in readme
     assert "不会读写 `${HOME}/volume-agent-gov`" in readme
     assert "down --volumes" in readme
-    assert "REQUIRE_LIVE_RUNTIME=1 make container-live-test" in readme
+    assert "REQUIRE_LIVE_RUNTIME=1" in readme
+    assert "REAL_ACCEPTANCE_AGENT_ID=security-operations-expert" in readme
+    assert "REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json" in readme
+    assert "make container-live-test" in readme
+    assert "make container-technical-live-smoke" in readme
+    assert "make langfuse-smoke" in readme
     assert "未执行前不得宣称" in readme
     assert "make container-core-smoke" in readme
     assert "make cutover-check" in readme
@@ -216,18 +222,29 @@ def test_container_acceptance_docs_require_fresh_current_worktree_and_public_tar
     assert "成功或失败" in core_cases
     assert "make ui-openai-responses-smoke" not in core_cases
     assert "make container-health-e2e" not in core_cases
+    for document in (readme, runtime_acceptance):
+        assert "验收对象是 AgentGov 平台" in document
+        assert "业务依赖缺失不作为平台验收前置条件" in document
+        assert "测试 Agent" in document
+    assert "完整业务验收仍受阻" not in runtime_acceptance
 
 
-def test_deployment_docs_split_safe_deploy_from_explicit_destructive_cutover():
+def test_deployment_docs_keep_atomic_cutover_retired_without_helper_bypass():
     readme = _read_repo_text("README.md")
+    baseline = _read_repo_text("docs/engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md")
 
     assert "发现旧 Claude/未知 schema 时会在停服前 fail closed" in readme
     assert "绝不自动清空" in readme
-    assert "PREPARE-AGENTSCOPE-FRESH-EPOCH" in readme
-    for target in ("cutover-prepare", "cutover-execute", "cutover-restore", "cutover-finalize"):
-        assert f"make {target}" in readme
-    for safeguard in ("active run/HITL/test/publish", "restore drill", "inode", "snapshot hash", "不可逆点"):
-        assert safeguard in readme
+    assert "make cutover-inspect" in readme
+    for document in (readme, baseline):
+        assert "统一" in document and "fail closed" in document
+        assert "内部 helper" in document
+        assert "人工维护方案" in document
+        assert "递归" in document
+        for target in ("cutover-prepare", "cutover-execute", "cutover-restore", "cutover-finalize"):
+            assert f"make {target}" not in document
+    assert "五类目标机器证据" in baseline
+    assert "不得用手写 `passed`、SHA-256" in baseline
 
 
 def test_runtime_docs_archive_all_retired_pre_agentscope_designs():

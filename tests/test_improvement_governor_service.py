@@ -1,4 +1,4 @@
-"""四阶段改进治理：归因、优化与可执行 pytest 代码的 Governor 字段所有权。"""
+"""四阶段改进治理的本地领域回归；真实 Governor 路径由容器验收负责。"""
 
 from __future__ import annotations
 
@@ -8,12 +8,150 @@ from types import SimpleNamespace
 
 import pytest
 from app.runtime.errors import ConflictError, RuntimeUnavailableError
+from app.runtime.improvement_db import ImprovementItemModel
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
+from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.improvement_governor_service import ImprovementGovernorService
 
 from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
-from feedback_store_test_utils import _seed_execution_record
+from feedback_store_test_utils import _run_payload, _seed_execution_record, _store
+
+
+def _service(
+    tmp_path: Path,
+    run_profile_json=None,
+    find_run_by_id=None,
+    *,
+    source_run: dict[str, object] | None = None,
+) -> tuple[ImprovementGovernorService, ImprovementContentStore]:
+    feedback_store, _settings = _store(tmp_path)
+    improvements = ImprovementStore(feedback_store.Session)
+    content = ImprovementContentStore(feedback_store.Session)
+    with feedback_store.Session.begin() as db:
+        db.add(
+            ImprovementItemModel(
+                improvement_id="imp-1",
+                agent_id="soc-ops",
+                title="告警误报治理",
+                improvement_stage="feedback_intake",
+                improvement_status="active",
+            )
+        )
+    content.upsert_normalized_feedback(
+        "imp-1",
+        problem="告警误报",
+        possible_object="MCP 数据",
+        possible_reason="时间不一致",
+        suggestion="增加时间校验",
+        user_quote="这是误报",
+    )
+    run_id = "run-1"
+    if source_run is not None:
+        persisted = feedback_store.record_run(source_run)
+        run_id = str(persisted["run_id"])
+    content.create_feedback(
+        "imp-1",
+        summary="告警时间窗口与事件时间不一致",
+        raw_text="原始用户输入：请判断这条告警是否应升级处置。",
+        run_id=run_id,
+    )
+
+    def find_persisted_run(run_id: str) -> dict[str, object] | None:
+        """把真实 FeedbackStore 的 keyword-only 查询适配为服务回调契约。"""
+
+        return feedback_store.find_run(run_id=run_id)
+
+    run_finder = find_run_by_id
+    if run_finder is None and source_run is not None:
+        run_finder = find_persisted_run
+
+    return (
+        ImprovementGovernorService(
+            improvement_store=improvements,
+            content_store=content,
+            run_profile_json=run_profile_json,
+            data_dir=tmp_path / "data",
+            find_run_by_id=run_finder,
+        ),
+        content,
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "trace_status", "trace_id"),
+    [
+        ("running", "pending", "1" * 32),
+        ("succeeded", "pending", "1" * 32),
+        ("succeeded", "complete", None),
+    ],
+)
+def test_automatic_improvement_rejects_incomplete_persisted_run_evidence(
+    tmp_path: Path,
+    status: str,
+    trace_status: str,
+    trace_id: str | None,
+) -> None:
+    service, _content = _service(
+        tmp_path,
+        source_run=_run_payload(status=status, trace_status=trace_status, trace_id=trace_id),
+    )
+
+    with pytest.raises(ConflictError, match="Automatic improvement"):
+        asyncio.run(service.generate_attribution("imp-1"))
+
+
+def test_automatic_improvement_accepts_complete_persisted_run_evidence(tmp_path: Path) -> None:
+    service, _content = _service(tmp_path, source_run=_run_payload())
+
+    result = asyncio.run(service.generate_attribution("imp-1"))
+
+    assert result.generated_by == "heuristic"
+    assert result.status == "draft"
+    assert result.uncertainty_factors
+    assert result.verification_suggestions
+
+
+def test_optimization_plan_without_governor_is_explicit_heuristic(tmp_path: Path) -> None:
+    service, content = _service(tmp_path, source_run=_run_payload())
+
+    result = asyncio.run(service.generate_optimization_plan("imp-1"))
+
+    assert result.generated_by == "heuristic"
+    assert result.changes
+    assert result.risk_level
+    assert content.get_optimization_plan("imp-1") is not None
+
+
+def test_regression_without_governor_does_not_fabricate_tests(tmp_path: Path) -> None:
+    service, content = _service(tmp_path, source_run=_run_payload())
+
+    with pytest.raises(RuntimeUnavailableError, match="治理模型运行时"):
+        asyncio.run(service.generate_regression_test_design("imp-1"))
+
+    assert content.get_regression_test_design("imp-1") is None
+
+
+def test_execution_store_roundtrips_risk_and_rollback(tmp_path: Path) -> None:
+    _service_instance, content = _service(tmp_path, source_run=_run_payload())
+    _seed_execution_record(
+        content,
+        "imp-1",
+        summary="已应用",
+        risk_level="中",
+        rollback_strategy="回滚到执行前基线 Agent 版本",
+        rollback_instructions=["放弃 change_set", "恢复版本"],
+    )
+
+    record = content.get_execution("imp-1")
+
+    assert record is not None
+    assert record.risk_level == "中"
+    assert record.rollback_strategy == "回滚到执行前基线 Agent 版本"
+    assert record.rollback_instructions == ["放弃 change_set", "恢复版本"]
+
+
+# 从原有组件测试恢复的确定性故障注入与负向回归。
 
 
 def _content(tmp_path: Path) -> ImprovementContentStore:
@@ -32,25 +170,17 @@ def _item() -> SimpleNamespace:
     return SimpleNamespace(improvement_id="imp-1", title="告警误报治理", agent_id="soc-ops")
 
 
-def _service(tmp_path: Path, run_profile_json, find_run_by_id=None) -> tuple[ImprovementGovernorService, ImprovementContentStore]:
-    content = _content(tmp_path)
-    content.upsert_normalized_feedback(
-        "imp-1", problem="告警误报", possible_object="MCP 数据", possible_reason="时间不一致", suggestion="加时间校验", user_quote="这是误报"
-    )
-    content.create_feedback(
-        "imp-1",
-        summary="告警时间窗口与事件时间不一致",
-        raw_text="原始用户输入：请判断这条告警是否应升级处置。",
-        run_id="run-1",
-    )
-    svc = ImprovementGovernorService(
-        improvement_store=_FakeImprovements(_item()),
-        content_store=content,
-        run_profile_json=run_profile_json,
-        data_dir=Path("/data"),
-        find_run_by_id=find_run_by_id,
-    )
-    return svc, content
+def _config_attribution(evidence_refs: list[dict], *, problem_type: str = "instruction_gap") -> dict:
+    return {
+        "problem_type": problem_type,
+        "optimization_object_type": "business_agent_agent_md",
+        "actionability": "workspace_config_change",
+        "confidence": "high",
+        "human_review_required": False,
+        "rationale": "目标业务 Agent 配置缺陷。",
+        "responsibility_boundary": {"owner": "soc-ops", "reason": "业务 Agent 配置需修正。"},
+        "evidence_refs": evidence_refs,
+    }
 
 
 @pytest.mark.parametrize(
@@ -240,7 +370,7 @@ def test_hostile_formatter_output_does_not_crash_or_pollute(tmp_path: Path) -> N
     assert rec.generated_by == "governor"  # 来源由后端判定，非 LLM 字段
     assert not rec.attribution_id.startswith("attacker")  # id 后端生成
     assert rec.status == "draft"
-    assert rec.summary  # 防御性回退非空
+    assert rec.summary
 
 
 def test_optimization_plan_governor_maps_tasks_to_changes(tmp_path: Path) -> None:
@@ -444,7 +574,7 @@ def test_attribution_heuristic_provides_uncertainty_and_verification(tmp_path: P
     svc, _ = _service(tmp_path, boom)
     rec = asyncio.run(svc.generate_attribution("imp-1"))
     assert rec.generated_by == "heuristic"
-    assert rec.uncertainty_factors and rec.verification_suggestions  # 启发式诚实默认非空
+    assert rec.uncertainty_factors and rec.verification_suggestions
 
 
 def test_optimization_plan_maps_risk_level(tmp_path: Path) -> None:
@@ -464,38 +594,7 @@ def test_optimization_plan_heuristic_provides_risk_level(tmp_path: Path) -> None
     content = _content(tmp_path)
     svc = ImprovementGovernorService(improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=boom, data_dir=Path("/data"))
     rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
-    assert rec.risk_level  # 启发式给出风险级别
-
-
-def test_execution_store_roundtrips_risk_and_rollback(tmp_path: Path) -> None:
-    """执行记录新增 risk_level/rollback_strategy/rollback_instructions 的 DB 列 + Record 映射回环。"""
-    content = _content(tmp_path)
-    _seed_execution_record(
-        content,
-        "imp-1",
-        summary="已应用",
-        risk_level="中",
-        rollback_strategy="回滚到执行前基线 Agent 版本",
-        rollback_instructions=["放弃 change_set", "恢复版本"],
-    )
-    got = content.get_execution("imp-1")
-    assert got is not None
-    assert got.risk_level == "中"
-    assert got.rollback_strategy == "回滚到执行前基线 Agent 版本"
-    assert got.rollback_instructions == ["放弃 change_set", "恢复版本"]
-
-
-def _config_attribution(evidence_refs: list[dict], *, problem_type: str = "instruction_gap") -> dict:
-    return {
-        "problem_type": problem_type,
-        "optimization_object_type": "business_agent_agent_md",
-        "actionability": "workspace_config_change",
-        "confidence": "high",
-        "human_review_required": False,
-        "rationale": "目标业务 Agent 配置缺陷。",
-        "responsibility_boundary": {"owner": "soc-ops", "reason": "业务 Agent 配置需修正。"},
-        "evidence_refs": evidence_refs,
-    }
+    assert rec.risk_level
 
 
 def test_attribution_accepts_relative_agent_md_evidence(tmp_path: Path) -> None:

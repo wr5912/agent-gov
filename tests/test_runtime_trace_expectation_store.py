@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 
+import pytest
 from app.runtime.runtime_db import make_session_factory
 from app.runtime_gateway.contracts import (
     AgentRunResponse,
@@ -10,7 +11,9 @@ from app.runtime_gateway.contracts import (
     RuntimeTeamInboxDelivery,
 )
 from app.runtime_gateway.models import RuntimeSessionBindingModel
-from app.runtime_gateway.store import RuntimeRunStore
+from app.runtime_gateway.store import RuntimeInputRejected, RuntimeRunStore
+
+from runtime_hitl_test_utils import fingerprinted_hitl_payload
 
 _IDS = itertools.count()
 
@@ -116,28 +119,40 @@ def _record_external_result(store: RuntimeRunStore, run: AgentRunResponse) -> No
             "REQUIRE_EXTERNAL_EXECUTION",
             session_id="worker-session",
             reply_id="worker-reply",
-            payload={"tool_calls": [external_call]},
+            payload=fingerprinted_hitl_payload([external_call]),
         ),
     )
+    decision = {
+        "type": "EXTERNAL_EXECUTION_RESULT",
+        "reply_id": "worker-reply",
+        "execution_results": [
+            {
+                "type": "tool_result",
+                "id": "external-call",
+                "name": "BrowserAction",
+                "output": "redacted by trace exporter",
+                "state": "success",
+            },
+        ],
+    }
+    with pytest.raises(RuntimeInputRejected, match="client_operation_id is required"):
+        store.begin_run(
+            session_id="root-session",
+            runtime_agent_id="leader-runtime",
+            input_value=decision,
+            alert_id=None,
+            case_id=None,
+            metadata={},
+            expected_run_id=run.run_id,
+        )
     store.begin_run(
         session_id="root-session",
         runtime_agent_id="leader-runtime",
-        input_value={
-            "type": "EXTERNAL_EXECUTION_RESULT",
-            "reply_id": "worker-reply",
-            "execution_results": [
-                {
-                    "type": "tool_result",
-                    "id": "external-call",
-                    "name": "BrowserAction",
-                    "output": "redacted by trace exporter",
-                    "state": "success",
-                },
-            ],
-        },
+        input_value=decision,
         alert_id=None,
         case_id=None,
         metadata={},
+        client_operation_id="trace-expectation-external-result",
         expected_run_id=run.run_id,
     )
     store.apply_receipt(

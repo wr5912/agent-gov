@@ -113,7 +113,7 @@ class AgentGovRunTraceRegistry:
         runtime_version: str,
         agentscope_version: str,
     ) -> None:
-        """收到控制面 terminal 响应后才结束 root；重复确认幂等。"""
+        """收到 terminal 或 canonical interruption 确认后结束 root；重复确认幂等。"""
 
         with self._lock:
             if runtime_context.run_id in self._ended:

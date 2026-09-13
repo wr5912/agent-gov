@@ -1,17 +1,39 @@
-import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from app.runtime.agent_git_store import AgentGitError
-from app.runtime.errors import BusinessRuleViolation
+from app.runtime.published_harness_preparation import prepare_published_harnesses
+from app.runtime_gateway.store import harness_digest
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app as _load_app
 from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 
 
-def test_feedback_store_error_handler_returns_structured_error(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path)
+def test_removed_live_workspace_and_release_head_write_routes_are_unreachable(
+    process_environment,
+    tmp_path,
+) -> None:
+    module = _load_app(process_environment, tmp_path)
+    removed_paths = (
+        "/api/agent-repository/discard-changes",
+        "/api/agent-repository/snapshot",
+        "/api/agent-releases/release-id/restore",
+        "/api/agent-releases/release-id/rollback",
+    )
+
+    with TestClient(module.app) as client:
+        for path in removed_paths:
+            response = client.post(path, json={})
+            assert response.status_code == 404, (path, response.text)
+        openapi_paths = client.get("/openapi.json").json()["paths"]
+
+    assert all(path not in openapi_paths for path in removed_paths[:2])
+    assert "/api/agent-releases/{release_id}/restore" not in openapi_paths
+    assert "/api/agent-releases/{release_id}/rollback" not in openapi_paths
+
+
+def test_feedback_store_error_handler_returns_structured_error(process_environment, tmp_path):
+    module = _load_app(process_environment, tmp_path)
 
     with TestClient(module.app) as client:
         response = client.post("/api/feedback-signals", json={"labels": ["tool_data_incomplete"]})
@@ -21,8 +43,8 @@ def test_feedback_store_error_handler_returns_structured_error(monkeypatch, tmp_
     assert "run_id, session_id, alert_id, or case_id" in response.json()["detail"]
 
 
-def test_feedback_route_not_found_returns_structured_error(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path)
+def test_feedback_route_not_found_returns_structured_error(process_environment, tmp_path):
+    module = _load_app(process_environment, tmp_path)
 
     with TestClient(module.app) as client:
         response = client.get("/api/feedback-cases/fbc-missing")
@@ -34,8 +56,8 @@ def test_feedback_route_not_found_returns_structured_error(monkeypatch, tmp_path
     }
 
 
-def test_feedback_case_create_unknown_typed_source_returns_not_found(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path)
+def test_feedback_case_create_unknown_typed_source_returns_not_found(process_environment, tmp_path):
+    module = _load_app(process_environment, tmp_path)
 
     with TestClient(module.app) as client:
         response = client.post(
@@ -50,8 +72,8 @@ def test_feedback_case_create_unknown_typed_source_returns_not_found(monkeypatch
     }
 
 
-def test_feedback_route_conflict_returns_structured_error(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path)
+def test_feedback_route_conflict_returns_structured_error(process_environment, tmp_path):
+    module = _load_app(process_environment, tmp_path)
 
     with TestClient(module.app) as client:
         created = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "非法跨段"})
@@ -62,29 +84,11 @@ def test_feedback_route_conflict_returns_structured_error(monkeypatch, tmp_path)
     assert "transition" in response.json()["detail"].lower()
 
 
-def test_feedback_workbench_preserves_domain_error_code(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path)
-
-    def create_improvement(**_kwargs):
-        raise BusinessRuleViolation("domain-specific failure")
-
-    monkeypatch.setattr(module.improvement_store, "create_improvement", create_improvement)
-
-    with TestClient(module.app) as client:
-        response = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "领域错误"})
-
-    assert response.status_code == 400
-    assert response.json() == {
-        "detail": "domain-specific failure",
-        "error_code": "BUSINESS_RULE_VIOLATION",
-    }
-
-
 def test_public_finite_value_inputs_reject_unknown_values_at_validation_boundary(
-    monkeypatch,
+    process_environment,
     tmp_path,
 ):
-    module = _load_app(monkeypatch, tmp_path)
+    module = _load_app(process_environment, tmp_path)
 
     with TestClient(module.app) as client:
         invalid_queries = (
@@ -119,8 +123,8 @@ def test_public_finite_value_inputs_reject_unknown_values_at_validation_boundary
             assert patch_response.status_code == 422, (alias, patch_response.text)
 
 
-def test_agent_change_set_route_not_found_returns_structured_error(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path)
+def test_agent_change_set_route_not_found_returns_structured_error(process_environment, tmp_path):
+    module = _load_app(process_environment, tmp_path)
 
     with TestClient(module.app) as client:
         response = client.get("/api/agent-change-sets/agc-missing")
@@ -132,21 +136,23 @@ def test_agent_change_set_route_not_found_returns_structured_error(monkeypatch, 
     }
 
 
-def test_agent_change_set_publish_conflict_returns_structured_error(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path)
+def test_agent_change_set_publish_requires_explicit_review_fence(process_environment, tmp_path):
+    module = _load_app(process_environment, tmp_path)
 
     with TestClient(module.app) as client:
         response = client.post("/api/agent-change-sets/agc-missing/publish", json={})
 
-    assert response.status_code == 404
-    assert response.json() == {
-        "detail": "Agent change set not found",
-        "error_code": "NOT_FOUND",
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert isinstance(detail, list)
+    assert {item["loc"][-1] for item in detail} >= {
+        "expected_candidate_commit_sha",
+        "expected_diff_digest",
     }
 
 
-def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path, extra_agent_ids=(ORDINARY_TEST_AGENT_ID,))
+def test_agent_change_set_abandon_cleans_real_worktree_and_execution_claim(process_environment, tmp_path):
+    module = _load_app(process_environment, tmp_path, extra_agent_ids=(ORDINARY_TEST_AGENT_ID,))
     agent_store = module.agent_governance._store_for(ORDINARY_TEST_AGENT_ID)
     improvement = module.improvement_store.create_improvement(agent_id=ORDINARY_TEST_AGENT_ID, title="执行取消")
     module.improvement_content_store.upsert_normalized_feedback(
@@ -192,51 +198,19 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
     )
     worktree = Path(str(change_set["worktree_path"]))
     assert worktree.exists()
-    remove_worktree = agent_store.remove_worktree
-    cleanup_attempts = 0
-
-    def fail_cleanup_once(change_set_id: str, *, delete_branch: bool = True) -> None:
-        nonlocal cleanup_attempts
-        cleanup_attempts += 1
-        if cleanup_attempts == 1:
-            raise AgentGitError("cleanup interrupted")
-        remove_worktree(change_set_id, delete_branch=delete_branch)
-
-    monkeypatch.setattr(agent_store, "remove_worktree", fail_cleanup_once)
-
-    with TestClient(module.app) as client:
-        cleanup_failed = client.post(f"/api/agent-change-sets/{claim.change_set_id}/abandon", json={})
-
-    interrupted = module.improvement_content_store.get_execution(improvement.improvement_id)
-    pending_change_set = module.agent_governance.get_change_set(claim.change_set_id)
-    assert cleanup_failed.status_code == 409
-    assert interrupted is not None and interrupted.status == "draft" and not interrupted.claim_token
-    assert pending_change_set is not None and pending_change_set["worktree_cleanup_pending"] is True
-
-    replacement = module.improvement_content_store.execution_claims.claim_execution(
-        improvement.improvement_id,
-        change_set_id="agc-66666666-2222-3333-4444-555555555555",
-        base_commit_sha=base,
-        source_optimization_plan_id=plan.optimization_plan_id,
-        source_optimization_plan_updated_at=plan.updated_at,
-        source_attribution_id=attribution.attribution_id,
-        source_attribution_updated_at=attribution.updated_at,
-        claim_token="claim-immediate-retry",
-        now=(claimed_at + timedelta(minutes=1)).isoformat(),
-        claim_expires_at=(claimed_at + timedelta(minutes=11)).isoformat(),
-    )
-    module.improvement_content_store.execution_claims.finish_without_application(
-        improvement.improvement_id,
-        claim_token=replacement.claim_token,
-        claim_generation=replacement.claim_generation,
-        summary="retry claim acquired before old lease expired",
-        retain_change_set=False,
-    )
 
     with TestClient(module.app) as client:
         response = client.post(f"/api/agent-change-sets/{claim.change_set_id}/abandon", json={})
         repeated = client.post(f"/api/agent-change-sets/{claim.change_set_id}/abandon", json={})
-        publish = client.post(f"/api/agent-change-sets/{claim.change_set_id}/publish", json={})
+        publish = client.post(
+            f"/api/agent-change-sets/{claim.change_set_id}/publish",
+            json={
+                "expected_candidate_commit_sha": "a" * 40,
+                "expected_diff_digest": "b" * 64,
+                "expected_test_run_id": "atr-reviewed",
+                "expected_suite_digest": "c" * 64,
+            },
+        )
 
     assert response.status_code == 200 and repeated.status_code == 200
     assert response.json()["status"] == "abandoned" and response.json()["worktree_cleanup_pending"] is False
@@ -249,64 +223,60 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
     assert module.improvement_store.archive_improvement(improvement.improvement_id).improvement_status == "archived"
 
 
-def test_chat_during_agent_version_maintenance_returns_structured_503(monkeypatch, tmp_path):
-    monkeypatch.setenv("RUNTIME_CANDIDATES_DIR", str(tmp_path / "candidate-workspaces"))
+def test_chat_during_agent_version_maintenance_returns_structured_503(process_environment, tmp_path):
+    process_environment.set("RUNTIME_CANDIDATES_DIR", str(tmp_path / "candidate-workspaces"))
     module = _load_app(
-        monkeypatch,
+        process_environment,
         tmp_path,
         extra_agent_ids=(ORDINARY_TEST_AGENT_ID,),
         requires_web_hitl=False,
     )
-
-    async def create_runtime_agent(_payload):
-        return "runtime-agent-maintenance"
-
-    async def no_existing_runtime_agents(_name):
-        return []
-
-    monkeypatch.setattr(module.runtime_client, "create_agent", create_runtime_agent)
-    monkeypatch.setattr(module.runtime_client, "list_agent_ids_by_name", no_existing_runtime_agents)
-    binding = asyncio.run(module.provisioner.ensure(ORDINARY_TEST_AGENT_ID))
+    agent_store = module.agent_governance._store_for(ORDINARY_TEST_AGENT_ID)
+    prepare_published_harnesses(module.settings)
+    commit_sha = str(agent_store.current_commit_sha())
+    version = agent_store.version_summary(commit_sha, reason="maintenance-boundary-test")
+    agent_version_id = str(version["agent_version_id"])
+    runtime_agent_id = "runtime-agent-maintenance"
     module.run_store.bind_session(
         session_id="session-maintenance",
         agent_id=ORDINARY_TEST_AGENT_ID,
-        agent_version_id=binding.agent_version_id,
-        runtime_agent_id=binding.runtime_agent_id,
-        digest=binding.harness_digest,
+        agent_version_id=agent_version_id,
+        runtime_agent_id=runtime_agent_id,
+        digest=harness_digest(agent_store.repository_dir),
         idempotency_key=None,
     )
 
     with module.agent_governance.version_maintenance.lease(
         agent_id=ORDINARY_TEST_AGENT_ID,
-        kind="restore",
+        kind="publish",
         owner_id="test",
     ):
         with TestClient(module.app) as client:
             response = client.post(
                 "/api/runtime/chat/",
                 json={
-                    "agent_id": binding.runtime_agent_id,
+                    "agent_id": runtime_agent_id,
                     "session_id": "session-maintenance",
                     "client_operation_id": "maintenance-block",
                     "input": {"role": "user", "content": [{"type": "text", "text": "hello"}]},
                 },
             )
 
-    assert response.status_code == 503
+    assert response.status_code == 503, response.text
     assert response.json() == {
-        "detail": "Agent version maintenance is in progress; retry after restore completes.",
+        "detail": "Agent version maintenance or publish activation is in progress; retry after it completes.",
         "error_code": "RUNTIME_UNAVAILABLE",
     }
 
 
-def test_api_key_authentication_returns_structured_401(monkeypatch, tmp_path):
-    module = _load_app(monkeypatch, tmp_path, api_key="secret-token")
+def test_api_key_authentication_returns_structured_401(process_environment, tmp_path):
+    module = _load_app(process_environment, tmp_path, api_key="secret-token")
 
     with TestClient(module.app) as client:
-        missing = client.get("/api/agents")
-        wrong_scheme = client.get("/api/agents", headers={"Authorization": "Basic secret-token"})
-        wrong_token = client.get("/api/agents", headers={"Authorization": "Bearer wrong-token"})
-        ok = client.get("/api/agents", headers={"Authorization": "Bearer secret-token"})
+        missing = client.get("/api/agent-registry")
+        wrong_scheme = client.get("/api/agent-registry", headers={"Authorization": "Basic secret-token"})
+        wrong_token = client.get("/api/agent-registry", headers={"Authorization": "Bearer wrong-token"})
+        ok = client.get("/api/agent-registry", headers={"Authorization": "Bearer secret-token"})
 
     for response in (missing, wrong_scheme, wrong_token):
         assert response.status_code == 401

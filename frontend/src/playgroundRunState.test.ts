@@ -9,6 +9,30 @@ import {
 } from "./playgroundRunState";
 
 describe("playgroundRunReducer", () => {
+  it("releases only the same unsubmitted local operation without a fabricated terminal outcome", () => {
+    const starting = playgroundRunReducer(initialPlaygroundRunState, {
+      type: "start", operationId: "op-1", sessionId: "session-1",
+    });
+    expect(playgroundRunReducer(starting, {
+      type: "not_submitted", operationId: "stale-operation",
+    })).toEqual(starting);
+    expect(playgroundRunReducer(starting, {
+      type: "not_submitted", operationId: "op-1",
+    })).toEqual({ phase: "idle", lastOutcome: undefined, lastRunId: undefined, lastSessionId: undefined });
+    const bound = playgroundRunReducer(starting, {
+      type: "run_handle", operationId: "op-1", sessionId: "session-1", runId: "run-1",
+    });
+    expect(playgroundRunReducer(bound, {
+      type: "not_submitted", operationId: "op-1",
+    })).toEqual(bound);
+    const detached = playgroundRunReducer(initialPlaygroundRunState, {
+      type: "observe_backend_run", operationId: "op-2", sessionId: "session-2", runId: "run-2",
+    });
+    expect(playgroundRunReducer(detached, {
+      type: "not_submitted", operationId: "op-2",
+    })).toEqual(detached);
+  });
+
   it("keeps send locked while stop waits for a backend run handle", () => {
     const starting = playgroundRunReducer(initialPlaygroundRunState, {
       type: "start",
@@ -112,5 +136,58 @@ describe("playgroundRunReducer", () => {
     });
 
     expect(rebound.phase).toBe("awaiting_input");
+  });
+
+  it("restores an actionable HITL card after a transient monitor failure", () => {
+    const running = playgroundRunReducer(initialPlaygroundRunState, {
+      type: "observe_backend_run",
+      operationId: "detached-1",
+      sessionId: "session-1",
+      runId: "run-1",
+    });
+    const reconciling = playgroundRunReducer(running, {
+      type: "reconciling",
+      operationId: "detached-1",
+      message: "temporary network failure",
+    });
+    const awaiting = playgroundRunReducer(reconciling, {
+      type: "awaiting_input",
+      operationId: "detached-1",
+    });
+
+    expect(awaiting.phase).toBe("awaiting_input");
+    expect(awaiting.controlError).toBeUndefined();
+    expect(canSubmitPlaygroundUserInput(awaiting)).toBe(true);
+  });
+
+  it("returns a reconciled non-HITL run to running and fences stale recovery", () => {
+    const running = playgroundRunReducer(initialPlaygroundRunState, {
+      type: "observe_backend_run",
+      operationId: "detached-1",
+      sessionId: "session-1",
+      runId: "run-1",
+    });
+    const reconciling = playgroundRunReducer(running, {
+      type: "reconciling",
+      operationId: "detached-1",
+      message: "temporary network failure",
+    });
+
+    expect(playgroundRunReducer(reconciling, {
+      type: "monitor_recovered",
+      operationId: "stale-operation",
+    })).toEqual(reconciling);
+    expect(playgroundRunReducer(reconciling, {
+      type: "monitor_recovered",
+      operationId: "detached-1",
+    })).toMatchObject({ phase: "running", controlError: undefined });
+    const awaiting = playgroundRunReducer(running, {
+      type: "awaiting_input",
+      operationId: "detached-1",
+    });
+    expect(playgroundRunReducer(awaiting, {
+      type: "monitor_recovered",
+      operationId: "detached-1",
+    })).toMatchObject({ phase: "running" });
   });
 });

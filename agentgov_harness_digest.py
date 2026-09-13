@@ -5,11 +5,26 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
+from fnmatch import fnmatch
 from pathlib import Path
 
 import yaml
 
 HARNESS_CONTENT_ROOTS = ("agent.yaml", "AGENT.md", "skills", "mcp", "subagents", "tests")
+HARNESS_EXCLUDED_NAMES = frozenset(
+    {
+        ".cache",
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "__pycache__",
+        "dist",
+        "node_modules",
+    },
+)
+HARNESS_EXCLUDED_PATTERNS = ("*.pyc", "*.pyo")
 
 
 def harness_content_digest(workspace: Path) -> str:
@@ -75,7 +90,10 @@ def _tree_digest(root: Path) -> str:
             continue
         if not stat.S_ISREG(mode):
             raise ValueError(f"Harness contains a non-regular entry: {path}")
-        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        relative = path.relative_to(root)
+        if any(part in HARNESS_EXCLUDED_NAMES for part in relative.parts) or any(fnmatch(path.name, pattern) for pattern in HARNESS_EXCLUDED_PATTERNS):
+            continue
+        digest.update(relative.as_posix().encode("utf-8"))
         digest.update(b"\0")
         digest.update(path.read_bytes())
         digest.update(b"\0")

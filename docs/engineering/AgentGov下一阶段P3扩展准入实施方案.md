@@ -272,7 +272,7 @@ Multica 不再作为 P3 的独立产品扩展线或任何阶段的前置依赖�
 | 通用集成 | 认证、幂等、重试、重复/乱序、超时、撤销、部分失败 | 真实外部 API/CLI、断网与对账记录 |
 | SLO/经济性 | 队列压力、限流、超时、预算超限、观测完整性 | 声明窗口内的延迟/错误/吞吐/单次成本报告 |
 | 安全旗舰 MVP | 数据授权、隐藏集、baseline/candidate、专家争议、工具失败、安全审批 | 专家复核、隔离环境、真实容器；P0-MCP 回执不替代 |
-| AgentScope Runtime 运行验收 | fresh epoch/旧 DB 拒绝、OpenAPI/type、非法状态、原生事件与 OTel 关联 | 50 个实质不同 run、10 并发、3 次真实浏览器、2 小时 soak 与完整 OTLP trace |
+| AgentScope Runtime 运行验收 | fresh epoch/旧 DB 拒绝、OpenAPI/type、非法状态、原生事件与 OTel 关联 | 50 个实质不同 run、10 并发、3 次真实浏览器与完整 OTLP trace |
 | Governor 启用 | 未授权、build 篡改、scope 不匹配、评估失败、并发、幂等、canary 超阈值、回退 | 精确 build/pack/evaluator、principal、canary 观察和 activation/rollback trace |
 | observer/协作候选 | pairing、spool、重复/乱序、coverage、秘密排除、未配置负向断言 | 真实 CLI/候选平台、断网和进程重启 |
 

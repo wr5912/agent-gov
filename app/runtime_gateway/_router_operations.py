@@ -7,7 +7,12 @@ from fastapi.responses import JSONResponse
 
 from app.runtime.json_types import JsonObject
 
-from .client import AgentScopeRuntimeClient, RuntimeUpstreamError, copy_response_headers
+from .client import (
+    AgentScopeRuntimeClient,
+    RuntimeJsonResponse,
+    RuntimeUpstreamError,
+    copy_response_headers,
+)
 from .contracts import AgentRunResponse
 from .store import RuntimeRunStore, RuntimeStateConflict, SessionCreationStatus
 
@@ -95,14 +100,22 @@ async def _interrupt_active_run(
         raise RuntimeStateConflict("Active run has no Runtime Session fences")
     results = await _request_binding_interrupts(client, bindings)
     errors = [result for result in results if isinstance(result, BaseException)]
-    if errors:
+    unresolved = [error for error in errors if not isinstance(error, RuntimeUpstreamError) or error.status_code != 404]
+    if unresolved:
         store.mark_cancellation_uncertain(
             run.run_id,
-            error={"type": type(errors[0]).__name__},
+            error={"type": type(unresolved[0]).__name__},
         )
-        raise errors[0]
+        raise unresolved[0]
+    store.mark_recovery_interrupt_requested(run.run_id)
     for binding, result in zip(bindings, results, strict=True):
         if binding.session_id == primary_session_id:
+            if isinstance(result, RuntimeUpstreamError) and result.status_code == 404:
+                return RuntimeJsonResponse(
+                    status_code=202,
+                    headers={},
+                    body={"status": "already_idle"},
+                )
             return result
     raise RuntimeStateConflict("Requested Runtime Session is not fenced by the active run")
 
@@ -111,12 +124,13 @@ def _json_upstream(upstream: Any) -> JSONResponse:
     return JSONResponse(upstream.body, status_code=upstream.status_code, headers=copy_response_headers(upstream.headers))
 
 
-def _session_id_from_view(value: object) -> str | None:
-    if not isinstance(value, dict):
-        return None
-    session = value.get("session")
-    if isinstance(session, dict):
-        candidate = session.get("id")
-        return candidate if isinstance(candidate, str) else None
-    candidate = value.get("session_id")
-    return candidate if isinstance(candidate, str) else None
+def _cancel_response(run: AgentRunResponse) -> JSONResponse:
+    return JSONResponse(
+        {
+            "run_id": run.run_id,
+            "session_id": run.session_id,
+            "status": run.status,
+        },
+        status_code=202,
+        headers={RUN_ID_HEADER: run.run_id, SESSION_ID_HEADER: run.session_id},
+    )

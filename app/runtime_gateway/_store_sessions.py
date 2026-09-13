@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 
+from agentgov_agentscope_contract import session_creation_token, session_workspace_id
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
@@ -34,6 +35,39 @@ from .models import (
     RuntimeSessionCreationIntentModel,
     RuntimeTeamDeliveryModel,
 )
+from .operation_identity import (
+    LEGACY_UNKNOWN_SESSION_REQUEST_FINGERPRINT,
+    session_creation_request_fingerprint,
+)
+
+
+def _run_topology_is_frozen(metadata: JsonObject | None) -> bool:
+    values = metadata or {}
+    return values.get("cancellation_requested") is True or values.get("recovery_required") is True
+
+
+def _validate_session_creation_request(
+    intent: RuntimeSessionCreationIntentModel,
+    *,
+    runtime_agent_id: str,
+    requested_name: str | None,
+) -> None:
+    if intent.runtime_agent_id != runtime_agent_id:
+        raise RuntimeStateConflict(
+            "Idempotency-Key is already bound to another Runtime Agent",
+        )
+    if intent.request_fingerprint == LEGACY_UNKNOWN_SESSION_REQUEST_FINGERPRINT:
+        raise RuntimeStateConflict(
+            "Legacy Session creation intent has no replay-safe request identity",
+        )
+    requested_fingerprint = session_creation_request_fingerprint(
+        runtime_agent_id,
+        requested_name,
+    )
+    if intent.request_fingerprint != requested_fingerprint:
+        raise RuntimeStateConflict(
+            "Idempotency-Key is already bound to another immutable Session request",
+        )
 
 
 class RuntimeSessionStoreMixin:
@@ -42,6 +76,30 @@ class RuntimeSessionStoreMixin:
     def session_creation_for_key(self, key: str) -> RuntimeSessionCreationIntentModel | None:
         with self.Session() as db:
             row = db.scalar(select(RuntimeSessionCreationIntentModel).where(RuntimeSessionCreationIntentModel.idempotency_key == key))
+            return _detached(db, row)
+
+    def session_creation_for_request(
+        self,
+        *,
+        key: str,
+        runtime_agent_id: str,
+        requested_name: str | None,
+    ) -> RuntimeSessionCreationIntentModel | None:
+        """Read an idempotent intent only after validating its full public request."""
+
+        with self.Session() as db:
+            row = db.scalar(
+                select(RuntimeSessionCreationIntentModel).where(
+                    RuntimeSessionCreationIntentModel.idempotency_key == key,
+                ),
+            )
+            if row is None:
+                return None
+            _validate_session_creation_request(
+                row,
+                runtime_agent_id=runtime_agent_id,
+                requested_name=requested_name,
+            )
             return _detached(db, row)
 
     def start_session_creation(
@@ -53,10 +111,14 @@ class RuntimeSessionStoreMixin:
         runtime_agent_id: str,
         digest: str,
         workspace_id: str,
-        session_name: str | None,
+        requested_name: str | None,
     ) -> tuple[RuntimeSessionCreationIntentModel, bool]:
         """原子占有一个创建 intent；同 key 只有首次调用获得执行权。"""
 
+        request_fingerprint = session_creation_request_fingerprint(
+            runtime_agent_id,
+            requested_name,
+        )
         with self.Session.begin() as db:
             begin_sqlite_write_transaction(db.connection())
             existing = (
@@ -65,6 +127,11 @@ class RuntimeSessionStoreMixin:
                 else None
             )
             if existing is not None:
+                _validate_session_creation_request(
+                    existing,
+                    runtime_agent_id=runtime_agent_id,
+                    requested_name=requested_name,
+                )
                 if (
                     _version_identity(existing) != (agent_id, agent_version_id, runtime_agent_id, digest)
                     or _base_workspace_id(existing.workspace_id) != workspace_id
@@ -72,7 +139,8 @@ class RuntimeSessionStoreMixin:
                     raise RuntimeStateConflict("Idempotency-Key is already bound to another Agent version")
                 return _detached(db, existing), False
             now = utc_now()
-            intent_id = f"session-intent-{uuid.uuid4()}"
+            identity = uuid.uuid4()
+            intent_id = session_creation_token(identity)
             intent = RuntimeSessionCreationIntentModel(
                 intent_id=intent_id,
                 idempotency_key=idempotency_key,
@@ -80,8 +148,8 @@ class RuntimeSessionStoreMixin:
                 agent_version_id=agent_version_id,
                 runtime_agent_id=runtime_agent_id,
                 harness_digest=digest,
-                workspace_id=f"{workspace_id}--s-{intent_id}",
-                session_name=session_name,
+                workspace_id=session_workspace_id(workspace_id, identity),
+                request_fingerprint=request_fingerprint,
                 status=SessionCreationStatus.PENDING.value,
                 created_at=now,
                 updated_at=now,
@@ -158,6 +226,10 @@ class RuntimeSessionStoreMixin:
 
             child = db.get(RuntimeSessionBindingModel, registration.child_session_id)
             if child is None:
+                if _run_topology_is_frozen(run.metadata_json):
+                    raise RuntimeStateConflict(
+                        "Team child cannot bind after cancellation or recovery started",
+                    )
                 child = RuntimeSessionBindingModel(
                     session_id=registration.child_session_id,
                     agent_id=run.agent_id,
@@ -190,6 +262,12 @@ class RuntimeSessionStoreMixin:
                     raise RuntimeStateConflict("Team child Session is already bound to another governed identity")
                 if child.active_run_id not in {None, run.run_id}:
                     raise RuntimeStateConflict("Team child Session belongs to another active run")
+                if child.active_run_id != run.run_id and _run_topology_is_frozen(
+                    run.metadata_json,
+                ):
+                    raise RuntimeStateConflict(
+                        "Team child cannot rebind after cancellation or recovery started",
+                    )
                 child.active_run_id = run.run_id
             parent.team_id = registration.team_id
             now = utc_now()
@@ -227,6 +305,10 @@ class RuntimeSessionStoreMixin:
             run = _require_run(db, delivery.run_id)
             if RunStatus(run.status) not in ACTIVE_RUN_STATUSES:
                 raise RuntimeStateConflict("Team delivery requires an active run")
+            if _run_topology_is_frozen(run.metadata_json):
+                raise RuntimeStateConflict(
+                    "Team delivery cannot expand a run after cancellation or recovery started",
+                )
             if delivery.source_session_id == delivery.target_session_id:
                 raise RuntimeStateConflict("Team delivery must cross Session boundaries")
             source = db.get(RuntimeSessionBindingModel, delivery.source_session_id)

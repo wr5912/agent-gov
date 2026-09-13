@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
@@ -17,7 +16,6 @@ from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor, TracerPro
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Status
 from opentelemetry.util.types import AttributeValue
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .otel_config import runtime_otel_config
 from .run_trace import AgentGovTraceIdGenerator
@@ -185,21 +183,6 @@ class OTelRuntime:
             self._closed = True
         self.provider.force_flush(timeout_millis=self.flush_timeout_millis)
         self.provider.shutdown()
-
-
-class OTelRuntimeLifecycleMiddleware:
-    """Flush and close the Runtime-owned provider after ASGI lifespan exit."""
-
-    def __init__(self, app: ASGIApp, *, runtime: OTelRuntime) -> None:
-        self._app = app
-        self._runtime = runtime
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        try:
-            await self._app(scope, receive, send)
-        finally:
-            if scope["type"] == "lifespan":
-                await asyncio.to_thread(self._runtime.shutdown)
 
 
 _managed_runtime: OTelRuntime | None = None

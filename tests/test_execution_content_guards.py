@@ -7,7 +7,6 @@ import json
 
 import pytest
 import yaml
-
 from app.runtime.execution_content_guards import ExecutionContentGuardError, guard_execution_write
 
 
@@ -17,6 +16,7 @@ def _manifest(
     allowed_tools: list[str] | None = None,
     denied_tools: list[str] | None = None,
     writable_paths: list[str] | None = None,
+    permission_mode: str = "default",
 ) -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -25,6 +25,7 @@ def _manifest(
             "runtime": "agentscope",
             "runtime_contract": "agentscope-app/2.0.8",
         },
+        "session": {"permission_mode": permission_mode, "cwd": ".", "model_profile": "default"},
         "workspace_policy": {
             "fail_closed": True,
             "immutable_harness": True,
@@ -32,7 +33,18 @@ def _manifest(
             "allowed_tools": allowed_tools or ["Read(./**)", "Grep"],
             "denied_tools": denied_tools or ["Read(./.env)", "Bash(curl *)"],
             "writable_paths": writable_paths or ["/runtime-data/outputs/agent-a"],
+            "immutable_paths": ["AGENT.md", "agent.yaml", "skills/**", "mcp/**", "subagents/**"],
+            "denied_read_paths": [".env", "**/.env", "**/*credential*"],
+            "allowed_network_domains": ["approved.internal"],
+            "sandbox": {
+                "enabled": True,
+                "fail_if_unavailable": True,
+                "allow_unsandboxed_commands": False,
+            },
         },
+        "runtime_middlewares": [
+            {"type": "policy_guard", "phase": "before_tool_call", "fail_closed": True},
+        ],
     }
 
 
@@ -104,6 +116,73 @@ def test_permission_and_write_scope_may_only_narrow() -> None:
         writable_paths=[],
     )
     guard_execution_write(target_path="agent.yaml", new_bytes=_yaml(narrowed), original_bytes=_yaml(old))
+
+
+def test_ask_rules_are_frozen_because_removal_can_expose_broader_allow() -> None:
+    old = _manifest(allowed_tools=["Write(outputs/**)"])
+    old["workspace_policy"]["ask_tools"] = ["Write(outputs/review/**)"]
+    new = _manifest(allowed_tools=["Write(outputs/**)"])
+
+    with pytest.raises(ExecutionContentGuardError, match="不得扩大工具权限"):
+        guard_execution_write(
+            target_path="agent.yaml",
+            new_bytes=_yaml(new),
+            original_bytes=_yaml(old),
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda value: value["session"].update(permission_mode="accept_edits"), "permission_mode"),
+        (lambda value: value["workspace_policy"].update(denied_read_paths=[".env"]), "拒绝读取"),
+        (lambda value: value["workspace_policy"].update(immutable_paths=["AGENT.md"]), "不可变路径"),
+        (lambda value: value["session"].update(cwd="/"), "session.cwd"),
+        (lambda value: value["session"].update(model_profile="unmanaged"), "model_profile"),
+        (
+            lambda value: value["workspace_policy"].update(
+                allowed_network_domains=["approved.internal", "new.internal"],
+            ),
+            "网络访问",
+        ),
+        (lambda value: value["workspace_policy"]["sandbox"].update(enabled=False), "sandbox"),
+        (lambda value: value["workspace_policy"]["sandbox"].update(network=True), "sandbox"),
+        (
+            lambda value: value.update(
+                runtime_middlewares=[
+                    {"type": "policy_guard", "phase": "before_tool_call", "fail_closed": True},
+                    {"type": "tool_audit", "phase": "after_tool_call"},
+                ],
+            ),
+            "middleware",
+        ),
+    ],
+)
+def test_runtime_execution_policy_cannot_expand(mutate, message: str) -> None:
+    old = _manifest(permission_mode="explore")
+    new = _manifest(permission_mode="explore")
+    mutate(new)
+    with pytest.raises(ExecutionContentGuardError, match=message):
+        guard_execution_write(target_path="agent.yaml", new_bytes=_yaml(new), original_bytes=_yaml(old))
+
+
+def test_runtime_execution_policy_may_only_tighten() -> None:
+    old = _manifest(permission_mode="default")
+    new = _manifest(permission_mode="explore")
+    new["workspace_policy"]["denied_read_paths"].append("private/**")
+    new["workspace_policy"]["allowed_network_domains"] = []
+
+    guard_execution_write(target_path="agent.yaml", new_bytes=_yaml(new), original_bytes=_yaml(old))
+
+
+def test_incomparable_permission_modes_cannot_be_exchanged() -> None:
+    for old_mode, new_mode in (("dont_ask", "explore"), ("explore", "dont_ask")):
+        with pytest.raises(ExecutionContentGuardError, match="permission_mode"):
+            guard_execution_write(
+                target_path="agent.yaml",
+                new_bytes=_yaml(_manifest(permission_mode=new_mode)),
+                original_bytes=_yaml(_manifest(permission_mode=old_mode)),
+            )
 
 
 def test_invalid_or_unreferenced_mcp_config_rejected() -> None:

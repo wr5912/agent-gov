@@ -1,262 +1,163 @@
 from __future__ import annotations
 
-import hashlib
-import stat
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Event
 
 import pytest
 from app.routers.agent_config_files import create_agent_config_files_router
-from app.routers.catalog import create_catalog_router
-from app.runtime.agent_paths import business_agent_layout
-from app.runtime.config_file_schemas import AgentConfigFileUpdateRequest
-from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
-from app.runtime.settings import AppSettings
-from app.runtime.stores.agent_registry_store import AgentRegistryStore
-from app.services import agent_config_files as agent_config_files_module
-from app.services.agent_config_files import AgentConfigFileService
+from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+from app.runtime.stores.feedback_store import FeedbackStore
+from app.services.agent_candidate_writer import AgentCandidateWriteError, AgentCandidateWriter
+from app.services.agent_governance import AgentGovernanceService
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-TEST_AGENT_ID = "test-agent"
+from feedback_store_test_utils import _settings
 
 
-def _http_mcp_content(name: str) -> str:
-    return (
-        '{"mcp_config":{"type":"http_mcp","url":"https://'
-        + name
-        + '.invalid/mcp"},"credential_refs":[]}\n'
+def _services(tmp_path: Path):
+    settings = _settings(tmp_path)
+    version_store = GitAgentVersionStore(
+        repository_dir=settings.default_workspace_dir,
+        worktrees_dir=settings.agent_git_worktrees_dir,
+        releases_dir=settings.agent_release_archives_dir,
     )
+    feedback_store = FeedbackStore(data_dir=settings.data_dir, workspace_dir=settings.default_workspace_dir)
+    governance = AgentGovernanceService(
+        feedback_store=feedback_store,
+        agent_version_store=version_store,
+        runtime_mode="local-debug",
+    )
+    writer = AgentCandidateWriter(governance)
+    change_set = governance.create_change_set(title="候选配置编辑", operator="tester")
+    return settings, governance, writer, change_set
 
 
-def _test_app(tmp_path: Path) -> tuple[TestClient, AppSettings, AgentRegistryStore]:
-    data_dir = tmp_path / "volume-agent-gov" / "data"
-    settings = AppSettings(_env_file=None, DATA_DIR=data_dir)
-    session_factory = make_session_factory(runtime_db_path_from_data_dir(data_dir))
-    registry = AgentRegistryStore(session_factory)
+def _app(writer: AgentCandidateWriter) -> FastAPI:
     app = FastAPI()
-    app.include_router(
-        create_agent_config_files_router(
-            settings=settings,
-            agent_registry_store=registry,
-            require_api_key=lambda: None,
+    app.include_router(create_agent_config_files_router(candidate_writer=writer, require_api_key=lambda: None))
+    return app
+
+
+def test_candidate_file_route_commits_without_mutating_live_workspace(tmp_path: Path) -> None:
+    settings, _governance, writer, change_set = _services(tmp_path)
+    change_set_id = str(change_set["change_set_id"])
+    live_prompt = settings.default_workspace_dir / "AGENT.md"
+    original_live = live_prompt.read_text(encoding="utf-8")
+
+    with TestClient(_app(writer)) as client:
+        current = client.get(f"/api/agent-change-sets/{change_set_id}/files", params={"path": "AGENT.md"})
+        response = client.put(
+            f"/api/agent-change-sets/{change_set_id}/files",
+            json={
+                "expected_candidate_commit_sha": current.json()["candidate_commit_sha"],
+                "files": [{"path": "AGENT.md", "content": "# Candidate only\n", "expected_sha256": current.json()["sha256"]}],
+                "operator": "tester",
+            },
         )
-    )
-    app.include_router(create_catalog_router(settings=settings, agent_registry_store=registry, require_api_key=lambda: None))
-    return TestClient(app), settings, registry
+        removed_route = client.get(
+            "/api/agent-config-file",
+            params={"agent_id": DEFAULT_BUSINESS_AGENT_ID, "path": "AGENT.md"},
+        )
+
+    assert current.status_code == response.status_code == 200
+    assert response.json()["change_set_id"] == change_set_id
+    assert response.json()["published"] is False
+    assert response.json()["changed_paths"] == ["AGENT.md"]
+    assert response.json()["candidate_commit_sha"] != change_set["base_commit_sha"]
+    assert live_prompt.read_text(encoding="utf-8") == original_live
+    assert removed_route.status_code == 404
 
 
-def _register_agent(settings: AppSettings, registry: AgentRegistryStore, agent_id: str) -> Path:
-    workspace = business_agent_layout(settings.data_dir, agent_id).workspace
-    (workspace / "mcp").mkdir(parents=True, exist_ok=True)
-    registry.create_business_agent(name=agent_id, agent_id=agent_id, workspace_dir=str(workspace))
-    return workspace
+def test_candidate_batch_is_one_commit_and_rejects_stale_or_unsafe_input(tmp_path: Path) -> None:
+    _settings_value, governance, writer, change_set = _services(tmp_path)
+    change_set_id = str(change_set["change_set_id"])
+    base = str(change_set["base_commit_sha"])
+    url = f"/api/agent-change-sets/{change_set_id}/files"
+    body = {
+        "expected_candidate_commit_sha": base,
+        "files": [
+            {"path": "AGENT.md", "content": "# Reviewed candidate\n"},
+            {"path": "mcp/reviewed.json", "content": '{"mcp_config":{"type":"http_mcp","url":"https://example.invalid/mcp"},"credential_refs":[]}\n'},
+        ],
+        "operator": "tester",
+    }
 
+    with TestClient(_app(writer)) as client:
+        written = client.put(url, json=body)
+        stale = client.put(
+            url,
+            json={"expected_candidate_commit_sha": base, "files": [{"path": "AGENT.md", "content": "# Different stale content\n"}]},
+        )
+        unsafe = client.put(
+            url,
+            json={"expected_candidate_commit_sha": written.json()["candidate_commit_sha"], "files": [{"path": "mcp/../escape.json", "content": "{}"}]},
+        )
+        process_spawn = client.put(
+            url,
+            json={"expected_candidate_commit_sha": written.json()["candidate_commit_sha"], "files": [{"path": "mcp/process.json", "content": '{"command":"node","args":[]}'}]},
+        )
 
-def test_agent_config_file_updates_agentscope_mcp_and_keeps_existing_sessions_pinned(tmp_path: Path) -> None:
-    client, settings, registry = _test_app(tmp_path)
-    workspace = _register_agent(settings, registry, TEST_AGENT_ID)
-    target = workspace / "mcp" / "demo.json"
-    target.write_text(_http_mcp_content("old"), encoding="utf-8")
-    target.chmod(0o640)
-
-    read_response = client.get(
-        "/api/agent-config-file",
-        params={"agent_id": TEST_AGENT_ID, "path": "mcp/demo.json"},
-    )
-    assert read_response.status_code == 200
-    current = read_response.json()
-
-    updated_content = _http_mcp_content("new")
-    update_response = client.put(
-        "/api/agent-config-file",
-        params={"agent_id": TEST_AGENT_ID, "path": "mcp/demo.json"},
-        json={"content": updated_content, "expected_sha256": current["sha256"]},
-    )
-
-    assert update_response.status_code == 200
-    assert update_response.json()["existing_sessions_unchanged"] is True
-    assert target.read_text(encoding="utf-8") == updated_content
-    assert stat.S_IMODE(target.stat().st_mode) == 0o640
-
-
-def test_agent_config_file_rejects_invalid_json_process_spawn_and_stale_sha(tmp_path: Path) -> None:
-    client, settings, registry = _test_app(tmp_path)
-    workspace = _register_agent(settings, registry, TEST_AGENT_ID)
-    target = workspace / "mcp" / "demo.json"
-    target.write_text(_http_mcp_content("old"), encoding="utf-8")
-
-    invalid = client.put(
-        "/api/agent-config-file",
-        params={"agent_id": TEST_AGENT_ID, "path": "mcp/demo.json"},
-        json={"content": "{"},
-    )
-    wrong_shape = client.put(
-        "/api/agent-config-file",
-        params={"agent_id": TEST_AGENT_ID, "path": "mcp/demo.json"},
-        json={"content": "[]"},
-    )
-    process_spawn = client.put(
-        "/api/agent-config-file",
-        params={"agent_id": TEST_AGENT_ID, "path": "mcp/demo.json"},
-        json={"content": '{"command":"node","args":[]}'},
-    )
-    stale = client.put(
-        "/api/agent-config-file",
-        params={"agent_id": TEST_AGENT_ID, "path": "mcp/demo.json"},
-        json={"content": _http_mcp_content("stale"), "expected_sha256": "not-current"},
-    )
-
-    assert invalid.status_code == 422
-    assert wrong_shape.status_code == 422
-    assert process_spawn.status_code == 422
+    assert written.status_code == 200
+    candidate = written.json()["candidate_commit_sha"]
+    assert governance._store_for(DEFAULT_BUSINESS_AGENT_ID).version_summary(candidate)["parent_version_id"] == base
     assert stale.status_code == 409
-    assert target.read_text(encoding="utf-8") == _http_mcp_content("old")
+    assert unsafe.status_code == 422
+    assert process_spawn.status_code == 422
 
 
-def test_agent_config_file_rejects_uneditable_and_unsafe_paths_and_unknown_agents(tmp_path: Path) -> None:
-    client, settings, registry = _test_app(tmp_path)
-    _register_agent(settings, registry, TEST_AGENT_ID)
-
-    uneditable = client.get("/api/agent-config-file", params={"agent_id": TEST_AGENT_ID, "path": "README.md"})
-    hostile_agent = client.get("/api/agent-config-file", params={"agent_id": "../escape", "path": "AGENT.md"})
-    hostile_path = client.get("/api/agent-config-file", params={"agent_id": TEST_AGENT_ID, "path": "mcp/../escape.json"})
-    missing_agent = client.get("/api/agent-config-file", params={"agent_id": "missing-agent", "path": "AGENT.md"})
-
-    assert uneditable.status_code == 422
-    assert hostile_agent.status_code == 422
-    assert hostile_path.status_code == 422
-    assert missing_agent.status_code == 404
-
-
-def test_agent_config_file_rejects_workspace_and_target_symlinks(tmp_path: Path) -> None:
-    client, settings, registry = _test_app(tmp_path)
-    workspace = _register_agent(settings, registry, TEST_AGENT_ID)
-    outside = tmp_path / "outside.json"
-    outside.write_text(_http_mcp_content("outside"), encoding="utf-8")
-    (workspace / "mcp" / "demo.json").symlink_to(outside)
-
-    target_symlink = client.put(
-        "/api/agent-config-file",
-        params={"agent_id": TEST_AGENT_ID, "path": "mcp/demo.json"},
-        json={"content": _http_mcp_content("new")},
-    )
-
-    real_workspace = tmp_path / "real-workspace"
-    real_workspace.mkdir()
-    workspace_symlink = tmp_path / "workspace-link"
-    workspace_symlink.symlink_to(real_workspace, target_is_directory=True)
-    registry.create_business_agent(name="linked-agent", agent_id="linked-agent", workspace_dir=str(workspace_symlink))
-    directory_symlink = client.get(
-        "/api/agent-config-file",
-        params={"agent_id": "linked-agent", "path": "AGENT.md"},
-    )
-
-    assert target_symlink.status_code == 409
-    assert directory_symlink.status_code == 409
-    assert outside.read_text(encoding="utf-8") == _http_mcp_content("outside")
-
-
-def test_agent_config_file_cleans_failed_temp_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    client, settings, registry = _test_app(tmp_path)
-    workspace = _register_agent(settings, registry, TEST_AGENT_ID)
-    target = workspace / "mcp" / "demo.json"
-    original = _http_mcp_content("old")
-    target.write_text(original, encoding="utf-8")
-
-    def fail_replace(*args: object, **kwargs: object) -> None:
-        raise PermissionError("replace denied")
-
-    monkeypatch.setattr(agent_config_files_module.os, "replace", fail_replace)
-    response = client.put(
-        "/api/agent-config-file",
-        params={"agent_id": TEST_AGENT_ID, "path": "mcp/demo.json"},
-        json={"content": _http_mcp_content("new")},
-    )
-
-    assert response.status_code == 409
-    assert target.read_text(encoding="utf-8") == original
-    assert list((workspace / "mcp").glob("demo.json.tmp-*")) == []
-
-
-def test_agent_config_file_serializes_compare_and_swap_updates(
+def test_candidate_write_retry_recovers_lost_response_without_duplicate_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _, settings, registry = _test_app(tmp_path)
-    workspace = _register_agent(settings, registry, TEST_AGENT_ID)
-    target = workspace / "mcp" / "demo.json"
-    original = _http_mcp_content("old")
-    intermediate = _http_mcp_content("intermediate")
-    final = _http_mcp_content("final")
-    target.write_text(original, encoding="utf-8")
-    service = AgentConfigFileService(settings=settings, agent_registry_store=registry)
-    original_replace = service._atomic_replace
-    first_entered = Event()
-    allow_first = Event()
-    second_started = Event()
+    _settings_value, governance, writer, change_set = _services(tmp_path)
+    base = str(change_set["base_commit_sha"])
+    original = governance.mark_candidate_committed
+    lost = False
 
-    def controlled_replace(*, directory_fd: int, target_name: str, data: bytes, mode: int) -> None:
-        if data == intermediate.encode():
-            first_entered.set()
-            assert allow_first.wait(timeout=3)
-        original_replace(directory_fd=directory_fd, target_name=target_name, data=data, mode=mode)
+    def lose_first_response(*args, **kwargs):
+        nonlocal lost
+        result = original(*args, **kwargs)
+        if not lost:
+            lost = True
+            raise RuntimeError("simulated response loss")
+        return result
 
-    monkeypatch.setattr(service, "_atomic_replace", controlled_replace)
-
-    def update(content: str, expected: str) -> object:
-        if content == final:
-            second_started.set()
-        return service.update_file(
-            agent_id=TEST_AGENT_ID,
-            path="mcp/demo.json",
-            request=AgentConfigFileUpdateRequest(content=content, expected_sha256=expected),
-        )
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(update, intermediate, hashlib.sha256(original.encode()).hexdigest())
-        assert first_entered.wait(timeout=3)
-        second = executor.submit(update, final, hashlib.sha256(intermediate.encode()).hexdigest())
-        assert second_started.wait(timeout=3)
-        assert not second.done()
-        allow_first.set()
-        assert first.result(timeout=3).content == intermediate
-        assert second.result(timeout=3).content == final
-
-    assert target.read_text(encoding="utf-8") == final
-
-
-def test_catalog_router_discovers_agent_scoped_agentscope_assets(tmp_path: Path) -> None:
-    client, settings, registry = _test_app(tmp_path)
-    test_workspace = _register_agent(settings, registry, TEST_AGENT_ID)
-    disposal_workspace = _register_agent(settings, registry, "response-disposal")
-    _write_agent_asset(test_workspace, "test-subagent", "test-skill")
-    _write_agent_asset(disposal_workspace, "disposal-subagent", "disposal-skill")
-
-    test_agents = client.get("/api/agents", params={"agent_id": TEST_AGENT_ID})
-    disposal_agents = client.get("/api/agents", params={"agent_id": "response-disposal"})
-    disposal_skills = client.get("/api/skills", params={"agent_id": "response-disposal"})
-
-    assert test_agents.status_code == 200
-    assert disposal_agents.status_code == 200
-    assert disposal_skills.status_code == 200
-    assert [item["name"] for item in test_agents.json()] == ["test-subagent"]
-    assert [item["name"] for item in disposal_agents.json()] == ["disposal-subagent"]
-    assert [item["name"] for item in disposal_skills.json()] == ["disposal-skill"]
-
-
-def _write_agent_asset(workspace: Path, agent_name: str, skill_name: str) -> None:
-    agent_dir = workspace / "subagents" / agent_name
-    skill_dir = workspace / "skills" / skill_name
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (agent_dir / "agent.yaml").write_text(
-        f"agent:\n  id: {agent_name}\n  name: {agent_name}\n  description: test agent\n",
-        encoding="utf-8",
+    monkeypatch.setattr(governance, "mark_candidate_committed", lose_first_response)
+    request = dict(
+        change_set_id=str(change_set["change_set_id"]),
+        files=(("AGENT.md", "# Response-loss candidate\n", None, 0o644),),
+        expected_candidate_commit_sha=base,
+        operator="tester",
+        note=None,
     )
-    (agent_dir / "AGENT.md").write_text("Prompt\n", encoding="utf-8")
-    (skill_dir / "SKILL.md").write_text(
-        f"---\nname: {skill_name}\ndescription: test skill\n---\nInstructions\n",
-        encoding="utf-8",
-    )
+    with pytest.raises(RuntimeError, match="response loss"):
+        writer.write_text_files(**request)
+    recovered = writer.write_text_files(**request)
+
+    candidate = str(recovered["candidate_commit_sha"])
+    assert recovered["published"] is False
+    assert governance._store_for(DEFAULT_BUSINESS_AGENT_ID).version_summary(candidate)["parent_version_id"] == base
+
+
+def test_candidate_compare_and_swap_allows_only_one_concurrent_command(tmp_path: Path) -> None:
+    _settings_value, _governance, writer, change_set = _services(tmp_path)
+    request = {
+        "change_set_id": str(change_set["change_set_id"]),
+        "expected_candidate_commit_sha": str(change_set["base_commit_sha"]),
+        "operator": "tester",
+        "note": None,
+    }
+
+    def write(label: str):
+        try:
+            return writer.write_text_files(files=(("AGENT.md", f"# {label}\n", None, 0o644),), **request)
+        except AgentCandidateWriteError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(write, ("first", "second")))
+
+    assert sum(isinstance(result, dict) for result in results) == 1
+    assert sum(isinstance(result, AgentCandidateWriteError) for result in results) == 1

@@ -5,8 +5,13 @@ from pathlib import Path
 
 import pytest
 from app.api_mode import ACCEPTANCE_IDENTITY_HEADER, ApiModeGateMiddleware
-from app.runtime_gateway.security import sign_internal_request, verify_internal_request
-from fastapi import FastAPI, Request
+from app.routers.error_handlers import register_error_handlers
+from app.runtime.runtime_db import make_session_factory
+from app.runtime_gateway.contracts import RunStatus, RuntimeReceipt
+from app.runtime_gateway.router import create_internal_runtime_router
+from app.runtime_gateway.security import sign_internal_request
+from app.runtime_gateway.store import RuntimeRunStore
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 RUNTIME_SECRET = "runtime-shared-secret-for-mode-gate"
@@ -16,13 +21,18 @@ MUTATIONS = (
     ("POST", "/api/runtime/sessions/"),
     ("POST", "/api/runtime/chat/"),
     ("POST", "/api/feedback-signals"),
-    ("POST", "/api/agents/security/publish"),
-    ("POST", "/api/agents/security/restore"),
-    ("DELETE", "/api/agents/security"),
+    ("POST", "/api/agent-change-sets/change-set/publish"),
+    ("POST", "/api/agent-registry/security/workspace/restore"),
+    ("DELETE", "/api/agent-registry/security"),
 )
 
 
-def _app(mode: str, state_file: Path | None = None) -> FastAPI:
+def _app(
+    mode: str,
+    state_file: Path | None = None,
+    *,
+    store: RuntimeRunStore | None = None,
+) -> FastAPI:
     app = FastAPI()
     app.add_middleware(
         ApiModeGateMiddleware,
@@ -31,29 +41,42 @@ def _app(mode: str, state_file: Path | None = None) -> FastAPI:
         acceptance_api_key=ACCEPTANCE_KEY,
         state_file=state_file,
     )
-
-    async def accepted() -> dict[str, bool]:
-        return {"accepted": True}
-
-    for index, (method, path) in enumerate(MUTATIONS):
-        app.add_api_route(path, accepted, methods=[method], name=f"mutation-{index}")
-    app.add_api_route("/api/agents", accepted, methods=["GET"])
-    app.add_api_route("/health/ready", accepted, methods=["GET"])
-
-    @app.post("/internal/runtime-receipts")
-    async def runtime_receipt(request: Request):
-        body = await request.body()
-        valid = verify_internal_request(
-            secret=RUNTIME_SECRET,
-            timestamp=request.headers.get("X-AgentGov-Timestamp"),
-            signature=request.headers.get("X-AgentGov-Signature"),
-            method=request.method,
-            path=request.url.path,
-            body=body,
+    if store is not None:
+        register_error_handlers(app)
+        app.include_router(
+            create_internal_runtime_router(
+                store=store,
+                shared_secret=RUNTIME_SECRET,
+            ),
         )
-        return {"hmac_valid": valid}
-
     return app
+
+
+def _runtime_store(tmp_path: Path):
+    store = RuntimeRunStore(make_session_factory(tmp_path / "api-mode.db"))
+    store.bind_agent_version(
+        agent_id="agent-mode-gate",
+        agent_version_id="version-mode-gate",
+        digest="a" * 64,
+        runtime_agent_id="runtime-agent-mode-gate",
+    )
+    store.bind_session(
+        session_id="session-mode-gate",
+        agent_id="agent-mode-gate",
+        agent_version_id="version-mode-gate",
+        runtime_agent_id="runtime-agent-mode-gate",
+        digest="a" * 64,
+    )
+    run = store.begin_run(
+        session_id="session-mode-gate",
+        runtime_agent_id="runtime-agent-mode-gate",
+        input_value={"role": "user", "content": []},
+        alert_id=None,
+        case_id=None,
+        metadata={},
+    )
+    store.mark_trigger_started(run.run_id)
+    return store, store.get_run(run.run_id)
 
 
 @pytest.mark.parametrize(("method", "path"), MUTATIONS)
@@ -65,15 +88,27 @@ def test_drain_rejects_every_external_mutation(method: str, path: str) -> None:
     assert response.json() == {"detail": "API mutation gate is drain"}
 
 
-@pytest.mark.parametrize("path", ("/api/agents", "/health/ready"))
+@pytest.mark.parametrize("path", ("/api/agent-registry", "/health/ready"))
 def test_drain_allows_reads_and_health(path: str) -> None:
     response = TestClient(_app("drain")).get(path)
 
-    assert response.status_code == 200
+    # 404 来自未伪造业务端点的真实 FastAPI 路由边界，证明 gate 已放行读取。
+    assert response.status_code == 404
 
 
-def test_drain_allows_only_router_verified_runtime_receipt_write() -> None:
-    body = b'{"event_id":"evt-1"}'
+def test_drain_allows_only_router_verified_runtime_receipt_write(tmp_path: Path) -> None:
+    store, run = _runtime_store(tmp_path)
+    receipt = RuntimeReceipt(
+        receipt_id="receipt-mode-gate",
+        event_id="event-mode-gate",
+        session_id=run.session_id,
+        run_id=run.run_id,
+        reply_id="reply-mode-gate",
+        type="REPLY_START",
+        payload={},
+        trace_id=run.trace_id,
+    )
+    body = receipt.model_dump_json().encode()
     timestamp = str(time.time())
     signature = sign_internal_request(
         secret=RUNTIME_SECRET,
@@ -82,14 +117,16 @@ def test_drain_allows_only_router_verified_runtime_receipt_write() -> None:
         path="/internal/runtime-receipts",
         body=body,
     )
-    response = TestClient(_app("drain")).post(
+    response = TestClient(_app("drain", store=store)).post(
         "/internal/runtime-receipts",
         content=body,
         headers={"X-AgentGov-Timestamp": timestamp, "X-AgentGov-Signature": signature},
     )
 
     assert response.status_code == 200
-    assert response.json() == {"hmac_valid": True}
+    assert response.json()["run_id"] == run.run_id
+    assert response.json()["status"] == RunStatus.RUNNING
+    assert store.get_run(run.run_id).status is RunStatus.RUNNING
 
 
 @pytest.mark.parametrize(
@@ -119,7 +156,7 @@ def test_acceptance_identity_and_one_time_bearer_allow_mutation() -> None:
         },
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 404
 
 
 def test_one_mounted_state_file_is_the_atomic_drain_to_open_latch(tmp_path) -> None:
@@ -138,7 +175,7 @@ def test_one_mounted_state_file_is_the_atomic_drain_to_open_latch(tmp_path) -> N
     )
     replacement.replace(state_file)
 
-    assert client.post("/api/runtime/chat/").status_code == 200
+    assert client.post("/api/runtime/chat/").status_code == 404
 
 
 def test_invalid_mounted_gate_file_fails_closed_for_mutations_but_keeps_health_readable(tmp_path) -> None:
@@ -147,7 +184,7 @@ def test_invalid_mounted_gate_file_fails_closed_for_mutations_but_keeps_health_r
     client = TestClient(_app("open", state_file))
 
     assert client.post("/api/runtime/chat/").status_code == 503
-    assert client.get("/health/ready").status_code == 200
+    assert client.get("/health/ready").status_code == 404
 
 
 @pytest.mark.parametrize(

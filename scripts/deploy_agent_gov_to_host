@@ -6,17 +6,20 @@ DEFAULT_HOST="172.16.112.232"
 DEFAULT_REMOTE_DIR="~/work/agent-gov"
 COMPOSE_FILE="docker/docker-compose.yml"
 LOCAL_COMPOSE_ENV_FILE="${LOCAL_COMPOSE_ENV_FILE:-docker/.env}"
+DEPLOY_REF="${DEPLOY_REF:-origin/master}"
+TRUSTED_DOCKER_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/deploy_agent_gov_to_host [host]
 
-Deploy latest origin/master to a remote Docker Compose host.
+Deploy an explicit committed Git ref to a remote Docker Compose host.
 
 Defaults:
   host        172.16.112.232
   user        root          (override with DEPLOY_USER)
   remote dir  ~/work/agent-gov (override with REMOTE_DIR)
+  source ref  origin/master    (override with DEPLOY_REF; must resolve locally)
 
 The script preserves the remote private docker/.env, stores image archives in
 remote images/, loads the images on the remote host, replaces this Compose
@@ -77,22 +80,36 @@ require_command() {
   command -v "$name" >/dev/null 2>&1 || die "required command not found: $name"
 }
 
-fetch_origin_master() {
+resolve_deploy_ref() {
   git fetch origin master --prune --tags
 
-  ORIGIN_MASTER=$(git rev-parse origin/master)
-  VERSION=$(git show origin/master:VERSION | tr -d '[:space:]')
-  [[ -n "$VERSION" ]] || die "origin/master VERSION is empty"
+  TARGET_COMMIT=$(git rev-parse --verify "${DEPLOY_REF}^{commit}") \
+    || die "DEPLOY_REF does not resolve to a commit: $DEPLOY_REF"
+  VERSION=$(git show "${TARGET_COMMIT}:VERSION" | tr -d '[:space:]')
+  [[ -n "$VERSION" ]] || die "$DEPLOY_REF VERSION is empty"
+
+  local current_script_hash target_script_hash
+  current_script_hash=$(git hash-object scripts/deploy_agent_gov_to_host)
+  target_script_hash=$(git rev-parse "${TARGET_COMMIT}:scripts/deploy_agent_gov_to_host") \
+    || die "$DEPLOY_REF does not contain scripts/deploy_agent_gov_to_host"
+  [[ "$current_script_hash" = "$target_script_hash" ]] || die \
+    "the running deploy script differs from DEPLOY_REF; invoke the script from the exact target commit"
+}
+
+normalize_architecture() {
+  case "$1" in
+    amd64|x86_64) printf 'amd64\n' ;;
+    arm64|aarch64) printf 'arm64\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
 }
 
 ensure_local_image() {
   local image=$1
-  if docker image inspect "$image" >/dev/null 2>&1; then
+  if "${LOCAL_DOCKER[@]}" image inspect "$image" >/dev/null 2>&1; then
     return 0
   fi
-
-  log "Local image missing, pulling: $image"
-  docker pull "$image"
+  die "required local image missing after images-prepare/build: $image"
 }
 
 dedupe_images() {
@@ -113,7 +130,7 @@ upload_image_archive() {
   local images=("$@")
 
   log "Writing remote image archive: images/$archive"
-  docker save "${images[@]}" | gzip -1 | remote_run "bash -c 'set -euo pipefail
+  "${LOCAL_DOCKER[@]}" save "${images[@]}" | gzip -1 | remote_run "bash -c 'set -euo pipefail
     remote_path=\$1
     archive=\$2
     mkdir -p \"\$remote_path/images\"
@@ -127,7 +144,7 @@ upload_image_archive() {
 
 cd "$ROOT_DIR"
 
-for command_name in git docker gzip rsync ssh tar; do
+for command_name in git docker gzip install rsync ssh tar; do
   require_command "$command_name"
 done
 
@@ -135,13 +152,40 @@ done
 [[ -f "$COMPOSE_FILE" ]] || die "$COMPOSE_FILE not found"
 
 log "Consumer x Mode x Boundary: remote containers use docker/.env, runtime root stays on the remote host, secrets stay in private env files"
-fetch_origin_master
+resolve_deploy_ref
 
 TMP_DIR=$(mktemp -d /tmp/agent-gov-master.XXXXXX)
-trap 'rm -rf "$TMP_DIR"' EXIT
+LOCAL_BOUNDARY_DIR=$(mktemp -d /tmp/agentgov-deploy-boundary.XXXXXX)
+trap 'rm -rf -- "$TMP_DIR" "$LOCAL_BOUNDARY_DIR"' EXIT
 
-log "Exporting origin/master ${ORIGIN_MASTER}"
-git archive origin/master | tar -x -C "$TMP_DIR"
+log "Exporting ${DEPLOY_REF} ${TARGET_COMMIT}"
+git archive "$TARGET_COMMIT" | tar -x -C "$TMP_DIR"
+
+mapfile -t LOCAL_TOOLCHAIN < <(
+  PYTHONPATH="$TMP_DIR" "$ROOT_DIR/.venv/bin/python" - "$LOCAL_BOUNDARY_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+from scripts.selected_env_source_snapshot import (
+    COMPOSE_PLUGIN_ENV,
+    DOCKER_CLI_ENV,
+    prepare_docker_toolchain,
+)
+
+environment = prepare_docker_toolchain(Path(sys.argv[1]), include_buildx=False)
+print(environment[DOCKER_CLI_ENV])
+print(environment[COMPOSE_PLUGIN_ENV])
+print(environment["DOCKER_CONFIG"])
+print(environment["PATH"])
+PY
+)
+(( ${#LOCAL_TOOLCHAIN[@]} == 4 )) || die "failed to materialize bound local Docker CLI/plugin"
+LOCAL_DOCKER_BIN=${LOCAL_TOOLCHAIN[0]}
+LOCAL_COMPOSE_PLUGIN=${LOCAL_TOOLCHAIN[1]}
+LOCAL_DOCKER_CONFIG=${LOCAL_TOOLCHAIN[2]}
+LOCAL_DOCKER_PATH=${LOCAL_TOOLCHAIN[3]}
+[[ -x "$LOCAL_DOCKER_BIN" && -x "$LOCAL_COMPOSE_PLUGIN" ]] || die "bound local Docker CLI/plugin is not executable"
+LOCAL_DOCKER=(env -i HOME="${HOME:?HOME is required}" DOCKER_CONFIG="$LOCAL_DOCKER_CONFIG" PATH="$LOCAL_DOCKER_PATH" DOCKER_HOST=unix:///var/run/docker.sock "$LOCAL_DOCKER_BIN")
 
 if [[ "$LOCAL_COMPOSE_ENV_FILE" = /* ]]; then
   LOCAL_COMPOSE_ENV_PATH="$LOCAL_COMPOSE_ENV_FILE"
@@ -159,8 +203,15 @@ log "Checking remote prerequisites on $REMOTE"
 remote_run "bash -s" <<'REMOTE_PREREQUISITES'
 set -euo pipefail
 command -v python3 >/dev/null || { echo "remote python3 is required" >&2; exit 1; }
-command -v docker >/dev/null || { echo "remote docker is required" >&2; exit 1; }
-docker compose version >/dev/null
+[ -f /usr/bin/docker ] || [ -f /usr/local/bin/docker ] || { echo "trusted remote Docker CLI is required" >&2; exit 1; }
+for plugin in \
+  /usr/local/lib/docker/cli-plugins/docker-compose \
+  /usr/local/libexec/docker/cli-plugins/docker-compose \
+  /usr/lib/docker/cli-plugins/docker-compose \
+  /usr/libexec/docker/cli-plugins/docker-compose; do
+  [ ! -f "$plugin" ] || break
+done
+[ -f "$plugin" ] || { echo "trusted remote Docker Compose plugin is required" >&2; exit 1; }
 python3 - <<'PY'
 import sys
 
@@ -168,6 +219,30 @@ if sys.version_info < (3, 11):
     raise SystemExit(f"remote Python >=3.11 is required, found {sys.version.split()[0]}")
 PY
 REMOTE_PREREQUISITES
+
+LOCAL_DOCKER_ARCH=$(normalize_architecture "$("${LOCAL_DOCKER[@]}" info --format '{{.Architecture}}')")
+REMOTE_DOCKER_ARCH=$(normalize_architecture "$(remote_run "bash -s" <<'REMOTE_DOCKER_ARCH'
+set -euo pipefail
+trusted_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+boundary=$(mktemp -d /tmp/agentgov-deploy-docker-boundary.XXXXXX)
+chmod 0700 "$boundary"
+trap 'rm -rf -- "$boundary"' EXIT
+source_cli=/usr/bin/docker
+[ -f "$source_cli" ] || source_cli=/usr/local/bin/docker
+[ -f "$source_cli" ] && [ ! -L "$source_cli" ] || { echo "trusted remote Docker CLI is invalid" >&2; exit 1; }
+source_owner=$(stat -Lc '%u' "$source_cli")
+source_mode=$(stat -Lc '%a' "$source_cli")
+[ "$source_owner" = 0 ] && (( (8#$source_mode & 8#022) == 0 )) || { echo "trusted remote Docker CLI owner/mode is invalid" >&2; exit 1; }
+source_sha=$(sha256sum "$source_cli" | awk '{print $1}')
+install -m 0500 "$source_cli" "$boundary/docker"
+[ "$(sha256sum "$source_cli" | awk '{print $1}')" = "$source_sha" ] || { echo "Docker CLI changed while binding" >&2; exit 1; }
+[ "$(sha256sum "$boundary/docker" | awk '{print $1}')" = "$source_sha" ] || { echo "bound Docker CLI bytes differ" >&2; exit 1; }
+env -i HOME="$HOME" DOCKER_CONFIG="$boundary" PATH="$trusted_path" DOCKER_HOST=unix:///var/run/docker.sock \
+  "$boundary/docker" info --format '{{.Architecture}}'
+REMOTE_DOCKER_ARCH
+)")
+[[ "$LOCAL_DOCKER_ARCH" = "$REMOTE_DOCKER_ARCH" ]] || die \
+  "local Docker architecture $LOCAL_DOCKER_ARCH does not match remote $REMOTE_DOCKER_ARCH; docker save transfers only the resolved local platform"
 
 REMOTE_PATH=$(remote_run "REMOTE_DIR=$(quote "$REMOTE_DIR") python3 - <<'PY'
 import os
@@ -180,20 +255,48 @@ PY
 log "Remote path: $REMOTE:$REMOTE_PATH"
 remote_run "mkdir -p $(quote "$REMOTE_PATH") $(quote "$REMOTE_PATH/images")"
 
-# 在 rsync 覆盖旧栈 Compose/脚本之前，只读检查远程 schema epoch。临时检查器放在
-# images/ 中（该目录不参与代码 rsync），无论成功还是失败都删除。
+# 在 rsync 覆盖旧栈 Compose/脚本之前，只读检查远程 schema epoch。临时 bundle 放在
+# images/ 中（该目录不参与代码 rsync），携带应用与 cutover 共用的物理 schema inspector，
+# 无论成功还是失败都删除。
 log "Preflighting remote Runtime epoch before source sync"
-rsync -az \
-  -e "$(rsync_ssh_command)" \
-  "$TMP_DIR/scripts/agentscope_atomic_cutover.py" \
-  "${REMOTE}:${REMOTE_PATH}/images/.agentscope_atomic_cutover.preflight.py"
-remote_run "bash -s -- $(quote "$REMOTE_PATH")" <<'REMOTE_EPOCH_PREFLIGHT'
+PREFLIGHT_ROOT=$(remote_run "mktemp -d $(quote "$REMOTE_PATH/images/.agentscope-cutover-preflight.XXXXXX")")
+case "$PREFLIGHT_ROOT" in
+  "$REMOTE_PATH"/images/.agentscope-cutover-preflight.*) ;;
+  *) die "remote preflight directory escaped images boundary" ;;
+esac
+if ! (
+  cd "$TMP_DIR"
+  rsync -azR \
+    -e "$(rsync_ssh_command)" \
+    ./scripts/agentscope_atomic_cutover.py \
+    ./app/__init__.py \
+    ./app/runtime/__init__.py \
+    ./app/runtime/sqlite_schema_contract.py \
+    "${REMOTE}:$(quote "$PREFLIGHT_ROOT")/"
+); then
+  remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$PREFLIGHT_ROOT")" <<'REMOTE_PREFLIGHT_CLEANUP'
 set -euo pipefail
 remote_path=$1
-preflight_script="$remote_path/images/.agentscope_atomic_cutover.preflight.py"
-trap 'rm -f "$preflight_script"' EXIT
+preflight_root=$2
+case "$preflight_root" in
+  "$remote_path"/images/.agentscope-cutover-preflight.*) rm -rf -- "$preflight_root" ;;
+  *) printf 'Refusing unsafe preflight cleanup.\n' >&2; exit 1 ;;
+esac
+REMOTE_PREFLIGHT_CLEANUP
+  die "failed to upload remote Runtime epoch preflight bundle"
+fi
+remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$PREFLIGHT_ROOT")" <<'REMOTE_EPOCH_PREFLIGHT'
+set -euo pipefail
+remote_path=$1
+preflight_root=$2
+case "$preflight_root" in
+  "$remote_path"/images/.agentscope-cutover-preflight.*) ;;
+  *) printf 'Preflight directory escaped images boundary.\n' >&2; exit 1 ;;
+esac
+preflight_script="$preflight_root/scripts/agentscope_atomic_cutover.py"
+trap 'rm -rf -- "$preflight_root"' EXIT
 if [ -f "$remote_path/docker/.env" ]; then
-  python3 "$preflight_script" inspect \
+  PYTHONPATH="$preflight_root" python3 "$preflight_script" inspect \
     --env-file "$remote_path/docker/.env" \
     --require-current-or-empty
 else
@@ -201,11 +304,20 @@ else
 fi
 REMOTE_EPOCH_PREFLIGHT
 
+SOURCE_ARTIFACT_SHA256=$(PYTHONPATH="$TMP_DIR" python3 -c \
+  'import sys; from pathlib import Path; from scripts.agentscope_atomic_cutover_bootstrap import source_artifact_sha256; print(source_artifact_sha256(Path(sys.argv[1])))' \
+  "$TMP_DIR")
+[[ "$SOURCE_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "failed to compute source artifact SHA-256"
+log "Preparing digest-pinned build and runtime dependency images"
+"$ROOT_DIR/.venv/bin/python" "$TMP_DIR/scripts/run_selected_env_operation.py" \
+  --env-file "$LOCAL_COMPOSE_ENV_PATH" \
+  --env-base-dir "$(dirname "$LOCAL_COMPOSE_ENV_PATH")" \
+  --operation images-prepare
 log "Building project images for version $VERSION"
-APP_VERSION="$VERSION" docker compose --env-file "$LOCAL_COMPOSE_ENV_PATH" -f "$TMP_DIR/$COMPOSE_FILE" build \
-  agentscope-runtime \
-  agent-gov-api \
-  agent-gov-ui
+"$ROOT_DIR/.venv/bin/python" "$TMP_DIR/scripts/run_selected_env_operation.py" \
+  --env-file "$LOCAL_COMPOSE_ENV_PATH" \
+  --env-base-dir "$(dirname "$LOCAL_COMPOSE_ENV_PATH")" \
+  --operation build
 
 PROJECT_IMAGES=(
   "agent-gov-agentscope-runtime:${VERSION}"
@@ -214,9 +326,11 @@ PROJECT_IMAGES=(
 )
 for image in "${PROJECT_IMAGES[@]}"; do
   ensure_local_image "$image"
+  source_label=$("${LOCAL_DOCKER[@]}" image inspect "$image" --format '{{ index .Config.Labels "io.agentgov.source-artifact-sha256" }}')
+  [[ "$source_label" = "$SOURCE_ARTIFACT_SHA256" ]] || die "project image source artifact label mismatch: $image"
 done
 
-log "Syncing origin/master tracked code"
+log "Syncing ${DEPLOY_REF} tracked code"
 rsync -az --delete \
   -e "$(rsync_ssh_command)" \
   --exclude='/.git/' \
@@ -235,6 +349,9 @@ mkdir -p images
 cp -n docker/.env.example docker/.env
 printf 'remote VERSION=%s\n' "$(tr -d '[:space:]' < VERSION)"
 REMOTE_SYNC
+
+log "Validating remote deployment environment before image packaging"
+remote_run "cd $(quote "$REMOTE_PATH") && python3 scripts/check_public_bind.py --env-file docker/.env"
 
 log "Resolving Langfuse dependency image names from remote docker/.env"
 dependency_images_output=$(remote_run "bash -s -- $(quote "$REMOTE_PATH")" <<'REMOTE_IMAGES'
@@ -270,18 +387,26 @@ case "$(env_value LANGFUSE_BASE_URL http://langfuse-web:3000)" in
   *) exit 0 ;;
 esac
 
-env_value LANGFUSE_WORKER_IMAGE docker.io/langfuse/langfuse-worker:3
-env_value LANGFUSE_WEB_IMAGE docker.io/langfuse/langfuse:3
-env_value LANGFUSE_POSTGRES_IMAGE docker.io/postgres:17
-env_value LANGFUSE_CLICKHOUSE_IMAGE docker.io/clickhouse/clickhouse-server:24.3
-env_value LANGFUSE_REDIS_IMAGE docker.io/redis:7
-env_value LANGFUSE_MINIO_IMAGE cgr.dev/chainguard/minio
+env_value LANGFUSE_WORKER_IMAGE docker.io/langfuse/langfuse-worker:3.225.7@sha256:93207bd67d2e789ea55fa3d47eeba065dd6b1869187127ab24201784c52b96bc
+env_value LANGFUSE_WEB_IMAGE docker.io/langfuse/langfuse:3.225.7@sha256:a27fe525f52984fa6d36fd34e8b8c6e5ae4af43f34134cafc833b467fa9580ae
+env_value LANGFUSE_POSTGRES_IMAGE docker.io/postgres:17.9@sha256:347bc4e64006d47bb255b0e28652d08590260a5e97f6b55f6ba1c0b31aef58b3
+env_value LANGFUSE_CLICKHOUSE_IMAGE docker.io/clickhouse/clickhouse-server:24.3.18.7@sha256:85b97f63dcfff47790d26bb5d5801637aaddb2b93e5e9aee27a686c2fb2b9916
+env_value LANGFUSE_REDIS_IMAGE docker.io/redis:7.4.9@sha256:3e1b24a1a8f24ff926b15e5ace8c38a03e5657fb66e1fc7e5188e315aa5fa094
+env_value LANGFUSE_MINIO_IMAGE cgr.dev/chainguard/minio@sha256:f2cbe739b01145a88176b1b6949fc0d0f568f24dbf27fa801795372d70aab38e
 REMOTE_IMAGES
 )
 mapfile -t DEPENDENCY_IMAGES <<< "$dependency_images_output"
 mapfile -t DEPENDENCY_IMAGES < <(dedupe_images "${DEPENDENCY_IMAGES[@]}")
 for image in "${DEPENDENCY_IMAGES[@]}"; do
   ensure_local_image "$image"
+done
+
+for image in "${PROJECT_IMAGES[@]}" "${DEPENDENCY_IMAGES[@]}"; do
+  [[ -n "$image" ]] || continue
+  image_os=$("${LOCAL_DOCKER[@]}" image inspect "$image" --format '{{.Os}}')
+  image_arch=$(normalize_architecture "$("${LOCAL_DOCKER[@]}" image inspect "$image" --format '{{.Architecture}}')")
+  [[ "$image_os" = linux && "$image_arch" = "$LOCAL_DOCKER_ARCH" ]] || die \
+    "image platform mismatch before transfer: $image resolves to $image_os/$image_arch, expected linux/$LOCAL_DOCKER_ARCH"
 done
 
 PROJECT_ARCHIVE="agent-gov-${VERSION}-images.tar.gz"
@@ -294,12 +419,63 @@ if (( ${#DEPENDENCY_IMAGES[@]} > 0 )); then
 fi
 
 log "Loading images and restarting all agent-gov services on $REMOTE"
-remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$VERSION") $with_langfuse" <<'REMOTE_DEPLOY'
+remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$VERSION") $with_langfuse $(quote "$SOURCE_ARTIFACT_SHA256")" <<'REMOTE_DEPLOY'
 set -euo pipefail
 remote_path=$1
 version=$2
 with_langfuse=$3
+source_digest=$4
 cd "$remote_path"
+trusted_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=$trusted_path
+unset DOCKER_CONTEXT DOCKER_CERT_PATH DOCKER_TLS_VERIFY COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_NAME
+docker_boundary=$(mktemp -d /tmp/agentgov-deploy-docker-boundary.XXXXXX)
+docker_config="$docker_boundary/docker-config"
+plugin_directory="$docker_config/cli-plugins"
+install -d -m 0700 "$docker_config" "$plugin_directory"
+source_cli=/usr/bin/docker
+[ -f "$source_cli" ] || source_cli=/usr/local/bin/docker
+[ -f "$source_cli" ] && [ ! -L "$source_cli" ] || { echo "trusted Docker CLI is invalid" >&2; exit 1; }
+for source_plugin in \
+  /usr/local/lib/docker/cli-plugins/docker-compose \
+  /usr/local/libexec/docker/cli-plugins/docker-compose \
+  /usr/lib/docker/cli-plugins/docker-compose \
+  /usr/libexec/docker/cli-plugins/docker-compose; do
+  [ ! -f "$source_plugin" ] || break
+done
+[ -f "$source_plugin" ] && [ ! -L "$source_plugin" ] || { echo "trusted Compose plugin is invalid" >&2; exit 1; }
+source_cli_owner=$(stat -Lc '%u' "$source_cli")
+source_cli_mode=$(stat -Lc '%a' "$source_cli")
+source_plugin_owner=$(stat -Lc '%u' "$source_plugin")
+source_plugin_mode=$(stat -Lc '%a' "$source_plugin")
+[ "$source_cli_owner" = 0 ] && [ "$source_plugin_owner" = 0 ] && \
+  (( (8#$source_cli_mode & 8#022) == 0 )) && (( (8#$source_plugin_mode & 8#022) == 0 )) || {
+  echo "trusted Docker CLI/plugin owner/mode is invalid" >&2
+  exit 1
+}
+source_cli_sha=$(sha256sum "$source_cli" | awk '{print $1}')
+source_plugin_sha=$(sha256sum "$source_plugin" | awk '{print $1}')
+install -m 0500 "$source_cli" "$docker_boundary/docker"
+install -m 0500 "$source_plugin" "$plugin_directory/docker-compose"
+chmod 0500 "$plugin_directory" "$docker_boundary"
+[ "$(sha256sum "$source_cli" | awk '{print $1}')" = "$source_cli_sha" ] && \
+  [ "$(sha256sum "$source_plugin" | awk '{print $1}')" = "$source_plugin_sha" ] && \
+  [ "$(sha256sum "$docker_boundary/docker" | awk '{print $1}')" = "$source_cli_sha" ] && \
+  [ "$(sha256sum "$plugin_directory/docker-compose" | awk '{print $1}')" = "$source_plugin_sha" ] || {
+  echo "Docker CLI/plugin changed while binding" >&2
+  exit 1
+}
+trap 'rm -rf -- "$docker_boundary"' EXIT
+docker_cmd=(env -i HOME="$HOME" DOCKER_CONFIG="$docker_config" PATH="$docker_boundary:$trusted_path" DOCKER_HOST=unix:///var/run/docker.sock "$docker_boundary/docker")
+
+normalize_architecture() {
+  case "$1" in
+    amd64|x86_64) printf 'amd64\n' ;;
+    arm64|aarch64) printf 'arm64\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+remote_arch=$(normalize_architecture "$("${docker_cmd[@]}" info --format '{{.Architecture}}')")
 
 project_archive="images/agent-gov-${version}-images.tar.gz"
 dependency_archive="images/agent-gov-${version}-langfuse-deps-images.tar.gz"
@@ -309,8 +485,49 @@ for archive in "${archives[@]}"; do
   [ -f "$archive" ] || { echo "missing archive: $archive" >&2; exit 1; }
   [ -f "$archive.sha256" ] || { echo "missing checksum: $archive.sha256" >&2; exit 1; }
   sha256sum -c "$archive.sha256"
-  gzip -dc "$archive" | docker load
 done
+
+python3 scripts/agentscope_atomic_cutover_archive.py \
+  --archive "$project_archive" \
+  --architecture "$remote_arch" \
+  --source-digest "$source_digest" \
+  --expected-image "agent-gov-agentscope-runtime:${version}" \
+  --expected-image "agent-gov-api:${version}" \
+  --expected-image "agent-gov-ui:${version}"
+if [ "$with_langfuse" = 1 ]; then
+  python3 scripts/agentscope_atomic_cutover_archive.py \
+    --archive "$dependency_archive" \
+    --architecture "$remote_arch" \
+    --forbidden-prefix agent-gov-
+fi
+for archive in "${archives[@]}"; do
+  gzip -dc "$archive" | "${docker_cmd[@]}" load
+done
+
+actual_source_digest=$(python3 -c \
+  'from pathlib import Path; from scripts.agentscope_atomic_cutover_bootstrap import source_artifact_sha256; print(source_artifact_sha256(Path.cwd()))')
+[ "$actual_source_digest" = "$source_digest" ] || {
+  echo "remote source artifact differs from freshly built project images" >&2
+  exit 1
+}
+for image in "agent-gov-agentscope-runtime:${version}" "agent-gov-api:${version}" "agent-gov-ui:${version}"; do
+  source_label=$("${docker_cmd[@]}" image inspect "$image" --format '{{ index .Config.Labels "io.agentgov.source-artifact-sha256" }}')
+  [ "$source_label" = "$source_digest" ] || {
+    echo "loaded project image source artifact label mismatch: $image" >&2
+    exit 1
+  }
+done
+
+export APP_VERSION="$version"
+export AGENTGOV_SOURCE_ARTIFACT_SHA256="$source_digest"
+
+[ -f docker/.env ] && [ ! -L docker/.env ] || { echo "docker/.env must be a regular non-symlink file" >&2; exit 1; }
+source_env_sha256=$(sha256sum docker/.env | awk '{print $1}')
+source_env_identity=$(stat -Lc '%d:%i:%s:%Y:%Z' docker/.env)
+selected_env=$(mktemp /tmp/agentgov-deploy-env.XXXXXX)
+trap 'rm -f -- "$selected_env"; rm -rf -- "$docker_boundary"' EXIT
+install -m 0600 docker/.env "$selected_env"
+export SELECTED_DEPLOY_ENV_FILE=$selected_env
 
 read_env() {
   local key=$1
@@ -324,7 +541,7 @@ read_env() {
       print
       exit
     }
-  ' docker/.env 2>/dev/null || true)
+  ' "${SELECTED_DEPLOY_ENV_FILE:-docker/.env}" 2>/dev/null || true)
   printf '%s' "${value:-$default}"
 }
 
@@ -336,7 +553,6 @@ expand_remote_value() {
   printf '%s' "$value"
 }
 
-export APP_VERSION="$version"
 for required_key in API_KEY AGENTGOV_RUNTIME_SHARED_SECRET MODEL_PROVIDER_API_KEY; do
   required_value=$(read_env "$required_key" "")
   [ -n "$required_value" ] || { echo "missing required private env key: $required_key" >&2; exit 1; }
@@ -410,44 +626,34 @@ require_public_bind_opt_in() {
 
 require_public_bind_opt_in "AgentGov API" API_BIND_IP API_ALLOW_PUBLIC_BIND
 require_public_bind_opt_in "AgentGov UI" FRONTEND_BIND_IP FRONTEND_ALLOW_PUBLIC_BIND
-compose=(docker compose --env-file docker/.env -f docker/docker-compose.yml)
-if [ "$with_langfuse" = 1 ]; then
-  compose+=(-f docker/docker-compose.langfuse.yml)
-  "${compose[@]}" --profile langfuse config >/dev/null
-else
-  "${compose[@]}" config >/dev/null
-fi
-actual_core_services=$(docker compose --env-file docker/.env -f docker/docker-compose.yml config --services | sort)
-expected_core_services=$(printf '%s\n' agent-gov-api agent-gov-ui agentscope-runtime | sort)
-[ "$actual_core_services" = "$expected_core_services" ] || {
-  echo "unexpected core service set before cutover" >&2
-  printf 'actual:\n%s\n' "$actual_core_services" >&2
-  exit 1
-}
 
 # 普通部署只能复用空卷或精确 AgentScope epoch。旧 Claude/未知 schema 必须在仍未停服时
 # fail closed，绝不能把一次版本部署偷换成 destructive cutover。
-python3 scripts/agentscope_atomic_cutover.py inspect \
-  --env-file docker/.env \
+env -i HOME="$HOME" PATH="$trusted_path" python3 scripts/agentscope_atomic_cutover.py inspect \
+  --env-file "$selected_env" \
   --require-current-or-empty
 
-export COMPOSE_ENV_FILE=docker/.env
-export COMPOSE_UP_FLAGS="--no-build --pull never"
 if [ "$with_langfuse" = 1 ]; then
-  "${compose[@]}" --profile langfuse down --remove-orphans || true
-  make --no-print-directory all-up
-  "${compose[@]}" --profile langfuse ps
+  .venv/bin/python scripts/run_selected_env_operation.py --env-file "$selected_env" \
+    --env-base-dir "$remote_path/docker" --operation all-up --no-build --force-recreate
 else
-  "${compose[@]}" down
-  make --no-print-directory up
-  "${compose[@]}" ps
+  .venv/bin/python scripts/run_selected_env_operation.py --env-file "$selected_env" \
+    --env-base-dir "$remote_path/docker" --operation up --no-build --force-recreate
 fi
 
-actual_core_services=$(docker compose --env-file docker/.env -f docker/docker-compose.yml config --services | sort)
-expected_core_services=$(printf '%s\n' agent-gov-api agent-gov-ui agentscope-runtime | sort)
-[ "$actual_core_services" = "$expected_core_services" ] || {
-  echo "unexpected core service set" >&2
-  printf 'actual:\n%s\n' "$actual_core_services" >&2
+[ "$(sha256sum "$docker_boundary/docker" | awk '{print $1}')" = "$source_cli_sha" ] && \
+  [ "$(sha256sum "$plugin_directory/docker-compose" | awk '{print $1}')" = "$source_plugin_sha" ] || {
+  echo "bound Docker CLI/plugin changed during deployment" >&2
+  exit 1
+}
+
+[ "$(sha256sum docker/.env | awk '{print $1}')" = "$source_env_sha256" ] && \
+  [ "$(stat -Lc '%d:%i:%s:%Y:%Z' docker/.env)" = "$source_env_identity" ] || {
+  echo "docker/.env changed during the deployment transaction" >&2
+  exit 1
+}
+[ "$(python3 -c 'from pathlib import Path; from scripts.agentscope_atomic_cutover_bootstrap import source_artifact_sha256; print(source_artifact_sha256(Path.cwd()))')" = "$source_digest" ] || {
+  echo "deployable source changed during the deployment transaction" >&2
   exit 1
 }
 
@@ -457,8 +663,10 @@ langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 50402)")
 
 python3 - <<PY
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 import time
+
+direct_http = build_opener(ProxyHandler({}))
 
 checks = [
     ("API and AgentScope Runtime readiness", "http://127.0.0.1:${host_port}/health/ready", 60, True),
@@ -472,7 +680,7 @@ for name, url, attempts, print_body in checks:
     for _ in range(attempts):
         try:
             request = Request(url, headers={"User-Agent": "agent-gov-deploy-smoke"})
-            with urlopen(request, timeout=5) as response:
+            with direct_http.open(request, timeout=5) as response:
                 body = response.read(500)
                 print(f"{name} OK: {url} status={response.status}")
                 if print_body:

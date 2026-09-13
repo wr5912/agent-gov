@@ -6,7 +6,7 @@ from pathlib import Path
 
 from test_quality.coverage import evaluate_coverage, load_coverage
 from test_quality.evidence import validate_evidence
-from test_quality.policy import load_quality_policy, selected_lane_nodes, validate_quality_policy
+from test_quality.policy import load_quality_policy, open_gap_errors, selected_lane_nodes, validate_quality_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,6 +21,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--require-clean", action="store_true")
     parser.add_argument("--expected-sha")
     parser.add_argument("--skip-collection", action="store_true")
+    parser.add_argument("--fail-on-open-gaps", action="store_true")
+    parser.add_argument("--gap-lane", action="append", default=[])
     return parser.parse_args()
 
 
@@ -30,6 +32,9 @@ def main() -> int:
     policy = load_quality_policy(policy_path)
     validation = None if args.skip_collection else validate_quality_policy(policy, repo_root=REPO_ROOT)
     errors = [] if validation is None else list(validation.errors)
+    if args.fail_on_open_gaps:
+        lanes = set(args.gap_lane) or {lane.id for lane in policy.lanes if lane.enforcement == "blocking"}
+        errors.extend(open_gap_errors(policy, lanes))
     if args.coverage_json:
         errors.extend(evaluate_coverage(load_coverage(args.coverage_json), policy.coverage))
     if args.evidence_dir:

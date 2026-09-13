@@ -3,12 +3,20 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import time
 from typing import Literal
 
 import pytest
 from agentscope_runtime.access_middleware import FixedRuntimeUserMiddleware
 from agentscope_runtime.settings import RUNTIME_USER_ID
-from agentscope_runtime.signing import SIGNATURE_HEADER, TIMESTAMP_HEADER, runtime_gateway_headers, verify_runtime_gateway_request, verify_signed_request
+from agentscope_runtime.signing import (
+    SIGNATURE_HEADER,
+    TIMESTAMP_HEADER,
+    TIMESTAMP_TOLERANCE_SECONDS,
+    runtime_gateway_headers,
+    verify_runtime_gateway_request,
+    verify_signed_request,
+)
 from app.runtime_gateway.security import sign_internal_request, sign_runtime_request, verify_internal_request
 from starlette.types import Message, Receive, Scope, Send
 
@@ -204,12 +212,20 @@ def test_runtime_boundary_still_blocks_concurrent_replay() -> None:
     assert len(forwarded) == 1
 
 
-def test_runtime_boundary_blocks_future_timestamp_replay_until_signature_expires(monkeypatch: pytest.MonkeyPatch) -> None:
-    clock = [NOW]
-    monkeypatch.setattr("agentscope_runtime.signing.time.time", lambda: clock[0])
-    signed = runtime_gateway_headers(SECRET, RUNTIME_USER_ID, "GET", "/health", timestamp=str(NOW + 60))
+def test_runtime_boundary_retains_future_signature_for_its_entire_real_clock_window() -> None:
+    future_timestamp = f"{time.time() + TIMESTAMP_TOLERANCE_SECONDS - 1:.9f}"
+    signed = runtime_gateway_headers(
+        SECRET,
+        RUNTIME_USER_ID,
+        "GET",
+        "/health",
+        timestamp=future_timestamp,
+    )
     scope = _scope()
-    scope["headers"] = [(b"x-user-id", RUNTIME_USER_ID.encode()), *((name.lower().encode(), value.encode()) for name, value in signed.items())]
+    scope["headers"] = [
+        (b"x-user-id", RUNTIME_USER_ID.encode()),
+        *((name.lower().encode(), value.encode()) for name, value in signed.items()),
+    ]
     forwarded: list[Scope] = []
 
     async def downstream(scope: Scope, _receive: Receive, send: Send) -> None:
@@ -217,15 +233,18 @@ def test_runtime_boundary_blocks_future_timestamp_replay_until_signature_expires
         await send({"type": "http.response.start", "status": 204, "headers": []})
         await send({"type": "http.response.body", "body": b""})
 
-    boundary = FixedRuntimeUserMiddleware(downstream, expected_user_id=RUNTIME_USER_ID, shared_secret=SECRET)
+    boundary = FixedRuntimeUserMiddleware(
+        downstream,
+        expected_user_id=RUNTIME_USER_ID,
+        shared_secret=SECRET,
+    )
 
     async def exercise() -> None:
         assert (await _request(boundary, scope))[0]["status"] == 204
-        for elapsed in (61, 120):
-            clock[0] = NOW + elapsed
-            assert verify_runtime_gateway_request(SECRET, signed[TIMESTAMP_HEADER], signed[SIGNATURE_HEADER], RUNTIME_USER_ID, "GET", "/health", b"")
-            assert (await _request(boundary, scope))[0]["status"] == 401
-        clock[0] = NOW + 121
+        signature = signed[SIGNATURE_HEADER]
+        signature_valid_until = float(future_timestamp) + TIMESTAMP_TOLERANCE_SECONDS
+        # 不改系统时钟：直接约束 replay 账本的绝对过期点不得早于签名失效点。
+        assert boundary._seen_signatures[signature] >= signature_valid_until
         assert (await _request(boundary, scope))[0]["status"] == 401
 
     asyncio.run(exercise())

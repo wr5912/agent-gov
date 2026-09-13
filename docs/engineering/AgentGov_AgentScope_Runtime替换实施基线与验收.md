@@ -1,10 +1,10 @@
 # AgentGov AgentScope Runtime 替换实施基线与验收
 
 > 文档角色：Runtime 替换的工程决策、实现索引与剩余验收依据。
-> 核对日期：2026-09-11。状态：4.0.0 基础运行验收已有证据，完整业务验收仍受阻，详见 §6.3。
+> 核对日期：2026-09-12。状态：4.0.1 整改候选已完成 P0–P4 实现，P5 真实容器与浏览器验收正在进行；既有 v4.0.0 只代表整改前基线，完整平台验收尚未完成，详见 §6.3。
 > 来源：`AgentGov_AgentScope_Runtime替换实施方案.md`；原方案基于 AgentGov
 > `b12372f` 与 AgentScope `2.0.8` / `ff8697ec4d59ee01f3766176e70cb24ee894d6c6`。
-> 本文核对的是 AgentGov 4.0.0 源码基线，不把原方案 commit 当成已部署版本。
+> 本文核对的是 AgentGov 4.0.1 当前工作树，不把原方案 commit 或既有 v4.0.0 tag 当成最新已部署版本。
 
 ## 1. 文档归属与采纳范围
 
@@ -61,14 +61,14 @@ AgentScope 嵌入 API 进程会扩大模型凭据与执行权限边界；直接�
 
 | 面向调用者的行为 | 当前实现 | 证据 |
 | --- | --- | --- |
-| 获取当前发布绑定 | `GET /api/runtime/agents/{agent_id}/current` 只读；`POST .../provision` 幂等创建；发布版本可尚未 provision | [router.py](../../app/runtime_gateway/router.py)、[provisioning.py](../../app/runtime_gateway/provisioning.py) |
+| 获取当前发布绑定 | `GET /api/runtime/agents/{agent_id}/current` 只读；原生 Agent 创建、探测与绑定只属于候选发布 saga；普通客户端没有独立 provision 入口 | [router.py](../../app/runtime_gateway/router.py)、[provisioning.py](../../app/runtime_gateway/provisioning.py)、[agent_release_activation_workflow.py](../../app/services/agent_release_activation_workflow.py) |
 | 创建 Session | body 为 `agent_id`、可选 `name`；这里 `agent_id` 的值是 `runtime_agent_id`；额外字段一律拒绝 | [contracts.py](../../app/runtime_gateway/contracts.py) |
 | 列出 Session | `GET /api/runtime/sessions/?governance_agent_id=...` 按业务 Agent 聚合多个版本，并过滤受管 Session | [router.py](../../app/runtime_gateway/router.py) |
-| 提交 chat 与恢复重试 | 必须传 `client_operation_id`；响应不确定时按同一操作 ID 查询 run；HITL 续跑还要传 `expected_run_id` | [contracts.py](../../app/runtime_gateway/contracts.py)、[操作入口](../../app/runtime_gateway/_router_operations.py) |
-| 原生 SSE | 使用 `aiter_raw()` 转发，保留 frame 内容、顺序及未知事件；HTTP/TCP chunk 边界不属于等价承诺 | [router.py](../../app/runtime_gateway/router.py)、[前端解析](../../frontend/src/api/agentScopeStream.ts) |
+| 提交 chat 与恢复重试 | 必须传 `client_operation_id`；响应不确定时先按同一操作 ID 查询 run，暂未投影则用同 payload/同 ID 幂等重试；明确不启动执行的 4xx 与 operation 404 才回滚；HITL 续跑还要传 `expected_run_id` | [contracts.py](../../app/runtime_gateway/contracts.py)、[操作入口](../../app/runtime_gateway/_router_operations.py)、[前端恢复](../../frontend/src/playgroundRunRecovery.ts) |
+| 原生 SSE | Gateway 先发送一个无业务语义的 `:\n\n` readiness comment；随后只接受上游 `200 + text/event-stream`，使用 `aiter_raw()` 转发，保留上游 frame 内容、顺序及未知事件；HTTP/TCP chunk 边界不属于等价承诺 | [client.py](../../app/runtime_gateway/client.py)、[router.py](../../app/runtime_gateway/router.py)、[SSE 契约](../../app/sse_contracts.py)、[前端解析](../../frontend/src/api/agentScopeStream.ts) |
 | 精确运行终态 | `REPLY_END` 只是 reply 结束；前端按 `run_id` 查询终态，后端还核对 Message、Session 持久化和 team 子执行 | [终态存储](../../app/runtime_gateway/_store_runs.py)、[前端终态判断](../../frontend/src/playgroundRunTerminal.ts) |
-| 生命周期回执 | 实际为 TraceContext、Tracing、Receipt 等 Middleware 组合；内部还有 boot、child-session、team-inbox 协调 | [service.py](../../agentscope_runtime/service.py)、[router.py](../../app/runtime_gateway/router.py) |
-| 新数据库 epoch | 仅允许空库初始化或精确匹配 `agentscope-runtime-v1`；拒绝旧库与未知 schema，不在线迁移旧 Claude 数据 | [runtime_db.py](../../app/runtime/runtime_db.py) |
+| 生命周期回执 | 实际为 TraceContext、Tracing、Receipt 等 Middleware 组合；规范 `REPLY_END` 前的协程取消使用不含正文的签名 `RUN_INTERRUPTED`，内部还有 boot、child-session、team-inbox 协调 | [receipt_middleware.py](../../agentscope_runtime/receipt_middleware.py)、[service.py](../../agentscope_runtime/service.py)、[router.py](../../app/runtime_gateway/router.py) |
+| 数据库 epoch 与一次性迁移 | 当前 epoch 为 `agentscope-runtime-v3`；空库直接创建 v3，精确 v1/v2 可在启动锁内迁移，其他旧库、未知 marker、结构漂移及非空旧发布操作表均 fail closed | [sqlite_schema_contract.py](../../app/runtime/sqlite_schema_contract.py)、[runtime_db.py](../../app/runtime/runtime_db.py)、[hitl_migration.py](../../app/runtime_gateway/hitl_migration.py) |
 
 Session 创建的 `Idempotency-Key`、chat 的 `client_operation_id` 和治理 `run_id`
 分别解决不同步骤的幂等与关联问题，不能互换。Session 一旦绑定发布版本，后续发布只影响
@@ -95,6 +95,11 @@ run 结束后临时授权失效。外部执行续跑也必须对应真实 pendin
 新 Harness 使用 `agent.yaml`、`AGENT.md`、`skills/`、`mcp/`、`subagents/` 和 `tests/`。
 身份、展示、`agentscope-app/2.0.8` contract、权限、Workspace 策略与资产 digest 进入
 manifest；发布以精确 Git 内容为依据，Runtime Agent 绑定按需创建且不可原地改写。
+Subagent manifest 安全校验由 API 与 Runtime 共用的根模块承载，并分别进入两个镜像；API
+不得因调用共享校验器而依赖 Runtime 私有包。
+资产 digest 覆盖上述受治理源文件，但排除 `__pycache__`、`.pytest_cache`、`.ruff_cache`、
+`.mypy_cache`、`.cache`、`*.pyc` 和 `*.pyo` 等可再生运行缓存；同名符号链接仍 fail closed，
+不得利用排除项逃逸 Workspace。
 
 | 处理 | 资产 | 约束与证据 |
 | --- | --- | --- |
@@ -107,6 +112,9 @@ manifest；发布以精确 Git 内容为依据，Runtime Agent 绑定按需创�
 `mapped|retired|rejected` 与确认状态。转换覆盖率要求 100%、`rejected=0`、重复执行 digest
 一致；不允许静默漏文件。转换器只用于离线迁移，不进入生产启动链。仓库内置初始化源还须通过
 `runtime-bootstrap` 准入；live Workspace 中的私有配置不能随转换回流项目源码。
+平台 `governor-workspace` 的显式初始化文件每次部署同步；已存在的只读普通文件采用同目录原子替换，
+保留目标所有权和权限，不追随符号链接，也不删除卷内额外文件。既存业务 Agent Workspace 则整体
+跳过，不能借平台配置同步去回灌业务 Git 版本。
 
 | Consumer | Mode / env 来源 | 数据与秘密边界 |
 | --- | --- | --- |
@@ -122,44 +130,60 @@ env 是按环境选择，不是叠加覆盖。配置完整说明以 README、env
 
 ## 5. 原子切换与恢复边界
 
-普通部署与破坏性切换是两种操作。普通部署发现旧 Claude/未知 schema 应在停服前拒绝，
-不会顺带迁移或清空活动卷。切换命令的参数和操作顺序以
-[README 部署章节](../../README.md#部署) 为唯一 runbook。
+普通部署与持久化数据切换是两种操作。普通部署接受空库、精确 v3，以及只含受支持迁移形状的
+精确 v1/v2；部署前只读检查会将旧版本识别为可迁移，随后由新代码在启动锁内完成
+v1/v2→v3 迁移。这不是旧 Claude 数据迁移，也不允许借机清空活动卷。
 
-操作者明确放弃旧数据时，可按 README 的空卷重新初始化路径部署；必须核定本项目卷与外部
-依赖边界，不能把该路径写成旧数据迁移、回滚演练或五类原子切换证据通过。下表描述的是保留
-恢复能力的切换流程，不要求为明确弃旧的新部署伪造历史恢复证据。
+v1/v2→v3 重建 `runtime_session_creation_intents` 与 `agent_runs` 并迁入 `runtime_chat_operations`。
+v1 从 `session_name` 计算请求指纹后删除该正文副本；v2 无法还原原请求，保留未知历史指纹标记，
+不伪造原始请求。迁移逐行检查 Session intent 与 run 数量，保持其余治理关联；
+旧 `agent_release_operations` 仅在表、21 个字段、索引及 release 外键精确且表为空时删除，非空记录
+或任一结构漂移均整体 fail closed。HITL 数据迁移先在无 marker 的事务中把历史 payload 约化为
+`RuntimeToolCallFingerprint`，再执行 `secure_delete`、WAL 截断、`VACUUM` 和再次 WAL 截断；物理净化
+成功后才以独立事务写入 `agentscope-hitl-fingerprint-v1` marker。失败时 marker 保持缺失以便安全重试，
+未知 marker 一律拒绝。当前公开 cutover 能力仍仅包含只读 epoch 检查。
 
-| 阶段 | 必备条件与产物 | 失败处理 |
-| --- | --- | --- |
-| 隔离演练 | 临时 Runtime root 完成 Harness 转换和验收；不复用真实活动卷 | 保留脱敏证据，关闭隔离项目 |
-| `prepare` | 业务停机；精确解析旧 root；外置数据/env/ownership/hash 与旧 Compose/image 快照；完成数据和镜像 restore drill | 不清空活动数据；证据不匹配即拒绝 |
-| `execute` | 校验一次性 token、路径/inode/hash、active run/HITL/test/publish 均为 0；建立 fresh epoch 和验收栈 | 未开放写闸时可按 manifest 恢复旧快照和精确镜像 |
-| `finalize` 前半段 | 五类机器验收证据齐备；生产 bind/key 下以 `drain` 状态重建并通过 readiness | 写闸仍关闭时可恢复 |
-| 不可逆点 | `api-gate-state.json` 经 `fsync + os.replace` 原子切为 `open`，同时记录 `irreversible_at` | 即使尚无真实请求，也禁止回挂旧卷或运行旧 binary |
-| 开放后 | 写入 cutover ledger，清除受保护旧快照，持续观察新栈 | 关闭写闸并向前修复 AgentScope-only 栈 |
-
-源方案把“首个非验收请求被接受”作为不可逆点；当前实现以写闸原子开放为准，避免请求
-接收与恢复标记之间的空窗。恢复与清理依据
-[切换恢复模块](../../scripts/agentscope_atomic_cutover_recovery.py)，最终证据依据
-[证据校验器](../../scripts/agentscope_atomic_cutover_evidence.py)。原方案的开放后 24 小时
-观察、旧快照在不可逆点后 15 分钟内清理仍是操作验收要求，不能仅凭脚本存在认定已完成。
+`maintenance-down`、`prepare`、`execute`、`finalize`、`recover-finalize` 与 `restore` 当前统一
+fail closed，Make 不暴露对应目标，高权限内部 helper 也拒绝构造。冷备/旧栈演练、整根切换的
+crash-resume、普通部署入口互斥和 root filesystem custody 未形成机器可证明闭环前，不允许手写
+manifest/receipt 或 SHA-256 绕过。真实切换须另走经审批的人工维护方案，使用普通 selected-env
+`make down` 停服，保留旧目录且不递归删除；完整操作边界以 README 部署章节为准。
 
 ## 6. 验证分层与完整验收门槛
+
+验收对象是 AgentGov 平台，业务 Agent 只是端到端调测载体。业务依赖缺失不作为平台验收前置条件：
+`security-operations-expert` 的外部 SOC/RO 服务及其专业业务效果不在本轮范围内，不要求补齐
+这些服务，也不通过修改其活动 Harness 或降低权限来换取通过。平台的工具接入、审批、恢复、
+观测及反馈改进能力仍须验证。通过公共 Workspace 导入接口创建的最小 Agent
+只可用于 Runtime 技术集成回归；正式发布与效果验收必须使用真实已发布业务 Agent、仓库外
+人工复核场景和服务端生成的身份，不得用预制响应、伪造 ID/状态/Trace 或请求拦截冒充证据。
+
+这一边界解决了把特定业务依赖误当作平台准入条件的问题，不减少下述平台验收项。平台改进效果
+以可复核的源回答缺陷、候选变更和同一任务的前后结果为依据，不以生成方案、测试或发布成功
+代替实际改善。若后续明确验收某个业务 Agent，再单独纳入其依赖和专业效果。
+
+Runtime 启动时先校验不可变快照的 marker、目录结构和完整 Harness digest；这些完整性错误仍会阻断
+启动。对通过完整性校验但 subagent manifest 不满足当前安全契约的旧快照，Runtime 只隔离其模板，
+记录告警并允许其他有效 Agent 启动；绑定该快照的旧 Session 和新会话仍在工作区初始化前被拒绝，
+不得降级执行或就地修改旧快照。`/health` 成功仅说明平台服务可用，不表示隔离的业务版本、历史
+Session 或正式端到端验收已通过；恢复该业务版本需另走受治理的候选、验证与发布流程。
 
 | 验证层 | 公共入口或证据 | 能证明的范围 |
 | --- | --- | --- |
 | 文档与静态治理 | `make codex-guard`、文档契约测试 | 索引、契约引用、旧入口与生成物检查，不证明真实运行 |
-| 行为与故障契约 | 相关目标测试、`make main-flow-test`、`make typecheck`；提交/发版前串行 `make test` | 后端、前端、状态机、权限与恢复逻辑；覆盖率以 [quality_policy.json](../../tests/quality_policy.json) 为准 |
+| 行为与故障回归 | 相关目标测试、`make main-flow-test`、`make typecheck`；提交/发版前串行 `make test` | 后端、前端、状态机、权限与恢复逻辑；它们是自动化回归，不代替真实部署验收；覆盖率以 [quality_policy.json](../../tests/quality_policy.json) 为准 |
 | 容器 | `make container-core-smoke`、`make container-openapi-check` | 当前工作树 rebuild、force-recreate 后的独立 Compose 验收 |
-| 观测 | `make langfuse-smoke` | 当次真实 run 的语义 Trace；需要有效 provider 与 OTLP 配置 |
-| 浏览器 | 对应公共 UI smoke 入口和完整旅程证据 | 原生事件、暂停/续跑、取消、历史、反馈与 Trace 的实际交互 |
-| 真实模型与稳定性 | `REQUIRE_LIVE_RUNTIME=1 make container-live-test` 及补充故障/soak/性能证据 | 固定场景、身份关联、负载和长时间运行 |
+| 观测 | `REQUIRE_LIVE_RUNTIME=1 REAL_ACCEPTANCE_AGENT_ID=security-operations-expert REAL_SCENARIO_FILE=/outside/reviewed.json make langfuse-smoke` | 从外部复核成功场景触发当次真实 run，并在私有验收进程读取严格投影后的语义 Trace；需要有效 provider 与 OTLP 配置 |
+| 浏览器 | 对应公共 UI smoke 入口和完整旅程证据 | 正式入口强制 Chromium 与 Firefox 各 3 次，核对原生事件、暂停/续跑、取消、历史、反馈与 Trace 的实际交互；`ui-playground-technical-smoke` 使用真实 Chromium、Firefox、API 与 provider 形成取消和重试技术证据，不验证业务工具效果或替代正式门禁 |
+| 真实模型候选门 | `REQUIRE_LIVE_RUNTIME=1 REAL_ACCEPTANCE_AGENT_ID=security-operations-expert REAL_SCENARIO_FILE=/outside/reviewed.json make container-release-candidate` | 当前树重建的隔离容器、已发布 Agent、复核场景、50 run/并发 10、双浏览器各 3 次取消和反馈链；仍不自动证明重启演练或正式发布签字 |
 
 公共容器验收由 [run_container_acceptance.py](../../scripts/run_container_acceptance.py)
 生成临时 Runtime 根、唯一 Compose project 和随机回环端口，使用当前工作树重建并
 `--force-recreate`，结束后清理该临时项目。它不触碰既有部署或真实持久化根；直接运行
 私有 target、宿主机测试或检查旧容器不能替代该路径。
+recreate 后 runner 写入本轮私有上下文回执；每个 Python/Node 验收入口会重新核对工作树与
+所选 env 指纹、场景快照、Compose project、容器/镜像 ID、运行标签及实际端口绑定。
+该回执用于阻断旧容器或裸环境开关冒充本轮结果，不替代 §6.2 的独立签名正式切换证据。
 
 ### 6.1 50-run 场景组成
 
@@ -188,26 +212,30 @@ Harness 自修改和管理面绕过。当前是单租户 operator，不能把作
   重复终态、终态重开、残留 run/HITL、未释放 fence 和错误作用域授权为 0。
 - 10 次反馈正确关联原 run；3 次候选闭环的变更 commit、测试 commit、发布版本一致；
   测试失败不能发布。
-- 真实浏览器连续 3 次完成创建 Session、两轮对话、Tool、HITL、Cancel、刷新历史、反馈、
-  Trace 流程，3/3 通过且不 mock SSE。2 小时 soak 内非计划重启、未处理异常、残留运行、
-  terminal 丢失均为 0。
+- Chromium 与 Firefox 各至少连续 3 次完成创建 Session、两轮对话、Tool、HITL、Cancel、刷新历史、反馈、
+  Trace 流程；浏览器只被动观测真实网络，不拦截请求、不履行响应也不注入运行配置。
+- 本轮真实运行集合中的非计划重启、未处理异常、残留运行和 terminal 丢失均为 0。
 - 50 个 run 对应 50 个唯一 Trace；场景应有 span 缺失为 0，内容长度/hash 对账通过，
   secret 原文命中为 0；查询 P95 ≤ 30 秒、最大 ≤ 60 秒。完整性规则见专项观测文档。
 - 对冻结基线，P95 TTFT 和端到端耗时 ≤ 1.20 倍、P99 ≤ 1.50 倍，非预期错误率增量
   ≤ 0.5 个百分点，OTel 引入的 P95 附加开销 ≤ 10%。报告采样、原始结果和环境，不能只报最好一次。
 
-最终五类机器证据为 `static_gates`、`contract_tests`、`container_acceptance`、
-`browser_acceptance`、`live_runtime`，须绑定同一 cutover、当前源码、镜像、验收产物与
-SHA-256；不得把人工改写 `passed` 当成测试结果。保留 schema/OpenAPI/Harness/Runtime
-版本、恢复演练、场景复核和故障时间线。受保护原始证据放在仓库外，仓库仅收脱敏结论与引用。
+五类目标机器证据仍为 `static_gates`、`contract_tests`、`container_acceptance`、
+`browser_acceptance`、`live_runtime`，但当前没有可开闸的自动 cutover/finalizer。它们只作为后续
+重新设计的目标契约，不得用手写 `passed`、SHA-256 或一次真实验收结果解除当前
+fail-closed 状态。保留 schema/OpenAPI/Harness/Runtime 版本、冷备演练、场景复核和故障
+时间线；受保护原始证据放在仓库外，仓库仅收脱敏结论与引用。
 
 ### 6.3 当前能力边界
 
-[live runner](../../scripts/run_agentscope_live_acceptance.py) 已能读取场景，运行 Session、
+[live runner](../../scripts/run_agentscope_live_acceptance.py) 已能读取仓库外人工复核场景，运行 Session、
 SSE、chat、消息、run/reply/trace 关联和反馈检查；其结果摘要并不自动证明上述场景分配、
-三次浏览器、两小时 soak、性能对比、候选发布闭环或五类最终机器回执已经齐备。
+三次浏览器、性能对比、候选发布闭环或五类最终机器回执已经齐备。
+场景格式由 [live_acceptance_scenario.schema.json](../../config/live_acceptance_scenario.schema.json)
+唯一约束；`source_ref/reviewed_by/reviewed_at` 用于追溯，不允许将历史合成输入
+事后换标签冒充业务复核场景。
 
-2026-09-10 至 2026-09-11 的 4.0.0 发布验证按以下范围记账；发布版本不代表完整业务验收通过：
+2026-09-10 至 2026-09-11 的 4.0.0 发布验证按以下范围记账；发布版本不代表完整平台验收通过：
 
 | 范围 | 本轮结果与边界 |
 | --- | --- |
@@ -219,11 +247,21 @@ SSE、chat、消息、run/reply/trace 关联和反馈检查；其结果摘要并
 | 观测隐私 | 对上述 2 个 Trace、8 个 observation 及 API/Runtime 日志做追加只读检查：合成 canary 与高熵私有值命中为 0，Trace/observation 原始 input/output 为空；不覆盖 Tool/MCP 全场景或浏览器 DOM 隐私 |
 | 正式部署 | 当前代码 `make build` 后 `make all-up COMPOSE_UP_FLAGS=--force-recreate`；9 服务运行，304 个源码文件逐哈希核对，所选 Compose env 与容器实际值一致，映射端口均为回环地址上的 50400–50499 |
 | 新数据边界 | 旧卷移出活动路径后从空目录初始化，无 legacy tables；旧目录暂存但不复用。这不是旧数据迁移、切换恢复或永久删除演练 |
-| 安全业务受阻 | 外部 MCP 尚缺案件修订 RO 工具和 SOC 处置剧本接口/资源；仅刷新注册无效。本轮未修改外部服务，也未降低批准能力来换取通过 |
+| 排除的业务依赖 | 外部 MCP 尚缺案件修订 RO 工具和 SOC 处置剧本接口/资源；按本轮平台验收范围排除，不再作为继续验收的阻断。本轮未修改外部服务或业务 Harness |
+
+平台自身仍有独立缺口：当前 [权限 Middleware](../../agentscope_runtime/policy_middleware.py)
+对显式允许规则返回 `ALLOW`，对其余请求返回 `DENY`，没有可配置的工具审批 `ASK` 入口。
+[现有权限测试](../../tests/test_agentscope_runtime_service.py) 也明确约束未声明工具必须拒绝。
+因此 HITL 回传、作用域和状态机已有实现/测试，不代表真实工具审批可达；补齐审批入口时必须
+保留未声明拒绝、不可变 Harness、路径和网络硬约束，不能把未允许工具统一改为询问或自动放行。
+
+浏览器验收也须先显式选定测试 Agent，再加载其改进事项；现有反馈脚本取第一个活跃业务 Agent，
+并在切换 Agent 前等待改进事项，不能据此证明非默认测试 Agent 的旅程可用。此项属于验收脚本
+的选择与等待顺序，不是外部 MCP 问题。
 
 同一轮中已修复资源创建的并发/取消补偿、签名畸形输入与重放窗口、Bash 参数越权、
 Runtime 缺少 `jq`、陈旧验收入口及 UI 测试隔离等本项目问题。原始日志保存在仓库外，不提交凭据或业务正文。
 
 50 个经复核的实质不同场景、10 并发、HITL、多轮/重启恢复、三类候选发布闭环、三次完整浏览器、
-两小时 soak 与性能/效果对比尚无完整证据，不声明通过。只有对应验证和同构建证据齐备，
+性能/效果对比尚无完整证据，不声明通过。只有对应验证和同构建证据齐备，
 才能升级为“完整验收通过”。

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Callable, Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
@@ -15,7 +16,7 @@ from ..protected_business_agents import is_protected_business_agent
 from ..runtime_db import utc_now
 from ..runtime_db_base import begin_sqlite_write_transaction
 from ..runtime_recovery import runtime_operation_heartbeat, runtime_operation_is_stale
-from ..state_machines import validate_transition
+from ..state_machines import AGENT_LIFECYCLE_STATES, validate_transition
 
 _PROVISIONING = "provisioning"
 _PROVISION_READY = "ready"
@@ -125,6 +126,17 @@ class AgentRegistryStore:
             row = db.get(AgentRegistryModel, agent_id)
             return _record(row) if row is not None and _is_public(row) else None
 
+    def has_agent(self, agent_id: str) -> bool:
+        """Return whether an active registry identity exists for production wiring."""
+
+        return self.get_agent(agent_id) is not None
+
+    def status_of(self, agent_id: str) -> str | None:
+        """Return the lifecycle status through the same public registry projection."""
+
+        record = self.get_agent(agent_id)
+        return record.status if record is not None else None
+
     def create_business_agent(self, *, name: str, agent_id: str, workspace_dir: str) -> AgentRegistryRecord:
         """注册一个业务 Agent 身份（被治理对象）。活跃 agent_id 重复拒绝，空 name 拒绝。
 
@@ -174,13 +186,22 @@ class AgentRegistryStore:
             requires_web_hitl=read_requires_human_confirmation(Path(workspace_dir)),
         )
 
-    def reserve_business_agent(self, *, name: str, agent_id: str, workspace_dir: str) -> AgentProvisionReservation:
+    def reserve_business_agent(
+        self,
+        *,
+        name: str,
+        agent_id: str,
+        workspace_dir: str,
+        lifecycle_status: str = "active",
+    ) -> AgentProvisionReservation:
         """Persist an invisible, exclusive creation intent before touching the workspace."""
         if self.deletion_pending(agent_id):
             raise ConflictError(f"Business agent {agent_id} still has pending Runtime cleanup")
         clean_name = name.strip()
         if not clean_name:
             raise BusinessRuleViolation("Business agent name cannot be empty")
+        if lifecycle_status not in AGENT_LIFECYCLE_STATES or lifecycle_status not in {"active", "draft"}:
+            raise BusinessRuleViolation("A new business Agent lifecycle must be active or draft")
         now = utc_now()
         token = uuid4().hex
         created_new = False
@@ -197,7 +218,7 @@ class AgentRegistryStore:
                         category="business",
                         workspace_dir=workspace_dir,
                         created_at=now,
-                        status="active",
+                        status=lifecycle_status,
                         provision_state=_PROVISIONING,
                         provision_token=token,
                         provision_started_at=now,
@@ -217,7 +238,7 @@ class AgentRegistryStore:
                 row.category = "business"
                 row.workspace_dir = workspace_dir
                 row.created_at = now
-                row.status = "active"
+                row.status = lifecycle_status
                 row.provision_state = _PROVISIONING
                 row.provision_token = token
                 row.provision_started_at = now
@@ -314,6 +335,17 @@ class AgentRegistryStore:
             row.status = status
             return _record(row)
 
+    def activate_business_agent_after_release(self, agent_id: str) -> AgentRegistryRecord:
+        """只供发布激活 saga 幂等完成 draft -> active。"""
+
+        with self._session_factory.begin() as db:
+            row = db.get(AgentRegistryModel, agent_id)
+            if row is None or not _is_public(row):
+                raise NotFoundError(f"Business agent not found: {agent_id}")
+            validate_transition("agent_release_activation", row.status or "active", "active")
+            row.status = "active"
+            return _record(row)
+
     def delete_business_agent(self, agent_id: str) -> AgentRegistryRecord:
         """把业务 Agent 标记为已删除（tombstone），使其立即不可见且重启不复活。
 
@@ -340,9 +372,7 @@ class AgentRegistryStore:
         """幂等 tombstone 精确代际，供可恢复的 Runtime 删除 saga 使用。"""
 
         if is_protected_business_agent(agent_id):
-            raise BusinessRuleViolation(
-                f"Business agent '{agent_id}' is protected: its built-in Workspace lives in the project repository"
-            )
+            raise BusinessRuleViolation(f"Business agent '{agent_id}' is protected: its built-in Workspace lives in the project repository")
         with self._session_factory.begin() as db:
             begin_sqlite_write_transaction(db.connection())
             row = db.get(AgentRegistryModel, agent_id)
@@ -350,6 +380,29 @@ class AgentRegistryStore:
                 raise ConflictError(f"Business agent generation changed during deletion: {agent_id}")
             if not row.deleted_at:
                 row.deleted_at = utc_now()
+
+    def tombstone_failed_draft_generation(
+        self,
+        agent_id: str,
+        *,
+        expected_created_at: str,
+        expected_workspace_dir: str,
+    ) -> None:
+        """隐藏后半段失败的新 draft，并保留安全重建所需的清理标记。"""
+
+        with self._session_factory.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = db.get(AgentRegistryModel, agent_id)
+            if (
+                row is None
+                or row.created_at != expected_created_at
+                or row.workspace_dir != expected_workspace_dir
+                or (row.provision_state or _PROVISION_READY) != _PROVISION_READY
+                or row.status != "draft"
+            ):
+                raise ConflictError(f"Business agent draft generation changed during compensation: {agent_id}")
+            row.deleted_at = row.deleted_at or utc_now()
+            _mark_incomplete_workspace(row, expected_workspace_dir)
 
 
 def _record(row: AgentRegistryModel) -> AgentRegistryRecord:

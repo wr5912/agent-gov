@@ -17,10 +17,10 @@ workspace_policy:
   - Read
   - Grep
   - Glob
+  - TeamSay
   - mcp__sec-ops__resource_read
   - mcp__sec-ops__resource_templates_list
   - mcp__sec-ops__resources_list
-  - mcp__sec-ops__soc_api__get_resp_playbooks_recommend
   denied_tools:
   - mcp__sec-ops__soc_api__create*
   - mcp__sec-ops__soc_api__manual

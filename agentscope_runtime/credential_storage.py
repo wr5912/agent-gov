@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import logging
-from importlib.metadata import PackageNotFoundError, version
 from typing import Self
 
 import httpx
@@ -15,19 +12,9 @@ from agentscope.message import Msg
 from agentscope.state import AgentState
 
 from .context_registry import RuntimeContext, bind_reply_context, discard_reply_contexts, take_reply_context
-from .receipt_middleware import RuntimeReceipt, RuntimeReceiptAck, fetch_runtime_context, post_runtime_receipt
-from .run_trace import AgentGovRunTraceRegistry
+from .receipt_middleware import AgentGovReceiptDispatcher, RuntimeReceipt, fetch_runtime_context
 from .settings import RUNTIME_USER_ID, RuntimeSettings
 from .team_coordination import AgentGovInMemoryMessageBus, register_team_child_session
-
-logger = logging.getLogger(__name__)
-
-try:
-    _AGENTSCOPE_VERSION = version("agentscope")
-except PackageNotFoundError:  # pragma: no cover - 生产镜像固定安装 AgentScope
-    _AGENTSCOPE_VERSION = "unknown"
-
-_TERMINAL_ACK_STATUSES = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 
 
 async def provision_runtime_credential(
@@ -76,8 +63,7 @@ class ProvisionedAsyncSQLAlchemyStorage(AsyncSQLAlchemyStorage):
         self,
         settings: RuntimeSettings,
         *,
-        receipt_transport: httpx.AsyncBaseTransport | None = None,
-        trace_registry: AgentGovRunTraceRegistry | None = None,
+        receipt_dispatcher: AgentGovReceiptDispatcher,
         message_bus: AgentGovInMemoryMessageBus | None = None,
     ) -> None:
         super().__init__(
@@ -87,10 +73,8 @@ class ProvisionedAsyncSQLAlchemyStorage(AsyncSQLAlchemyStorage):
             engine_kwargs={"connect_args": {"timeout": 30}},
         )
         self._runtime_settings = settings
-        self._receipt_transport = receipt_transport
-        self._trace_registry = trace_registry
+        self._receipt_dispatcher = receipt_dispatcher
         self._message_bus = message_bus
-        self._receipt_tasks: set[asyncio.Task[RuntimeReceiptAck | None]] = set()
         self._pending_batches: dict[tuple[str, str], dict[str, RuntimeContext]] = {}
 
     async def __aenter__(self) -> Self:
@@ -167,18 +151,14 @@ class ProvisionedAsyncSQLAlchemyStorage(AsyncSQLAlchemyStorage):
                 user_id=user_id,
                 child_session_id=session_id,
                 team_id=team_id,
-                transport=self._receipt_transport,
             )
 
     async def aclose(self) -> None:
-        await self._flush_receipts()
         for batch in self._pending_batches.values():
             contexts = list(batch.values())
             if contexts:
                 discard_reply_contexts(contexts[0], list(batch))
         self._pending_batches.clear()
-        if self._trace_registry is not None:
-            self._trace_registry.close_all()
         await super().aclose()
 
     async def _message_context(self, session_id: str, reply_id: str) -> tuple[RuntimeContext, bool]:
@@ -197,7 +177,7 @@ class ProvisionedAsyncSQLAlchemyStorage(AsyncSQLAlchemyStorage):
         async with httpx.AsyncClient(
             base_url=settings.agentgov_api_base_url,
             timeout=settings.request_timeout_seconds,
-            transport=self._receipt_transport,
+            trust_env=False,
         ) as client:
             return await fetch_runtime_context(client, settings, session_id)
 
@@ -233,55 +213,7 @@ class ProvisionedAsyncSQLAlchemyStorage(AsyncSQLAlchemyStorage):
         return left.model_dump(exclude={"team_generation"}) == right.model_dump(exclude={"team_generation"})
 
     def _schedule_receipt(self, receipt: RuntimeReceipt, context: RuntimeContext) -> None:
-        task = asyncio.create_task(
-            self._deliver_receipt(receipt, context),
-            name=f"agentgov-{receipt.type.lower()}-{receipt.event_id[:12]}",
-        )
-        self._receipt_tasks.add(task)
-        task.add_done_callback(self._receipt_tasks.discard)
-
-    async def _deliver_receipt(
-        self,
-        receipt: RuntimeReceipt,
-        context: RuntimeContext,
-    ) -> RuntimeReceiptAck | None:
-        settings = self._runtime_settings
-        attempt = 0
-        while True:
-            try:
-                async with httpx.AsyncClient(
-                    base_url=settings.agentgov_api_base_url,
-                    timeout=settings.request_timeout_seconds,
-                    transport=self._receipt_transport,
-                ) as client:
-                    acknowledgement = await post_runtime_receipt(client, settings, receipt)
-                if acknowledgement.run_id != context.run_id:
-                    raise RuntimeError("AgentGov receipt acknowledgement changed run identity")
-                if acknowledgement.status in _TERMINAL_ACK_STATUSES and self._trace_registry is not None:
-                    self._trace_registry.finish_run(
-                        context,
-                        terminal_reason=acknowledgement.terminal_reason or acknowledgement.status,
-                        failed=acknowledgement.status != "succeeded",
-                        runtime_version=settings.runtime_version,
-                        agentscope_version=_AGENTSCOPE_VERSION,
-                    )
-                return acknowledgement
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                attempt += 1
-                if attempt % settings.receipt_retry_attempts == 0:
-                    logger.exception(
-                        "%s receipt is still pending after %d attempts for session=%s run=%s event=%s",
-                        receipt.type,
-                        attempt,
-                        receipt.session_id,
-                        receipt.run_id,
-                        receipt.event_id,
-                    )
-                await asyncio.sleep(
-                    settings.receipt_retry_backoff_seconds * (2 ** min(attempt - 1, settings.receipt_retry_attempts - 1)),
-                )
+        self._receipt_dispatcher.schedule(receipt, context)
 
     @staticmethod
     def _message_receipt(context: RuntimeContext, msg: Msg) -> RuntimeReceipt:
@@ -346,20 +278,3 @@ class ProvisionedAsyncSQLAlchemyStorage(AsyncSQLAlchemyStorage):
             type="PERSISTENCE_FAILED",
             payload={"error": {"type": "persistence"}, "message_persisted": False},
         )
-
-    async def _flush_receipts(self) -> None:
-        tasks = tuple(self._receipt_tasks)
-        if not tasks:
-            return
-        _, pending = await asyncio.wait(
-            tasks,
-            timeout=self._runtime_settings.receipt_flush_timeout_seconds,
-        )
-        if pending:
-            logger.error(
-                "Cancelling %d unflushed AgentGov persistence receipt(s)",
-                len(pending),
-            )
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)

@@ -10,7 +10,7 @@ from business_agent_test_utils import create_test_business_agent_workspace
 
 
 def load_test_app(
-    monkeypatch,
+    process_environment,
     tmp_path,
     *,
     api_key: str = "",
@@ -38,8 +38,8 @@ def load_test_app(
         requires_web_hitl=True,
     )
 
-    monkeypatch.setenv("RUNTIME_CONTAINER", "0")
-    monkeypatch.setenv("RUNTIME_VOLUME_MODE", "local-debug")
+    process_environment.set("RUNTIME_CONTAINER", "0")
+    process_environment.set("RUNTIME_VOLUME_MODE", "local-debug")
     default_workspace = data / "business-agents" / DEFAULT_BUSINESS_AGENT_ID / "workspace"
     create_test_business_agent_workspace(
         default_workspace,
@@ -57,24 +57,24 @@ def load_test_app(
             requires_web_hitl=requires_web_hitl,
         )
 
-    monkeypatch.setenv("HOST_RUNTIME_VOLUME_ROOT", str(root))
-    monkeypatch.setenv("HOST_DATA_MOUNT", str(data))
-    monkeypatch.setenv("HOST_GOVERNOR_WORKSPACE_MOUNT", str(governor_workspace))
-    monkeypatch.setenv("GOVERNOR_WORKSPACE_DIR", str(governor_workspace))
-    monkeypatch.setenv("DATA_DIR", str(data))
-    monkeypatch.setenv("AGENTSCOPE_RUNTIME_URL", "http://agentscope-runtime.test")
-    monkeypatch.setenv("AGENTGOV_RUNTIME_SHARED_SECRET", "test-runtime-shared-secret")
-    monkeypatch.setenv("AGENTSCOPE_MODEL_NAME", "test-model")
-    monkeypatch.setenv("AGENTSCOPE_MODEL_TYPE", "OpenAIChatModel")
-    monkeypatch.setenv("AGENTSCOPE_MODEL_CREDENTIAL", "test-model-credential")
-    monkeypatch.setenv("API_KEY", api_key)
-    monkeypatch.setenv("AGENTGOV_API_MODE", "open")
-    monkeypatch.delenv("AGENTGOV_ACCEPTANCE_IDENTITY", raising=False)
-    monkeypatch.delenv("AGENTGOV_ACCEPTANCE_API_KEY", raising=False)
+    process_environment.set("HOST_RUNTIME_VOLUME_ROOT", str(root))
+    process_environment.set("HOST_DATA_MOUNT", str(data))
+    process_environment.set("HOST_GOVERNOR_WORKSPACE_MOUNT", str(governor_workspace))
+    process_environment.set("GOVERNOR_WORKSPACE_DIR", str(governor_workspace))
+    process_environment.set("DATA_DIR", str(data))
+    # 契约测试不提供 Runtime 替身；若误触运行时网络，必须在回环地址上真实拒绝连接。
+    process_environment.set("AGENTSCOPE_RUNTIME_URL", "http://127.0.0.1:1")
+    process_environment.set("AGENTGOV_RUNTIME_SHARED_SECRET", "test-runtime-shared-secret")
+    process_environment.set("AGENTSCOPE_MODEL_NAME", "test-model")
+    process_environment.set("AGENTSCOPE_MODEL_TYPE", "OpenAIChatModel")
+    process_environment.set("API_KEY", api_key)
+    process_environment.set("AGENTGOV_API_MODE", "open")
+    process_environment.remove("AGENTGOV_ACCEPTANCE_IDENTITY")
+    process_environment.remove("AGENTGOV_ACCEPTANCE_API_KEY")
     del raw_events_enabled
-    monkeypatch.setenv("AGENT_GIT_REPOSITORY_DIR", str(default_workspace))
-    monkeypatch.setenv("AGENT_GIT_WORKTREES_DIR", str(agent_worktrees))
-    monkeypatch.setenv("AGENT_RELEASE_ARCHIVES_DIR", str(release_archives))
+    process_environment.set("AGENT_GIT_REPOSITORY_DIR", str(default_workspace))
+    process_environment.set("AGENT_GIT_WORKTREES_DIR", str(agent_worktrees))
+    process_environment.set("AGENT_RELEASE_ARCHIVES_DIR", str(release_archives))
 
     import app.runtime.settings as settings_module
 

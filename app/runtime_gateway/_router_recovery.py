@@ -11,7 +11,11 @@ from ._router_operations import (
     _compensate_session_creation,
     _request_binding_interrupts,
 )
-from .client import AgentScopeRuntimeClient, RuntimeUpstreamError
+from .client import (
+    AgentScopeRuntimeClient,
+    RuntimeUpstreamError,
+    canonical_session_locator_from_view,
+)
 from .contracts import TERMINAL_RUN_STATUSES, AgentRunResponse, RuntimeReceipt
 from .models import RuntimeSessionCreationIntentModel
 from .store import (
@@ -44,6 +48,23 @@ async def reconcile_runtime_gateway(
     cutoff = None
     if not include_fresh_intents:
         cutoff = (datetime.now(timezone.utc) - timedelta(seconds=SESSION_CREATION_RECOVERY_AGE_SECONDS)).isoformat()
+    await _reconcile_session_intents(client, store, report, cutoff=cutoff)
+    # lifespan 的首次调用只处理 Session create intent；随后
+    # reconcile_after_restart 会先给所有 active run 加 recovery fence。
+    if include_fresh_intents:
+        return report
+    await _reconcile_finalizing_runs(client, store, report)
+    await _reconcile_recovery_runs(client, store, report)
+    return report
+
+
+async def _reconcile_session_intents(
+    client: AgentScopeRuntimeClient,
+    store: RuntimeRunStore,
+    report: RuntimeGatewayRecoveryReport,
+    *,
+    cutoff: str | None,
+) -> None:
     for intent in store.recoverable_session_creations(updated_before=cutoff):
         try:
             outcome = await _reconcile_session_intent(client, store, intent)
@@ -57,28 +78,39 @@ async def reconcile_runtime_gateway(
             retry_status = SessionCreationStatus.PENDING if intent.session_id is None else SessionCreationStatus.CLEANUP_PENDING
             store.mark_session_creation(intent.intent_id, status=retry_status, error=_audit_error("reconcile_session", exc))
             report.failures += 1
-    # lifespan 的首次调用只处理 Session create intent；随后
-    # reconcile_after_restart 会先给所有 active run 加 recovery fence。
-    if not include_fresh_intents:
-        for run in store.finalizing_runs():
-            if run.metadata.get("recovery_required") is True:
+
+
+async def _reconcile_finalizing_runs(
+    client: AgentScopeRuntimeClient,
+    store: RuntimeRunStore,
+    report: RuntimeGatewayRecoveryReport,
+) -> None:
+    for run in store.finalizing_runs():
+        if run.metadata.get("recovery_required") is True:
+            continue
+        try:
+            receipts = await _recover_persistence_receipts(client, run)
+            if not receipts:
                 continue
-            try:
-                receipts = await _recover_persistence_receipts(client, run)
-                if receipts:
-                    for receipt in receipts:
-                        store.apply_receipt(receipt)
-                    if store.get_run(run.run_id).status in TERMINAL_RUN_STATUSES:
-                        report.runs_finalized += 1
-            except Exception:
-                report.failures += 1
-        for run in store.recovery_required_runs():
-            try:
-                if await _recover_restarted_run(client, store, run):
-                    report.runs_finalized += 1
-            except Exception:
-                report.failures += 1
-    return report
+            for receipt in receipts:
+                store.apply_receipt(receipt)
+            if store.get_run(run.run_id).status in TERMINAL_RUN_STATUSES:
+                report.runs_finalized += 1
+        except Exception:
+            report.failures += 1
+
+
+async def _reconcile_recovery_runs(
+    client: AgentScopeRuntimeClient,
+    store: RuntimeRunStore,
+    report: RuntimeGatewayRecoveryReport,
+) -> None:
+    for run in store.recovery_required_runs():
+        try:
+            if await _recover_restarted_run(client, store, run):
+                report.runs_finalized += 1
+        except Exception:
+            report.failures += 1
 
 
 async def _reconcile_session_intent(
@@ -120,12 +152,11 @@ async def _find_workspace_session(client: AgentScopeRuntimeClient, runtime_agent
         raise RuntimeUpstreamError(502, b'{"detail":"Runtime returned invalid Session list"}')
     matches: list[str] = []
     for value in values:
-        session = value.get("session") if isinstance(value, dict) else None
-        config = session.get("config") if isinstance(session, dict) else None
-        if isinstance(config, dict) and config.get("workspace_id") == workspace_id:
-            session_id = session.get("id")
-            if isinstance(session_id, str) and session_id:
-                matches.append(session_id)
+        session_id, candidate_workspace_id = canonical_session_locator_from_view(
+            value,
+        )
+        if candidate_workspace_id == workspace_id:
+            matches.append(session_id)
     if len(matches) > 1:
         raise RuntimeStateConflict("Runtime returned multiple Sessions for one immutable workspace")
     return matches[0] if matches else None
@@ -140,8 +171,12 @@ async def _recover_restarted_run(
 
     bindings = store.active_session_bindings(run.run_id)
     if not bindings:
-        store.fail_recovery(run.run_id, error="Runtime Session fences disappeared during restart recovery")
-        return True
+        # 没有 Session 身份就无法对 Runtime 做真实静止观测；不得把本地
+        # 绑定损坏误当成 upstream idle 并释放 run。
+        store.reset_recovery_quiescent(run.run_id)
+        raise RuntimeStateConflict(
+            "Runtime Session fences disappeared during restart recovery",
+        )
     if run.metadata.get("recovery_interrupt_requested") is not True:
         results = await _request_binding_interrupts(client, bindings)
         errors = [result for result in results if isinstance(result, BaseException)]
@@ -170,13 +205,16 @@ async def _recover_restarted_run(
             store.reset_recovery_quiescent(run.run_id)
             return False
 
-    if store.note_recovery_quiescent(run.run_id) >= 2:
-        store.fail_recovery(
-            run.run_id,
-            error="Runtime restarted while the run was active; all bound Sessions are now idle",
-        )
-        return True
-    return False
+    requested_by_user = run.metadata.get("cancellation_requested") is True
+    settled = store.settle_after_quiescent_observation(
+        run.run_id,
+        error=(
+            "Runtime cancellation completed without a canonical reply; all bound Sessions are now idle"
+            if requested_by_user
+            else "Runtime restarted while the run was active; all bound Sessions are now idle"
+        ),
+    )
+    return settled is not None and settled.status in TERMINAL_RUN_STATUSES
 
 
 async def _recover_persistence_receipts(

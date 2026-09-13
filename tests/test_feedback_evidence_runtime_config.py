@@ -7,9 +7,9 @@ import yaml
 from feedback_store_test_utils import FeedbackSignalCreateRequest, FeedbackStore, _run_payload, _settings
 
 
-def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch) -> None:
+def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, process_environment) -> None:
     settings = _settings(tmp_path)
-    monkeypatch.delenv("MCP_SERVER_URL", raising=False)
+    process_environment.remove("MCP_SERVER_URL")
     (settings.default_workspace_dir / "mcp" / "sec-ops.json").write_text(
         json.dumps(
             {
@@ -37,7 +37,6 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
     store = FeedbackStore(
         data_dir=settings.data_dir,
         workspace_dir=settings.default_workspace_dir,
-        agent_version_provider=lambda _aid=None: "main-v-test",
     )
     run_id = "run-mcp-config-failed"
     store.record_run(

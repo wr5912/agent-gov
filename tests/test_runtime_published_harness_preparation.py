@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -187,18 +189,41 @@ def test_invalid_harness_is_rejected_before_git_initialization(tmp_path: Path) -
     assert not settings.runtime_db_path.exists()
 
 
-def test_cli_reports_counts_and_never_echoes_private_failure_details(tmp_path: Path, monkeypatch, capsys) -> None:
+def _run_cli(settings: AppSettings) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "RUNTIME_CONTAINER": "0",
+            "RUNTIME_VOLUME_MODE": "local-debug",
+            "DATA_DIR": str(settings.data_dir),
+            "GOVERNOR_WORKSPACE_DIR": str(settings.governor_workspace_dir),
+            "RUNTIME_CANDIDATES_DIR": str(settings.runtime_candidates_dir),
+            "AGENTGOV_RUNTIME_SHARED_SECRET": "test-only-runtime-shared-secret",
+        },
+    )
+    return subprocess.run(
+        [sys.executable, "-m", "app.runtime.published_harness_preparation"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_cli_reports_counts_and_never_echoes_private_failure_details(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    monkeypatch.setattr(preparation, "get_settings", lambda: settings)
-    assert preparation.main() == 0
-    assert capsys.readouterr().out == "published_harnesses_prepared=0\n"
+    success = _run_cli(settings)
+    assert success.returncode == 0
+    assert success.stdout == "published_harnesses_prepared=0\n"
+    assert success.stderr == ""
 
-    def fail(_settings):
-        raise ValueError("private-path secret-value")
+    workspace = _workspace(settings, agent_id="private-path")
+    (workspace / "agent.yaml").write_text("agent: {runtime: unsupported}\n", encoding="utf-8")
+    (workspace / "AGENT.md").write_text("secret-value\n", encoding="utf-8")
+    failure = _run_cli(settings)
 
-    monkeypatch.setattr(preparation, "prepare_published_harnesses", fail)
-    assert preparation.main() == 1
-    output = capsys.readouterr()
-    assert output.err == "published_harness_preparation_failed=ValueError\n"
-    assert "private-path" not in output.out + output.err
-    assert "secret-value" not in output.out + output.err
+    assert failure.returncode == 1
+    assert failure.stderr == "published_harness_preparation_failed=RuntimeObjectNotFound\n"
+    assert "private-path" not in failure.stdout + failure.stderr
+    assert "secret-value" not in failure.stdout + failure.stderr

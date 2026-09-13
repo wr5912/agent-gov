@@ -6,3 +6,5 @@ frontend/dist
 **/.env.local-debug
 **/.env.bak*
 frontend/tsconfig.tsbuildinfo
+**/__pycache__/
+**/*.py[cod]

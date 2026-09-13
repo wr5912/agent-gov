@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from sqlalchemy.orm import sessionmaker
 
+from ._store_operations import RuntimeChatOperationStoreMixin
 from ._store_resources import RuntimeResourceStoreMixin
 from ._store_run_queries import RuntimeRunQueryStoreMixin
+from ._store_run_recovery import RuntimeRunRecoveryStoreMixin
 from ._store_runs import RuntimeRunStoreMixin
 from ._store_sessions import RuntimeSessionStoreMixin
 from ._store_support import (
@@ -35,7 +37,9 @@ from ._store_support import (
 class RuntimeRunStore(
     RuntimeResourceStoreMixin,
     RuntimeSessionStoreMixin,
+    RuntimeChatOperationStoreMixin,
     RuntimeRunStoreMixin,
+    RuntimeRunRecoveryStoreMixin,
     RuntimeRunQueryStoreMixin,
 ):
     """Session/Run/HITL/Trace 的 AgentGov 持久化门面。"""

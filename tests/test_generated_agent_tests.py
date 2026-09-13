@@ -7,14 +7,14 @@ from app.services.generated_agent_tests import (
     validate_generated_test_code,
 )
 
-VALID_TEST = '''
+VALID_TEST = """
 def test_conflicting_evidence_is_reported(agent):
     result = agent.run("两个权威来源结论冲突时如何处置？")
     assert not result.errors
     normalized_text = "".join(result.text.split())
     assert "冲突" in normalized_text
     assert "复核" in normalized_text
-'''
+"""
 
 
 def test_build_generated_agent_test_owns_path_and_normalizes_code() -> None:
@@ -45,10 +45,7 @@ def test_validate_generated_test_code_tracks_a_business_output_alias() -> None:
 
 def test_validate_generated_test_code_allows_structured_raw_assertions() -> None:
     validate_generated_test_code(
-        "def test_case(agent):\n"
-        "    result = agent.run('x')\n"
-        "    assert not result.errors\n"
-        "    assert result.raw['status'] == 'blocked'\n"
+        "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n    assert result.raw['status'] == 'blocked'\n"
     )
 
 
@@ -70,35 +67,29 @@ def test_validate_generated_test_code_allows_explicit_no_tool_activity_assertion
         ("def test_case(agent):\n    result = agent.invoke('x')\n    assert 'x' in result.text\n", "agent.invoke"),
         ("def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n", "concrete business outcome"),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n"
-            "    assert result.text.strip()\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n    assert result.text.strip()\n",
             "concrete business outcome",
         ),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n"
-            "    assert True\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n    assert True\n",
             "concrete business outcome",
         ),
         ("def test_case():\n    result = agent.run('x')\n    assert 'x' in result.text\n", "agent fixture"),
         ("def test_case(agent):\n    result = agent.run('x')\n    assert 'x' in result.text\n", "result.errors is empty"),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert result.errors == []\n"
-            "    assert 'x' in result.text\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert result.errors == []\n    assert 'x' in result.text\n",
             "result.errors is empty",
         ),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert result.errors == ()\n"
-            "    assert 'x' in result.text\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert result.errors == ()\n    assert 'x' in result.text\n",
             "result.errors is empty",
         ),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n"
-            "    assert any(word in result.text for word in ('x', 'y'))\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n    assert any(word in result.text for word in ('x', 'y'))\n",
             "concrete business outcome",
         ),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n"
-            "    assert 'x' in result.text or 'y' in result.text\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n    assert 'x' in result.text or 'y' in result.text\n",
             "concrete business outcome",
         ),
         ("import requests\ndef test_case(agent):\n    result = agent.run('x')\n    assert 'x' in result.text\n", "unsupported module"),
@@ -126,28 +117,23 @@ def test_validate_generated_test_code_allows_explicit_no_tool_activity_assertion
             "helper functions",
         ),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n"
-            "    if False:\n        assert 'x' in result.text\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n    if False:\n        assert 'x' in result.text\n",
             "directly in the test body",
         ),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n"
-            "    assert result.text == result.text\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n    assert result.text == result.text\n",
             "concrete business outcome",
         ),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n"
-            "    assert len(result.text) > 0\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n    assert len(result.text) > 0\n",
             "concrete business outcome",
         ),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n"
-            "    assert result.text.startswith('')\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n    assert result.text.startswith('')\n",
             "concrete business outcome",
         ),
         (
-            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n"
-            "    assert '来源A' in result.text\n",
+            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n    assert '来源A' in result.text\n",
             "concrete business outcome",
         ),
         (
@@ -155,6 +141,50 @@ def test_validate_generated_test_code_allows_explicit_no_tool_activity_assertion
             "    assert '来源A' in text\n"
             "    assert not result.errors\n",
             "result.errors is empty",
+        ),
+        (
+            "from unittest.mock import patch\n"
+            "def test_case(agent):\n    with patch.object(agent, 'run'):\n        result = agent.run('x')\n"
+            "    assert not result.errors\n    assert result.raw['status'] == 'blocked'\n",
+            "test integrity",
+        ),
+        (
+            "def test_case(agent):\n    result = agent.run('x')\n    result.raw['status'] = 'blocked'\n"
+            "    assert not result.errors\n    assert result.raw['status'] == 'blocked'\n",
+            "must not be mutated",
+        ),
+        (
+            "def test_case(agent):\n    result = agent.run('x')\n    agent.run = lambda value: result\n"
+            "    assert not result.errors\n    assert result.raw['status'] == 'blocked'\n",
+            "agent fixture must not be mutated",
+        ),
+        (
+            "from agentgov_testkit import AgentInvocation\n"
+            "def test_case(agent):\n    result = agent.run('x')\n    result = AgentInvocation('fake', None, None, None, None, None, (), {})\n"
+            "    assert not result.errors\n    assert result.raw['status'] == 'blocked'\n",
+            "test integrity",
+        ),
+        (
+            "def test_case(agent):\n    first = agent.run('x')\n    second = agent.run('y')\n"
+            "    assert not first.errors\n    assert first.raw['status'] == 'blocked'\n",
+            "exactly once",
+        ),
+        (
+            "from agentgov_testkit._reporting import record_invocation\n"
+            "def test_case(agent):\n    result = agent.run('x')\n    assert not result.errors\n"
+            "    assert result.raw['status'] == 'blocked'\n",
+            "test integrity",
+        ),
+        (
+            "import os\n"
+            "def test_case(agent):\n    os.environ['AGENTGOV_API_BASE'] = 'http://fake'\n"
+            "    result = agent.run('x')\n    assert not result.errors\n    assert result.raw['status'] == 'blocked'\n",
+            "execution controls",
+        ),
+        (
+            "def test_case(agent):\n    loader = __import__('unittest.mock')\n    result = agent.run('x')\n"
+            "    assert not result.errors\n    assert result.raw['status'] == 'blocked'\n",
+            "dynamic code",
         ),
     ],
 )

@@ -34,6 +34,7 @@ interface BusinessAgentTableProps {
   packagePending: string | null;
   openMenuAgentId?: string;
   onLifecycle: (agentId: string, status: string) => void;
+  onOpenCandidateGovernance: (agentId: string) => void;
   onOpenTestAssets: (agentId: string) => void;
   onToggleMenu: (agent: AgentSummary, element: HTMLButtonElement) => void;
 }
@@ -62,6 +63,7 @@ export function BusinessAgentTable(props: BusinessAgentTableProps) {
             packagePending={props.packagePending}
             menuOpen={props.openMenuAgentId === agent.agent_id}
             onLifecycle={props.onLifecycle}
+            onOpenCandidateGovernance={props.onOpenCandidateGovernance}
             onOpenTestAssets={props.onOpenTestAssets}
             onToggleMenu={props.onToggleMenu}
           />
@@ -79,6 +81,7 @@ function BusinessAgentRow({
   packagePending,
   menuOpen,
   onLifecycle,
+  onOpenCandidateGovernance,
   onOpenTestAssets,
   onToggleMenu,
 }: {
@@ -89,10 +92,12 @@ function BusinessAgentRow({
   packagePending: string | null;
   menuOpen: boolean;
   onLifecycle: (agentId: string, status: string) => void;
+  onOpenCandidateGovernance: (agentId: string) => void;
   onOpenTestAssets: (agentId: string) => void;
   onToggleMenu: (agent: AgentSummary, element: HTMLButtonElement) => void;
 }) {
   const isArchived = agent.status === "archived";
+  const isDraft = agent.status === "draft";
   const labels = [agent.default ? "默认" : "", agent.builtin ? "内置" : "", agent.protected ? "受保护" : ""].filter(Boolean);
   const rowBusy = packagePending?.endsWith(`:${agent.agent_id}`) || pending?.endsWith(`:${agent.agent_id}`);
   const toggleMenu = (event: MouseEvent<HTMLButtonElement>) => onToggleMenu(agent, event.currentTarget);
@@ -108,18 +113,32 @@ function BusinessAgentRow({
         <AgentTestStatusLine status={status} />
         <button className="settings-agent-test-link" data-testid="settings-agent-test-assets-link" type="button" onClick={() => onOpenTestAssets(agent.agent_id)}>查看测试资产</button>
       </div>
-      <select
-        className="select"
-        data-testid="settings-agent-lifecycle"
-        aria-label={`${agent.name} 生命周期`}
-        aria-busy={pending === `lifecycle:${agent.agent_id}`}
-        value={agent.status}
-        disabled={disabled || isArchived}
-        title={isArchived ? "已归档为终态" : undefined}
-        onChange={(event) => onLifecycle(agent.agent_id, event.target.value)}
-      >
-        {LIFECYCLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
+      {isDraft ? (
+        <div className="settings-agent-draft" data-testid="settings-agent-draft-status">
+          <strong>待发布</strong>
+          <button
+            type="button"
+            data-testid="settings-agent-draft-governance"
+            disabled={disabled}
+            onClick={() => onOpenCandidateGovernance(agent.agent_id)}
+          >
+            治理候选
+          </button>
+        </div>
+      ) : (
+        <select
+          className="select"
+          data-testid="settings-agent-lifecycle"
+          aria-label={`${agent.name} 生命周期`}
+          aria-busy={pending === `lifecycle:${agent.agent_id}`}
+          value={agent.status}
+          disabled={disabled || isArchived}
+          title={isArchived ? "已归档为终态" : undefined}
+          onChange={(event) => onLifecycle(agent.agent_id, event.target.value)}
+        >
+          {LIFECYCLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      )}
       <div className="settings-agent-actions">
         <button
           className="icon-button settings-agent-actions-trigger"

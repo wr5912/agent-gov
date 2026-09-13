@@ -9,28 +9,26 @@ import time
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ._generated_operation_policy import ALLOWED_RUNTIME_OPERATIONS
 from .signing import SIGNATURE_HEADER, TIMESTAMP_HEADER, TIMESTAMP_TOLERANCE_SECONDS, verify_runtime_gateway_request
 
-_RESOURCE = r"[^/]+"
 MAX_RUNTIME_REQUEST_BODY_BYTES = 1_048_576
+_PATH_PARAMETER = re.compile(r"\{[^/{}]+\}")
+
+
+def _compile_operation_path(path_template: str) -> re.Pattern[str]:
+    cursor = 0
+    parts = ["^"]
+    for match in _PATH_PARAMETER.finditer(path_template):
+        parts.extend((re.escape(path_template[cursor : match.start()]), r"[^/]+"))
+        cursor = match.end()
+    parts.extend((re.escape(path_template[cursor:]), "$"))
+    return re.compile("".join(parts))
+
+
 _ALLOWED_HTTP = {
-    "GET": (
-        re.compile(r"^/health$"),
-        re.compile(r"^/agent/$"),
-        re.compile(r"^/sessions/$"),
-        re.compile(rf"^/sessions/{_RESOURCE}/(?:messages|status|stream)$"),
-    ),
-    "POST": (
-        re.compile(r"^/agent/$"),
-        re.compile(r"^/sessions/$"),
-        re.compile(r"^/chat/$"),
-        re.compile(rf"^/sessions/{_RESOURCE}/interrupt$"),
-    ),
-    "PATCH": (re.compile(rf"^/sessions/{_RESOURCE}$"),),
-    "DELETE": (
-        re.compile(rf"^/agent/{_RESOURCE}$"),
-        re.compile(rf"^/sessions/{_RESOURCE}$"),
-    ),
+    method: tuple(_compile_operation_path(path_template) for candidate_method, path_template in ALLOWED_RUNTIME_OPERATIONS if candidate_method == method)
+    for method in {candidate_method for candidate_method, _ in ALLOWED_RUNTIME_OPERATIONS}
 }
 
 

@@ -20,6 +20,14 @@ def test_change_set_response_hides_publication_intent_and_types_error() -> None:
             "status": "publishing",
             "base_commit_sha": "base",
             "candidate_commit_sha": "candidate",
+            "approval_evidence": {
+                "candidate_commit_sha": "candidate",
+                "diff_digest": "d" * 64,
+                "test_run_id": "agtr-approved",
+                "suite_digest": "s" * 64,
+                "review_digest": "r" * 64,
+                "reviewed_file_count": 2,
+            },
             "branch_name": "agent-change/agc-test",
             "worktree_path": "/runtime/worktrees/agc-test",
             "publication_error": {
@@ -27,13 +35,31 @@ def test_change_set_response_hides_publication_intent_and_types_error() -> None:
                 "updated_at": "2026-07-10T00:01:00Z",
             },
             "publication_intent": {"release_id": "internal-only", "operator": "private"},
+            "publication_evidence": {
+                "candidate_commit_sha": "c" * 40,
+                "diff_digest": "d" * 64,
+                "test_run_id": "agtr-bound",
+                "suite_digest": "e" * 64,
+                "tag_name": "agent-release-agc-test",
+                "force": False,
+            },
         }
     ).model_dump(mode="json")
 
     assert "publication_intent" not in response
+    assert response["publication_evidence"]["test_run_id"] == "agtr-bound"
+    assert "operator" not in response["publication_evidence"]
     assert response["publication_error"] == {
         "detail": "release metadata is pending reconciliation",
         "updated_at": "2026-07-10T00:01:00Z",
+    }
+    assert response["approval_evidence"] == {
+        "candidate_commit_sha": "candidate",
+        "diff_digest": "d" * 64,
+        "test_run_id": "agtr-approved",
+        "suite_digest": "s" * 64,
+        "review_digest": "r" * 64,
+        "reviewed_file_count": 2,
     }
     event = AgentChangeSetEventResponse.model_validate(
         {
@@ -58,9 +84,20 @@ def test_release_workbench_uses_exact_commit_test_gate_and_separate_publish_acti
     assert 'data-testid="release-action-retry"' in source
     assert 'data-testid="release-action-force"' not in source
     assert 'data-testid="release-action-retry-cleanup"' in source
-    assert "latestExactRun(testRuns, selectedChangeSet?.candidate_commit_sha)" in source
-    assert 'testRun.status === "passed"' in source
-    assert "!selectedChangeSet.publication_blocker" in source
+    assert 'data-testid="release-file-unified-diff"' in source
+    assert "diffAgentChangeSetFile" in source
+    assert "detail.truncated" in source
+    assert "detail.truncated !== false" in source
+    assert "detail.truncated === false" in source
+    assert "currentTestRun = evidenceBoundTestRun(selectedChangeSet, testRuns)" in source
+    assert "publicationRequestEvidence(retryTarget, currentTestRun)" in source
+    assert 'testRun?.status === "passed"' in source
+    assert "testRun.change_set_id === changeSet.change_set_id" in source
+    assert "loadedDiffIdentity?.digest === selectedChangeSet?.diff_summary?.digest" in source
+    assert "candidateReviewEvidence.length > 0" in source
+    assert 'data-testid="release-file-review-confirm"' not in source
+    assert 'data-testid="release-approval-confirmation-note"' in source
+    assert "!changeSet.publication_blocker" in source
     assert "selectedChangeSet.publication_error?.detail" in source
     assert "selectedChangeSet?.latest_eval_run" not in source
     assert "reviewAgentChangeSetRegression" not in source
@@ -101,3 +138,32 @@ def test_real_container_acceptance_retries_only_governor_generated_writable_plan
     assert "assertExecutionTargetScope(seed, execution)" in source
     assert "execution modified paths outside the confirmed feedback scope" in source
     assert "business Agent invocation evidence is incomplete or contains runtime errors" in source
+
+
+def test_real_container_acceptance_reviews_exact_file_diffs_before_approval_and_publish() -> None:
+    source = (ROOT / "scripts/improvement_ui_e2e/real_container_flow.mjs").read_text(encoding="utf-8")
+    review_source = (ROOT / "scripts/improvement_ui_e2e/candidate_review.mjs").read_text(encoding="utf-8")
+
+    publish = source.index("async function publishPassedCandidate")
+    assert 'from "./candidate_review.mjs"' in source[:publish]
+    assert 'getByTestId("release-action-view-changes")' in review_source
+    assert '"/file-diff?" + query' in review_source
+    assert 'getByTestId("release-file-unified-diff").textContent()' in review_source
+    assert "CSS.escape(path)" in review_source
+    assert "[data-path=" in review_source
+    assert "hasText: entry.path" not in review_source
+    lifecycle_source = (ROOT / "scripts/verify_agent_candidate_lifecycle.mjs").read_text(encoding="utf-8")
+    assert "CSS.escape(value)" in lifecycle_source
+    assert "hasText: path" not in lifecycle_source
+    assert "detail.truncated !== false" in review_source
+    assert "candidate approval unexpectedly opened a second confirmation dialog" in review_source
+    assert 'summary.locator(\'input[type="checkbox"]\').count()' in review_source
+    assert 'getByTestId("release-action-approve")' in review_source
+    assert "approval.candidate_commit_sha !== evidence.candidateCommitSha" in review_source
+    assert "approval.test_run_id !== evidence.testRunId" in review_source
+    assert "approval.suite_digest !== evidence.suiteDigest" in review_source
+    assert "approval.diff_digest !== review.diffDigest" in review_source
+    assert "candidate approval became enabled before the complete file Diff was displayed" in review_source
+    assert "candidate approval unexpectedly published the candidate" in review_source
+    assert "request.expected_candidate_commit_sha !== flow.confirmed.candidate_commit_sha" in source
+    assert "await reviewAndApprovePassedCandidate(page, config, {" in source[publish:]

@@ -26,6 +26,7 @@ services:
         AGENT_GOV_RUNTIME_UID: ${AGENT_GOV_RUNTIME_UID:-1000}
         AGENT_GOV_RUNTIME_GID: ${AGENT_GOV_RUNTIME_GID:-1000}
         AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
+        AGENTGOV_SOURCE_ARTIFACT_SHA256: ${AGENTGOV_SOURCE_ARTIFACT_SHA256:-unmanaged}
     image: agent-gov-agentscope-runtime:${APP_VERSION:-dev}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-agentscope-runtime
     init: true
@@ -116,6 +117,7 @@ services:
       dockerfile: docker/Dockerfile
       args:
         AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
+        AGENTGOV_SOURCE_ARTIFACT_SHA256: ${AGENTGOV_SOURCE_ARTIFACT_SHA256:-unmanaged}
     image: agent-gov-api:${APP_VERSION:-dev}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-api
     labels: *acceptance-labels
@@ -198,6 +200,7 @@ services:
       dockerfile: docker/frontend.Dockerfile
       args:
         AGENT_GOV_ACCEPTANCE_RUN_ID: ${AGENT_GOV_ACCEPTANCE_RUN_ID:-unmanaged}
+        AGENTGOV_SOURCE_ARTIFACT_SHA256: ${AGENTGOV_SOURCE_ARTIFACT_SHA256:-unmanaged}
     image: agent-gov-ui:${APP_VERSION:-dev}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-ui
     labels: *acceptance-labels

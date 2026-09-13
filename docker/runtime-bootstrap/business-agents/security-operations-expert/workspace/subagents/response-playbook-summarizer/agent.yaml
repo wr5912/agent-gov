@@ -17,5 +17,6 @@ workspace_policy:
   - Read
   - Grep
   - Glob
+  - TeamSay
   denied_tools: []
   fail_closed: true

@@ -6,9 +6,12 @@ from copy import deepcopy
 
 import pytest
 from app.runtime.runtime_db import make_session_factory
-from app.runtime_gateway.contracts import ConfirmationScope, RunStatus, RuntimeReceipt
-from app.runtime_gateway.models import RuntimePendingActionModel
+from app.runtime_gateway.contracts import ConfirmationScope, RunStatus, RuntimeReceipt, governed_run_permission_rules
+from app.runtime_gateway.models import RuntimePendingActionModel, RuntimeReceiptModel
 from app.runtime_gateway.store import RuntimeInputRejected, RuntimeRunStore, RuntimeStateConflict
+from sqlalchemy import func, select
+
+from runtime_hitl_test_utils import fingerprinted_hitl_payload
 
 
 def _store(tmp_path) -> RuntimeRunStore:
@@ -181,7 +184,13 @@ def test_user_confirmation_reuses_run_and_rejects_kind_tamper_and_rules(tmp_path
         "state": "asking",
         "suggested_rules": [],
     }
-    waiting = store.apply_receipt(_receipt(run, "REQUIRE_USER_CONFIRM", payload={"tool_calls": [tool_call]}))
+    waiting = store.apply_receipt(
+        _receipt(
+            run,
+            "REQUIRE_USER_CONFIRM",
+            payload=fingerprinted_hitl_payload([tool_call]),
+        ),
+    )
     assert waiting.status is RunStatus.WAITING_HUMAN
 
     external = {
@@ -197,10 +206,11 @@ def test_user_confirmation_reuses_run_and_rejects_kind_tamper_and_rules(tmp_path
             alert_id=None,
             case_id=None,
             metadata={},
+            client_operation_id="continuation-kind-tamper",
             expected_run_id=run.run_id,
         )
 
-    def confirmation(*, input_value: str = '{ "text": "ok", "path": "out.txt" }', rules=None):
+    def confirmation(*, input_value: str = '{"path":"out.txt","text":"ok"}', rules=None):
         return {
             "type": "USER_CONFIRM_RESULT",
             "reply_id": "reply-a",
@@ -221,6 +231,7 @@ def test_user_confirmation_reuses_run_and_rejects_kind_tamper_and_rules(tmp_path
             alert_id=None,
             case_id=None,
             metadata={},
+            client_operation_id="continuation-client-rules",
             expected_run_id=run.run_id,
         )
     with pytest.raises(RuntimeStateConflict, match="cannot be modified"):
@@ -231,6 +242,7 @@ def test_user_confirmation_reuses_run_and_rejects_kind_tamper_and_rules(tmp_path
             alert_id=None,
             case_id=None,
             metadata={},
+            client_operation_id="continuation-tool-tamper",
             expected_run_id=run.run_id,
         )
 
@@ -241,6 +253,7 @@ def test_user_confirmation_reuses_run_and_rejects_kind_tamper_and_rules(tmp_path
         alert_id=None,
         case_id=None,
         metadata={},
+        client_operation_id="continuation-approved",
         expected_run_id=run.run_id,
     )
     assert resumed.run_id == run.run_id
@@ -264,11 +277,17 @@ def test_allow_for_run_uses_only_persisted_suggestions_and_expires_at_terminal(t
                 "tool_name": "Read",
                 "rule_content": "reports/**",
                 "behavior": "allow",
-                "source": "suggested",
+                "source": "workspace_policy.ask_tools",
             },
         ],
     }
-    store.apply_receipt(_receipt(run, "REQUIRE_USER_CONFIRM", payload={"tool_calls": [tool_call]}))
+    store.apply_receipt(
+        _receipt(
+            run,
+            "REQUIRE_USER_CONFIRM",
+            payload=fingerprinted_hitl_payload([tool_call]),
+        ),
+    )
     decision = {
         "type": "USER_CONFIRM_RESULT",
         "reply_id": "reply-a",
@@ -282,6 +301,7 @@ def test_allow_for_run_uses_only_persisted_suggestions_and_expires_at_terminal(t
         alert_id=None,
         case_id=None,
         metadata={},
+        client_operation_id="continuation-run-scope",
         confirmation_scope=ConfirmationScope.RUN,
         expected_run_id=run.run_id,
     )
@@ -320,7 +340,13 @@ def test_allow_for_run_fails_closed_without_safe_suggestions_and_under_concurren
         "state": "asking",
         "suggested_rules": [],
     }
-    store.apply_receipt(_receipt(run, "REQUIRE_USER_CONFIRM", payload={"tool_calls": [tool_call]}))
+    store.apply_receipt(
+        _receipt(
+            run,
+            "REQUIRE_USER_CONFIRM",
+            payload=fingerprinted_hitl_payload([tool_call]),
+        ),
+    )
 
     def approve(call: dict[str, object]):
         return store.begin_run(
@@ -334,6 +360,7 @@ def test_allow_for_run_fails_closed_without_safe_suggestions_and_under_concurren
             alert_id=None,
             case_id=None,
             metadata={},
+            client_operation_id="continuation-run-scope-race",
             confirmation_scope=ConfirmationScope.RUN,
             expected_run_id=run.run_id,
         )
@@ -341,13 +368,67 @@ def test_allow_for_run_fails_closed_without_safe_suggestions_and_under_concurren
     with pytest.raises(RuntimeStateConflict, match="requires AgentScope suggested"):
         approve(deepcopy(tool_call))
 
+    for rule_content in (None, "", "*", "**", "./**", "/**/*"):
+        broad_call = deepcopy(tool_call)
+        broad_call["suggested_rules"] = [
+            {
+                "tool_name": "Read",
+                "rule_content": rule_content,
+                "behavior": "allow",
+                "source": "workspace_policy.ask_tools",
+            },
+        ]
+        with store.Session.begin() as db:
+            action = db.get(RuntimePendingActionModel, f"{run.run_id}:reply-a:tool-run")
+            assert action is not None
+            action.tool_call_json = fingerprinted_hitl_payload(
+                [broad_call],
+            )["tool_calls"][0]
+        with pytest.raises(RuntimeStateConflict, match="bounded AgentScope"):
+            approve(deepcopy(broad_call))
+
+    for tool_name, rule_content in (
+        ("Bash", "*a*"),
+        ("mcp__security__lookup", "incident-123"),
+        ("Glob", "reports/**"),
+        ("Read", "**/secret.txt"),
+        ("Write", "../outputs/**"),
+        ("Unknown", "reports/**"),
+    ):
+        unsafe_rule_call = {
+            **deepcopy(tool_call),
+            "name": tool_name,
+            "suggested_rules": [
+                {
+                    "tool_name": tool_name,
+                    "rule_content": rule_content,
+                    "behavior": "allow",
+                    "source": "workspace_policy.ask_tools",
+                },
+            ],
+        }
+        with pytest.raises(ValueError, match="bounded AgentScope"):
+            governed_run_permission_rules(unsafe_rule_call, run.run_id)
+
+    untrusted_source = deepcopy(tool_call)
+    untrusted_source["suggested_rules"] = [
+        {
+            "tool_name": "Read",
+            "rule_content": "reports/**",
+            "behavior": "allow",
+            "source": "suggested",
+        },
+    ]
+    with pytest.raises(ValueError, match="governed suggestion source"):
+        governed_run_permission_rules(untrusted_source, run.run_id)
+
     malicious_call = deepcopy(tool_call)
     malicious_call["suggested_rules"] = [
         {
             "tool_name": "Write",
             "rule_content": "**",
             "behavior": "allow",
-            "source": "suggested",
+            "source": "workspace_policy.ask_tools",
         }
     ]
     persisted_call = deepcopy(tool_call)
@@ -356,22 +437,24 @@ def test_allow_for_run_fails_closed_without_safe_suggestions_and_under_concurren
             "tool_name": "Read",
             "rule_content": "reports/**",
             "behavior": "allow",
-            "source": "suggested",
+            "source": "workspace_policy.ask_tools",
         }
     ]
     with store.Session.begin() as db:
         action = db.get(RuntimePendingActionModel, f"{run.run_id}:reply-a:tool-run")
         assert action is not None
-        action.tool_call_json = persisted_call
+        action.tool_call_json = fingerprinted_hitl_payload(
+            [persisted_call],
+        )["tool_calls"][0]
 
-    def attempt(_: int) -> str:
+    def attempt(call: dict[str, object]) -> str:
         try:
-            return approve(deepcopy(malicious_call)).run_id
+            return approve(deepcopy(call)).run_id
         except RuntimeStateConflict:
             return "conflict"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        outcomes = list(executor.map(attempt, range(2)))
+        outcomes = list(executor.map(attempt, (malicious_call, persisted_call)))
     assert outcomes.count(run.run_id) == 1
     assert outcomes.count("conflict") == 1
     with store.Session() as db:
@@ -396,7 +479,17 @@ def test_external_result_requires_exact_identity_and_terminal_state(tmp_path) ->
         _receipt(
             run,
             "REQUIRE_EXTERNAL_EXECUTION",
-            payload={"tool_calls": [{"type": "tool_call", "id": "external-a", "name": "browser", "input": "{}", "state": "pending"}]},
+            payload=fingerprinted_hitl_payload(
+                [
+                    {
+                        "type": "tool_call",
+                        "id": "external-a",
+                        "name": "browser",
+                        "input": "{}",
+                        "state": "pending",
+                    },
+                ],
+            ),
         )
     )
 
@@ -412,6 +505,7 @@ def test_external_result_requires_exact_identity_and_terminal_state(tmp_path) ->
             alert_id=None,
             case_id=None,
             metadata={},
+            client_operation_id="continuation-external",
             expected_run_id=run.run_id,
         )
 
@@ -427,7 +521,16 @@ def test_hitl_allows_exact_partial_batch_and_rejects_stale_run_or_mixed_kind(tmp
     run = _begin(store)
     store.mark_trigger_started(run.run_id)
     calls = [{"type": "tool_call", "id": tool_id, "name": "Read", "input": f'{{"file_path":"{tool_id}.txt"}}'} for tool_id in ("tool-a", "tool-b")]
-    store.apply_receipt(_receipt(run, "REQUIRE_USER_CONFIRM", payload={"tool_calls": calls}))
+    store.apply_receipt(
+        _receipt(
+            run,
+            "REQUIRE_USER_CONFIRM",
+            payload=fingerprinted_hitl_payload(
+                calls,
+                default_state="asking",
+            ),
+        ),
+    )
     decision = {
         "type": "USER_CONFIRM_RESULT",
         "reply_id": "reply-a",
@@ -442,6 +545,7 @@ def test_hitl_allows_exact_partial_batch_and_rejects_stale_run_or_mixed_kind(tmp
             alert_id=None,
             case_id=None,
             metadata={},
+            client_operation_id="continuation-stale-run",
             expected_run_id="run-stale",
         )
 
@@ -452,6 +556,7 @@ def test_hitl_allows_exact_partial_batch_and_rejects_stale_run_or_mixed_kind(tmp
         alert_id=None,
         case_id=None,
         metadata={},
+        client_operation_id="continuation-partial-batch",
         expected_run_id=run.run_id,
     )
     assert resumed.run_id == run.run_id
@@ -466,7 +571,16 @@ def test_hitl_allows_exact_partial_batch_and_rejects_stale_run_or_mixed_kind(tmp
             _receipt(
                 run,
                 "REQUIRE_EXTERNAL_EXECUTION",
-                payload={"tool_calls": [{"id": "external-a", "name": "browser", "input": "{}"}]},
+                payload=fingerprinted_hitl_payload(
+                    [
+                        {
+                            "id": "external-a",
+                            "name": "browser",
+                            "input": "{}",
+                        },
+                    ],
+                    default_state="pending",
+                ),
             ),
         )
 
@@ -595,3 +709,335 @@ def test_restart_reconciliation_fails_closed_and_keeps_session_fence(tmp_path) -
     assert recovered.metadata["recovery_required"] is True
     with pytest.raises(RuntimeStateConflict, match="active run"):
         _begin(store)
+
+
+def test_cancel_request_is_atomic_and_repeat_does_not_reset_quiescence(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = _begin(store)
+    store.mark_trigger_started(run.run_id)
+
+    first = store.mark_cancel_requested(run.run_id)
+    assert first.metadata["cancellation_requested"] is True
+    assert first.metadata["recovery_required"] is True
+    assert first.metadata["recovery_quiescent_observations"] == 0
+    assert store.note_recovery_quiescent(run.run_id) == 1
+
+    repeated = store.mark_cancel_requested(run.run_id)
+    assert repeated.metadata["recovery_quiescent_observations"] == 1
+    assert [item.run_id for item in store.recovery_required_runs()] == [run.run_id]
+
+
+def test_client_metadata_cannot_preseed_recovery_control_facts(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = store.begin_run(
+        session_id="session-a",
+        runtime_agent_id="runtime-a",
+        input_value=_message(),
+        alert_id=None,
+        case_id=None,
+        metadata={
+            "business_label": "preserved",
+            "cancellation_requested": True,
+            "recovery_required": True,
+            "recovery_quiescent_observations": 99,
+            "runtime_interrupted_session_ids": ["session-a"],
+        },
+    )
+
+    assert run.metadata == {"business_label": "preserved"}
+    requested = store.mark_cancel_requested(run.run_id)
+    assert requested.metadata["cancellation_requested"] is True
+    assert requested.metadata["recovery_quiescent_observations"] == 0
+
+
+def test_pre_reply_interrupted_receipt_waits_for_quiescence_and_late_receipt_is_ack_only(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = _begin(store)
+    store.mark_trigger_started(run.run_id)
+    store.mark_cancel_requested(run.run_id)
+    interrupted = _receipt(
+        run,
+        "RUN_INTERRUPTED",
+        reply_id=None,
+        payload={},
+    )
+
+    recovering = store.apply_receipt(interrupted)
+    assert recovering.status is RunStatus.RUNNING
+    assert recovering.trace_status == "pending"
+    assert recovering.metadata["recovery_required"] is True
+    assert recovering.metadata["runtime_interrupted_session_ids"] == [run.session_id]
+    assert store.active_run_for_session(run.session_id) is not None
+
+    assert store.apply_receipt(interrupted).status is RunStatus.RUNNING
+    assert (
+        store.settle_after_quiescent_observation(
+            run.run_id,
+            error="all bound Sessions are idle",
+        )
+        is None
+    )
+    terminal = store.settle_after_quiescent_observation(
+        run.run_id,
+        error="all bound Sessions are idle",
+    )
+    assert terminal is not None
+    assert terminal.status is RunStatus.CANCELLED
+    assert terminal.terminal_reason == "interrupted"
+    assert terminal.trace_status == "pending"
+    assert terminal.error == {"type": "runtime_interrupted"}
+    assert store.active_run_for_session(run.session_id) is None
+    expectations = store.trace_expectations(run.run_id)
+    assert expectations.interrupted_before_reply is True
+    assert expectations.control_integrity_complete is True
+
+    late = interrupted.model_copy(
+        update={
+            "receipt_id": "late-interrupted-receipt",
+            "event_id": "late-interrupted-event",
+        },
+    )
+    assert store.apply_receipt(late).status is RunStatus.CANCELLED
+    assert store.mark_cancel_requested(run.run_id).status is RunStatus.CANCELLED
+    with store.Session() as db:
+        receipt_count = db.scalar(
+            select(func.count())
+            .select_from(RuntimeReceiptModel)
+            .where(
+                RuntimeReceiptModel.run_id == run.run_id,
+            ),
+        )
+    assert receipt_count == 1
+
+
+def test_interrupted_receipt_after_reply_start_keeps_fence_for_idle_recovery(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = _begin(store)
+    store.mark_trigger_started(run.run_id)
+    store.apply_receipt(_receipt(run, "REPLY_START"))
+    interrupted = store.apply_receipt(
+        _receipt(
+            run,
+            "RUN_INTERRUPTED",
+            reply_id=None,
+            payload={},
+        ),
+    )
+
+    assert interrupted.status is RunStatus.RUNNING
+    assert interrupted.trace_status == "pending"
+    assert interrupted.metadata["recovery_required"] is True
+    assert interrupted.metadata["runtime_interrupted_session_ids"] == [run.session_id]
+    assert store.active_run_for_session(run.session_id) is not None
+    assert [item.run_id for item in store.recovery_required_runs()] == [run.run_id]
+
+
+def test_canonical_interruption_cannot_be_overwritten_by_late_success_receipts(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = _begin(store)
+    store.mark_trigger_started(run.run_id)
+    store.apply_receipt(_receipt(run, "REPLY_START"))
+    store.mark_cancel_requested(run.run_id)
+    store.apply_receipt(
+        _receipt(
+            run,
+            "RUN_INTERRUPTED",
+            reply_id=None,
+            payload={},
+        ),
+    )
+
+    store.apply_receipt(
+        _receipt(
+            run,
+            "REPLY_END",
+            payload={"finished_reason": "completed"},
+        ),
+    )
+    store.apply_receipt(
+        _receipt(
+            run,
+            "MESSAGE_PERSISTED",
+            payload={
+                "message_persisted": True,
+                "finished_reason": "completed",
+            },
+        ),
+    )
+    late_batch = store.apply_receipt(_session_persisted(run, "reply-a"))
+
+    assert late_batch.status is RunStatus.FINALIZING
+    assert late_batch.metadata["recovery_required"] is True
+    assert store.active_run_for_session(run.session_id) is not None
+    assert (
+        store.settle_after_quiescent_observation(
+            run.run_id,
+            error="first idle",
+        )
+        is None
+    )
+    terminal = store.settle_after_quiescent_observation(
+        run.run_id,
+        error="second idle",
+    )
+    assert terminal is not None
+    assert terminal.status is RunStatus.CANCELLED
+    assert terminal.terminal_reason == "interrupted"
+    assert terminal.trace_status == "pending"
+
+
+def test_runtime_originated_interruption_settles_interrupted_after_quiescence(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = _begin(store)
+    store.mark_trigger_started(run.run_id)
+    store.apply_receipt(
+        _receipt(
+            run,
+            "RUN_INTERRUPTED",
+            reply_id=None,
+            payload={},
+        ),
+    )
+    assert (
+        store.settle_after_quiescent_observation(
+            run.run_id,
+            error="all bound Sessions are idle",
+        )
+        is None
+    )
+    terminal = store.settle_after_quiescent_observation(
+        run.run_id,
+        error="all bound Sessions are idle",
+    )
+
+    assert terminal is not None
+    assert terminal.status is RunStatus.INTERRUPTED
+    assert terminal.terminal_reason == "interrupted"
+    assert terminal.trace_status == "pending"
+
+
+def test_delayed_interrupted_receipt_upgrades_fallback_evidence_without_reopening_run(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = _begin(store)
+    store.mark_trigger_started(run.run_id)
+    store.mark_cancel_requested(run.run_id)
+    assert (
+        store.settle_after_quiescent_observation(
+            run.run_id,
+            error="receipt not yet available",
+        )
+        is None
+    )
+    fallback = store.settle_after_quiescent_observation(
+        run.run_id,
+        error="receipt not yet available",
+    )
+    assert fallback is not None
+    assert fallback.status is RunStatus.CANCELLED
+    assert fallback.terminal_reason == "observation_incomplete"
+    assert fallback.trace_status == "incomplete"
+
+    upgraded = store.apply_receipt(
+        _receipt(
+            run,
+            "RUN_INTERRUPTED",
+            reply_id=None,
+            payload={},
+        ),
+    )
+
+    assert upgraded.status is RunStatus.CANCELLED
+    assert upgraded.terminal_reason == "interrupted"
+    assert upgraded.trace_status == "pending"
+    assert store.active_run_for_session(run.session_id) is None
+
+
+def test_receipt_idempotency_identity_cannot_be_rebound(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = _begin(store)
+    store.mark_trigger_started(run.run_id)
+    receipt = _receipt(run, "REPLY_START")
+    store.apply_receipt(receipt)
+
+    with pytest.raises(RuntimeStateConflict, match="idempotency identity"):
+        store.apply_receipt(
+            receipt.model_copy(update={"reply_id": "different-reply"}),
+        )
+
+
+def test_interrupted_receipt_rejects_content_and_trace_rebinding(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = _begin(store)
+    store.mark_trigger_started(run.run_id)
+
+    with pytest.raises(RuntimeStateConflict, match="must not carry"):
+        store.apply_receipt(
+            _receipt(
+                run,
+                "RUN_INTERRUPTED",
+                reply_id="reply-not-allowed",
+                payload={"message": "not-allowed"},
+            ),
+        )
+    with pytest.raises(RuntimeStateConflict, match="another trace"):
+        store.apply_receipt(
+            _receipt(
+                run,
+                "RUN_INTERRUPTED",
+                reply_id=None,
+                trace_id="b" * 32,
+            ),
+        )
+    valid = _receipt(
+        run,
+        "RUN_INTERRUPTED",
+        reply_id=None,
+    )
+    store.apply_receipt(valid)
+    with pytest.raises(RuntimeStateConflict, match="idempotency identity"):
+        store.apply_receipt(
+            valid.model_copy(update={"trace_id": "b" * 32}),
+        )
+
+
+def test_cancel_recovery_settles_cancelled_and_expires_hitl_fence(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = _begin(store)
+    store.mark_trigger_started(run.run_id)
+    store.apply_receipt(_receipt(run, "REPLY_START"))
+    store.apply_receipt(
+        _receipt(
+            run,
+            "REQUIRE_USER_CONFIRM",
+            payload=fingerprinted_hitl_payload(
+                [
+                    {
+                        "type": "tool_call",
+                        "id": "tool-cancel",
+                        "name": "Read",
+                        "input": '{"file_path":"cancel.txt"}',
+                    },
+                ],
+                default_state="asking",
+            ),
+        ),
+    )
+    store.mark_cancel_requested(run.run_id)
+
+    first_idle = store.settle_after_quiescent_observation(
+        run.run_id,
+        error="all bound Sessions are now idle",
+    )
+    terminal = store.settle_after_quiescent_observation(
+        run.run_id,
+        error="all bound Sessions are now idle",
+    )
+
+    assert first_idle is None
+    assert terminal is not None
+    assert terminal.status is RunStatus.CANCELLED
+    assert terminal.terminal_reason == "observation_incomplete"
+    assert terminal.trace_status == "incomplete"
+    assert store.active_run_for_session(run.session_id) is None
+    assert store.pending_actions_for_run(run.run_id) == []
+    assert store.fail_recovery(run.run_id, error="repeat").status is RunStatus.CANCELLED

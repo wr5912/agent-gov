@@ -11,34 +11,53 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_paths import business_agent_layout
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
+from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
+from app.services.agent_governance import AgentGovernanceService
 
 from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
 
 
-def _make_store(tmp_path: Path) -> FeedbackStore:
+def _make_store(tmp_path: Path, *, resolve_versions: bool = False) -> FeedbackStore:
     data_dir = tmp_path / "data"
-    default_ws = business_agent_layout(data_dir, DEFAULT_BUSINESS_AGENT_ID).workspace
-    aaa_ws = business_agent_layout(data_dir, "AAA").workspace
-    default_ws.mkdir(parents=True, exist_ok=True)
-    aaa_ws.mkdir(parents=True, exist_ok=True)
-    (default_ws / "CLAUDE.md").write_text("default agent baseline config\n", encoding="utf-8")
-    (aaa_ws / "CLAUDE.md").write_text("AAA agent OPTIMIZED config - different from default\n", encoding="utf-8")
-    # provider 按 agent_id 路由（用 fake 版本号代表「各自的库 HEAD」）。
-    return FeedbackStore(
-        data_dir=data_dir,
-        agent_version_provider=lambda aid: f"ver-{aid or DEFAULT_BUSINESS_AGENT_ID}",
+    for agent_id in (DEFAULT_BUSINESS_AGENT_ID, "AAA", "BBB", ORDINARY_TEST_AGENT_ID):
+        workspace = business_agent_layout(data_dir, agent_id).workspace
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "CLAUDE.md").write_text(f"{agent_id} baseline config\n", encoding="utf-8")
+    store = FeedbackStore(data_dir=data_dir)
+    if not resolve_versions:
+        return store
+    registry = AgentRegistryStore(store.Session)
+    for agent_id in (DEFAULT_BUSINESS_AGENT_ID, "AAA", "BBB", ORDINARY_TEST_AGENT_ID):
+        registry.create_business_agent(
+            name=agent_id,
+            agent_id=agent_id,
+            workspace_dir=str(business_agent_layout(data_dir, agent_id).workspace),
+        )
+    default_layout = business_agent_layout(data_dir, DEFAULT_BUSINESS_AGENT_ID)
+    governance = AgentGovernanceService(
+        feedback_store=store,
+        agent_version_store=GitAgentVersionStore(
+            repository_dir=default_layout.workspace,
+            worktrees_dir=default_layout.version_base / "worktrees",
+            releases_dir=default_layout.version_base / "releases",
+        ),
+        runtime_mode="local-debug",
     )
+    governance.agent_exists = registry.has_agent
+    store.agent_version_provider = governance.current_agent_version_id
+    return store
 
 
 def test_current_agent_version_id_routes_per_agent(tmp_path: Path) -> None:
-    store = _make_store(tmp_path)
-    assert store._current_agent_version_id("AAA") == "ver-AAA"
-    assert store._current_agent_version_id("BBB") == "ver-BBB"
-    assert store._current_agent_version_id(ORDINARY_TEST_AGENT_ID) == f"ver-{ORDINARY_TEST_AGENT_ID}"
-    assert store._current_agent_version_id() == f"ver-{DEFAULT_BUSINESS_AGENT_ID}"
+    store = _make_store(tmp_path, resolve_versions=True)
+    versions = {agent_id: store._current_agent_version_id(agent_id) for agent_id in ("AAA", "BBB", ORDINARY_TEST_AGENT_ID, DEFAULT_BUSINESS_AGENT_ID)}
+    assert all(versions.values())
+    assert len(set(versions.values())) == len(versions)
+    assert store._current_agent_version_id() == versions[DEFAULT_BUSINESS_AGENT_ID]
 
 
 def test_execution_targets_and_sha_are_per_agent(tmp_path: Path) -> None:

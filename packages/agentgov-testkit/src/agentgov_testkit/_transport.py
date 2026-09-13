@@ -22,12 +22,13 @@ def post_message(
     timeout_seconds: float,
 ) -> JsonObject:
     try:
-        response = httpx.post(
-            f"{api_base}/api/agent-test-sessions/{test_session_id}/messages",
-            json={"message": message, "metadata": metadata},
-            headers=_headers(api_key),
-            timeout=timeout_seconds,
-        )
+        with httpx.Client(trust_env=False) as client:
+            response = client.post(
+                f"{api_base}/api/agent-test-sessions/{test_session_id}/messages",
+                json={"message": message, "metadata": metadata},
+                headers=_headers(api_key),
+                timeout=timeout_seconds,
+            )
         response.raise_for_status()
         payload: object = response.json()
     except (httpx.HTTPError, ValueError) as exc:
@@ -39,11 +40,12 @@ def post_message(
 
 def delete_session(*, api_base: str, test_session_id: str, api_key: str | None) -> None:
     with suppress(httpx.HTTPError):
-        httpx.delete(
-            f"{api_base}/api/agent-test-sessions/{test_session_id}",
-            headers=_headers(api_key),
-            timeout=10.0,
-        )
+        with httpx.Client(trust_env=False) as client:
+            client.delete(
+                f"{api_base}/api/agent-test-sessions/{test_session_id}",
+                headers=_headers(api_key),
+                timeout=10.0,
+            )
 
 
 def _headers(api_key: str | None) -> httpx.Headers:

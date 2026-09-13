@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 import os
 import re
@@ -15,14 +14,22 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
+from agentgov_agentscope_contract import RuntimeTemplateRestartRequired, version_workspace_id
 from agentgov_harness_digest import harness_content_digest
 from agentscope.app import SubAgentTemplate
 from agentscope.app.storage import StorageBase
 from agentscope.app.workspace_manager import WorkspaceManagerBase
-from agentscope.mcp import HttpMCPConfig, MCPClient
+from agentscope.mcp import MCPClient
 from agentscope.skill import LocalSkillLoader, Skill
 from agentscope.workspace import BubblewrapWorkspace
 
+from .mcp_config_validation import (
+    HTTP_HEADER_NAME,
+    explicit_mcp_tools,
+    forbidden_mcp_header,
+    mcp_env_prefix,
+    validated_http_mcp_config,
+)
 from .mcp_resource_middleware import MCPResourcePolicy, parse_mcp_resource_policy
 from .offline_gateway import WorkspacePreparation, offline_gateway_env, validate_runtime_state_links
 from .subagent_templates import load_subagent_templates
@@ -30,9 +37,6 @@ from .types import JsonObject
 
 _SAFE_AGENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,126}")
 _HARNESS_DIGEST = re.compile(r"[0-9a-f]{64}")
-_SESSION_WORKSPACE_TOKEN = re.compile(
-    r"session-intent-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-)
 _MARKER = ".agentgov-runtime-workspace.json"
 _REPORT = "conversion-report.json"
 _PUBLISHED_SNAPSHOT_MARKER = "snapshot.json"
@@ -41,42 +45,6 @@ _CACHE_DIR = ".agentgov-runtime-cache"
 _ENV_PLACEHOLDER = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 _ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]*")
 _REFERENCE_PATH = re.compile(r"mcp_config(?:\.[A-Za-z0-9_-]+)+")
-_MCP_TOOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,255}")
-_HTTP_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
-_FORBIDDEN_MCP_HEADERS = {
-    "connection",
-    "content-length",
-    "forwarded",
-    "host",
-    "proxy-authorization",
-    "proxy-connection",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-    "via",
-    "x-original-url",
-    "x-rewrite-url",
-}
-_RESERVED_RESOURCE_TOOL_NAMES = {
-    "resources_list",
-    "resource_templates_list",
-    "resource_read",
-}
-
-
-def _mcp_env_prefix(server_name: str) -> str:
-    normalized = re.sub(r"[^A-Z0-9]+", "_", server_name.upper()).strip("_")
-    return f"{normalized}_MCP_"
-
-
-def _forbidden_mcp_header(name: str) -> bool:
-    normalized = name.casefold()
-    return normalized in _FORBIDDEN_MCP_HEADERS or normalized.startswith("x-forwarded-")
-
-
-def _visible_ascii(value: str) -> bool:
-    return bool(value) and all(0x20 <= ord(character) <= 0x7E for character in value)
 
 
 def harness_digest(workspace: Path) -> str:
@@ -184,6 +152,9 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
         async with self._lock:
             preparation = WorkspacePreparation()
             harness_root, state_root = await asyncio.to_thread(self._materialize, parsed_id)
+            # 在初始化可写状态、MCP 或离线 gateway 之前拒绝不合规的旧 Harness。
+            # 启动时隔离单个旧模板不得变成该版本 Session 的运行时降级。
+            self._register_subagent_templates(harness_root, digest)
             cached = self._cache.get(parsed_id)
             created = cached is None
             if cached is None:
@@ -203,7 +174,6 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
                 raise ValueError("Harness source changed after workspace binding")
             harness_root = Path(cached.harness_root)
             try:
-                self._register_subagent_templates(harness_root, digest)
                 binding = (parsed_id, agent_id, session_id)
                 if binding not in self._validated_mcp_bindings:
                     await preparation.validate_mcp(
@@ -237,9 +207,7 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
         for template_type, template in incoming.items():
             existing = self._subagent_templates.get(template_type)
             if existing is None:
-                raise RuntimeError(
-                    f"Subagent template {template_type!r} was published after Runtime startup; restart Runtime",
-                )
+                raise RuntimeTemplateRestartRequired()
             if existing != template:
                 raise ValueError(f"Subagent template changed after Runtime startup: {template_type}")
 
@@ -431,7 +399,7 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
 
     @staticmethod
     def _require_runtime_bound_mcp_config(server_name: str, config: JsonObject, references: list[Any]) -> None:
-        env_prefix = _mcp_env_prefix(server_name)
+        env_prefix = mcp_env_prefix(server_name)
         reference_paths = {item.get("path") for item in references if isinstance(item, dict) and isinstance(item.get("path"), str)}
         url = config.get("url")
         if not isinstance(url, str) or url != "${" + env_prefix + "URL}" or "mcp_config.url" not in reference_paths:
@@ -444,7 +412,7 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
         seen_headers: set[str] = set()
         for name, value in headers.items():
             normalized = name.casefold()
-            if _HTTP_HEADER_NAME.fullmatch(name) is None or _forbidden_mcp_header(name) or normalized in seen_headers:
+            if HTTP_HEADER_NAME.fullmatch(name) is None or forbidden_mcp_header(name) or normalized in seen_headers:
                 raise ValueError("MCP header name is invalid or forbidden")
             seen_headers.add(normalized)
             target = f"mcp_config.headers.{name}"
@@ -526,56 +494,19 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
     ) -> MCPClient:
         config_type = config.get("type")
         if config_type == "http_mcp":
-            parsed_config = HttpMCPConfig.model_validate(config)
-            parsed_url = urlsplit(parsed_config.url)
-            if not _visible_ascii(parsed_config.url):
-                raise ValueError("HTTP MCP URL must contain visible ASCII only")
-            try:
-                address = ipaddress.ip_address(parsed_url.hostname or "")
-            except ValueError:
-                pass
-            else:
-                if not (address.is_global or address.is_loopback):
-                    raise ValueError("HTTP MCP URL uses a forbidden IP address")
-                if require_container_route and address.is_loopback:
-                    raise ValueError("Container Runtime MCP URL cannot use a loopback address")
-            headers = parsed_config.headers or {}
-            if any(not _visible_ascii(name) or not _visible_ascii(value) for name, value in headers.items()):
-                raise ValueError("HTTP MCP headers must contain visible ASCII only")
-            if (
-                parsed_url.scheme not in {"http", "https"}
-                or parsed_url.username is not None
-                or parsed_url.password is not None
-                or parsed_url.hostname is None
-                or parsed_url.hostname.lower() not in allowed_hosts
-                or parsed_url.query
-                or parsed_url.fragment
-            ):
-                raise ValueError("HTTP MCP URL is outside workspace_policy.allowed_network_domains")
-            if parsed_url.path.rstrip("/") != "/mcp":
-                raise ValueError("AgentGov MCP resource facade requires the streamable HTTP /mcp endpoint")
-            if require_container_route and parsed_url.scheme == "http" and parsed_url.hostname.casefold() != "host.docker.internal":
-                raise ValueError("Container Runtime permits plaintext MCP only through host.docker.internal")
-            if require_container_route and parsed_url.hostname.casefold() == "localhost":
-                raise ValueError("Container Runtime MCP URL cannot use localhost")
-            default_stateful = False
+            parsed_config = validated_http_mcp_config(
+                config,
+                allowed_hosts,
+                require_container_route=require_container_route,
+            )
         elif config_type == "stdio_mcp":
             raise ValueError("stdio_mcp is forbidden by AgentGov Runtime policy")
         else:
             raise ValueError("MCP config type must be http_mcp")
-        is_stateful = record.get("is_stateful", default_stateful)
+        is_stateful = record.get("is_stateful", False)
         if not isinstance(is_stateful, bool):
             raise ValueError("MCP is_stateful must be a boolean")
-        enable_tools = record.get("enable_tools")
-        if (
-            not isinstance(enable_tools, list)
-            or any(
-                not isinstance(tool_name, str) or _MCP_TOOL_NAME.fullmatch(tool_name) is None or tool_name in _RESERVED_RESOURCE_TOOL_NAMES
-                for tool_name in enable_tools
-            )
-            or len(enable_tools) != len(set(enable_tools))
-        ):
-            raise ValueError("MCP enable_tools must be an explicit unique tool-name list")
+        enable_tools = explicit_mcp_tools(record)
         if record.get("disable_tools") not in (None, []):
             raise ValueError("MCP disable_tools is forbidden when exact enable_tools is required")
         return MCPClient(
@@ -595,11 +526,7 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
             raise ValueError(
                 "workspace_id must be '<agent_id>--v-<64 lowercase hex digest>'",
             )
-        version_binding = workspace_id
-        if "--s-" in workspace_id:
-            version_binding, token = workspace_id.rsplit("--s-", 1)
-            if _SESSION_WORKSPACE_TOKEN.fullmatch(token) is None:
-                raise ValueError("workspace_id contains an invalid Session creation token")
+        version_binding = version_workspace_id(workspace_id)
         agent_id, digest = version_binding.rsplit("--v-", 1)
         if _SAFE_AGENT_ID.fullmatch(agent_id) is None or _HARNESS_DIGEST.fullmatch(digest) is None:
             raise ValueError(

@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgov.local/schemas/live-acceptance-scenario.json",
+  "title": "AgentGov reviewed live acceptance scenarios",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "scenarios"],
+  "properties": {
+    "agent_id": {"type": "string", "minLength": 1},
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/scenario"}
+    }
+  },
+  "$defs": {
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_target_paths"],
+      "properties": {
+        "allowed_target_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "required_test_literals": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "required_code_fragments": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "mcp_expectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "server_name",
+        "allowed_tool_names",
+        "unapproved_tool_names",
+        "resource_uris",
+        "resource_templates",
+        "read_resource_uri"
+      ],
+      "properties": {
+        "server_name": {"const": "sec-ops"},
+        "allowed_tool_names": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {"const": "soc_api__dashboard_summary_api_v1_dashboard_summary_get"}
+        },
+        "unapproved_tool_names": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "resource_uris": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {"const": "openapi://soc_api/health"}
+        },
+        "resource_templates": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "const": "openapi://soc_api/api/external/detection-findings/{finding_id}/analysis-result"
+          }
+        },
+        "read_resource_uri": {"const": "openapi://soc_api/health"}
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario_id", "purpose", "capability", "input", "source_ref", "reviewed_by", "reviewed_at"],
+      "x-agentgov-capability-by-purpose": {
+        "success": "generic_runtime",
+        "early_cancel": "runtime_cancel",
+        "partial_cancel": "runtime_cancel",
+        "retry": "idempotent_retry",
+        "mcp_readonly": "mcp_readonly",
+        "improvement": "improvement_effect"
+      },
+      "properties": {
+        "scenario_id": {"type": "string", "minLength": 1},
+        "purpose": {
+          "type": "string",
+          "enum": ["success", "early_cancel", "partial_cancel", "retry", "mcp_readonly", "improvement"]
+        },
+        "capability": {
+          "type": "string",
+          "enum": ["generic_runtime", "runtime_cancel", "idempotent_retry", "mcp_readonly", "improvement_effect"]
+        },
+        "input": {"type": "string", "minLength": 1},
+        "feedback_comment": {"type": "string", "minLength": 1},
+        "source_ref": {"type": "string", "minLength": 1},
+        "reviewed_by": {"type": "string", "minLength": 1},
+        "reviewed_at": {"type": "string", "format": "date-time"},
+        "acceptance": {"$ref": "#/$defs/acceptance"},
+        "mcp_expectation": {"$ref": "#/$defs/mcp_expectation"}
+      },
+      "oneOf": [
+        {"properties": {"purpose": {"const": "success"}, "capability": {"const": "generic_runtime"}}},
+        {"properties": {"purpose": {"const": "early_cancel"}, "capability": {"const": "runtime_cancel"}}},
+        {"properties": {"purpose": {"const": "partial_cancel"}, "capability": {"const": "runtime_cancel"}}},
+        {"properties": {"purpose": {"const": "retry"}, "capability": {"const": "idempotent_retry"}}},
+        {"properties": {"purpose": {"const": "mcp_readonly"}, "capability": {"const": "mcp_readonly"}}},
+        {"properties": {"purpose": {"const": "improvement"}, "capability": {"const": "improvement_effect"}}}
+      ],
+      "allOf": [
+        {
+          "if": {"properties": {"purpose": {"const": "improvement"}}, "required": ["purpose"]},
+          "then": {
+            "required": ["acceptance", "feedback_comment"],
+            "properties": {
+              "acceptance": {"required": ["required_test_literals"]}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"purpose": {"const": "mcp_readonly"}}, "required": ["purpose"]},
+          "then": {"required": ["mcp_expectation"]}
+        }
+      ]
+    }
+  }
+}

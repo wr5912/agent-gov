@@ -5,13 +5,19 @@ import json
 import shlex
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from agentscope.permission import PermissionBehavior, PermissionContext, PermissionDecision, PermissionMode
+from agentscope.state import AgentState
 from agentscope.tool import Bash
 from agentscope_runtime.policy_middleware import AgentGovPolicyMiddleware
+
+
+@dataclass
+class PolicyAgent:
+    state: AgentState
 
 
 @pytest.fixture
@@ -39,7 +45,7 @@ def decision(policy: AgentGovPolicyMiddleware, command: str) -> PermissionDecisi
     async def next_handler(**_: object) -> PermissionDecision:
         raise AssertionError("策略必须在执行 Bash 前完成判定")
 
-    agent = SimpleNamespace(state=SimpleNamespace(permission_context=PermissionContext(mode=PermissionMode.DEFAULT)))
+    agent = PolicyAgent(state=AgentState(permission_context=PermissionContext(mode=PermissionMode.DEFAULT)))
     return asyncio.run(policy.on_check_permission(agent, {"tool": Bash(), "tool_input": {"command": command}}, next_handler))
 
 

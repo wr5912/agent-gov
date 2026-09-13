@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agentgov_agentscope_contract import session_workspace_id
+
 from app.runtime.agent_git_store import GitAgentVersionStore
-from app.runtime.agent_job_types import FormatterOutputModel, agent_job_spec
+from app.runtime.agent_job_types import FormatterOutputModel
 from app.runtime.json_types import JsonObject
 from app.runtime.schemas import ChatRequest, ChatResponse
 from app.runtime.settings import AppSettings
@@ -27,13 +29,11 @@ from ._execution_support import (
     _ephemeral_runtime_name,
     _ExecutionResourcePlan,
     _governed_evidence_root,
-    _iter_sse_events,
     _json_digest,
     _messages_from_body,
     _ObservedExecution,
     _parse_structured_output,
     _reject_symlinks,
-    _requires_interactive_continuation,
     _requires_runtime_restart,
     _stable_session_uuid,
     _user_message,
@@ -42,12 +42,15 @@ from ._execution_support import (
 from .client import AgentScopeRuntimeClient, RuntimeUpstreamError
 from .contracts import (
     GOVERNED_EVIDENCE_ROOT_METADATA_KEY,
-    TERMINAL_RUN_STATUSES,
-    AgentRunResponse,
     RunStatus,
 )
 from .harness_snapshots import PublishedHarnessSnapshotStore
 from .provisioning import agent_payload_from_workspace, session_settings_from_workspace
+from .run_trigger import (
+    admit_and_trigger_chat,
+    cancel_active_session_run,
+    observe_background_run,
+)
 from .store import RuntimeRunStore, RuntimeStateConflict, harness_digest
 
 
@@ -166,25 +169,6 @@ class AgentScopeExecutionService:
         finally:
             await self._release_key(cache_key)
 
-    async def format_agent_text(
-        self,
-        *,
-        job_type: str,
-        raw_text: str,
-        job_input: JsonObject,
-    ) -> FormatterOutputModel:
-        """把轻量反馈整理也统一交给 AgentScope governor，API 不直连模型。"""
-
-        spec = agent_job_spec(job_type)
-        normalized_input = dict(job_input)
-        normalized_input.setdefault("raw_feedback", raw_text)
-        return await self.run_profile_json(
-            profile_name=spec.profile_name,
-            prompt=spec.prompt_builder(normalized_input),
-            job_type=spec.job_type.value,
-            job_input=normalized_input,
-        )
-
     async def close(self) -> None:
         """在 API 退出时尽力回收所有候选与治理临时资源。"""
 
@@ -207,6 +191,7 @@ class AgentScopeExecutionService:
                 include_ready,
                 self.settings.agent_test_run_timeout_seconds,
             ),
+            source_kinds={"candidate_snapshot", "staged"},
         ):
             try:
                 await self._release_key(row.cache_key)
@@ -323,7 +308,7 @@ class AgentScopeExecutionService:
             source_root=self.settings.runtime_candidates_dir.resolve() / source_id,
             version_owner_id=source_id,
             source_kind=source_kind,
-            workspace_id=f"{source_id}--v-{digest}--s-session-intent-{_stable_session_uuid(cache_key, source_id)}",
+            workspace_id=session_workspace_id(f"{source_id}--v-{digest}", _stable_session_uuid(cache_key, source_id)),
             display_name=display_name,
         )
 
@@ -476,23 +461,22 @@ class AgentScopeExecutionService:
         run_metadata.pop(GOVERNED_EVIDENCE_ROOT_METADATA_KEY, None)
         if governed_evidence_root is not None:
             run_metadata[GOVERNED_EVIDENCE_ROOT_METADATA_KEY] = governed_evidence_root
-        run = self.store.begin_run(
-            session_id=resource.session_id,
-            runtime_agent_id=resource.runtime_agent_id,
-            input_value=input_message,
-            alert_id=req.alert_id,
-            case_id=req.case_id,
-            metadata=run_metadata,
-        )
         try:
             async with asyncio.timeout(self._timeout_for(resource)):
                 observed = await self._trigger_and_observe(
                     resource,
-                    run.run_id,
                     input_message,
+                    alert_id=req.alert_id,
+                    case_id=req.case_id,
+                    metadata=run_metadata,
+                    client_operation_id=f"backend:{uuid.uuid4().hex}",
                 )
         except Exception:
-            await self._interrupt_if_active(resource.session_id, resource.runtime_agent_id)
+            await cancel_active_session_run(
+                client=self.client,
+                store=self.store,
+                session_id=resource.session_id,
+            )
             raise
 
         messages_body = await self.client.request_json(
@@ -532,87 +516,32 @@ class AgentScopeExecutionService:
     async def _trigger_and_observe(
         self,
         resource: _ExecutionResource,
-        run_id: str,
         input_message: JsonObject,
+        *,
+        alert_id: str | None,
+        case_id: str | None,
+        metadata: JsonObject,
+        client_operation_id: str,
     ) -> _ObservedExecution:
         async with self.client.stream(
             f"/sessions/{resource.session_id}/stream",
             params={"agent_id": resource.runtime_agent_id},
         ) as response:
-            upstream = await self.client.request_json(
-                "POST",
-                "/chat/",
-                json={
-                    "agent_id": resource.runtime_agent_id,
-                    "session_id": resource.session_id,
-                    "input": input_message,
-                },
+            triggered = await admit_and_trigger_chat(
+                client=self.client,
+                store=self.store,
+                session_id=resource.session_id,
+                runtime_agent_id=resource.runtime_agent_id,
+                input_value=input_message,
+                alert_id=alert_id,
+                case_id=case_id,
+                metadata=metadata,
+                client_operation_id=client_operation_id,
             )
-            if not isinstance(upstream.body, dict) or upstream.body.get("status") != "started":
-                raise RuntimeStateConflict("AgentScope did not accept the run")
-            self.store.mark_trigger_started(run_id)
-            return await self._observe_until_terminal(response, run_id)
-
-    async def _observe_until_terminal(self, response: Any, run_id: str) -> _ObservedExecution:
-        events: list[JsonObject] = []
-        stream_task = asyncio.create_task(self._collect_stream_events(response, events))
-        terminal_task = asyncio.create_task(self._wait_for_terminal(run_id))
-        try:
-            done, _pending = await asyncio.wait(
-                (stream_task, terminal_task),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if stream_task in done:
-                await stream_task
-                terminal = await terminal_task
-            else:
-                terminal = terminal_task.result()
-            return _ObservedExecution(events=events, terminal=terminal)
-        finally:
-            for task in (stream_task, terminal_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(stream_task, terminal_task, return_exceptions=True)
-
-    @staticmethod
-    async def _collect_stream_events(response: Any, events: list[JsonObject]) -> None:
-        async for event in _iter_sse_events(response):
-            events.append(event)
-            if _requires_interactive_continuation(event):
-                raise RuntimeStateConflict(
-                    "Non-interactive governance/test execution requires an explicit HITL continuation",
-                )
-
-    async def _wait_for_terminal(self, run_id: str) -> AgentRunResponse:
-        while True:
-            run = self.store.get_run(run_id)
-            if run.status in TERMINAL_RUN_STATUSES:
-                return run
-            await asyncio.sleep(0.05)
-
-    async def _interrupt_if_active(self, session_id: str, runtime_agent_id: str) -> None:
-        del runtime_agent_id
-        active = self.store.active_run_for_session(session_id)
-        if active is None:
-            return
-        self.store.mark_cancel_requested(active.run_id)
-        bindings = self.store.active_session_bindings(active.run_id)
-        results = await asyncio.gather(
-            *(
-                self.client.request_json(
-                    "POST",
-                    f"/sessions/{binding.session_id}/interrupt",
-                    params={"agent_id": binding.runtime_agent_id},
-                )
-                for binding in bindings
-            ),
-            return_exceptions=True,
-        )
-        errors = [result for result in results if isinstance(result, BaseException)]
-        if errors:
-            self.store.mark_cancellation_uncertain(
-                active.run_id,
-                error={"type": type(errors[0]).__name__},
+            return await observe_background_run(
+                response,
+                store=self.store,
+                run_id=triggered.run.run_id,
             )
 
     async def _release_key(self, cache_key: str) -> None:
@@ -622,7 +551,11 @@ class AgentScopeExecutionService:
         if ledger is None or ledger.status == "cleanup_complete":
             return
         if resource is not None:
-            await self._interrupt_if_active(resource.session_id, resource.runtime_agent_id)
+            await cancel_active_session_run(
+                client=self.client,
+                store=self.store,
+                session_id=resource.session_id,
+            )
             for _ in range(100):
                 if self.store.active_run_for_session(resource.session_id) is None:
                     break

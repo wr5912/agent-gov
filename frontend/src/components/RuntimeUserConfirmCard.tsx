@@ -1,4 +1,5 @@
 import { Check, HelpCircle, X } from "lucide-react";
+import { runtimeRunPermissionScopes } from "../runtimeUserConfirmState";
 import type { RuntimeUserConfirmAction, RuntimeUserConfirmRequest } from "../types/runtime";
 
 interface RuntimeUserConfirmCardProps {
@@ -17,6 +18,7 @@ export function RuntimeUserConfirmCard({
   onSubmit,
 }: RuntimeUserConfirmCardProps) {
   const waiting = request.status === "waiting";
+  const runPermissionScopes = runtimeRunPermissionScopes(request);
   return (
     <section
       className="runtime-user-confirm-panel"
@@ -33,6 +35,22 @@ export function RuntimeUserConfirmCard({
       <p className="runtime-user-confirm-note">
         “允许一次”仅放行当前调用；“本次运行内允许”采用 Runtime 建议的规则，并在该次运行结束时失效。
       </p>
+      {runPermissionScopes ? (
+        <div className="runtime-user-confirm-note" data-testid="runtime-user-confirm-run-scope">
+          <strong>本次运行授权范围</strong>
+          <ul>
+            {runPermissionScopes.map((scope) => (
+              <li key={`${scope.toolName}:${scope.ruleContent}`}>
+                <code>{scope.toolName}</code>：<code>{scope.ruleContent}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="runtime-user-confirm-note" data-testid="runtime-user-confirm-run-unavailable">
+          Runtime 未提供安全且有边界的建议规则，只能允许当前调用。
+        </p>
+      )}
       {request.toolCalls.map((toolCall) => (
         <div key={toolCall.id}>
           <div className="runtime-tool-summary"><span>{toolCall.name}</span></div>
@@ -57,7 +75,8 @@ export function RuntimeUserConfirmCard({
             type="button"
             className="secondary-button"
             data-testid="runtime-user-confirm-allow-run"
-            disabled={disabled || submitting}
+            disabled={disabled || submitting || !runPermissionScopes}
+            title={runPermissionScopes ? "按上方规则授权到本次运行结束" : "缺少安全且有边界的 Runtime 建议规则"}
             onClick={() => onSubmit(request, "allow_for_run")}
           >
             <Check size={15} /> 本次运行内允许

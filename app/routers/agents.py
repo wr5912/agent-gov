@@ -22,7 +22,8 @@ from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.runtime_gateway.provisioning import RuntimeAgentProvisioner
 from app.runtime_gateway.store import RuntimeStoreError
-from app.services.agent_governance import AgentGovernanceService
+from app.services.agent_change_set_queries import has_open_change_sets
+from app.services.agent_governance import TERMINAL_CHANGE_SET_STATES, AgentGovernanceService
 from app.services.business_agent_presentation import business_agent_presentation
 from app.services.runtime_agent_deletion import RuntimeAgentDeletionService
 
@@ -115,6 +116,12 @@ async def _delete_agent_with_storage(
         kind="agent_delete",
         owner_id="api:agent-delete",
     ) as lease:
+        if has_open_change_sets(
+            agent_governance.feedback_store.Session,
+            agent_id=agent_id,
+            terminal_states=TERMINAL_CHANGE_SET_STATES,
+        ):
+            raise ConflictError(f"Agent {agent_id} has an unfinished change set and cannot be deleted")
         intent = runtime_deletion.start(deleted)
         cleanup = await runtime_deletion.resume(
             intent.intent_id,

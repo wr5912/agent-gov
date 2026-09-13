@@ -1,91 +1,26 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-
-export const MOCK_API_KEY = "playground-cancel-synthetic-key";
-
-export function runtimeConnection({ real, environment, mockApiBase, readDeploymentEnv }) {
-  if (!real) return { apiBase: mockApiBase, apiKey: MOCK_API_KEY };
-  const apiBase = environment.RUNTIME_API_BASE?.replace(/\/$/, "");
-  if (!apiBase) throw new Error("REAL_API_BASE_REQUIRED");
+export function runtimeConnection(environment = process.env) {
+  const apiBase = String(environment.RUNTIME_API_BASE || "").trim().replace(/\/$/, "");
+  const uiBase = String(environment.RUNTIME_UI_BASE || "").trim().replace(/\/$/, "");
+  if (!apiBase || !uiBase) throw new Error("REAL_CONTAINER_ENDPOINTS_REQUIRED");
+  for (const [name, value] of [["RUNTIME_API_BASE", apiBase], ["RUNTIME_UI_BASE", uiBase]]) {
+    const url = new URL(value);
+    if (!new Set(["http:", "https:"]).has(url.protocol)) throw new Error(`${name}_PROTOCOL_INVALID`);
+    if (!new Set(["127.0.0.1", "localhost", "::1", "[::1]"]).has(url.hostname)) {
+      throw new Error(`${name}_LOOPBACK_REQUIRED`);
+    }
+    const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+    if (!Number.isInteger(port) || port < 50400 || port > 50499) throw new Error(`${name}_PORT_OUT_OF_RANGE`);
+  }
   return {
     apiBase,
-    apiKey: environment.RUNTIME_API_KEY || readDeploymentEnv("FRONTEND_RUNTIME_API_KEY") || readDeploymentEnv("API_KEY"),
+    uiBase,
+    apiKey: String(environment.RUNTIME_API_KEY || ""),
   };
-}
-
-async function loadVite(frontendRoot) {
-  const require = createRequire(join(frontendRoot, "package.json"));
-  const [{ createServer }, { default: react }] = await Promise.all([
-    import(pathToFileURL(require.resolve("vite")).href),
-    import(pathToFileURL(require.resolve("@vitejs/plugin-react")).href),
-  ]);
-  return { createServer, react };
-}
-
-export async function startMockUi({ frontendRoot, apiBase }, dependencies) {
-  const { createServer, react } = dependencies || await loadVite(frontendRoot);
-  const cacheDir = await mkdtemp(join(tmpdir(), "agentgov-cancel-vite-"));
-  let server;
-  const close = async () => {
-    try { await server?.close(); }
-    finally { await rm(cacheDir, { recursive: true, force: true }); }
-  };
-  try {
-    server = await createServer({
-      root: frontendRoot,
-      configFile: false,
-      envDir: false,
-      envPrefix: [],
-      cacheDir,
-      plugins: [react()],
-      logLevel: "silent",
-      define: {
-        "import.meta.env.VITE_RUNTIME_API_BASE": JSON.stringify(apiBase),
-        "import.meta.env.VITE_RUNTIME_API_KEY": JSON.stringify(MOCK_API_KEY),
-      },
-      server: { host: "127.0.0.1", port: 0, strictPort: true },
-    });
-    if (!server.httpServer) throw new Error("MOCK_UI_ADDRESS_INVALID");
-    // Vite 的高层 listen 将 0 回退到 5173；公开 Node server 保留 OS 分配语义。
-    const address = await listenLoopback(server.httpServer);
-    return { uiBase: `http://127.0.0.1:${address.port}`, close };
-  } catch (error) {
-    await close().catch(() => {});
-    throw error;
-  }
 }
 
 export async function cleanupResources(resources) {
   const results = await Promise.allSettled(resources.map(async (resource) => resource.close()));
   return results.flatMap((result, index) => result.status === "rejected" ? [resources[index].name] : []);
-}
-
-export function closeMockServer(server) {
-  return new Promise((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
-    server.closeAllConnections();
-  });
-}
-
-export async function listenLoopback(server) {
-  try {
-    await new Promise((resolve, reject) => {
-      const onError = (error) => { server.off("listening", onListening); reject(error); };
-      const onListening = () => { server.off("error", onError); resolve(); };
-      server.once("error", onError);
-      server.once("listening", onListening);
-      server.listen(0, "127.0.0.1");
-    });
-    const address = server.address();
-    if (!address || typeof address === "string" || !address.port) throw new Error("MOCK_UI_ADDRESS_INVALID");
-    return address;
-  } catch (error) {
-    await closeMockServer(server).catch(() => {});
-    throw error;
-  }
 }
 
 export function isUiDocument(response, html) {
@@ -94,12 +29,12 @@ export function isUiDocument(response, html) {
     && /<script\b[^>]*\btype=["']module["']/.test(html);
 }
 
-export async function waitForUi(uiBase, timeoutMs, fetchImpl = fetch) {
+export async function waitForUi(uiBase, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     let response;
-    try { response = await fetchImpl(uiBase, { signal: AbortSignal.timeout(5000) }); }
-    catch { /* 就绪期限内只重试连接失败，不将其他进程的 HTTP 200 当 UI。 */ }
+    try { response = await fetch(uiBase, { signal: AbortSignal.timeout(5000) }); }
+    catch { /* 在期限内等待真实部署 UI 就绪。 */ }
     if (response?.ok) {
       if (!isUiDocument(response, await response.text())) throw new Error("UI_DOCUMENT_INVALID");
       return;
@@ -113,28 +48,86 @@ function diagnosticPath(value) {
   try {
     const path = new URL(value).pathname;
     if (path.startsWith("/api/")) return "/api/[redacted]";
-    if (path === "/" || path === "/@vite/client" || path === "/@react-refresh") return path;
-    if (/^\/(?:src|node_modules)\/[A-Za-z0-9_./@-]+$/.test(path)) return path;
-  } catch { /* 非 HTTP 或无法识别的路径不进入诊断。 */ }
+    if (path === "/") return path;
+    if (/^\/(?:assets)\/[A-Za-z0-9_.@/-]+$/.test(path)) return path;
+  } catch { /* 无法识别的路径不进入诊断。 */ }
   return "[redacted]";
 }
 
-export function attachUiDiagnostics(page) {
+function isExpectedCancelledStream(request, network, failedAt) {
+  const url = new URL(request.url());
+  const match = url.pathname.match(/^\/api\/runtime\/sessions\/([^/]+)\/stream$/);
+  if (!match) return false;
+  const stream = network.streams.find((event) => event.request === request);
+  const reason = String(request.failure()?.errorText || "");
+  if (!stream?.responseAt || !/(?:abort|cancel|NS_BINDING_ABORTED)/i.test(reason)) return false;
+  const sessionId = decodeURIComponent(match[1]);
+  return network.cancels.some((cancel) => {
+    const runMatch = cancel.path.match(/^\/api\/agent-runs\/([^/]+)\/cancel$/);
+    if (!runMatch || cancel.at < stream.responseAt || cancel.at > failedAt) return false;
+    const runId = decodeURIComponent(runMatch[1]);
+    return network.chats.some((chat) => chat.runId === runId && chat.sessionId === sessionId);
+  });
+}
+
+function isExpectedReloadStream(request, network, failedAt) {
+  let url;
+  try { url = new URL(request.url()); }
+  catch { return false; }
+  if (!/^\/api\/runtime\/sessions\/[^/]+\/stream$/.test(url.pathname)) return false;
+  const reason = String(request.failure()?.errorText || "");
+  if (!/(?:abort|cancel|NS_BINDING_ABORTED)/i.test(reason)) return false;
+  const fence = network.reloadClosures?.find((candidate) => (
+    !candidate.used
+    && candidate.request === request
+    && failedAt >= candidate.registeredAt
+    && failedAt <= candidate.expiresAt
+  ));
+  if (!fence) return false;
+  fence.used = true;
+  return true;
+}
+
+export function attachUiDiagnostics(page, network) {
   const events = [];
   const record = (event) => { if (events.length < 30) events.push(event); };
   page.on("pageerror", () => record({ kind: "page_error" }));
   page.on("console", (message) => { if (message.type() === "error") record({ kind: "console_error" }); });
   page.on("response", (response) => {
-    if (response.status() >= 400) record({ kind: "http_error", status: response.status(), path: diagnosticPath(response.url()) });
+    if (response.status() >= 400) {
+      record({ kind: "http_error", status: response.status(), path: diagnosticPath(response.url()) });
+    }
   });
-  page.on("requestfailed", (request) => record({ kind: "request_failed", path: diagnosticPath(request.url()) }));
+  page.on("requestfailed", (request) => {
+    const failedAt = performance.now();
+    const kind = isExpectedCancelledStream(request, network, failedAt)
+      ? "expected_stream_cancel"
+      : isExpectedReloadStream(request, network, failedAt)
+        ? "expected_reload_stream_cancel"
+        : "request_failed";
+    record({
+      kind,
+      path: diagnosticPath(request.url()),
+    });
+  });
   return events;
 }
 
 export function failureDiagnostic(error, stage, events) {
-  const codes = new Set(["REAL_API_BASE_REQUIRED", "MOCK_UI_ADDRESS_INVALID", "UI_DOCUMENT_INVALID", "UI_START_TIMEOUT"]);
+  const codes = new Set([
+    "REAL_CONTAINER_ENDPOINTS_REQUIRED",
+    "RUNTIME_API_BASE_PROTOCOL_INVALID",
+    "RUNTIME_UI_BASE_PROTOCOL_INVALID",
+    "RUNTIME_API_BASE_LOOPBACK_REQUIRED",
+    "RUNTIME_UI_BASE_LOOPBACK_REQUIRED",
+    "RUNTIME_API_BASE_PORT_OUT_OF_RANGE",
+    "RUNTIME_UI_BASE_PORT_OUT_OF_RANGE",
+    "UI_DOCUMENT_INVALID",
+    "UI_START_TIMEOUT",
+  ]);
   return {
-    status: "failed", stage,
+    status: "failed",
+    stage,
     code: codes.has(error?.message) ? error.message : "ACCEPTANCE_FAILED",
     kind: error?.name === "TimeoutError" ? "timeout" : "error",
     events,

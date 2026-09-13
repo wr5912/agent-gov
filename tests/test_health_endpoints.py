@@ -1,31 +1,15 @@
+"""健康端点使用真实生产 Runtime client；可达路径由真实容器验收覆盖。"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
 from pathlib import Path
 
-from app.routers import core
 from app.routers.core import create_core_router
-from app.runtime.schemas import RuntimeDependencyVersions
 from app.runtime.settings import AppSettings
-from app.runtime_gateway.client import RuntimeJsonResponse, RuntimeUpstreamError
+from app.runtime_gateway.client import AgentScopeRuntimeClient
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-
-@dataclass
-class StubRuntimeClient:
-    response: RuntimeJsonResponse | None = None
-    error: Exception | None = None
-    calls: int = 0
-    base_url: str = "http://agentscope-runtime:8090"
-
-    async def request_json(self, method: str, path: str, *, timeout: float):
-        self.calls += 1
-        assert (method, path, timeout) == ("GET", "/health", 5.0)
-        if self.error is not None:
-            raise self.error
-        assert self.response is not None
-        return self.response
 
 
 def _settings(tmp_path: Path) -> AppSettings:
@@ -38,63 +22,63 @@ def _settings(tmp_path: Path) -> AppSettings:
         AGENT_GIT_WORKTREES_DIR=tmp_path / "worktrees",
         AGENT_RELEASE_ARCHIVES_DIR=tmp_path / "releases",
         RUNTIME_CANDIDATES_DIR=tmp_path / "candidates",
+        AGENTSCOPE_RUNTIME_URL="http://127.0.0.1:1",
+        AGENTGOV_RUNTIME_SHARED_SECRET="health-test-shared-secret",
     )
 
 
-def _client(monkeypatch, tmp_path: Path, runtime: StubRuntimeClient) -> TestClient:
+def _app_with_unreachable_runtime(tmp_path: Path) -> tuple[FastAPI, AgentScopeRuntimeClient]:
+    settings = _settings(tmp_path)
+    runtime = AgentScopeRuntimeClient(
+        settings.agentscope_runtime_url,
+        shared_secret=settings.runtime_shared_secret,
+        timeout_seconds=0.2,
+    )
     app = FastAPI()
-    monkeypatch.setattr(
-        core,
-        "runtime_dependency_versions",
-        lambda: RuntimeDependencyVersions(agentscope="2.0.8"),
-    )
-    app.include_router(create_core_router(settings=_settings(tmp_path), app=app, runtime_client=runtime))
-    return TestClient(app)
+    app.include_router(create_core_router(settings=settings, app=app, runtime_client=runtime))
+    return app, runtime
 
 
-def test_liveness_never_calls_runtime(monkeypatch, tmp_path) -> None:
-    runtime = StubRuntimeClient(error=AssertionError("runtime must not be called"))
-    client = _client(monkeypatch, tmp_path, runtime)
-
-    response = client.get("/health/live")
+def test_liveness_succeeds_when_real_runtime_client_target_is_unreachable(tmp_path: Path) -> None:
+    app, runtime = _app_with_unreachable_runtime(tmp_path)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/health/live")
+    finally:
+        asyncio.run(runtime.close())
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-    assert runtime.calls == 0
 
 
-def test_readiness_reports_agentscope_reachable(monkeypatch, tmp_path) -> None:
-    runtime = StubRuntimeClient(response=RuntimeJsonResponse(200, {}, {"status": "ok"}))
-    client = _client(monkeypatch, tmp_path, runtime)
-
-    response = client.get("/health/ready")
-
-    assert response.status_code == 200
-    assert response.json()["runtime_service"]["status"] == "ready"
-    assert response.json()["runtime_service"]["route"] == "http://agentscope-runtime:8090"
-
-
-def test_readiness_reports_agentscope_unreachable_without_leaking_body(monkeypatch, tmp_path) -> None:
-    runtime = StubRuntimeClient(error=RuntimeUpstreamError(503, b'{"secret":"hidden"}'))
-    client = _client(monkeypatch, tmp_path, runtime)
-
-    response = client.get("/health/ready")
+def test_readiness_reports_real_connection_failure_without_credentials(tmp_path: Path) -> None:
+    app, runtime = _app_with_unreachable_runtime(tmp_path)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/health/ready")
+    finally:
+        asyncio.run(runtime.close())
 
     assert response.status_code == 503
     payload = response.json()["runtime_service"]
     assert payload["status"] == "not_ready"
     assert payload["retryable"] is True
-    assert "hidden" not in str(payload)
+    assert "health-test-shared-secret" not in str(payload)
 
 
-def test_health_exposes_agentscope_only_dependency_versions(monkeypatch, tmp_path) -> None:
-    runtime = StubRuntimeClient(response=RuntimeJsonResponse(200, {}, {"status": "ok"}))
-    client = _client(monkeypatch, tmp_path, runtime)
+def test_health_exposes_agentscope_only_dependency_versions(tmp_path: Path) -> None:
+    app, runtime = _app_with_unreachable_runtime(tmp_path)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/health")
+    finally:
+        asyncio.run(runtime.close())
 
-    payload = client.get("/health").json()
-
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "degraded"
     assert payload["runtime_kind"] == "agentscope"
-    assert payload["runtime_dependency_versions"]["agentscope"] == "2.0.8"
+    assert payload["runtime_dependency_versions"]["agentscope"]
     serialized = str(payload).lower()
     assert "litellm" not in serialized
     assert "sdk_session" not in serialized

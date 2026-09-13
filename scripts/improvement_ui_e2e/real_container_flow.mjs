@@ -1,6 +1,8 @@
 import {
   apiJson,
   assertHostileTestRunRejected,
+  getCurrentRuntimeAgent,
+  runReviewedScenario,
   seedBaseImprovement,
 } from "./runtime_client.mjs";
 import {
@@ -9,6 +11,7 @@ import {
   screenshotAndAudit,
   unexpectedDiagnostics,
 } from "./page_audit.mjs";
+import { reviewAndApprovePassedCandidate } from "./candidate_review.mjs";
 
 const VIEWPORTS = [
   { name: "desktop", width: 1440, height: 980 },
@@ -18,24 +21,41 @@ const VIEWPORTS = [
 const MAX_GOVERNOR_PLAN_ATTEMPTS = 3;
 const MAX_REGRESSION_DESIGN_ATTEMPTS = 3;
 const TERMINAL_TEST_RUN_STATES = new Set(["passed", "failed", "error", "cancelled", "interrupted"]);
-const FIXED_TEST_ARGUMENTS = ["-m", "pytest", "-q", "-p", "agentgov_testkit.pytest_plugin", "tests"];
-
-async function configurePage(page, config) {
-  await page.addInitScript(([apiBase, apiKey]) => {
-    window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase, apiKey }));
-    window.localStorage.removeItem("playground-active-session");
-  }, [config.apiBase, config.apiKey]);
-}
+const FIXED_TEST_ARGUMENTS = [
+  "-I",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "agentgov_testkit.pytest_plugin",
+  "--noconftest",
+  "--import-mode=importlib",
+  "-c",
+  "/dev/null",
+  "tests",
+];
 
 async function openImprovement(page, config, seed) {
   await page.goto(config.uiBase, { waitUntil: "domcontentloaded" });
   const switcher = page.getByTestId("topbar-agent-switcher");
   await switcher.waitFor({ timeout: 30000 });
+  await switcher.selectOption(seed.agent.agent_id);
   await page.getByTestId("nav-improvement").click();
   await page.getByTestId("improvement-workbench").waitFor({ timeout: 30000 });
+  const scope = page.getByTestId("improvement-scope-filter");
+  const scopedResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === "GET"
+      && url.pathname === "/api/improvements"
+      && url.searchParams.get("agent_id") === seed.agent.agent_id;
+  }, { timeout: 30000 });
+  await scope.selectOption(seed.agent.agent_id);
+  const response = await scopedResponse;
+  if (!response.ok() || await scope.inputValue() !== seed.agent.agent_id) {
+    throw new Error("improvement workbench did not apply the exact Agent scope");
+  }
   const target = page.locator('[data-testid="improvement-list-item"][data-item-id="' + seed.item.improvement_id + '"]').first();
   await target.waitFor({ timeout: 30000 });
-  await switcher.selectOption(seed.agent.agent_id);
   await target.click();
   await page.locator('[data-testid="improvement-detail"][data-item-id="' + seed.item.improvement_id + '"]').waitFor({ timeout: 30000 });
 }
@@ -347,7 +367,8 @@ function assertPassedTestEvidence(flow, suite, run) {
     throw new Error("platform test run contains a non-passing pytest item: " + JSON.stringify(run.items));
   }
   if (!(run.invocations || []).length
-      || run.invocations.some((invocation) => invocation.agent_version_id !== run.commit_sha
+      || run.invocations.some((invocation) => invocation.test_run_id !== run.test_run_id
+        || invocation.agent_version_id !== run.commit_sha
         || !invocation.langfuse_trace_id
         || (invocation.errors || []).length)) {
     throw new Error("business Agent invocation evidence is incomplete or contains runtime errors: "
@@ -363,60 +384,14 @@ async function waitForPassedGate(page, run) {
   }, run.test_run_id, { timeout: 60000 });
 }
 
-async function verifyVisibleTestRunFailure(page, config, flow) {
-  const endpoint = "/api/agent-change-sets/" + encodeURIComponent(flow.execution.change_set_id) + "/test-runs";
-  const routeUrl = config.apiBase + endpoint;
-  let intercepted = false;
-  let originalPayload;
-  const injectStructuredFailure = async (route) => {
-    const request = route.request();
-    if (request.method() !== "POST" || intercepted) {
-      await route.continue();
-      return;
-    }
-    intercepted = true;
-    originalPayload = request.postDataJSON() || {};
-    await route.fulfill({
-      status: 409,
-      contentType: "application/json",
-      body: JSON.stringify({
-        detail: "待发布提交在目标业务 Agent 中不可用",
-        error_code: "AGENT_TEST_COMMIT_NOT_FOUND",
-      }),
-    });
-  };
-  await page.route(routeUrl, injectStructuredFailure);
-  let response;
-  try {
-    [response] = await Promise.all([
-      page.waitForResponse((candidate) => (
-        candidate.request().method() === "POST" && new URL(candidate.url()).pathname === endpoint
-      ), { timeout: config.actionTimeoutMs }),
-      page.getByTestId("release-action-run-tests").click(),
-    ]);
-  } finally {
-    await page.unroute(routeUrl, injectStructuredFailure);
-  }
-  if (!intercepted || response.ok()) {
-    throw new Error("controlled unknown-commit test run did not fail");
-  }
-  if (Object.keys(originalPayload).length !== 0) {
-    throw new Error("release UI submitted client-owned test identity: " + JSON.stringify(originalPayload));
-  }
-  const error = page.getByTestId("release-action-error");
-  await error.waitFor({ timeout: 30000 });
-  const visibleDetail = (await error.innerText()).trim();
-  if (!visibleDetail) throw new Error("test run failure did not render a visible error detail");
-  const evidence = await screenshotAndAudit(page, config.screenshotDir, "desktop-test-run-failure");
-  return {
-    http_error: { method: "POST", path: endpoint, status: response.status() },
-    visible_detail: visibleDetail,
-    evidence,
-  };
-}
-
 async function publishPassedCandidate(page, config, flow) {
   const changeSetId = flow.execution.change_set_id;
+  const approval = await reviewAndApprovePassedCandidate(page, config, {
+    changeSetId,
+    candidateCommitSha: flow.confirmed.candidate_commit_sha,
+    testRunId: flow.terminalRun.test_run_id,
+    suiteDigest: flow.suite.suite_digest,
+  });
   const endpoint = "/api/agent-change-sets/" + changeSetId + "/publish";
   const button = page.getByTestId("release-action-publish");
   await page.waitForFunction(() => {
@@ -432,7 +407,13 @@ async function publishPassedCandidate(page, config, flow) {
     throw new Error("normal publication failed: " + response.status() + " " + await responseBody(response));
   }
   const request = response.request().postDataJSON();
-  if (request.force !== false || request.operator !== "ui" || request.force_reason !== undefined) {
+  if (request.force !== false
+      || request.operator !== "ui"
+      || request.force_reason !== undefined
+      || request.expected_candidate_commit_sha !== flow.confirmed.candidate_commit_sha
+      || request.expected_diff_digest !== approval.diffDigest
+      || request.expected_test_run_id !== flow.terminalRun.test_run_id
+      || request.expected_suite_digest !== flow.suite.suite_digest) {
     throw new Error("passed candidate did not use normal publication: " + JSON.stringify(request));
   }
   const release = await response.json();
@@ -442,7 +423,7 @@ async function publishPassedCandidate(page, config, flow) {
     throw new Error("published release lost exact passed commit binding: " + JSON.stringify(release));
   }
   await page.getByTestId("release-item").filter({ hasText: release.tag_name || release.release_id }).waitFor({ timeout: 30000 });
-  return { endpoint, release, status: response.status() };
+  return { ...approval, endpoint, release, status: response.status() };
 }
 
 async function assertCreateDrawerFullyVisible(page) {
@@ -489,7 +470,6 @@ async function verifyResponsiveStates(browser, config, seed, flow, release) {
   for (const viewport of VIEWPORTS) {
     const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } });
     const diagnostics = attachDiagnostics(page, config.apiBase, config.uiBase);
-    await configurePage(page, config);
     try {
       await openImprovement(page, config, seed);
       await assertCreateDrawerFullyVisible(page);
@@ -532,14 +512,46 @@ async function verifyResponsiveStates(browser, config, seed, flow, release) {
   return results;
 }
 
-export async function runRealContainerAcceptance(browser, config) {
-  const seed = await seedBaseImprovement(config);
+export async function verifyCompletedImprovementAcceptance(browser, config, evidence) {
+  const required = [
+    evidence?.agent_id,
+    evidence?.improvement_id,
+    evidence?.candidate_commit_sha,
+    evidence?.test_run?.test_run_id,
+    evidence?.release?.release_id,
+    evidence?.release?.commit_sha,
+  ];
+  if (required.some((value) => typeof value !== "string" || !value)) {
+    throw new Error("completed improvement evidence is missing an exact persisted identity");
+  }
+  const seed = {
+    agent: { agent_id: evidence.agent_id },
+    item: { improvement_id: evidence.improvement_id },
+    stamp: evidence.improvement_id,
+  };
+  const flow = {
+    terminalRun: { test_run_id: evidence.test_run.test_run_id },
+    confirmed: { candidate_commit_sha: evidence.candidate_commit_sha },
+  };
+  const viewports = await verifyResponsiveStates(browser, config, seed, flow, evidence.release);
+  return {
+    status: "passed",
+    mode: "read-only-completed-loop",
+    agent_id: evidence.agent_id,
+    improvement_id: evidence.improvement_id,
+    release_id: evidence.release.release_id,
+    commit_sha: evidence.release.commit_sha,
+    viewports,
+  };
+}
+
+export async function runRealContainerAcceptance(browser, config, governanceAgentId, scenario) {
+  const seed = await seedBaseImprovement(config, governanceAgentId, scenario);
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
   const diagnostics = attachDiagnostics(page, config.apiBase, config.uiBase);
-  await configurePage(page, config);
   let flow;
-  let failureEvidence;
   let publication;
+  let outcomeComparison;
   let negativeBoundary;
   let functionalDiagnostics;
   try {
@@ -560,12 +572,19 @@ export async function runRealContainerAcceptance(browser, config) {
     flow.suite = suite;
     flow.terminalRun = terminalRun;
     await waitForPassedGate(page, terminalRun);
-    failureEvidence = await verifyVisibleTestRunFailure(page, config, flow);
     publication = await publishPassedCandidate(page, config, flow);
+    outcomeComparison = await verifyPublishedCandidateOutcome(config, seed, publication.release);
     flow.actions.push({
       action: "platform-pytest",
       endpoint: "/api/agent-test-runs/" + terminalRun.test_run_id,
       status: terminalRun.status,
+    });
+    flow.actions.push({
+      action: "review-and-approve-candidate",
+      endpoint: publication.approvalEndpoint,
+      status: publication.approvalStatus,
+      reviewed_file_count: publication.reviewedFileCount,
+      diff_digest: publication.diffDigest,
     });
     flow.actions.push({
       action: "publish-passed-candidate",
@@ -574,7 +593,7 @@ export async function runRealContainerAcceptance(browser, config) {
     });
 
     assertNoForbiddenUiRequests(diagnostics.requests);
-    const unexpected = unexpectedDiagnostics(diagnostics, [failureEvidence.http_error]);
+    const unexpected = unexpectedDiagnostics(diagnostics);
     if (Object.values(unexpected).some((items) => items.length)) {
       throw new Error("functional browser diagnostics failed: " + JSON.stringify({
         unexpected,
@@ -607,11 +626,19 @@ export async function runRealContainerAcceptance(browser, config) {
       status: run.status,
       trace_id: run.trace_id,
       trace_status: run.trace_status,
+      input_sha256: run.inputSha256,
+      reply_text_sha256: run.replyTextSha256,
+      reply_text_length: run.replyTextLength,
     })),
     change_set_id: flow.execution.change_set_id,
     candidate_commit_sha: flow.confirmed.candidate_commit_sha,
     generated_test_files: flow.confirmed.generated_test_files,
     suite_digest: flow.suite.suite_digest,
+    approval_evidence: publication.approved.approval_evidence,
+    reviewed_diff: {
+      digest: publication.diffDigest,
+      file_count: publication.reviewedFileCount,
+    },
     test_run: {
       test_run_id: flow.terminalRun.test_run_id,
       status: flow.terminalRun.status,
@@ -623,10 +650,57 @@ export async function runRealContainerAcceptance(browser, config) {
       commit_sha: publication.release.commit_sha,
       force_published: publication.release.force_published,
     },
+    outcome_comparison: outcomeComparison,
     actions: flow.actions,
     negative_boundary: negativeBoundary,
-    visible_failure: failureEvidence,
     functional_diagnostics: functionalDiagnostics,
     viewports,
+  };
+}
+
+async function verifyPublishedCandidateOutcome(config, seed, release) {
+  const baseline = seed.sourceRuns[0];
+  const candidateBinding = await getCurrentRuntimeAgent(config, seed.agent.agent_id);
+  if (candidateBinding.agent_version_id !== release.commit_sha) {
+    throw new Error("published candidate is not the exact current Runtime Agent version");
+  }
+  const candidate = await runReviewedScenario(config, candidateBinding, seed.scenario.input);
+  if (candidate.inputSha256 !== baseline.inputSha256) {
+    throw new Error("baseline and candidate Runtime runs did not use the exact same reviewed input");
+  }
+  if (candidate.agent_version_id === baseline.agent_version_id
+      || candidate.replyTextSha256 === baseline.replyTextSha256) {
+    throw new Error("published candidate did not produce a distinct same-input Runtime outcome");
+  }
+  const compactBaseline = baseline.replyText.replace(/\s+/g, "");
+  const compactCandidate = candidate.replyText.replace(/\s+/g, "");
+  const requiredLiterals = seed.requiredTestLiterals.map((literal) => literal.replace(/\s+/g, ""));
+  if (!requiredLiterals.length) {
+    throw new Error("reviewed improvement scenario requires at least one effect literal");
+  }
+  if (requiredLiterals.every((literal) => compactBaseline.includes(literal))) {
+    throw new Error("reviewed improvement scenario does not reproduce the claimed baseline failure");
+  }
+  if (requiredLiterals.some((literal) => !compactCandidate.includes(literal))) {
+    throw new Error("published candidate response does not satisfy the reviewed required literals");
+  }
+  return {
+    same_input: true,
+    baseline: runtimeOutcomeEvidence(baseline),
+    candidate: runtimeOutcomeEvidence(candidate),
+    required_literals_checked: requiredLiterals.length,
+  };
+}
+
+function runtimeOutcomeEvidence(run) {
+  return {
+    run_id: run.run_id,
+    session_id: run.session_id,
+    agent_version_id: run.agent_version_id,
+    trace_id: run.trace_id,
+    trace_status: run.trace_status,
+    input_sha256: run.inputSha256,
+    reply_text_sha256: run.replyTextSha256,
+    reply_text_length: run.replyTextLength,
   };
 }

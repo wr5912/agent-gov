@@ -68,7 +68,7 @@ TIA 和 xdist 在满足 `tests/quality_policy.json` 的配对样本与时间窗�
 | --- | --- | --- |
 | `.codex` / `.claude` skill、README、docs 容器治理 | `git diff --check`、`scripts/check_docs_governance.py`、`scripts/check_stage_language.py`、`scripts/check_codex_governance.py --mode fail`、相关 skill/governance 单测 | 用户要求完整验证、发版、或改动影响运行时代码 |
 | docs 归档、删除、重命名或权威替换 | `tests/test_documentation_contracts.py`、`scripts/check_orphan_tests.py`、`scripts/check_docs_governance.py` | 提交/发版时追加 `make test` |
-| runtime/env、Docker、模型凭据边界 | settings/env policy/documentation 相关 pytest；隔离核心容器用 `make container-core-smoke`，Langfuse/OTel 用 `make langfuse-smoke` | 影响 Agent job 主流程时跑 `make main-flow-test`；真实模型使用显式授权的 `REQUIRE_LIVE_RUNTIME=1 make container-live-test` |
+| runtime/env、Docker、模型凭据边界 | settings/env policy/documentation 相关 pytest；隔离核心容器用 `make container-core-smoke`；Langfuse/OTel 须绑定仓库外复核成功场景后用 `make langfuse-smoke` | 影响 Agent job 主流程时跑 `make main-flow-test`；真实模型须提供仓库外人工复核场景，并使用 `REQUIRE_LIVE_RUNTIME=1 REAL_ACCEPTANCE_AGENT_ID=security-operations-expert REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json make container-live-test` |
 | 产品主流程、Agent job、formatter、store、API/UI 状态 | `make main-flow-test` + 相关 pytest | 提交/发版时跑 `make test` |
 | 四阶段改进治理 UI 设计一致性、抽屉/modal 语义、Playground 动作边界 | `pnpm --dir frontend run verify:design-parity`，必要时追加 `make ui-feedback-smoke` | 改动真实前端组件时同时跑 `pnpm --dir frontend build` |
 | 前端可见行为 | `pnpm --dir frontend build`，必要时浏览器 smoke | 改 OpenAPI/类型时先生成并检查漂移 |

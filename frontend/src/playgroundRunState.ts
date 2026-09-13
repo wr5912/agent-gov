@@ -57,6 +57,14 @@ export type PlaygroundRunAction =
     message: string;
   }
   | {
+    type: "monitor_recovered";
+    operationId: string;
+  }
+  | {
+    type: "not_submitted";
+    operationId: string;
+  }
+  | {
     type: "terminal";
     operationId: string;
     outcome: PlaygroundRunOutcome;
@@ -99,6 +107,7 @@ export function playgroundRunReducer(
   }
   if (state.operationId !== action.operationId) return state;
 
+  if (action.type === "not_submitted") return releaseUnsubmittedState(state);
   if (action.type === "run_handle") {
     if (state.sessionId && state.sessionId !== action.sessionId) return state;
     return {
@@ -114,8 +123,8 @@ export function playgroundRunReducer(
     };
   }
   if (action.type === "awaiting_input") {
-    if (state.phase !== "running") return state;
-    return { ...state, phase: "awaiting_input" };
+    if (state.phase !== "running" && state.phase !== "reconciling") return state;
+    return { ...state, phase: "awaiting_input", controlError: undefined };
   }
   if (action.type === "input_resolved") {
     if (state.phase !== "awaiting_input") return state;
@@ -132,6 +141,10 @@ export function playgroundRunReducer(
   if (action.type === "reconciling") {
     return { ...state, phase: "reconciling", controlError: action.message };
   }
+  if (action.type === "monitor_recovered") {
+    if (state.phase !== "reconciling" && state.phase !== "awaiting_input") return state;
+    return { ...state, phase: "running", controlError: undefined };
+  }
   if (action.type === "terminal") {
     return {
       phase: "idle",
@@ -141,6 +154,16 @@ export function playgroundRunReducer(
     };
   }
   return state;
+}
+
+function releaseUnsubmittedState(state: PlaygroundRunState): PlaygroundRunState {
+  if (state.source !== "local" || state.runId) return state;
+  return {
+    phase: "idle",
+    lastOutcome: state.lastOutcome,
+    lastRunId: state.lastRunId,
+    lastSessionId: state.lastSessionId,
+  };
 }
 
 export function isPlaygroundRunLocked(state: PlaygroundRunState): boolean {
@@ -161,7 +184,7 @@ export function playgroundRunStatusText(state: PlaygroundRunState): string {
   if (state.phase === "cancelling") return "停止中…";
   if (state.phase === "reconciling") return "状态待核对";
   if (state.phase === "awaiting_input") return "等待输入";
-  if (state.phase === "starting") return "正在启动";
+  if (state.phase === "starting") return "正在建立事件流";
   if (state.phase === "running") return "运行中";
   return "Ready";
 }

@@ -1,6 +1,6 @@
 # AgentScope 与 Langfuse 观测契约及验收
 
-> 核对日期：2026-09-11。本文依据 AgentGov 4.0.0 源码基线，记录观测边界与验收要求。
+> 核对日期：2026-09-11。本文依据 AgentGov 4.0.1 当前整改候选，记录观测边界与验收要求；既有 v4.0.0 tag 不代表本轮整改代码。
 > 代码和测试存在不代表真实部署已经验收；本文不构成生产上线、故障恢复或性能通过报告。
 > 来源材料：`agentscope-langfuse-integration-requirements.md`，原稿面向 AgentScope
 > `examples/agent_service` / `examples/web_ui`，基线为 AgentScope 2.0.8、Langfuse v4.32.0 草案。
@@ -25,7 +25,7 @@
 | Redis 双向 TraceIndex | 不纳入 | AgentGov run 与持久化控制回执已经提供关联与对账事实，不另建一份索引 |
 | Feedback Outbox 与 Langfuse Score 改评 | 不纳入 | 反馈进入 AgentGov 治理对象；当前未实现该草案的 Score 投影队列 |
 | 30 天保留、异步删除与索引 TTL | 不纳入 | 当前未实现该草案的 retention 清理服务，不能声称自动按 30 天删除 |
-| v4.32.0、Observations v2、Scores v3、无 SDK | 不纳入当前基线 | Compose 默认 Langfuse `:3`，当前通过 Python SDK 查询；v4 兼容尚未由本文验证 |
+| v4.32.0、Observations v2、Scores v3、无 SDK | 不纳入当前基线 | Compose 默认锁定 Langfuse `3.225.7` 的 web/worker manifest digest，当前通过 Python SDK 查询；v4 兼容尚未由本文验证 |
 | `/observability/v1`、专属开关与 TraceSheet | 不纳入 | 复用 AgentGov run/trace 入口，不复制原稿 API、环境变量或前端布局约定 |
 | 基于 owner 的多用户隔离 | 改写 | 当前是单租户 operator 控制面，不提供原稿的多租户授权承诺 |
 | 原始 AgentEvent/SSE 与语义 trace 分离 | 采纳 | SSE 未知事件继续原样透传；Langfuse 不承担会话恢复或逐 delta replay |
@@ -69,6 +69,17 @@ Middleware 在每次 `anext` 前 attach context，随后 detach 再 yield，避�
 stage 可先结束；根等待控制面 terminal 确认后结束，重复确认幂等。Runtime 退出会关闭仍活动的根；
 这不代表可以从崩溃的 model/tool 指令中点继续，也不等于强杀场景已验证零丢失。
 
+Runtime 的普通控制回执调度器是进程内队列，不是 durable outbox。它用稳定
+`receipt_id` / `event_id` 和控制面幂等写入对抗重放；调用协程取消后，已调度任务仍由
+tracked task 继续投递。优雅关闭时依次关闭 Storage、有界刷新控制回执、收口 trace、
+关闭 provider；刷新超时或永久错误会使 lifespan 失败并记录不含正文和凭据的错误。
+
+`SIGKILL`、进程崩溃、容器或主机突然丢失不执行上述 flush，未 ACK 的内存回执可能丢失；
+不得把协程取消保护表述为进程崩溃后耐久。此时依赖 AgentGov 控制面的 durable run/fence：
+Runtime boot reconciliation 先对 active run 请求中断，再对所有绑定 Session 执行连续两次真实
+idle 观测后 fail-closed 收敛。该恢复链只确保 run 不永久假挂和 fence 不提前释放，
+不承诺重建崩溃窗口中未持久的 Message、回执或 OTel span。
+
 ## 3. 内容、凭据与传输
 
 当前 [OTel 出口](../../agentscope_runtime/observability.py) 使用 `RedactingSpanProcessor`
@@ -91,8 +102,8 @@ OTLP endpoint/header 也不初始化 exporter。Provider 的 flush/shutdown 由 
 | 消费方 | 当前凭据边界 | 配置与验证入口 |
 | --- | --- | --- |
 | AgentScope Runtime | 持有模型/MCP 凭据及 OTLP 摄取配置；摄取与 API 查询复用同一对项目 key，不表示权限隔离；不接收登录、盐、加密或存储密码 | Runtime settings、OTLP 导出与脱敏测试 |
-| AgentGov API | 仅持有 Runtime 共享密钥和可选 Langfuse 查询凭据，不接收模型/MCP secret | API settings、trace 查询与错误投影 |
-| 浏览器 | 经 AgentGov API 读取 trace，不持有 Langfuse secret | API 响应、DOM 与构建产物检查 |
+| AgentGov API | 仅把可选 Langfuse 项目凭据用于查询、不执行写入，但该 key 同时供 Runtime 摄取，凭据本身没有只读降权；不接收模型/MCP secret | API settings、trace 查询与错误投影 |
+| 浏览器 | 经 AgentGov API 读取受控 trace 引用与完整性状态，不持有 Langfuse secret | API 响应、DOM 与构建产物检查 |
 | Langfuse profile | 保存脱敏语义 observation，其基础设施凭据保持私有 | Compose 渲染摘要与真实 trace smoke |
 
 容器部署通过 `COMPOSE_ENV_FILE` 选择一份完整 env；宿主调试、容器和前端环境各有边界，
@@ -109,14 +120,21 @@ OTel SDK、运行环境和真实调用数量核实。当前也没有本地 Colle
 
 ## 4. 查询、完整性与反馈门
 
-调用方优先访问 `GET /api/agent-runs/{run_id}/trace`。已知 trace ID 时可使用现有
-`GET /api/langfuse/traces/{trace_id}`；前端不直接访问 Langfuse secret API。
-该查询路径不新增原稿的 `/observability/v1`、reply 查询、retention 或 Score 协议。
+唯一公开查询入口是 `GET /api/agent-runs/{run_id}/trace`。控制面先读取并授权该 AgentGov run，
+不提供仅凭 `trace_id` 读取 Langfuse payload 的通用路由；前端不直接访问 Langfuse secret API。
+公开响应只包含 run/trace 关联、受控链接和完整性状态，不返回 observation、input、output、event、
+body 或上游 metadata。该查询路径不新增原稿的 `/observability/v1`、reply 查询、retention 或
+Score 协议。
 
 [查询客户端](../../app/runtime/integrations/runtime_langfuse.py) 当前使用 Langfuse SDK 的
-`trace.get`，请求 `core,scores,observations,metrics`，不请求 I/O 字段。
-查询异常返回脱敏的失败状态与错误类型。Compose 的 `:3` 默认值不是完整版本锁定证据；
-验收仍须记录实际镜像 digest，不能由原稿 v4 文档推导本实例的 API 兼容性。
+`trace.get`，只请求 `core,observations`，随后按受控 trace/observation 字段和精确语义属性
+allowlist 做第二次正向投影；因此不能把上游 `fields` 参数当成隐私边界。投影后的瞬时内部视图
+只供完整性校验和受控证据摘要使用，公开 API 不复用该 payload。查询客户端忽略宿主机代理环境，
+避免本地 Langfuse Basic 查询凭据被意外发送给外部代理。
+查询异常返回脱敏的失败状态与错误类型。Compose 将 Langfuse web/worker 成对锁定为
+`3.225.7` 的多架构 manifest digest，并锁定 Postgres、ClickHouse、Redis 与 MinIO 的本轮
+验证 digest；私有 web/worker 覆盖必须成对且显式版本一致。验收仍须记录本机解析后的平台镜像 digest，不能由
+原稿 v4 文档推导本实例的 API 兼容性。
 
 `trace_status` 与 run 业务状态分开：
 
@@ -161,13 +179,18 @@ expectations 由 [run 查询存储](../../app/runtime_gateway/_store_run_queries
 | 无正文回执、工具终态、HITL/external 身份 | [test_agentscope_trace_receipts.py](../../tests/test_agentscope_trace_receipts.py) |
 | 从持久事实生成观测期望 | [test_runtime_trace_expectation_store.py](../../tests/test_runtime_trace_expectation_store.py) |
 | 根图、reply、Team、tool、action 和指纹负向验证 | [test_runtime_trace_validation.py](../../tests/test_runtime_trace_validation.py) |
-| 后台完整性、查询失败隔离、截止时间 | [test_runtime_trace_reconciliation.py](../../tests/test_runtime_trace_reconciliation.py) |
+| 查询失败脱敏、公开投影与访问边界 | [test_langfuse_query_client.py](../../tests/test_langfuse_query_client.py) |
 | Runtime 生命周期、正文脱敏与持久化回执 | [test_agentscope_runtime_service.py](../../tests/test_agentscope_runtime_service.py) |
+| 回执重试、取消、响应丢失重放与有界关闭 | [test_runtime_control_receipt_delivery.py](../../tests/test_runtime_control_receipt_delivery.py) |
 | smoke 绑定本轮 run 和语义关联 | [test_langfuse_smoke_contract.py](../../tests/test_langfuse_smoke_contract.py) |
 
-真实观测验收走公共入口 `make langfuse-smoke COMPOSE_ENV_FILE=docker/.env`。
-该入口会触发真实 AgentScope run，需要可用的模型与 OTLP 私有配置；
+真实观测验收走公共入口
+`REQUIRE_LIVE_RUNTIME=1 REAL_ACCEPTANCE_AGENT_ID=security-operations-expert
+REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json make langfuse-smoke COMPOSE_ENV_FILE=docker/.env`。
+该入口从仓库外复核文件选择一个 `success` 场景触发真实 AgentScope run，需要可用的模型与 OTLP 私有配置；
 [smoke 脚本](../../scripts/langfuse_smoke.py) 校验本轮 run 的语义 trace，而非任选历史记录。
+公开 AgentGov API 不返回 observation payload；脚本只在隔离验收进程中使用私有凭据查询 Langfuse，
+并在校验前复用控制面的正向字段投影。
 容器构建、force-recreate、临时卷隔离与清理遵循根 README 的验收 runner 契约。
 
 | 场景 | 应保存的成功或失败证据 |
@@ -185,7 +208,7 @@ expectations 由 [run 查询存储](../../app/runtime_gateway/_store_run_queries
 测试中只保留匹配位置、计数、长度/hash 和脱敏结果，不把真实秘密或业务正文带入交付证据。
 当前单元测试的 canary 不能代替跨进程、真实 Langfuse 和浏览器验证。
 
-50 个实质不同输入、浏览器连续 3 次、2 小时 soak 等全局门统一见
+50 个实质不同输入、Chromium 与 Firefox 各连续 3 次等全局门统一见
 [Runtime 替换验收基线](./AgentGov_AgentScope_Runtime替换实施基线与验收.md)，本文不另定一套阈值。
 原稿的 100 Session × 10 reply、v4 Score 跨日改评和 retention 删除测试不自动成为本期通过声明。
 
@@ -196,7 +219,12 @@ expectations 由 [run 查询存储](../../app/runtime_gateway/_store_run_queries
 ## 6. 本基线的已知边界
 
 - 本轮运行验收范围见 [Runtime 替换验收基线 §6.3](./AgentGov_AgentScope_Runtime替换实施基线与验收.md#63-当前能力边界)。
-  AgentGov 4.0.0 版本号不代表 Langfuse v4；Langfuse v4 API、生产故障恢复、保留期与吞吐目标尚未验证。
+  AgentGov `v4.0.0` tag 和当前 4.0.1 整改候选均不代表 Langfuse v4；Langfuse v4 API、生产故障恢复、保留期与吞吐目标尚未验证。
+- `all-up`、容器 healthy 或 Web 登录成功都不等于真实 OTLP 摄取与查询可用。任何 Langfuse 恢复通过声明必须在
+  仓库外冷备上共同演练 PostgreSQL、ClickHouse、MinIO 与 Redis，并保留原 `LANGFUSE_ENCRYPTION_KEY`
+  的可恢复性；只恢复数据库或更换加密 key 不能视为完整恢复。当前尚无这组生产恢复证据。
+- 自助注册关闭等身份面设置必须先按当前锁定的 Langfuse `3.225.7` 实际配置核验，不能照搬另一大版本的变量名；
+  私有身份、salt、认证和存储加密值只保留在所选私有 env／备份中，不进入源码、日志或本文。
 - Collector、Redis TraceIndex、Score Outbox、自动清理和多租户授权均非本文声明的现有能力。
 - Langfuse 不接管 AgentScope 消息事实，也不反向驱动运行状态；观测不完整会阻止自动改进取证。
 - 若依赖升级改变公共 Hook、采样、属性、查询结构或异步可见时间，应重跑对应契约与真实 smoke，

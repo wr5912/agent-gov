@@ -14,8 +14,10 @@ from urllib.parse import urlsplit
 
 import yaml
 from agentgov_harness_digest import harness_content_digest
+from agentgov_run_permission import is_bounded_run_path_rule
+from agentscope.message import ToolCallBlock, ToolCallState
 from agentscope.middleware import MiddlewareBase
-from agentscope.permission import PermissionBehavior, PermissionDecision, PermissionMode
+from agentscope.permission import PermissionBehavior, PermissionDecision, PermissionMode, PermissionRule
 from agentscope.tool import ToolBase
 
 from .bash_policy import parse_safe_bash
@@ -28,6 +30,7 @@ _READ_TOOL_PATH_KEYS = {"Read": "file_path", "Grep": "path", "Glob": "path"}
 _MAX_PERMISSION_SCAN_ENTRIES = 10_000
 _BASH_METADATA_MUTATOR = re.compile(r"(?:^|[;&|()\s])(chmod|chown|chgrp|chattr)(?:$|\s)")
 _RUN_RULE_SOURCE_PREFIX = "agentgov-run:"
+_MINIMUM_WORKER_TOOLS = frozenset({"TeamSay"})
 _REQUIRED_IMMUTABLE_PATHS = {"AGENT.md", "agent.yaml", "skills/**", "mcp/**", "subagents/**"}
 _SUPPORTED_RUNTIME_MIDDLEWARES = {"policy_guard", "tool_audit", "system_prompt_context"}
 _SUBAGENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,126}")
@@ -42,6 +45,7 @@ class _HarnessRule:
 @dataclass(frozen=True)
 class _PolicyConfig:
     allow_rules: tuple[_HarnessRule, ...]
+    ask_rules: tuple[_HarnessRule, ...]
     deny_rules: tuple[_HarnessRule, ...]
     denied_read_paths: tuple[str, ...]
     writable_paths: tuple[str, ...]
@@ -50,7 +54,7 @@ class _PolicyConfig:
 
 
 class AgentGovPolicyMiddleware(MiddlewareBase):
-    """DENY 优先执行 Harness 规则，未被显式允许的工具一律拒绝。"""
+    """DENY 优先执行 Harness 规则，仅受审 ASK 可进入人工确认。"""
 
     def __init__(
         self,
@@ -64,6 +68,7 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
         self._environ = os.environ if environ is None else environ
         policy = self._load_policy()
         self._allow_rules = policy.allow_rules
+        self._ask_rules = policy.ask_rules
         self._deny_rules = policy.deny_rules
         self._denied_read_paths = policy.denied_read_paths
         self._writable_paths = policy.writable_paths
@@ -120,13 +125,27 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
             return self._deny("Network target is outside workspace_policy.allowed_network_domains")
         if self._uses_disallowed_subagent(tool.name, tool_input):
             return self._deny("Subagent type is outside the current AgentGov Harness version")
-        if self._permission_mode(agent) is PermissionMode.BYPASS:
+        permission_mode = self._permission_mode(agent)
+        if permission_mode is PermissionMode.BYPASS:
             return self._deny("AgentGov Runtime forbids bypass permission mode")
-        subagent_decision = await self._subagent_boundary(agent, tool, tool_input)
-        if subagent_decision is not None:
-            return subagent_decision
+        if not isinstance(permission_mode, PermissionMode):
+            return self._deny("AgentGov Runtime received an invalid permission mode")
         if await self._matches(self._deny_rules, tool, tool_input):
             return self._deny("Denied by AgentGov Harness policy")
+        if permission_mode is PermissionMode.EXPLORE and not await self._is_read_only(tool, tool_input):
+            return self._deny("AgentGov Runtime explore mode is read-only")
+        worker_decision = await self._worker_boundary(
+            agent,
+            tool,
+            tool_input,
+            is_worker=runtime_context is not None and runtime_context.role == "worker",
+        )
+        if worker_decision is not None and worker_decision.behavior is PermissionBehavior.DENY:
+            return worker_decision
+        if self._is_confirmed_tool_call(input_kwargs.get("tool_call"), tool):
+            return await next_handler(**input_kwargs)
+        if worker_decision is not None:
+            return worker_decision
         if runtime_context is not None and await self._matches_current_run_rule(
             agent,
             tool,
@@ -138,31 +157,47 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
                 message="Allowed by AgentGov run-scoped confirmation",
                 decision_reason="agentgov.allow_for_run",
             )
+        ask_rule = await self._matching_rule(self._ask_rules, tool, tool_input)
+        if ask_rule is not None:
+            if permission_mode is PermissionMode.DONT_ASK:
+                return self._deny("AgentGov Runtime dont_ask mode cannot request confirmation")
+            return self._ask(tool.name, ask_rule)
         if await self._matches(self._allow_rules, tool, tool_input):
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
                 message="Allowed by AgentGov Harness policy",
                 decision_reason="workspace_policy.allowed_tools",
             )
-        del next_handler
         return self._deny("Tool invocation is not explicitly allowed by AgentGov Harness policy")
 
-    async def _subagent_boundary(
+    async def _worker_boundary(
         self,
         agent: Any,
         tool: ToolBase,
         tool_input: MiddlewareInput,
+        *,
+        is_worker: bool,
     ) -> PermissionDecision | None:
+        if not is_worker:
+            return None
+        if tool.name in _MINIMUM_WORKER_TOOLS:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="Allowed by the AgentGov worker baseline",
+                decision_reason="agentgov.worker.minimum_tools",
+            )
         context = getattr(getattr(agent, "state", None), "permission_context", None)
         allow_rules = self._scoped_subagent_rules(getattr(context, "allow_rules", None))
         deny_rules = self._scoped_subagent_rules(getattr(context, "deny_rules", None))
-        if not allow_rules and not deny_rules:
-            return None
         if await self._matches_permission_rules(deny_rules, tool, tool_input):
             return self._deny("Denied by the current AgentGov subagent policy")
         if not await self._matches_permission_rules(allow_rules, tool, tool_input):
             return self._deny("Tool is not explicitly allowed for the current AgentGov subagent")
-        return None
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="Allowed by the current AgentGov subagent policy",
+            decision_reason="agentgov.subagent.allowed_tools",
+        )
 
     @staticmethod
     def _scoped_subagent_rules(value: Any) -> tuple[Any, ...]:
@@ -172,18 +207,24 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
             rule for rules in value.values() if isinstance(rules, list) for rule in rules if str(getattr(rule, "source", "")).startswith("agentgov-subagent:")
         )
 
-    @staticmethod
+    @classmethod
     async def _matches_permission_rules(
+        cls,
         rules: tuple[Any, ...],
         tool: ToolBase,
         tool_input: MiddlewareInput,
     ) -> bool:
         for rule in rules:
-            if getattr(rule, "tool_name", None) != tool.name:
+            rule_tool_name = getattr(rule, "tool_name", None)
+            if not isinstance(rule_tool_name, str) or not cls._tool_name_matches(rule_tool_name, tool.name):
                 continue
             if await tool.match_rule(getattr(rule, "rule_content", None), tool_input):
                 return True
         return False
+
+    @staticmethod
+    def _is_confirmed_tool_call(value: Any, tool: ToolBase) -> bool:
+        return isinstance(value, ToolCallBlock) and value.name == tool.name and value.state == ToolCallState.ALLOWED
 
     @staticmethod
     def _prune_run_rules(agent: Any, *, active_run_id: str | None) -> None:
@@ -234,9 +275,18 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
         if not _REQUIRED_IMMUTABLE_PATHS.issubset(immutable_paths):
             raise ValueError("workspace_policy.immutable_paths does not protect the complete Harness")
         self._validate_runtime_middlewares(payload.get("runtime_middlewares"))
+        allow_rules = self._parse_rules(policy.get("allowed_tools"), "allowed_tools")
+        ask_rules = self._parse_rules(policy.get("ask_tools", []), "ask_tools")
+        deny_rules = self._parse_rules(policy.get("denied_tools"), "denied_tools")
+        self._validate_rule_conflicts(
+            allow_rules=allow_rules,
+            ask_rules=ask_rules,
+            deny_rules=deny_rules,
+        )
         return _PolicyConfig(
-            allow_rules=self._parse_rules(policy.get("allowed_tools"), "allowed_tools"),
-            deny_rules=self._parse_rules(policy.get("denied_tools"), "denied_tools"),
+            allow_rules=allow_rules,
+            ask_rules=ask_rules,
+            deny_rules=deny_rules,
             denied_read_paths=tuple(self._parse_path_list(policy.get("denied_read_paths"), "denied_read_paths", allow_empty=False)),
             writable_paths=tuple(self._parse_path_list(policy.get("writable_paths"), "writable_paths", allow_empty=True)),
             allowed_network_hosts=self._parse_network_hosts(policy.get("allowed_network_domains")),
@@ -299,13 +349,13 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
 
     @staticmethod
     def _parse_rules(value: Any, field: str) -> tuple[_HarnessRule, ...]:
-        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        if not isinstance(value, list) or any(not isinstance(item, str) or item != item.strip() or "\0" in item for item in value):
             raise ValueError(f"workspace_policy.{field} must be a string list")
         rules: list[_HarnessRule] = []
         for item in value:
             tool_name, separator, content = item.partition("(")
-            if field == "allowed_tools" and tool_name.startswith("mcp__") and any(character in tool_name for character in "*?["):
-                raise ValueError("workspace_policy.allowed_tools cannot wildcard MCP tools")
+            if field in {"allowed_tools", "ask_tools"} and tool_name.startswith("mcp__") and any(character in tool_name for character in "*?["):
+                raise ValueError(f"workspace_policy.{field} cannot wildcard MCP tools")
             if separator:
                 if not item.endswith(")") or not tool_name or not content[:-1]:
                     raise ValueError(f"workspace_policy.{field} contains an invalid rule")
@@ -315,6 +365,27 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
             else:
                 raise ValueError(f"workspace_policy.{field} contains an empty rule")
         return tuple(rules)
+
+    @staticmethod
+    def _validate_rule_conflicts(
+        *,
+        allow_rules: tuple[_HarnessRule, ...],
+        ask_rules: tuple[_HarnessRule, ...],
+        deny_rules: tuple[_HarnessRule, ...],
+    ) -> None:
+        groups = {
+            "allowed_tools": allow_rules,
+            "ask_tools": ask_rules,
+            "denied_tools": deny_rules,
+        }
+        for field, rules in groups.items():
+            if len(rules) != len(set(rules)):
+                raise ValueError(f"workspace_policy.{field} contains duplicate rules")
+        fields = tuple(groups)
+        for index, left in enumerate(fields):
+            for right in fields[index + 1 :]:
+                if set(groups[left]) & set(groups[right]):
+                    raise ValueError(f"workspace_policy.{left} and workspace_policy.{right} contain conflicting rules")
 
     async def _matches(
         self,
@@ -329,8 +400,19 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
                 return True
         return False
 
-    @staticmethod
+    async def _matching_rule(
+        self,
+        rules: tuple[_HarnessRule, ...],
+        tool: ToolBase,
+        tool_input: MiddlewareInput,
+    ) -> _HarnessRule | None:
+        for rule in rules:
+            if self._tool_name_matches(rule.tool_name, tool.name) and await tool.match_rule(rule.rule_content, tool_input):
+                return rule
+        return None
+
     async def _matches_current_run_rule(
+        self,
         agent: Any,
         tool: ToolBase,
         tool_input: MiddlewareInput,
@@ -340,12 +422,41 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
         rules = getattr(context, "allow_rules", {}).get(tool.name, [])
         source = f"{_RUN_RULE_SOURCE_PREFIX}{run_id}"
         for rule in rules:
-            if getattr(rule, "source", None) == source and await tool.match_rule(
-                getattr(rule, "rule_content", None),
-                tool_input,
+            if (
+                getattr(rule, "source", None) == source
+                and getattr(rule, "tool_name", None) == tool.name
+                and getattr(rule, "behavior", None) is PermissionBehavior.ALLOW
+                and self._bounded_run_rule_matches(
+                    tool.name,
+                    getattr(rule, "rule_content", None),
+                    tool_input,
+                )
             ):
                 return True
         return False
+
+    def _bounded_run_rule_matches(
+        self,
+        tool_name: str,
+        rule_content: str | None,
+        tool_input: MiddlewareInput,
+    ) -> bool:
+        if not is_bounded_run_path_rule(tool_name, rule_content):
+            return False
+        raw_path = tool_input.get("file_path")
+        if not isinstance(raw_path, str) or not raw_path or "\0" in raw_path:
+            return False
+        raw_parts = PurePosixPath(raw_path.replace("\\", "/")).parts
+        if ".." in raw_parts:
+            return False
+        target = self._resolve_tool_path(raw_path)
+        candidates = {target.as_posix()}
+        for root in (self._tool_workdir, self._workspace_root):
+            with suppress(ValueError):
+                relative = target.relative_to(root).as_posix()
+                candidates.update({relative, f"./{relative}"})
+        assert rule_content is not None
+        return any(fnmatch.fnmatchcase(candidate, rule_content) for candidate in candidates)
 
     @staticmethod
     def _tool_name_matches(pattern: str, tool_name: str) -> bool:
@@ -514,6 +625,29 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
         state = getattr(agent, "state", None)
         context = getattr(state, "permission_context", None)
         return getattr(context, "mode", None)
+
+    @staticmethod
+    async def _is_read_only(tool: ToolBase, tool_input: MiddlewareInput) -> bool:
+        try:
+            return await tool.check_read_only(tool_input)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _ask(tool_name: str, rule: _HarnessRule) -> PermissionDecision:
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message="Confirmation required by AgentGov Harness policy",
+            decision_reason="workspace_policy.ask_tools",
+            suggested_rules=[
+                PermissionRule(
+                    tool_name=tool_name,
+                    rule_content=rule.rule_content,
+                    behavior=PermissionBehavior.ALLOW,
+                    source="workspace_policy.ask_tools",
+                ),
+            ],
+        )
 
     @staticmethod
     def _deny(reason: str) -> PermissionDecision:

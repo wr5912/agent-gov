@@ -59,9 +59,32 @@ def read_requires_human_confirmation(workspace_dir: Path) -> bool:
     if not isinstance(loaded, dict):
         return False
     session = loaded.get("session")
-    if not isinstance(session, dict):
+    policy = loaded.get("workspace_policy")
+    if not isinstance(session, dict) or not isinstance(policy, dict):
         return False
-    return session.get("permission_mode") in {"default", "explore", "accept_edits"}
+    if session.get("permission_mode") not in {"default", "explore", "accept_edits"}:
+        return False
+    ask_tools = policy.get("ask_tools", [])
+    if not isinstance(ask_tools, list) or not ask_tools or any(not _valid_ask_rule(item) for item in ask_tools):
+        return False
+    if len(ask_tools) != len(set(ask_tools)):
+        return False
+    allowed_tools = policy.get("allowed_tools", [])
+    denied_tools = policy.get("denied_tools", [])
+    if not isinstance(allowed_tools, list) or not isinstance(denied_tools, list):
+        return False
+    if any(not isinstance(item, str) for item in (*allowed_tools, *denied_tools)):
+        return False
+    return not (set(ask_tools) & (set(allowed_tools) | set(denied_tools)))
+
+
+def _valid_ask_rule(value: object) -> bool:
+    if not isinstance(value, str) or not value or value != value.strip() or "\0" in value:
+        return False
+    name, separator, content = value.partition("(")
+    if not name or (separator and (not value.endswith(")") or not content[:-1])):
+        return False
+    return not (name.startswith("mcp__") and any(character in name for character in "*?["))
 
 
 def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:

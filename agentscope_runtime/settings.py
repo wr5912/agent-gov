@@ -107,6 +107,33 @@ def _sqlite_url(value: str, *, data_dir: Path) -> str:
     return value
 
 
+def _runtime_storage(values: Mapping[str, str]) -> tuple[Path, Path, Path, Path, str]:
+    data_dir = _absolute_path(
+        values.get("AGENTSCOPE_RUNTIME_DATA_DIR", "/runtime-data"),
+        name="AGENTSCOPE_RUNTIME_DATA_DIR",
+    )
+    business_root = _absolute_path(
+        values.get("AGENTSCOPE_RUNTIME_BUSINESS_AGENTS_ROOT", "/business-agents"),
+        name="AGENTSCOPE_RUNTIME_BUSINESS_AGENTS_ROOT",
+    )
+    candidates_root = _absolute_path(
+        values.get("AGENTSCOPE_RUNTIME_CANDIDATES_ROOT", "/candidate-workspaces"),
+        name="AGENTSCOPE_RUNTIME_CANDIDATES_ROOT",
+    )
+    workspaces_root = _absolute_path(
+        values.get("AGENTSCOPE_RUNTIME_WORKSPACES_ROOT", "/runtime-workspaces"),
+        name="AGENTSCOPE_RUNTIME_WORKSPACES_ROOT",
+    )
+    database_url = _sqlite_url(
+        values.get(
+            "AGENTSCOPE_RUNTIME_DATABASE_URL",
+            f"sqlite+aiosqlite:///{data_dir / 'agentscope.db'}",
+        ),
+        data_dir=data_dir,
+    )
+    return data_dir, business_root, candidates_root, workspaces_root, database_url
+
+
 @dataclass(frozen=True)
 class RuntimeSettings:
     """独立 Runtime 的边界配置，不读取 AgentGov 业务配置。"""
@@ -140,29 +167,13 @@ class RuntimeSettings:
         secret = _required_value(values, "AGENTGOV_RUNTIME_SHARED_SECRET")
         provider_api_key = _required_value(values, "MODEL_PROVIDER_API_KEY")
 
-        data_dir = _absolute_path(
-            values.get("AGENTSCOPE_RUNTIME_DATA_DIR", "/runtime-data"),
-            name="AGENTSCOPE_RUNTIME_DATA_DIR",
-        )
-        business_root = _absolute_path(
-            values.get("AGENTSCOPE_RUNTIME_BUSINESS_AGENTS_ROOT", "/business-agents"),
-            name="AGENTSCOPE_RUNTIME_BUSINESS_AGENTS_ROOT",
-        )
-        candidates_root = _absolute_path(
-            values.get("AGENTSCOPE_RUNTIME_CANDIDATES_ROOT", "/candidate-workspaces"),
-            name="AGENTSCOPE_RUNTIME_CANDIDATES_ROOT",
-        )
-        workspaces_root = _absolute_path(
-            values.get("AGENTSCOPE_RUNTIME_WORKSPACES_ROOT", "/runtime-workspaces"),
-            name="AGENTSCOPE_RUNTIME_WORKSPACES_ROOT",
-        )
-        database_url = _sqlite_url(
-            values.get(
-                "AGENTSCOPE_RUNTIME_DATABASE_URL",
-                f"sqlite+aiosqlite:///{data_dir / 'agentscope.db'}",
-            ),
-            data_dir=data_dir,
-        )
+        (
+            data_dir,
+            business_root,
+            candidates_root,
+            workspaces_root,
+            database_url,
+        ) = _runtime_storage(values)
         port = _port(values.get("AGENTSCOPE_RUNTIME_PORT", "8090"))
 
         return cls(

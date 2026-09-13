@@ -60,7 +60,7 @@ x-acceptance-labels: &acceptance-labels
 services:
   langfuse-volume-init:
     profiles: ["langfuse-maintenance"]
-    image: ${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17}
+    image: ${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17.9@sha256:347bc4e64006d47bb255b0e28652d08590260a5e97f6b55f6ba1c0b31aef58b3}
     user: "0:0"
     network_mode: "none"
     entrypoint: ["/bin/sh", "-ec"]
@@ -85,7 +85,7 @@ services:
 
   langfuse-worker:
     profiles: ["langfuse"]
-    image: ${LANGFUSE_WORKER_IMAGE:-docker.io/langfuse/langfuse-worker:3}
+    image: ${LANGFUSE_WORKER_IMAGE:-docker.io/langfuse/langfuse-worker:3.225.7@sha256:93207bd67d2e789ea55fa3d47eeba065dd6b1869187127ab24201784c52b96bc}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-worker
     labels: *acceptance-labels
     restart: unless-stopped
@@ -104,7 +104,7 @@ services:
 
   langfuse-web:
     profiles: ["langfuse"]
-    image: ${LANGFUSE_WEB_IMAGE:-docker.io/langfuse/langfuse:3}
+    image: ${LANGFUSE_WEB_IMAGE:-docker.io/langfuse/langfuse:3.225.7@sha256:a27fe525f52984fa6d36fd34e8b8c6e5ae4af43f34134cafc833b467fa9580ae}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-web
     labels: *acceptance-labels
     restart: unless-stopped
@@ -136,7 +136,7 @@ services:
 
   langfuse-clickhouse:
     profiles: ["langfuse"]
-    image: ${LANGFUSE_CLICKHOUSE_IMAGE:-docker.io/clickhouse/clickhouse-server:24.3}
+    image: ${LANGFUSE_CLICKHOUSE_IMAGE:-docker.io/clickhouse/clickhouse-server:24.3.18.7@sha256:85b97f63dcfff47790d26bb5d5801637aaddb2b93e5e9aee27a686c2fb2b9916}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-clickhouse
     labels: *acceptance-labels
     restart: unless-stopped
@@ -158,7 +158,7 @@ services:
 
   langfuse-minio:
     profiles: ["langfuse"]
-    image: ${LANGFUSE_MINIO_IMAGE:-cgr.dev/chainguard/minio}
+    image: ${LANGFUSE_MINIO_IMAGE:-cgr.dev/chainguard/minio@sha256:f2cbe739b01145a88176b1b6949fc0d0f568f24dbf27fa801795372d70aab38e}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-minio
     labels: *acceptance-labels
     restart: unless-stopped
@@ -183,7 +183,7 @@ services:
 
   langfuse-redis:
     profiles: ["langfuse"]
-    image: ${LANGFUSE_REDIS_IMAGE:-docker.io/redis:7}
+    image: ${LANGFUSE_REDIS_IMAGE:-docker.io/redis:7.4.9@sha256:3e1b24a1a8f24ff926b15e5ace8c38a03e5657fb66e1fc7e5188e315aa5fa094}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-redis
     labels: *acceptance-labels
     restart: unless-stopped
@@ -206,7 +206,7 @@ services:
 
   langfuse-postgres:
     profiles: ["langfuse"]
-    image: ${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17}
+    image: ${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17.9@sha256:347bc4e64006d47bb255b0e28652d08590260a5e97f6b55f6ba1c0b31aef58b3}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-postgres
     labels: *acceptance-labels
     restart: unless-stopped

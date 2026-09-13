@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from app.runtime.errors import ConflictError
+from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
-from app.runtime_gateway.client import RuntimeUpstreamError
+from app.runtime.stores.feedback_store import FeedbackStore
+from app.runtime_gateway.client import AgentScopeRuntimeClient, RuntimeUpstreamError
 from app.runtime_gateway.harness_snapshots import PublishedHarnessSnapshotStore
-from app.runtime_gateway.provisioning import RuntimeAgentProvisioner
-from app.runtime_gateway.store import RuntimeObjectNotFound, RuntimeRunStore, RuntimeStateConflict, harness_digest
+from app.runtime_gateway.store import RuntimeRunStore, RuntimeStateConflict, harness_digest
+from app.services.agent_governance import AgentGovernanceService
 from app.services.runtime_agent_deletion import RuntimeAgentDeletionService
 
 from business_agent_test_utils import create_test_business_agent_workspace
@@ -21,44 +24,24 @@ def _git(repository: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repository), *args],
         check=True,
-        stdout=subprocess.PIPE,
+        capture_output=True,
         text=True,
     ).stdout.strip()
 
 
-class _RuntimeClient:
-    def __init__(self) -> None:
-        self.sessions = {"runtime-a": {"session-a", "session-b"}}
-        self.agents = {"runtime-a"}
-        self.fail_session_once = "session-b"
-        self.calls: list[tuple[str, str]] = []
-
-    async def list_session_ids(self, runtime_agent_id: str) -> list[str]:
-        self.calls.append(("list", runtime_agent_id))
-        if runtime_agent_id not in self.agents:
-            raise RuntimeUpstreamError(404, b'{"detail":"gone"}')
-        return sorted(self.sessions.get(runtime_agent_id, set()))
-
-    async def delete_session(self, session_id: str, runtime_agent_id: str) -> None:
-        self.calls.append(("delete_session", session_id))
-        if self.fail_session_once == session_id:
-            self.fail_session_once = None
-            raise RuntimeUpstreamError(502, b'{"detail":"provider secret must not persist"}')
-        sessions = self.sessions.get(runtime_agent_id, set())
-        if session_id not in sessions:
-            raise RuntimeUpstreamError(404, b'{"detail":"gone"}')
-        sessions.remove(session_id)
-
-    async def delete_agent(self, runtime_agent_id: str) -> None:
-        self.calls.append(("delete_agent", runtime_agent_id))
-        if runtime_agent_id not in self.agents:
-            raise RuntimeUpstreamError(404, b'{"detail":"gone"}')
-        if self.sessions.get(runtime_agent_id):
-            raise AssertionError("all Runtime Sessions must be deleted first")
-        self.agents.remove(runtime_agent_id)
+@pytest.fixture
+def unavailable_runtime_endpoint() -> Iterator[str]:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        listener.close()
 
 
-def _fixture(tmp_path: Path):
+@pytest.fixture
+def deletion_resources(tmp_path: Path, unavailable_runtime_endpoint: str):
     data_dir = tmp_path / "data"
     workspace = data_dir / "business-agents" / "agent-a" / "workspace"
     create_test_business_agent_workspace(workspace, agent_id="agent-a", name="Agent A")
@@ -67,24 +50,16 @@ def _fixture(tmp_path: Path):
     _git(workspace, "config", "user.email", "test@example.local")
     _git(workspace, "add", "-A")
     _git(workspace, "commit", "-m", "published")
-
-    from app.runtime.agent_git_store import GitAgentVersionStore
-
     versions = GitAgentVersionStore(
         repository_dir=workspace,
         worktrees_dir=workspace.parent / "version" / "worktrees",
         releases_dir=workspace.parent / "version" / "releases",
     )
-    commit = versions.current_commit_sha()
-    assert commit is not None
+    commit = versions.inspect_clean_head()[0]
     digest = harness_digest(workspace)
     factory = make_session_factory(data_dir / "runtime.sqlite3")
     registry = AgentRegistryStore(factory)
-    record = registry.create_business_agent(
-        name="Agent A",
-        agent_id="agent-a",
-        workspace_dir=str(workspace),
-    )
+    record = registry.create_business_agent(name="Agent A", agent_id="agent-a", workspace_dir=str(workspace))
     store = RuntimeRunStore(factory)
     registry.deletion_pending = store.agent_deletion_pending
     store.bind_agent_version(
@@ -93,14 +68,13 @@ def _fixture(tmp_path: Path):
         digest=digest,
         runtime_agent_id="runtime-a",
     )
-    for session_id in ("session-a", "session-b"):
-        store.bind_session(
-            session_id=session_id,
-            agent_id="agent-a",
-            agent_version_id=commit,
-            runtime_agent_id="runtime-a",
-            digest=digest,
-        )
+    store.bind_session(
+        session_id="session-a",
+        agent_id="agent-a",
+        agent_version_id=commit,
+        runtime_agent_id="runtime-a",
+        digest=digest,
+    )
     run = store.begin_run(
         session_id="session-a",
         runtime_agent_id="runtime-a",
@@ -109,7 +83,7 @@ def _fixture(tmp_path: Path):
         case_id=None,
         metadata={},
     )
-    retained_run = store.fail_trigger(run.run_id, error={"type": "test"})
+    retained_run = store.fail_trigger(run.run_id, error={"type": "network-unavailable"})
     snapshots = PublishedHarnessSnapshotStore(tmp_path / "candidates")
     snapshot = snapshots.materialize(
         version_store=versions,
@@ -117,106 +91,80 @@ def _fixture(tmp_path: Path):
         agent_version_id=commit,
         expected_digest=digest,
     )
-    client = _RuntimeClient()
-    evicted: list[str] = []
+    feedback = FeedbackStore(data_dir=data_dir, workspace_dir=tmp_path / "governor")
+    governance = AgentGovernanceService(
+        feedback_store=feedback,
+        agent_version_store=versions,
+        runtime_mode="local-debug",
+    )
+    client = AgentScopeRuntimeClient(
+        unavailable_runtime_endpoint,
+        shared_secret="test-only-runtime-shared-secret",
+        timeout_seconds=1,
+    )
     service = RuntimeAgentDeletionService(
-        client=client,  # type: ignore[arg-type]
+        client=client,
         store=store,
         registry=registry,
         snapshots=snapshots,
         data_dir=data_dir,
-        evict_agent_store=evicted.append,
+        evict_agent_store=governance.evict_agent_store,
     )
-    return record, versions, store, registry, snapshots, snapshot, client, service, retained_run, evicted
+    try:
+        yield record, store, registry, snapshot, client, service, retained_run, governance
+    finally:
+        asyncio.run(client.close())
 
 
-def test_partial_remote_delete_is_durable_and_restart_finishes_without_losing_history(tmp_path: Path) -> None:
-    record, versions, store, registry, snapshots, snapshot, client, service, retained_run, evicted = _fixture(tmp_path)
-    intent = service.start(record)
+def test_deletion_start_persists_exact_generation_without_touching_resources(deletion_resources) -> None:
+    record, store, registry, snapshot, _client, service, retained_run, governance = deletion_resources
 
-    partial = asyncio.run(service.resume(intent.intent_id, assert_maintenance_active=lambda: None))
+    with governance.version_maintenance.lease(
+        agent_id="agent-a",
+        kind="agent_delete",
+        owner_id="pytest:deletion-start",
+    ):
+        intent = service.start(record)
 
-    assert partial.cleanup_complete is False
-    assert registry.get_agent("agent-a") is None
-    pending = store.get_agent_deletion(intent.intent_id)
-    assert pending.status == "cleanup_pending"
-    assert pending.deleted_session_ids_json == ["session-a"]
-    assert pending.error_json == {"stage": "delete_runtime_session", "error_type": "RuntimeUpstreamError"}
-    assert "secret" not in str(pending.error_json)
-    assert store.get_session("session-a").runtime_agent_id == "runtime-a"
+    persisted = store.get_agent_deletion(intent.intent_id)
+    assert persisted.status == "cleanup_pending"
+    assert persisted.agent_id == "agent-a"
+    assert persisted.agent_generation == record.created_at
+    assert registry.get_agent("agent-a") is not None
     assert snapshot.workspace.exists()
-    with pytest.raises(ConflictError, match="pending Runtime cleanup"):
-        registry.create_business_agent(name="new", agent_id="agent-a", workspace_dir="/new/workspace")
-
-    # 模拟 API 进程重启：新 service 只依赖持久化 intent，从首轮已确认进度继续。
-    restarted = RuntimeAgentDeletionService(
-        client=client,  # type: ignore[arg-type]
-        store=RuntimeRunStore(store.Session),
-        registry=AgentRegistryStore(store.Session),
-        snapshots=PublishedHarnessSnapshotStore(snapshots.root),
-        data_dir=tmp_path / "data",
-        evict_agent_store=evicted.append,
-    )
-    restarted.registry.deletion_pending = restarted.store.agent_deletion_pending
-    complete = asyncio.run(restarted.resume(intent.intent_id, assert_maintenance_active=lambda: None))
-
-    assert complete.cleanup_complete is True
-    completed = store.get_agent_deletion(intent.intent_id)
-    assert completed.status == "cleanup_complete"
-    assert completed.deleted_session_ids_json == ["session-a", "session-b"]
-    assert completed.deleted_runtime_agent_ids_json == ["runtime-a"]
-    assert completed.removed_snapshot_ids_json == [
-        f"published::{retained_run.agent_version_id}:{retained_run.harness_digest}",
-    ]
-    assert not snapshot.workspace.parent.exists()
-    assert not Path(record.workspace_dir).parent.exists()
-    assert client.sessions["runtime-a"] == set()
-    assert client.agents == set()
-    assert evicted == ["agent-a"]
-    with pytest.raises(RuntimeObjectNotFound):
-        store.get_session("session-a")
-    # run/trace/feedback 归属历史不级联；旧代际仍在，但不能再取得 Runtime 授权。
+    assert Path(record.workspace_dir).exists()
     assert store.get_run(retained_run.run_id).run_id == retained_run.run_id
 
-    new_workspace = tmp_path / "data" / "business-agents" / "agent-a" / "workspace"
-    create_test_business_agent_workspace(new_workspace, agent_id="agent-a", name="New Agent A")
-    recreated = registry.create_business_agent(
-        name="New Agent A",
+
+def test_real_runtime_network_failure_is_durable_and_redacted(deletion_resources) -> None:
+    record, store, registry, snapshot, _client, service, retained_run, governance = deletion_resources
+    with governance.version_maintenance.lease(
         agent_id="agent-a",
-        workspace_dir=str(new_workspace),
-    )
-    assert recreated.created_at > record.created_at
-    provisioner = RuntimeAgentProvisioner(
-        client=client,  # type: ignore[arg-type]
-        store=store,
-        registry=registry,
-        version_store_for=lambda _agent_id: versions,
-        snapshot_store=snapshots,
-    )
-    with pytest.raises(RuntimeObjectNotFound, match="active Agent generation"):
-        provisioner.authorize_run(retained_run)
+        kind="agent_delete",
+        owner_id="pytest:network-failure",
+    ) as lease:
+        intent = service.start(record)
+        result = asyncio.run(service.resume(intent.intent_id, assert_maintenance_active=lease.assert_active))
+
+    assert result.cleanup_complete is False
+    pending = store.get_agent_deletion(intent.intent_id)
+    assert pending.status == "cleanup_pending"
+    assert pending.tombstoned is True
+    assert pending.error_json == {
+        "stage": "enumerate_runtime_sessions",
+        "error_type": "RuntimeUpstreamError",
+    }
+    assert registry.get_agent("agent-a") is None
+    assert snapshot.workspace.exists()
+    assert Path(record.workspace_dir).exists()
+    assert store.get_run(retained_run.run_id).run_id == retained_run.run_id
+    database_bytes = Path(record.workspace_dir).parents[2].joinpath("runtime.sqlite3").read_bytes()
+    assert b"127.0.0.1" not in database_bytes
+    assert b"test-only-runtime-shared-secret" not in database_bytes
 
 
-def test_remote_404_is_an_idempotent_cleanup_confirmation(tmp_path: Path) -> None:
-    record, _versions, store, _registry, _snapshots, _snapshot, client, service, _run, _evicted = _fixture(tmp_path)
-    intent = service.start(record)
-    client.fail_session_once = None
-    client.sessions["runtime-a"].clear()
-    client.agents.clear()
-
-    result = asyncio.run(service.resume(intent.intent_id, assert_maintenance_active=lambda: None))
-
-    assert result.cleanup_complete is True
-    completed = store.get_agent_deletion(intent.intent_id)
-    assert completed.enumerated_runtime_agent_ids_json == ["runtime-a"]
-    assert completed.deleted_session_ids_json == ["session-a", "session-b"]
-    assert completed.deleted_runtime_agent_ids_json == ["runtime-a"]
-
-
-def test_business_agent_deletion_waits_for_unlocated_ephemeral_provisioning(tmp_path: Path) -> None:
-    record, _versions, store, registry, _snapshots, _snapshot, _client, service, retained_run, _evicted = _fixture(
-        tmp_path,
-    )
+def test_business_agent_deletion_waits_for_unlocated_ephemeral_provisioning(deletion_resources) -> None:
+    record, store, registry, _snapshot, _client, service, retained_run, governance = deletion_resources
     store.start_ephemeral_resource(
         cache_key="candidate:in-flight",
         business_agent_id="agent-a",
@@ -228,75 +176,114 @@ def test_business_agent_deletion_waits_for_unlocated_ephemeral_provisioning(tmp_
         workspace_id=f"candidate-{'a' * 48}--v-{retained_run.harness_digest}",
     )
 
-    with pytest.raises(RuntimeStateConflict, match="provisioning must settle"):
-        service.start(record)
+    with governance.version_maintenance.lease(
+        agent_id="agent-a",
+        kind="agent_delete",
+        owner_id="pytest:in-flight-candidate",
+    ):
+        with pytest.raises(RuntimeStateConflict, match="provisioning must settle"):
+            service.start(record)
 
     assert registry.get_agent("agent-a") is not None
     assert store.recoverable_agent_deletions() == []
 
 
-def test_business_agent_deletion_includes_candidate_ephemeral_source_without_touching_other_tuple(
-    tmp_path: Path,
+class _PartialDeletionClient:
+    """只在第二个 Session 首次删除时失败，用于验证持久化 saga 续跑。"""
+
+    def __init__(self) -> None:
+        self.sessions = {"runtime-a": {"session-a", "session-b"}}
+        self.agents = {"runtime-a"}
+        self.fail_session_once = "session-b"
+
+    async def list_session_ids(self, runtime_agent_id: str) -> list[str]:
+        if runtime_agent_id not in self.agents:
+            raise RuntimeUpstreamError(404, b'{"detail":"gone"}')
+        return sorted(self.sessions.get(runtime_agent_id, set()))
+
+    async def delete_session(self, session_id: str, runtime_agent_id: str) -> None:
+        if self.fail_session_once == session_id:
+            self.fail_session_once = None
+            raise RuntimeUpstreamError(502, b'{"detail":"provider secret must not persist"}')
+        sessions = self.sessions.get(runtime_agent_id, set())
+        if session_id not in sessions:
+            raise RuntimeUpstreamError(404, b'{"detail":"gone"}')
+        sessions.remove(session_id)
+
+    async def delete_agent(self, runtime_agent_id: str) -> None:
+        if runtime_agent_id not in self.agents:
+            raise RuntimeUpstreamError(404, b'{"detail":"gone"}')
+        if self.sessions.get(runtime_agent_id):
+            raise AssertionError("all Runtime Sessions must be deleted first")
+        self.agents.remove(runtime_agent_id)
+
+
+def test_partial_remote_delete_is_durable_and_restart_resumes_without_losing_run(
+    deletion_resources,
 ) -> None:
-    record, versions, store, _registry, snapshots, published, client, service, retained_run, _evicted = _fixture(
-        tmp_path,
-    )
-    isolation_key = "candidate:deletion-cross"
-    candidate_identity = snapshots.candidate_identity(
-        agent_id="agent-a",
-        agent_version_id=retained_run.agent_version_id,
-        expected_digest=retained_run.harness_digest,
-        isolation_key=isolation_key,
-    )
-    workspace_id = f"{candidate_identity.workspace_id}--s-session-intent-00000000-0000-0000-0000-000000000001"
-    store.start_ephemeral_resource(
-        cache_key=isolation_key,
-        business_agent_id="agent-a",
-        version_owner_id=candidate_identity.source_id,
-        agent_version_id=retained_run.agent_version_id,
-        digest=retained_run.harness_digest,
-        source_id=candidate_identity.source_id,
-        source_kind="candidate_snapshot",
-        workspace_id=workspace_id,
-    )
-    candidate = snapshots.materialize_candidate(
-        version_store=versions,
-        agent_id="agent-a",
-        agent_version_id=retained_run.agent_version_id,
-        expected_digest=retained_run.harness_digest,
-        isolation_key=isolation_key,
-    )
-    store.record_ephemeral_agent(isolation_key, "runtime-candidate")
-    store.bind_agent_version(
-        agent_id=candidate.source_id,
-        agent_version_id=retained_run.agent_version_id,
-        digest=retained_run.harness_digest,
-        runtime_agent_id="runtime-candidate",
-        governance_agent_id="agent-a",
-        source_kind="candidate_snapshot",
-        source_id=candidate.source_id,
-    )
-    store.record_ephemeral_session(isolation_key, "session-candidate")
+    record, store, registry, snapshot, _client, original, retained_run, governance = deletion_resources
     store.bind_session(
-        session_id="session-candidate",
+        session_id="session-b",
         agent_id="agent-a",
         agent_version_id=retained_run.agent_version_id,
-        runtime_agent_id="runtime-candidate",
+        runtime_agent_id="runtime-a",
         digest=retained_run.harness_digest,
     )
-    store.mark_ephemeral_ready(isolation_key)
-    client.agents.add("runtime-candidate")
-    client.sessions["runtime-candidate"] = {"session-candidate"}
-    client.fail_session_once = None
+    runtime = _PartialDeletionClient()
+    evicted: list[str] = []
+    service = RuntimeAgentDeletionService(
+        client=runtime,  # type: ignore[arg-type]
+        store=store,
+        registry=registry,
+        snapshots=original.snapshots,
+        data_dir=original.data_dir,
+        evict_agent_store=evicted.append,
+    )
+    with governance.version_maintenance.lease(
+        agent_id="agent-a",
+        kind="agent_delete",
+        owner_id="pytest:partial-delete",
+    ) as lease:
+        intent = service.start(record)
+        partial = asyncio.run(
+            service.resume(intent.intent_id, assert_maintenance_active=lease.assert_active),
+        )
 
-    intent = service.start(record)
-    result = asyncio.run(service.resume(intent.intent_id, assert_maintenance_active=lambda: None))
+    assert partial.cleanup_complete is False
+    pending = store.get_agent_deletion(intent.intent_id)
+    assert pending.status == "cleanup_pending"
+    assert pending.deleted_session_ids_json == ["session-a"]
+    assert pending.error_json == {
+        "stage": "delete_runtime_session",
+        "error_type": "RuntimeUpstreamError",
+    }
+    assert "secret" not in str(pending.error_json)
+    assert registry.get_agent("agent-a") is None
+    assert snapshot.workspace.exists()
+    assert store.get_run(retained_run.run_id).run_id == retained_run.run_id
 
-    assert result.cleanup_complete is True
-    completed = store.get_agent_deletion(intent.intent_id)
-    assert completed.deleted_runtime_agent_ids_json == ["runtime-a", "runtime-candidate"]
-    assert not published.workspace.parent.exists()
-    assert not candidate.workspace.parent.exists()
-    ephemeral = store.get_ephemeral_resource(isolation_key)
-    assert ephemeral is not None and ephemeral.status == "cleanup_complete"
-    assert store.agent_versions_for_agent("agent-a") == []
+    restarted_store = RuntimeRunStore(store.Session)
+    restarted_registry = AgentRegistryStore(store.Session)
+    restarted_registry.deletion_pending = restarted_store.agent_deletion_pending
+    restarted = RuntimeAgentDeletionService(
+        client=runtime,  # type: ignore[arg-type]
+        store=restarted_store,
+        registry=restarted_registry,
+        snapshots=PublishedHarnessSnapshotStore(original.snapshots.root),
+        data_dir=original.data_dir,
+        evict_agent_store=evicted.append,
+    )
+    completed = asyncio.run(
+        restarted.resume(intent.intent_id, assert_maintenance_active=lambda: None),
+    )
+
+    assert completed.cleanup_complete is True
+    persisted = restarted_store.get_agent_deletion(intent.intent_id)
+    assert persisted.status == "cleanup_complete"
+    assert persisted.deleted_session_ids_json == ["session-a", "session-b"]
+    assert persisted.deleted_runtime_agent_ids_json == ["runtime-a"]
+    assert runtime.sessions["runtime-a"] == set()
+    assert runtime.agents == set()
+    assert evicted == ["agent-a"]
+    assert not snapshot.workspace.parent.exists()
+    assert restarted_store.get_run(retained_run.run_id).run_id == retained_run.run_id

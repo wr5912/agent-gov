@@ -73,9 +73,7 @@ def test_retired_term_fails_in_openapi_summary_or_description(tmp_path: Path) ->
     source = tmp_path / "app" / "routers" / "release.py"
     source.parent.mkdir(parents=True)
     source.write_text(
-        '@router.post("/release", summary="Create Agent ' + _term("change", " set") + '")\n'
-        "def release():\n"
-        "    return None\n",
+        '@router.post("/release", summary="Create Agent ' + _term("change", " set") + '")\ndef release():\n    return None\n',
         encoding="utf-8",
     )
 

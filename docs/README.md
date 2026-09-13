@@ -70,7 +70,7 @@
 - [反馈闭环当前实现基线](./反馈闭环当前实现基线.md)：`docs/反馈闭环当前实现基线.md`
 - [AgentGov AgentScope Runtime 替换实施基线与验收](./engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md)：
   `docs/engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md`，吸收替换方案中的事实源、
-  Harness、切换恢复和验收要求，标明当前实现与 50-run、浏览器、soak 等完整验收的边界
+  Harness、切换恢复和验收要求，标明当前实现与 50-run、浏览器等完整验收的边界
 - [AgentScope 与 Langfuse 观测契约及验收](./engineering/AgentScope与Langfuse观测契约及验收.md)：
   `docs/engineering/AgentScope与Langfuse观测契约及验收.md`，说明 run/Trace 关联、安全出口、
   完整性对账及验收，并区分 AgentScope 示例应用原始需求与 AgentGov 当前实现
@@ -78,8 +78,8 @@
   `docs/engineering/业务AgentWorkspace原生pytest测试资产实现方案.md`，定义测试资产唯一真相、
   `agentgov_testkit`、精确提交运行、服务重启恢复和发布条件
 - [业务 Agent Workspace 包导入与热加载产品工程方案](./业务AgentWorkspace包导入与热加载产品工程方案.md)：
-  `docs/业务AgentWorkspace包导入与热加载产品工程方案.md`，定义普通 Agent 仅由 Workspace 包创建、
-  原样导入/导出、同 ID 覆盖、下一 turn 生效、Git 审计、删除与运行卷初始化的当前工程契约；
+  `docs/业务AgentWorkspace包导入与热加载产品工程方案.md`，定义原生 schema 表单与 Workspace 包统一
+  进入 Git 候选、同 ID 候选导入、测试审批发布、不可变 Session 绑定、Git 审计、删除与运行卷初始化；
   字段级真相源仍是 OpenAPI
 
 ## 四阶段改进治理工作台权威方案
@@ -99,6 +99,9 @@
 
 ## 工程治理
 
+- [AgentScope API 最大复用与单轨整改实施与验收记录](./engineering/AgentScope_API最大复用与单轨整改计划.md)：
+  `docs/engineering/AgentScope_API最大复用与单轨整改计划.md`，记录基于 AgentScope 2.0.8 公共 API
+  完成的 P0–P4 单轨整改、schema 迁移边界及 P5 真实容器／浏览器验收状态；实现完成不等于真实验收通过
 - [测试资产组合治理](./engineering/测试资产组合治理.md)：`docs/engineering/测试资产组合治理.md`，
   测试分类、业务 Agent 自有回归与独立发布评测包分权、生命周期、执行通道、可信证据、TIA/xdist
   晋级和 mutation 的权威工程契约

@@ -7,10 +7,11 @@ import time
 from pathlib import Path
 from typing import TypeAlias
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
+_DIRECT_HTTP = build_opener(ProxyHandler({}))
 
 
 def _env_value(path: Path, key: str) -> str | None:
@@ -29,7 +30,7 @@ def _env_value(path: Path, key: str) -> str | None:
 def _get_json(url: str, *, timeout: float) -> tuple[int | None, JsonObject | None, str | None]:
     request = Request(url, headers={"Accept": "application/json", "User-Agent": "agent-gov-health-diagnose"})
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with _DIRECT_HTTP.open(request, timeout=timeout) as response:
             status_code = response.status
             raw = response.read(1024 * 1024)
     except HTTPError as exc:

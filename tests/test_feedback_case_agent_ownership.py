@@ -4,21 +4,49 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 import pytest
+from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.agent_paths import business_agent_layout
 from app.runtime.errors import BusinessRuleViolation, ConflictError
+from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import FeedbackCaseModel, FeedbackCaseSourceModel, utc_now
 from app.runtime.schemas import FeedbackCaseCreateRequest, FeedbackSignalCreateRequest, SocEventIngestRequest
+from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
+from app.services.agent_governance import AgentGovernanceService
 from pydantic import ValidationError
 
-from business_agent_test_utils import ORDINARY_TEST_AGENT_ID
+from business_agent_test_utils import ORDINARY_TEST_AGENT_ID, create_test_business_agent_workspace
 from feedback_store_test_utils import _run_payload
 
 
-def _store(tmp_path) -> FeedbackStore:
-    return FeedbackStore(
-        data_dir=tmp_path / "data",
-        agent_exists=lambda agent_id: agent_id in {ORDINARY_TEST_AGENT_ID, "agent-a", "agent-b"},
-    )
+def _store(tmp_path, *, resolve_versions: bool = False) -> FeedbackStore:
+    data_dir = tmp_path / "data"
+    store = FeedbackStore(data_dir=data_dir)
+    registry = AgentRegistryStore(store.Session)
+    for agent_id in (ORDINARY_TEST_AGENT_ID, "agent-a", "agent-b"):
+        workspace = business_agent_layout(data_dir, agent_id).workspace
+        create_test_business_agent_workspace(workspace, agent_id=agent_id, name=agent_id)
+        registry.create_business_agent(name=agent_id, agent_id=agent_id, workspace_dir=str(workspace))
+    store.agent_exists = registry.has_agent
+    if resolve_versions:
+        default_layout = business_agent_layout(data_dir, DEFAULT_BUSINESS_AGENT_ID)
+        create_test_business_agent_workspace(
+            default_layout.workspace,
+            agent_id=DEFAULT_BUSINESS_AGENT_ID,
+            name=DEFAULT_BUSINESS_AGENT_ID,
+        )
+        governance = AgentGovernanceService(
+            feedback_store=store,
+            agent_version_store=GitAgentVersionStore(
+                repository_dir=default_layout.workspace,
+                worktrees_dir=default_layout.version_base / "worktrees",
+                releases_dir=default_layout.version_base / "releases",
+            ),
+            runtime_mode="local-debug",
+        )
+        governance.agent_exists = registry.has_agent
+        store.agent_version_provider = governance.current_agent_version_id
+    return store
 
 
 def _signal(store: FeedbackStore, *, run_id: str, agent_id: str, signal_id: str | None = None) -> dict:
@@ -340,12 +368,7 @@ def test_case_source_kind_prevents_cross_table_id_collision(tmp_path) -> None:
 
 
 def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp_path) -> None:
-    version_agent_ids: list[str | None] = []
-    store = FeedbackStore(
-        data_dir=tmp_path / "data",
-        agent_exists=lambda agent_id: agent_id in {ORDINARY_TEST_AGENT_ID, "agent-a", "agent-b"},
-        agent_version_provider=lambda agent_id: version_agent_ids.append(agent_id) or f"version-{agent_id}",
-    )
+    store = _store(tmp_path, resolve_versions=True)
     for run_id, agent_id in (("run-claimed", "agent-a"), ("run-stale", "agent-b")):
         store.record_run(
             _run_payload(
@@ -429,12 +452,11 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
 
     evidence = store.create_evidence_package("case-claim-winner")
     assert evidence is not None
-    assert evidence["business_agent_version_id"] == "version-agent-a"
+    assert evidence["business_agent_version_id"] == store._current_agent_version_id("agent-a")
     assert evidence["source_refs"]["event_ids"] == ["event-claimed"]
     assert evidence["source_refs"]["run_ids"] == ["run-claimed"]
     event_file = store.get_evidence_package_file(evidence["evidence_package_id"], "soc_events.json")
     assert [event["event_id"] for event in event_file["content"]] == ["event-claimed"]
-    assert version_agent_ids == ["agent-a"]
 
     with store.Session() as db:
         repaired = db.get(FeedbackCaseModel, "case-claim-winner")

@@ -1,6 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { getLangfuseTrace, type LangfuseTracePayload } from "../api/langfuseTraces";
-import type { RuntimeClientConfig } from "../types/runtime";
+import type { ReactNode } from "react";
 
 type TraceSource = {
   generation_trace_id?: string | null;
@@ -41,39 +39,16 @@ export function TraceButton({
 }
 
 export function TraceDetail({
-  clientConfig,
   traceId,
 }: {
-  clientConfig: RuntimeClientConfig;
   traceId: string;
 }) {
-  const [payload, setPayload] = useState<LangfuseTracePayload | null>(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let mounted = true;
-    setPayload(null);
-    setError("");
-    getLangfuseTrace(clientConfig, traceId)
-      .then((value) => { if (mounted) setPayload(value); })
-      .catch((err: unknown) => { if (mounted) setError(err instanceof Error ? err.message : String(err)); });
-    return () => { mounted = false; };
-  }, [clientConfig, traceId]);
-
-  if (error) {
-    return (
-      <div className="iw-operation-error" data-testid="generation-trace-error">
-        <strong>Trace 加载失败：</strong>{error}
-      </div>
-    );
-  }
-  if (!payload) {
-    return <div className="iw-operation-status" data-testid="generation-trace-loading">正在加载 Trace...</div>;
-  }
   return (
     <div className="iw-trace-detail" data-testid="generation-trace-detail">
-      <TraceDl rows={[["trace_id", traceId]]} />
-      <pre className="iw-pre">{JSON.stringify(payload, null, 2)}</pre>
+      <TraceDl rows={[
+        ["trace_id", traceId],
+        ["数据边界", "AgentGov 仅展示受控 Trace 引用；完整性状态必须通过已授权的 AgentGov run 查询。"],
+      ]} />
     </div>
   );
 }

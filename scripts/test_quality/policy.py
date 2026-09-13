@@ -13,6 +13,8 @@ from pydantic import ValidationError
 from .collection import CollectionResult, collect_pytest_nodes, expand_selectors
 from .models import Classification, Lifecycle, QualityPolicy
 
+REAL_CONTAINER_UI_TARGETS = frozenset({"ui-feedback-smoke", "ui-playground-cancel-smoke"})
+
 
 @dataclass(frozen=True)
 class PolicyValidation:
@@ -81,6 +83,16 @@ def main_flow_bindings(policy: QualityPolicy) -> tuple[list[str], list[str]]:
     return pytest_selectors, ui_scripts
 
 
+def real_container_ui_targets(policy: QualityPolicy) -> list[str]:
+    targets: list[str] = []
+    for flow in policy.main_flows:
+        for scenario in flow.scenarios:
+            target = scenario.real_container_ui_target
+            if target is not None and target not in targets:
+                targets.append(target)
+    return targets
+
+
 def _frontend_scripts(repo_root: Path) -> set[str]:
     package_path = repo_root / "frontend/package.json"
     if not package_path.is_file():
@@ -109,6 +121,9 @@ def _main_flow_errors(policy: QualityPolicy, collected: CollectionResult, repo_r
             for script in scenario.ui_scripts:
                 if script not in frontend_scripts:
                     errors.append(f"frontend script {script} referenced by {context} is not defined")
+            target = scenario.real_container_ui_target
+            if target is not None and target not in REAL_CONTAINER_UI_TARGETS:
+                errors.append(f"real container UI target {target} referenced by {context} is not public/allowlisted")
     return errors
 
 
@@ -217,3 +232,9 @@ def validate_quality_policy(
 
 def selected_lane_nodes(validation: PolicyValidation, lane: str) -> tuple[str, ...]:
     return tuple(sorted(nodeid for nodeid, classification in validation.classifications.items() if lane in classification.lanes))
+
+
+def open_gap_errors(policy: QualityPolicy, lanes: set[str]) -> list[str]:
+    """把指定主流程或发布 lane 的未关闭 GAP 投影为硬失败。"""
+
+    return [f"open {gap.risk} gap blocks {gap.target_lane}: {gap.id}: {gap.description}" for gap in policy.gaps if gap.target_lane in lanes]

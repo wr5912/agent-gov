@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -12,6 +13,7 @@ import httpx
 from .security import sign_runtime_request
 
 _RUNTIME_UNAVAILABLE_BODY = b'{"detail":"AgentScope Runtime unavailable","error_code":"RUNTIME_UNAVAILABLE"}'
+_STREAM_ESTABLISHMENT_TIMEOUT_BODY = b'{"detail":"Runtime SSE establishment timed out"}'
 RuntimeHeaders: TypeAlias = dict[str, str]
 
 
@@ -21,6 +23,34 @@ class RuntimeUpstreamError(RuntimeError):
         self.status_code = status_code
         self.body = body
         self.content_type = content_type or "application/json"
+
+
+def canonical_session_id_from_view(value: object) -> str:
+    """从原生 SessionView 读取唯一的 AgentScope Session 身份。"""
+
+    session = value.get("session") if isinstance(value, dict) else None
+    session_id = session.get("id") if isinstance(session, dict) else None
+    if not isinstance(session_id, str) or not session_id:
+        raise RuntimeUpstreamError(
+            502,
+            b'{"detail":"Runtime returned invalid Session entry"}',
+        )
+    return session_id
+
+
+def canonical_session_locator_from_view(value: object) -> tuple[str, str]:
+    """只从原生嵌套对象读取 Session/workspace 身份，不兼容旧字段。"""
+
+    session_id = canonical_session_id_from_view(value)
+    session = value.get("session") if isinstance(value, dict) else None
+    config = session.get("config") if isinstance(session, dict) else None
+    workspace_id = config.get("workspace_id") if isinstance(config, dict) else None
+    if not isinstance(workspace_id, str) or not workspace_id:
+        raise RuntimeUpstreamError(
+            502,
+            b'{"detail":"Runtime returned invalid Session entry"}',
+        )
+    return session_id, workspace_id
 
 
 @dataclass(frozen=True)
@@ -40,7 +70,6 @@ class AgentScopeRuntimeClient:
         user_id: str = "agentgov-runtime",
         shared_secret: str,
         timeout_seconds: float = 30.0,
-        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.user_id = user_id
@@ -48,16 +77,16 @@ class AgentScopeRuntimeClient:
             raise ValueError("AgentScope Runtime shared secret is required")
         self._shared_secret = shared_secret
         self._last_timestamp_ns = 0
-        self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(
+        self._stream_establishment_timeout_seconds = timeout_seconds
+        self._client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=httpx.Timeout(timeout_seconds, read=None),
             follow_redirects=False,
+            trust_env=False,
         )
 
     async def close(self) -> None:
-        if self._owns_client:
-            await self._client.aclose()
+        await self._client.aclose()
 
     async def request_json(
         self,
@@ -99,13 +128,19 @@ class AgentScopeRuntimeClient:
         *,
         params: dict[str, object] | None = None,
     ) -> AsyncIterator[httpx.Response]:
-        request = self._build_signed_request("GET", path, params=params)
+        request = self._build_signed_request(
+            "GET",
+            path,
+            params=params,
+            headers={
+                "Accept": "text/event-stream",
+                "Accept-Encoding": "identity",
+            },
+        )
         response: httpx.Response | None = None
         try:
-            response = await self._client.send(request, stream=True)
-            if response.status_code >= 400:
-                body = await response.aread()
-                raise RuntimeUpstreamError(response.status_code, body, response.headers.get("content-type"))
+            response = await self._send_stream_request(request)
+            await _validate_stream_response(response)
             yield response
         except httpx.RequestError as exc:
             raise RuntimeUpstreamError(503, _RUNTIME_UNAVAILABLE_BODY) from exc
@@ -119,16 +154,38 @@ class AgentScopeRuntimeClient:
         *,
         params: dict[str, object] | None = None,
     ) -> httpx.Response:
-        request = self._build_signed_request("GET", path, params=params)
+        request = self._build_signed_request(
+            "GET",
+            path,
+            params=params,
+            headers={
+                "Accept": "text/event-stream",
+                "Accept-Encoding": "identity",
+            },
+        )
+        response = await self._send_stream_request(request)
         try:
-            response = await self._client.send(request, stream=True)
+            await _validate_stream_response(response)
+        except BaseException:
+            await response.aclose()
+            raise
+        return response
+
+    async def _send_stream_request(self, request: httpx.Request) -> httpx.Response:
+        """只限制 HTTP/SSE 建连；响应头到达后不限制长连接读时长。"""
+
+        try:
+            async with asyncio.timeout(
+                self._stream_establishment_timeout_seconds,
+            ):
+                return await self._client.send(request, stream=True)
+        except TimeoutError as exc:
+            raise RuntimeUpstreamError(
+                504,
+                _STREAM_ESTABLISHMENT_TIMEOUT_BODY,
+            ) from exc
         except httpx.RequestError as exc:
             raise RuntimeUpstreamError(503, _RUNTIME_UNAVAILABLE_BODY) from exc
-        if response.status_code >= 400:
-            body = await response.aread()
-            await response.aclose()
-            raise RuntimeUpstreamError(response.status_code, body, response.headers.get("content-type"))
-        return response
 
     async def create_agent(self, payload: dict[str, object]) -> str:
         response = await self.request_json("POST", "/agent/", json=payload)
@@ -183,13 +240,7 @@ class AgentScopeRuntimeClient:
             raise RuntimeUpstreamError(502, b'{"detail":"Runtime returned invalid Session list"}')
         locators: list[tuple[str, str]] = []
         for value in values:
-            session = value.get("session") if isinstance(value, dict) else None
-            session_id = session.get("id") if isinstance(session, dict) else None
-            config = session.get("config") if isinstance(session, dict) else None
-            workspace_id = config.get("workspace_id") if isinstance(config, dict) else None
-            if not isinstance(session_id, str) or not session_id or not isinstance(workspace_id, str) or not workspace_id:
-                raise RuntimeUpstreamError(502, b'{"detail":"Runtime returned invalid Session entry"}')
-            locator = (session_id, workspace_id)
+            locator = canonical_session_locator_from_view(value)
             if locator not in locators:
                 locators.append(locator)
         return locators
@@ -241,8 +292,41 @@ class AgentScopeRuntimeClient:
 def copy_response_headers(headers: RuntimeHeaders) -> RuntimeHeaders:
     """只转发端到端语义头；不传播 hop-by-hop 连接状态。"""
 
-    allowed = {"content-type", "cache-control", "content-language", "etag", "last-modified", "x-accel-buffering"}
-    return {key: value for key, value in headers.items() if key.lower() in allowed}
+    canonical_names = {
+        "content-type": "Content-Type",
+        "cache-control": "Cache-Control",
+        "content-language": "Content-Language",
+        "etag": "ETag",
+        "last-modified": "Last-Modified",
+        "x-accel-buffering": "X-Accel-Buffering",
+    }
+    copied: RuntimeHeaders = {}
+    for key, value in headers.items():
+        canonical = canonical_names.get(key.lower())
+        if canonical is not None:
+            copied[canonical] = value
+    return copied
+
+
+async def _validate_stream_response(response: httpx.Response) -> None:
+    if response.status_code >= 400:
+        body = await response.aread()
+        raise RuntimeUpstreamError(
+            response.status_code,
+            body,
+            response.headers.get("content-type"),
+        )
+    if response.status_code != 200 or _media_type(response.headers.get("content-type")) != "text/event-stream":
+        raise RuntimeUpstreamError(
+            502,
+            b'{"detail":"Runtime returned an invalid SSE response"}',
+        )
+
+
+def _media_type(content_type: str | None) -> str | None:
+    if content_type is None:
+        return None
+    return content_type.partition(";")[0].strip().lower()
 
 
 def _json_body(value: object | None) -> bytes:

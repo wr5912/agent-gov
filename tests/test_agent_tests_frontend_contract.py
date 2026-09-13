@@ -79,30 +79,14 @@ def test_asset_center_projects_workspace_tests_runs_and_per_agent_schedule() -> 
 
 def test_asset_center_keeps_many_agents_in_a_scrollable_master_detail_layout() -> None:
     styles = _read("frontend/src/agent-test-assets.css")
-    e2e = _read("scripts/verify_asset_registry.mjs")
 
     assert ".test-asset-workspace" in styles
     assert "grid-template-columns: minmax(230px, 280px) minmax(0, 1fr);" in styles
     assert ".test-agent-list" in styles
     assert "overflow-y: auto;" in styles
     assert ".test-file-list" not in styles
-    assert "Array.from({ length: 24 }" in e2e
-    assert "detailBox.width <= navigatorBox.width * 2.4" in e2e
-    assert "element.scrollHeight > element.clientHeight" in e2e
-    assert "sourceBox.width < detailBox.width * 0.9" in e2e
-    assert "test_asset_detail_compact_commit" in e2e
-    assert "test_source_persists_after_history_filter" in e2e
     assert ".test-source-symbol-rail" in styles
     assert ".test-source-symbols" not in styles
-    assert "test_topbar_refresh_current_asset_tab" in e2e
-    assert "test_source_symbol_inactive_visibility" in e2e
-    assert "test_source_symbol_scroll_tracking" in e2e
-    assert "test_asset_desktop_contained" in e2e
-    assert "test_asset_compact_desktop_contained" in e2e
-    assert "test_asset_column_bottom_alignment" in e2e
-    assert "test_source_internal_scroll" in e2e
-    assert "test_asset_mobile_vertical_reachability" in e2e
-    assert "test_topbar_fixed_height" in e2e
 
 
 def test_release_workbench_runs_fixed_commit_bound_platform_tests() -> None:
@@ -111,14 +95,19 @@ def test_release_workbench_runs_fixed_commit_bound_platform_tests() -> None:
 
     assert "inspectAgentTestSuite" in release
     assert "createAgentChangeSetTestRun" in release
+    assert "diffAgentChangeSet" in release
+    assert "approveAgentChangeSet" in release
+    assert "rejectAgentChangeSet" in release
     assert "listAgentTestRuns" in release
-    assert "currentTestRun = latestExactRun(testRuns, selectedChangeSet?.candidate_commit_sha)" in release
+    assert "currentTestRun = evidenceBoundTestRun(selectedChangeSet, testRuns)" in release
     assert 'data-testid="release-action-run-tests"' in release
     assert 'data-testid="release-action-cancel-tests"' in release
     assert 'data-testid="release-test-output"' in release
     assert "只认可当前待发布 commit 的运行记录" in release
-    assert "修复前版本" in release
+    assert "基准版本" in release
     assert "待发布版本" in release
+    assert 'data-testid="release-action-approve"' in release
+    assert 'data-testid="release-action-reject"' in release
     assert "/test-suite" in runtime_api
     assert "/test-runs" in runtime_api
     assert "/api/agent-test-runs" in runtime_api

@@ -29,7 +29,11 @@ def _load_container_acceptance() -> ModuleType:
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
     return module
 
 
@@ -411,13 +415,12 @@ def test_public_operator_ports_default_to_configurable_loopback_bindings() -> No
         assert container.get(name, "0") == "0"
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     assert 'scripts/check_public_bind.py --env-file "$(COMPOSE_ENV_FILE)"' in makefile
-    assert "up: public-bind-check cutover-inspect" in makefile
-    assert "all-up: public-bind-check cutover-inspect" in makefile
-    assert "ui-up: public-bind-check" in makefile
-    assert "langfuse-up: public-bind-check langfuse-prepare" in makefile
+    assert 'SELECTED_ENV_RUNNER = $(PYTHON_RUN) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)"' in makefile
+    for operation in ("up", "all-up", "ui-up", "langfuse-up", "images-prepare"):
+        assert f"--operation {operation}" in makefile
 
 
-def test_public_bind_guard_requires_explicit_single_tenant_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_public_bind_guard_requires_explicit_single_tenant_opt_in(process_environment) -> None:
     guard = _load_public_bind_guard()
     for name in (
         "API_BIND_IP",
@@ -427,11 +430,62 @@ def test_public_bind_guard_requires_explicit_single_tenant_opt_in(monkeypatch: p
         "LANGFUSE_BIND_IP",
         "LANGFUSE_ALLOW_PUBLIC_BIND",
     ):
-        monkeypatch.delenv(name, raising=False)
+        process_environment.remove(name)
     guard.require_public_bind_opt_in({"API_BIND_IP": "127.0.0.1"})
     with pytest.raises(ValueError, match="API_ALLOW_PUBLIC_BIND=1"):
         guard.require_public_bind_opt_in({"API_BIND_IP": "0.0.0.0"})
     guard.require_public_bind_opt_in({"API_BIND_IP": "0.0.0.0", "API_ALLOW_PUBLIC_BIND": "1"})
+
+
+def test_public_bind_guard_rejects_out_of_range_or_duplicate_project_ports(process_environment) -> None:
+    guard = _load_public_bind_guard()
+    guard.require_project_host_ports({})
+
+    # Ambient shell values are not part of the selected env contract.
+    process_environment.set("HOST_PORT", "50399")
+    guard.require_project_host_ports({})
+    process_environment.remove("HOST_PORT")
+
+    with pytest.raises(ValueError, match="50400-50499"):
+        guard.require_project_host_ports({"HOST_PORT": "50399"})
+    with pytest.raises(ValueError, match="must be unique"):
+        guard.require_project_host_ports({"HOST_PORT": "50400", "FRONTEND_HOST_PORT": "50400"})
+
+
+def test_public_bind_guard_accepts_project_port_range_boundaries() -> None:
+    guard = _load_public_bind_guard()
+    guard.require_project_host_ports(
+        {
+            "HOST_PORT": "50400",
+            "FRONTEND_HOST_PORT": "50499",
+            "LANGFUSE_HOST_PORT": "50401",
+            "LANGFUSE_MINIO_HOST_PORT": "50402",
+            "LANGFUSE_MINIO_CONSOLE_HOST_PORT": "50403",
+        }
+    )
+
+
+def test_langfuse_image_overrides_must_be_a_same_version_pair(process_environment) -> None:
+    guard = _load_public_bind_guard()
+    process_environment.remove("LANGFUSE_WEB_IMAGE")
+    process_environment.remove("LANGFUSE_WORKER_IMAGE")
+
+    guard.require_paired_langfuse_images({})
+    with pytest.raises(ValueError, match="overridden together"):
+        guard.require_paired_langfuse_images({"LANGFUSE_WEB_IMAGE": "registry.example/langfuse:3.225.7"})
+    with pytest.raises(ValueError, match="same explicit version tag"):
+        guard.require_paired_langfuse_images(
+            {
+                "LANGFUSE_WEB_IMAGE": "registry.example/langfuse:3.225.7",
+                "LANGFUSE_WORKER_IMAGE": "registry.example/langfuse-worker:3.224.0",
+            }
+        )
+    guard.require_paired_langfuse_images(
+        {
+            "LANGFUSE_WEB_IMAGE": "registry.example:5000/langfuse:3.225.7@sha256:" + "a" * 64,
+            "LANGFUSE_WORKER_IMAGE": "registry.example:5000/langfuse-worker:3.225.7@sha256:" + "b" * 64,
+        }
+    )
 
 
 def test_runtime_mount_and_process_boundary_is_fail_closed() -> None:
@@ -497,6 +551,7 @@ def test_official_env_examples_keep_secrets_and_runtime_ownership_explicit() -> 
     container = _env_values(ENV_EXAMPLE)
     local = _env_values(LOCAL_DEBUG_EXAMPLE)
 
+    assert container["LANGFUSE_ENABLED"] == "false"
     assert container["AGENTGOV_RUNTIME_SHARED_SECRET"].startswith("replace-with-")
     assert container["MODEL_PROVIDER_API_KEY"] == "replace-with-private-provider-key"
     assert "SEC_OPS_MCP_TOKEN" not in container
@@ -517,34 +572,52 @@ def test_official_env_examples_keep_secrets_and_runtime_ownership_explicit() -> 
 
 
 def test_make_operational_targets_use_selected_env_and_agentscope_services() -> None:
-    selected = "/tmp/agent-gov-selected-compose.env"
-    result = subprocess.run(
-        [
-            "make",
-            "-n",
-            "up",
-            "all-up",
-            "smoke",
-            "container-openapi-check",
-            "langfuse-smoke",
-            "runtime-validate",
-            "cutover-check",
-            f"COMPOSE_ENV_FILE={selected}",
-            "COMPOSE=:",
-            "PYTHON_RUN=:",
-        ],
-        cwd=REPO_ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert selected in result.stdout
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-    assert "logs -f agent-gov-api agentscope-runtime" in makefile
-    assert "build agent-gov-ui" in makefile
-    assert "scripts/check_agentscope_cutover.py" in makefile
+    assert "COMPOSE_ENV_FILE ?= docker/.env" in makefile
+    assert 'SELECTED_ENV_RUNNER = $(PYTHON_RUN) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)"' in makefile
+    for operation in (
+        "all-up",
+        "build",
+        "check",
+        "compose-diagnose",
+        "down",
+        "images-prepare",
+        "langfuse-logs",
+        "langfuse-prepare",
+        "langfuse-stop",
+        "langfuse-up",
+        "logs",
+        "runtime-bootstrap",
+        "runtime-clean",
+        "runtime-migrate",
+        "runtime-migrate-scan",
+        "runtime-prepare-harnesses",
+        "runtime-validate",
+        "ui-build",
+        "ui-logs",
+        "ui-stop",
+        "ui-up",
+        "up",
+    ):
+        assert f"--operation {operation}" in makefile
+    assert "_selected-" not in makefile
+    for retired in ("cutover-maintenance-down", "cutover-prepare", "cutover-execute", "cutover-finalize", "cutover-restore"):
+        assert retired not in makefile
+
+
+def test_container_acceptance_make_variables_cannot_bypass_public_runner() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    for assignment in (
+        "override ACCEPTANCE_PYTHON :=",
+        "override MAKE := $(if $(AGENTGOV_ACCEPTANCE_MAKE),$(AGENTGOV_ACCEPTANCE_MAKE),/usr/bin/make)",
+        "override CONTAINER_ACCEPTANCE :=",
+        "override REQUIRE_CONTAINER_ACCEPTANCE =",
+    ):
+        assert assignment in makefile
+    assert "MAKE ?=" not in makefile
+    assert "_SOURCE_ARTIFACT_SHA256_VALID" in makefile
+    assert "source artifact SHA-256 generation failed" in makefile
 
 
 def test_container_acceptance_uses_exact_agentscope_core_services() -> None:
@@ -555,54 +628,15 @@ def test_container_acceptance_uses_exact_agentscope_core_services() -> None:
     assert "isolated-health" not in acceptance.PROFILES
 
 
-@pytest.mark.parametrize("target", ["up", "all-up"])
-@pytest.mark.parametrize("failure", ["epoch", "readiness"])
-def test_deployment_fails_before_writes_on_old_epoch_and_requires_readiness(tmp_path, target, failure) -> None:
-    calls = tmp_path / "calls.txt"
-    runner = tmp_path / "python-probe"
-    runner.write_text(
-        f"#!{sys.executable}\n"
-        "import sys\n"
-        "from pathlib import Path\n"
-        f"log = Path({str(calls)!r})\n"
-        "args = ' '.join(sys.argv[1:])\n"
-        "with log.open('a') as stream: stream.write(args + '\\n')\n"
-        f"failure = {failure!r}\n"
-        "if failure == 'epoch' and 'agentscope_atomic_cutover.py inspect' in args: sys.exit(2)\n"
-        "if 'diagnose_runtime_health.py' in args:\n"
-        "    assert '--require-ready' in sys.argv\n"
-        "    sys.exit(1)\n",
-        encoding="utf-8",
-    )
-    runner.chmod(0o700)
-    result = subprocess.run(
-        ["make", "--no-print-directory", target, f"PYTHON={runner}", f"PYTHON_RUN={runner}", "COMPOSE=true", f"COMPOSE_ENV_FILE={tmp_path / 'unused.env'}"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode != 0
-    invocations = calls.read_text(encoding="utf-8")
-    assert "agentscope_atomic_cutover.py inspect" in invocations
-    assert ("bootstrap_runtime_volume.py" in invocations) is (failure == "readiness")
-    assert ("diagnose_runtime_health.py" in invocations) is (failure == "readiness")
-
-
-@pytest.mark.parametrize("target", ["container-live-test", "ui-feedback-smoke"])
+@pytest.mark.parametrize("target", ["container-live-test", "ui-feedback-smoke", "langfuse-smoke"])
 def test_real_feedback_acceptance_enables_langfuse_profile(target) -> None:
-    result = subprocess.run(
-        ["make", "--no-print-directory", "-n", target, "REQUIRE_LIVE_RUNTIME=1", "PYTHON_RUN=:"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "--profile langfuse" in result.stdout
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    recipe = makefile.split(f"\n{target}:", 1)[1].split("\n\n", 1)[0]
+
+    assert "$(CONTAINER_ACCEPTANCE) --profile langfuse --" in recipe
 
 
-def test_container_acceptance_generates_isolated_project_ports_and_mounts(tmp_path, monkeypatch) -> None:
+def test_container_acceptance_generates_isolated_project_ports_and_mounts(tmp_path) -> None:
     acceptance = _load_container_acceptance()
 
     source_env = tmp_path / "source.env"
@@ -618,8 +652,6 @@ def test_container_acceptance_generates_isolated_project_ports_and_mounts(tmp_pa
         "HOST_DATA_MOUNT=/home/operator/volume-agent-gov/data/business-agents\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(acceptance, "_allocate_loopback_ports", lambda _count: (50451, 50452, 50453, 50454, 50455))
-
     isolation = acceptance.prepare_isolated_environment(source_env, "1234-deadbeef", tmp_path)
     child_env = acceptance.build_acceptance_env(acceptance.PROFILES["core"], isolation, "1234-deadbeef", {})
 
@@ -635,9 +667,18 @@ def test_container_acceptance_generates_isolated_project_ports_and_mounts(tmp_pa
     assert child_env["FRONTEND_ALLOW_PUBLIC_BIND"] == "0"
     assert child_env["LANGFUSE_BIND_IP"] == "127.0.0.1"
     assert child_env["LANGFUSE_ALLOW_PUBLIC_BIND"] == "0"
-    assert child_env["HOST_PORT"] == "50451"
-    assert child_env["FRONTEND_HOST_PORT"] == "50452"
-    assert child_env["LANGFUSE_HOST_PORT"] == "50453"
+    selected_ports = [
+        int(child_env[key])
+        for key in (
+            "HOST_PORT",
+            "FRONTEND_HOST_PORT",
+            "LANGFUSE_HOST_PORT",
+            "LANGFUSE_MINIO_HOST_PORT",
+            "LANGFUSE_MINIO_CONSOLE_HOST_PORT",
+        )
+    ]
+    assert len(set(selected_ports)) == 5
+    assert all(50400 <= port <= 50499 for port in selected_ports)
     assert child_env["COMPOSE_ENV_FILE"] == str(isolation.env_file)
     assert acceptance._compose_mount_variables() == set(acceptance.ISOLATED_MOUNT_PATHS)
     for variable in acceptance.ISOLATED_MOUNT_PATHS:
@@ -674,8 +715,13 @@ def test_container_acceptance_compose_config_resolves_only_isolated_bind_mounts(
         "LANGFUSE_MINIO_ROOT_PASSWORD",
         "LANGFUSE_NEXTAUTH_SECRET",
     )
+    required_secret_set = set(required_secrets)
+    example_lines = ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
     source_env.write_text(
-        ENV_EXAMPLE.read_text(encoding="utf-8") + "\n" + "\n".join(f"{name}={'a' * 64}" for name in required_secrets),
+        "\n".join(
+            [line for line in example_lines if line.split("=", 1)[0].strip().removeprefix("export ").strip() not in required_secret_set]
+            + [f"{name}={'a' * 64}" for name in required_secrets]
+        ),
         encoding="utf-8",
     )
     isolation = acceptance.prepare_isolated_environment(source_env, "1234-configcheck", tmp_path)
@@ -690,39 +736,63 @@ def test_container_acceptance_compose_config_resolves_only_isolated_bind_mounts(
     acceptance._validate_isolated_mounts(base, isolation, child_env)
 
 
-def test_container_acceptance_always_cleans_failed_isolated_refresh(tmp_path, monkeypatch) -> None:
+def test_container_acceptance_public_target_owns_refresh_and_failure_cleanup() -> None:
     acceptance = _load_container_acceptance()
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    source = Path(acceptance.__file__).read_text(encoding="utf-8")
+    frozen_source = (REPO_ROOT / "scripts/container_acceptance_frozen_runner.py").read_text(encoding="utf-8")
+    reexec_source = (REPO_ROOT / "scripts/container_acceptance_reexec.py").read_text(encoding="utf-8")
 
-    source_env = tmp_path / "source.env"
-    source_env.write_text("API_KEY=test-only\n", encoding="utf-8")
-    monkeypatch.setattr(acceptance, "LOCK_FILE", tmp_path / "acceptance.lock")
-    monkeypatch.setattr(acceptance, "source_fingerprint", lambda _path: "stable")
-    monkeypatch.setattr(acceptance, "_allocate_loopback_ports", lambda _count: (50461, 50462, 50463, 50464, 50465))
-    monkeypatch.setattr(acceptance, "_bootstrap_isolated_runtime", lambda _isolation, _env: None)
-
-    cleaned: list[Path] = []
-
-    def fail_refresh(_profile, _isolation, _env) -> None:
-        raise acceptance.AcceptanceError("expected refresh failure")
-
-    def record_cleanup(_profile, isolation, _env) -> None:
-        assert isolation.runtime_root.is_dir()
-        cleaned.append(isolation.runtime_root)
-
-    monkeypatch.setattr(acceptance, "refresh_profile", fail_refresh)
-    monkeypatch.setattr(acceptance, "cleanup_profile", record_cleanup)
-
-    with pytest.raises(acceptance.AcceptanceError, match="expected refresh failure"):
-        acceptance.run_acceptance(acceptance.PROFILES["core"], source_env, ["true"], {})
-
-    assert len(cleaned) == 1
-    assert not cleaned[0].parent.exists()
+    core_recipe = makefile.split("\ncontainer-core-smoke:", 1)[1].split("\n\n", 1)[0]
+    assert "$(CONTAINER_ACCEPTANCE) --profile core --" in core_recipe
+    prepare_body = source.split("def _prepare_frozen_acceptance", 1)[1].split("def run_acceptance", 1)[0]
+    run_body = source.split("def run_acceptance", 1)[1].split("def main", 1)[0]
+    cleanup_body = source.split("def _cleanup_acceptance_run", 1)[1].split("def run_acceptance", 1)[0]
+    frozen_body = frozen_source.split("def resume_frozen_acceptance", 1)[1]
+    assert "finally:" in run_body
+    assert "materialize_acceptance_toolchain(" in prepare_body
+    assert run_body.index("_prepare_frozen_acceptance(") < run_body.index("exec_frozen_runner(")
+    assert run_body.index("_cleanup_acceptance_run(") > run_body.index("finally:")
+    assert frozen_body.index("actions.run_refreshed(") < frozen_body.index("finally:")
+    assert frozen_body.index("actions.cleanup(") > frozen_body.index("finally:")
+    assert 'os.execve(python, [str(python), str(runner), "--frozen-resume"], child)' in reexec_source
+    assert "cleanup_profile(profile, isolation, child_env, daemon_identity)" in cleanup_body
 
 
 def test_langfuse_smoke_does_not_initialize_the_selected_live_volume() -> None:
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
-    assert re.search(r"^langfuse-smoke:\s*$", makefile, flags=re.MULTILINE)
+    recipe = makefile.split("\nlangfuse-smoke: live-acceptance-preflight", 1)[1].split("\n\n", 1)[0]
+    assert "$(CONTAINER_ACCEPTANCE) --profile langfuse --" in recipe
+    assert '--scenario-file "$${REAL_SCENARIO_FILE}"' in makefile
+    assert '--agent-id "$${REAL_ACCEPTANCE_AGENT_ID}"' in makefile
+    runtime_client = (REPO_ROOT / "scripts/improvement_ui_e2e/runtime_client.mjs").read_text(encoding="utf-8")
+    assert "/api/langfuse/traces/" not in runtime_client
+    assert "--projected-trace-id" in runtime_client
+
+
+def test_technical_seed_has_distinct_public_nonformal_container_entry() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    recipe = makefile.split("\ncontainer-technical-live-smoke: technical-live-preflight", 1)[1].split("\n\n", 1)[0]
+    assert "$(CONTAINER_ACCEPTANCE) --profile langfuse --" in recipe
+    assert "--technical-integration-seed" in makefile
+    assert "TECHNICAL_SCENARIO_FILE" in makefile
+    assert "--expected-agent-id runtime-technical-integration-package" in makefile
+
+
+def test_mcp_technical_seed_has_distinct_core_container_entry() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    recipe = makefile.split("\ncontainer-mcp-technical-smoke: mcp-technical-live-preflight", 1)[1].split("\n\n", 1)[0]
+    private_recipe = makefile.split("\n_container-mcp-technical-smoke:", 1)[1].split("\n\n", 1)[0]
+    assert "$(CONTAINER_ACCEPTANCE) --profile core --" in recipe
+    assert "--mcp-technical-seed" in private_recipe
+    assert "--capability mcp_readonly" in private_recipe
+    assert "--runs 1" in private_recipe
+    assert "--concurrency 1" in private_recipe
+    assert "TECHNICAL_SCENARIO_FILE" in makefile
+    assert "--expected-agent-id runtime-mcp-technical-integration-package" in makefile
 
 
 def test_langfuse_permission_init_reuses_all_stateful_mount_sources() -> None:
@@ -751,3 +821,18 @@ def test_api_image_hosts_only_control_plane_entrypoint() -> None:
     assert 'ENTRYPOINT ["python", "-m", "app.runtime.service_launcher"]' in dockerfile
     assert 'CMD ["api"]' in dockerfile
     assert not (REPO_ROOT / "docker/entrypoint.sh").exists()
+
+
+@pytest.mark.parametrize(
+    "relative",
+    (
+        "docker/Dockerfile",
+        "docker/agentscope-runtime.Dockerfile",
+        "docker/frontend.Dockerfile",
+    ),
+)
+def test_every_project_build_stage_uses_a_digest_pinned_base_image(relative: str) -> None:
+    instructions = [line.strip() for line in (REPO_ROOT / relative).read_text(encoding="utf-8").splitlines() if line.strip().upper().startswith("FROM ")]
+
+    assert instructions
+    assert all(re.search(r"@sha256:[0-9a-f]{64}(?:\s+AS\s+\S+)?$", line, re.IGNORECASE) for line in instructions)

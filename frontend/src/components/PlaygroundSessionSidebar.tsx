@@ -1,4 +1,5 @@
-import { MessageSquarePlus, RefreshCw } from "lucide-react";
+import { Check, MessageSquarePlus, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { useState } from "react";
 import type { SessionInfo } from "../types/runtime";
 
 interface PlaygroundSessionSidebarProps {
@@ -7,6 +8,8 @@ interface PlaygroundSessionSidebarProps {
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
   onRefresh: () => void;
+  onRenameSession?: (sessionId: string, name: string) => Promise<void>;
+  onDeleteSession?: (sessionId: string) => Promise<void>;
   streaming: boolean;
 }
 
@@ -16,8 +19,51 @@ export function PlaygroundSessionSidebar({
   onSelectSession,
   onNewSession,
   onRefresh,
+  onRenameSession,
+  onDeleteSession,
   streaming,
 }: PlaygroundSessionSidebarProps) {
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const startRename = (session: SessionInfo) => {
+    setActionError(null);
+    setEditingSessionId(session.session_id);
+    setEditingName(session.title || "");
+  };
+
+  const rename = async () => {
+    const cleanName = editingName.trim();
+    if (!editingSessionId || !cleanName || !onRenameSession) return;
+    setPendingSessionId(editingSessionId);
+    setActionError(null);
+    try {
+      await onRenameSession(editingSessionId, cleanName);
+      setEditingSessionId(null);
+      setEditingName("");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPendingSessionId(null);
+    }
+  };
+
+  const remove = async (session: SessionInfo) => {
+    if (!onDeleteSession || !window.confirm(`确认删除会话“${session.title || session.session_id}”？此操作会删除 AgentScope 中的会话与消息。`)) return;
+    setPendingSessionId(session.session_id);
+    setActionError(null);
+    try {
+      await onDeleteSession(session.session_id);
+      if (editingSessionId === session.session_id) setEditingSessionId(null);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPendingSessionId(null);
+    }
+  };
+
   return (
     <aside className="playground-session-sidebar" data-testid="playground-session-sidebar" aria-label="Playground 会话导航">
       <header className="playground-side-panel-head">
@@ -34,10 +80,13 @@ export function PlaygroundSessionSidebar({
           <MessageSquarePlus size={14} /> 新会话
         </button>
       </div>
+      {actionError ? <div className="error-box session-sidebar-error" role="alert">{actionError}</div> : null}
       <div className="session-sidebar-list" data-testid="playground-session-list">
         {sessions.length === 0 ? (
           <div className="empty-state">暂无会话。发送第一条消息后会自动创建。</div>
         ) : sessions.map((session) => {
+          const editing = editingSessionId === session.session_id;
+          const pending = pendingSessionId === session.session_id;
           return (
             <article
               className={`session-sidebar-item ${activeSessionId === session.session_id ? "active" : ""}`.trim()}
@@ -45,15 +94,49 @@ export function PlaygroundSessionSidebar({
               data-session-id={session.session_id}
               key={session.session_id}
             >
-              <button
-                className="session-sidebar-main"
-                type="button"
-                disabled={streaming}
-                onClick={() => onSelectSession(session.session_id)}
-              >
-                <strong>{session.title || session.session_id}</strong>
-                <span>{statusLabel(session.status)} · {formatDate(session.updated_at)}</span>
-              </button>
+              {editing ? (
+                <form
+                  className="session-sidebar-rename"
+                  onSubmit={(event) => { event.preventDefault(); void rename(); }}
+                >
+                  <input
+                    id={`session-name-${session.session_id}`}
+                    aria-label="会话名称"
+                    data-testid="playground-session-rename-input"
+                    value={editingName}
+                    maxLength={512}
+                    autoFocus
+                    disabled={pending}
+                    onChange={(event) => setEditingName(event.target.value)}
+                  />
+                  <button type="submit" aria-label="保存会话名称" disabled={pending || !editingName.trim()}><Check size={14} /></button>
+                  <button type="button" aria-label="取消重命名" disabled={pending} onClick={() => setEditingSessionId(null)}><X size={14} /></button>
+                </form>
+              ) : (
+                <button
+                  className="session-sidebar-main"
+                  type="button"
+                  disabled={streaming || pending}
+                  onClick={() => onSelectSession(session.session_id)}
+                >
+                  <strong>{session.title || session.session_id}</strong>
+                  <span>{statusLabel(session.status)} · {formatDate(session.updated_at)}</span>
+                </button>
+              )}
+              {!editing && (onRenameSession || onDeleteSession) ? (
+                <div className="session-sidebar-actions">
+                  {onRenameSession ? (
+                    <button type="button" aria-label="重命名会话" disabled={streaming || pending} onClick={() => startRename(session)}>
+                      <Pencil size={13} />
+                    </button>
+                  ) : null}
+                  {onDeleteSession ? (
+                    <button className="session-sidebar-delete" type="button" aria-label="删除会话" disabled={streaming || pending} onClick={() => { void remove(session); }}>
+                      <Trash2 size={13} />
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </article>
           );
         })}

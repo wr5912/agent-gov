@@ -1,78 +1,64 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from app.agent_testing.router import create_agent_testing_router
 from app.agent_testing.runner import FIXED_PYTEST_COMMAND
-from app.agent_testing.schedule import AgentTestScheduleService, AgentTestScheduleStore, validate_test_schedule
-from app.agent_testing.service import AgentTestingError, AgentTestingService
+from app.agent_testing.schedule import validate_test_schedule
+from app.agent_testing.schemas import AgentTestScheduleUpdateRequest
+from app.agent_testing.service import AgentTestingError
 from app.agent_testing.store import AgentTestingStore
-from app.runtime.agent_git_store import GitAgentVersionStore
-from app.runtime.runtime_db import make_session_factory
-from app.runtime.schemas import ChatResponse
 from app.runtime.state_machines import StateTransitionError, validate_transition
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
+from app_test_utils import load_test_app
 
 
-def _service(tmp_path: Path) -> tuple[AgentTestingService, AgentTestScheduleService, AgentTestingStore, GitAgentVersionStore, list[str]]:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    workspace.joinpath("CLAUDE.md").write_text("# scheduled Agent\n", encoding="utf-8")
+def _service(tmp_path: Path, process_environment):
+    module = load_test_app(
+        process_environment,
+        tmp_path,
+        extra_agent_ids=("agent-a", "agent-missing"),
+    )
+    workspace = module.settings.data_dir / "business-agents" / "agent-a" / "workspace"
     tests_dir = workspace / "tests"
     tests_dir.mkdir()
     tests_dir.joinpath("README.md").write_text("# tests\n", encoding="utf-8")
     tests_dir.joinpath("test_agent.py").write_text(
+        "from pathlib import Path\n\n"
+        "ROOT = Path(__file__).parents[1]\n\n"
         "class TestAgent:\n"
-        "    def helper(self):\n"
-        "        return True\n\n"
         "    def test_answer(self):\n"
-        "        assert self.helper()\n\n"
-        "    async def test_async_answer_method(self):\n"
-        "        assert True\n\n"
+        "        assert (ROOT / 'AGENT.md').is_file()\n\n"
+        "    async def verify_async_answer_method(self):\n"
+        "        assert (ROOT / 'agent.yaml').is_file()\n\n"
         "class Helper:\n"
         "    def test_not_collected(self):\n"
-        "        assert True\n\n"
-        "async def test_async_answer():\n"
-        "    assert True\n",
+        "        assert (ROOT / 'tests' / 'README.md').is_file()\n\n"
+        "async def verify_async_answer():\n"
+        "    assert ROOT.is_dir()\n",
         encoding="utf-8",
     )
-    git_store = GitAgentVersionStore(
-        repository_dir=workspace,
-        worktrees_dir=tmp_path / "worktrees",
-        releases_dir=tmp_path / "releases",
+    git_store = module.agent_governance._store_for("agent-a")
+    return (
+        module.agent_testing_service,
+        module.agent_test_schedule_service,
+        module.agent_testing_store,
+        git_store,
+        module.agent_registry_store,
     )
-    git_store.ensure_bootstrap()
-    session_factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    testing_store = AgentTestingStore(session_factory)
-    schedule_store = AgentTestScheduleStore(session_factory)
 
-    async def unused_run_candidate(*_args, **_kwargs) -> ChatResponse:
-        raise AssertionError("must not invoke an Agent while scheduling pytest")
 
-    service = AgentTestingService(
-        store=testing_store,
-        store_for=lambda agent_id: git_store if agent_id == "agent-a" else (_ for _ in ()).throw(AssertionError(agent_id)),
-        agent_exists=lambda agent_id: agent_id == "agent-a",
-        get_change_set=lambda _change_set_id: None,
-        run_candidate=unused_run_candidate,
-        artifacts_dir=tmp_path / "artifacts",
-        api_base_url="http://127.0.0.1:8000",
-        api_key=None,
-        run_timeout_seconds=30,
-        schedule_reader=schedule_store.get_schedule,
-    )
-    enqueued: list[str] = []
-    service.runner.enqueue = enqueued.append  # type: ignore[method-assign]
-    schedules = AgentTestScheduleService(
-        store=schedule_store,
-        testing=service,
-        agent_exists=lambda agent_id: agent_id == "agent-a",
-        agent_status=lambda _agent_id: "active",
-    )
-    return service, schedules, testing_store, git_store, enqueued
+def _await_terminal(store: AgentTestingStore, test_run_id: str) -> dict:
+    deadline = time.monotonic() + 30
+    run = store.get_run(test_run_id)
+    while run and run["status"] in {"queued", "running"} and time.monotonic() < deadline:
+        time.sleep(0.05)
+        run = store.get_run(test_run_id)
+    assert run is not None and run["status"] not in {"queued", "running"}, run
+    return run
 
 
 def test_schedule_validation_requires_five_fields_iana_timezone_and_fifteen_minutes() -> None:
@@ -90,8 +76,8 @@ def test_schedule_validation_requires_five_fields_iana_timezone_and_fifteen_minu
         validate_test_schedule("0 2 * * *", "Mars/Olympus", now=now)
 
 
-def test_schedule_crud_keeps_one_strategy_per_agent(tmp_path: Path) -> None:
-    service, schedules, _testing_store, _git_store, _enqueued = _service(tmp_path)
+def test_schedule_crud_keeps_one_strategy_per_agent(tmp_path: Path, process_environment) -> None:
+    service, schedules, _testing_store, _git_store, _registry = _service(tmp_path, process_environment)
     now = datetime(2026, 7, 20, tzinfo=timezone.utc)
     try:
         default = schedules.read_schedule("agent-a")
@@ -121,8 +107,8 @@ def test_schedule_crud_keeps_one_strategy_per_agent(tmp_path: Path) -> None:
         service.close()
 
 
-def test_due_schedule_pins_current_commit_and_coalesces_missed_windows(tmp_path: Path) -> None:
-    service, schedules, testing_store, git_store, enqueued = _service(tmp_path)
+def test_due_schedule_pins_current_commit_and_coalesces_missed_windows(tmp_path: Path, process_environment) -> None:
+    service, schedules, testing_store, git_store, _registry = _service(tmp_path, process_environment)
     configured_at = datetime(2026, 7, 20, 0, 0, tzinfo=timezone.utc)
     try:
         schedule = schedules.update_schedule(
@@ -142,7 +128,7 @@ def test_due_schedule_pins_current_commit_and_coalesces_missed_windows(tmp_path:
         assert runs[0]["source"] == "scheduled"
         assert runs[0]["schedule_id"] == schedule["schedule_id"]
         assert runs[0]["scheduled_for"] == schedule["next_run_at"]
-        assert enqueued == [runs[0]["test_run_id"]]
+        assert _await_terminal(testing_store, str(runs[0]["test_run_id"]))["status"] == "passed"
         assert schedules.tick(now=configured_at + timedelta(days=1)) == 0
 
         events = schedules.list_events("agent-a", limit=10)
@@ -152,8 +138,8 @@ def test_due_schedule_pins_current_commit_and_coalesces_missed_windows(tmp_path:
         service.close()
 
 
-def test_schedule_coalesces_active_agent_commit_and_skips_inactive_agent(tmp_path: Path) -> None:
-    service, schedules, testing_store, git_store, _enqueued = _service(tmp_path)
+def test_schedule_coalesces_active_agent_commit_and_skips_inactive_agent(tmp_path: Path, process_environment) -> None:
+    service, schedules, testing_store, git_store, registry = _service(tmp_path, process_environment)
     now = datetime(2026, 7, 20, 0, 0, tzinfo=timezone.utc)
     try:
         active = testing_store.create_run(
@@ -177,22 +163,17 @@ def test_schedule_coalesces_active_agent_commit_and_skips_inactive_agent(tmp_pat
         assert event["status"] == "coalesced"
         assert event["test_run_id"] == active["test_run_id"]
 
-        inactive = AgentTestScheduleService(
-            store=schedules.store,
-            testing=service,
-            agent_exists=lambda agent_id: agent_id == "agent-a",
-            agent_status=lambda _agent_id: "deprecated",
-        )
-        assert inactive.tick(now=now + timedelta(hours=1, minutes=15)) == 1
-        assert inactive.list_events("agent-a", limit=1)[0]["status"] == "skipped"
-        assert inactive.read_schedule("agent-a")["enabled"] is True
+        registry.transition_business_agent("agent-a", status="deprecated")
+        assert schedules.tick(now=now + timedelta(hours=1, minutes=15)) == 1
+        assert schedules.list_events("agent-a", limit=1)[0]["status"] == "skipped"
+        assert schedules.read_schedule("agent-a")["enabled"] is True
         assert len(testing_store.list_runs(agent_id="agent-a")) == 1
     finally:
         service.close()
 
 
-def test_scheduler_tick_drains_a_durable_pending_event_without_a_new_occurrence(tmp_path: Path) -> None:
-    service, schedules, testing_store, _git_store, enqueued = _service(tmp_path)
+def test_scheduler_tick_drains_a_durable_pending_event_without_a_new_occurrence(tmp_path: Path, process_environment) -> None:
+    service, schedules, testing_store, _git_store, _registry = _service(tmp_path, process_environment)
     now = datetime(2026, 7, 20, 0, 0, tzinfo=timezone.utc)
     try:
         schedules.update_schedule(
@@ -210,33 +191,28 @@ def test_scheduler_tick_drains_a_durable_pending_event_without_a_new_occurrence(
         event = schedules.list_events("agent-a", limit=1)[0]
         assert event["status"] == "enqueued"
         assert event["test_run_id"] == testing_store.list_runs(agent_id="agent-a")[0]["test_run_id"]
-        assert enqueued == [event["test_run_id"]]
+        assert _await_terminal(testing_store, str(event["test_run_id"]))["status"] == "passed"
     finally:
         service.close()
 
 
-def test_missing_and_archived_agents_disable_future_schedule_windows(tmp_path: Path) -> None:
-    service, schedules, _testing_store, _git_store, _enqueued = _service(tmp_path)
+def test_missing_and_archived_agents_disable_future_schedule_windows(tmp_path: Path, process_environment) -> None:
+    service, schedules, _testing_store, _git_store, registry = _service(tmp_path, process_environment)
     now = datetime(2026, 7, 20, 0, 0, tzinfo=timezone.utc)
     try:
         schedules.update_schedule(
-            "agent-a",
+            "agent-missing",
             enabled=True,
             cron_expression="*/15 * * * *",
             timezone_name="UTC",
             now=now,
         )
-        missing = AgentTestScheduleService(
-            store=schedules.store,
-            testing=service,
-            agent_exists=lambda _agent_id: False,
-            agent_status=lambda _agent_id: None,
-        )
-        assert missing.tick(now=now + timedelta(minutes=15)) == 1
-        missing_event = schedules.store.list_events(agent_id="agent-a", limit=1)[0]
+        registry.delete_business_agent("agent-missing")
+        assert schedules.tick(now=now + timedelta(minutes=15)) == 1
+        missing_event = schedules.store.list_events(agent_id="agent-missing", limit=1)[0]
         assert missing_event["status"] == "skipped"
         assert missing_event["detail"]["schedule_disabled"] is True
-        assert schedules.store.get_schedule("agent-a")["enabled"] is False
+        assert schedules.store.get_schedule("agent-missing")["enabled"] is False
 
         later = now + timedelta(hours=1)
         schedules.update_schedule(
@@ -246,17 +222,12 @@ def test_missing_and_archived_agents_disable_future_schedule_windows(tmp_path: P
             timezone_name="UTC",
             now=later,
         )
-        archived = AgentTestScheduleService(
-            store=schedules.store,
-            testing=service,
-            agent_exists=lambda _agent_id: True,
-            agent_status=lambda _agent_id: "archived",
-        )
-        assert archived.tick(now=later + timedelta(minutes=15)) == 1
-        archived_event = archived.list_events("agent-a", limit=1)[0]
+        registry.transition_business_agent("agent-a", status="archived")
+        assert schedules.tick(now=later + timedelta(minutes=15)) == 1
+        archived_event = schedules.list_events("agent-a", limit=1)[0]
         assert archived_event["status"] == "skipped"
         assert archived_event["detail"]["schedule_disabled"] is True
-        assert archived.read_schedule("agent-a")["enabled"] is False
+        assert schedules.read_schedule("agent-a")["enabled"] is False
 
         schedules.update_schedule(
             "agent-a",
@@ -271,37 +242,50 @@ def test_missing_and_archived_agents_disable_future_schedule_windows(tmp_path: P
         service.close()
 
 
-def test_test_asset_file_and_paginated_history_are_read_only_projections(tmp_path: Path) -> None:
-    service, _schedules, testing_store, git_store, _enqueued = _service(tmp_path)
+def test_test_asset_file_and_paginated_history_are_read_only_projections(tmp_path: Path, process_environment) -> None:
+    service, schedules, testing_store, git_store, _registry = _service(tmp_path, process_environment)
     try:
         source = service.get_suite_file("agent-a", path="tests/test_agent.py")
         assert source["commit_sha"] == git_store.current_commit_sha()
-        assert source["line_count"] == 16
+        assert source["line_count"] == 17
         symbols = source["symbols"]
         assert isinstance(symbols, list)
         assert [(item["kind"], item["name"], item["qualified_name"], item["line"]) for item in symbols if isinstance(item, dict)] == [
-            ("class", "TestAgent", "TestAgent", 1),
-            ("function", "test_answer", "TestAgent.test_answer", 5),
-            ("async_function", "test_async_answer_method", "TestAgent.test_async_answer_method", 8),
-            ("class", "Helper", "Helper", 11),
-            ("async_function", "test_async_answer", "test_async_answer", 15),
+            ("class", "TestAgent", "TestAgent", 5),
+            ("function", "test_answer", "TestAgent.test_answer", 6),
+            ("class", "Helper", "Helper", 12),
+            ("async_function", "verify_async_answer", "verify_async_answer", 16),
         ]
         with pytest.raises(AgentTestingError) as traversal:
             service.get_suite_file("agent-a", path="tests/../.env")
         assert traversal.value.error_code == "AGENT_TEST_FILE_PATH_INVALID"
 
-        for index, run_source in enumerate(("manual", "scheduled", "manual")):
-            run = testing_store.create_run(
-                agent_id="agent-a",
-                commit_sha=f"{index + 1:040x}",
-                change_set_id=None,
-                source=run_source,
-                command=FIXED_PYTEST_COMMAND,
-                suite={},
-                suite_digest=None,
-            )
-            assert testing_store.claim_run(str(run["test_run_id"])) is not None
-            testing_store.finish_run(str(run["test_run_id"]), status="passed", report={"exit_code": 0}, items=[], stdout="", stderr="")
+        first_manual = service.create_run(
+            agent_id="agent-a",
+            commit_sha=None,
+            change_set_id=None,
+            source="manual",
+        )
+        assert _await_terminal(testing_store, str(first_manual["test_run_id"]))["status"] == "passed"
+        scheduled_at = datetime(2026, 7, 20, 0, 0, tzinfo=timezone.utc)
+        schedules.update_schedule(
+            "agent-a",
+            enabled=True,
+            cron_expression="*/15 * * * *",
+            timezone_name="UTC",
+            now=scheduled_at,
+        )
+        assert schedules.tick(now=scheduled_at + timedelta(minutes=15)) == 1
+        scheduled_run = testing_store.list_runs(agent_id="agent-a")[0]
+        assert scheduled_run["source"] == "scheduled"
+        assert _await_terminal(testing_store, str(scheduled_run["test_run_id"]))["status"] == "passed"
+        last_manual = service.create_run(
+            agent_id="agent-a",
+            commit_sha=None,
+            change_set_id=None,
+            source="manual",
+        )
+        assert _await_terminal(testing_store, str(last_manual["test_run_id"]))["status"] == "passed"
 
         first = service.list_run_history(
             agent_id="agent-a",
@@ -344,51 +328,21 @@ def test_schedule_event_state_machine_rejects_terminal_reopen() -> None:
         validate_transition("agent_test_schedule_event", "enqueued", "pending")
 
 
-def test_history_and_schedule_routes_keep_backend_owned_fields_out_of_requests() -> None:
-    class FakeTesting:
-        def list_run_history(self, **kwargs):
-            assert kwargs["agent_id"] == "agent-a"
-            return {"items": [], "next_cursor": None}
+def test_schedule_request_keeps_backend_owned_fields_out_of_writable_contract() -> None:
+    request = AgentTestScheduleUpdateRequest.model_validate({"enabled": True, "cron_expression": "0 2 * * *", "timezone": "UTC"})
+    assert request.model_dump(mode="json") == {
+        "enabled": True,
+        "cron_expression": "0 2 * * *",
+        "timezone": "UTC",
+    }
 
-    class FakeSchedules:
-        def update_schedule(self, agent_id: str, **kwargs):
-            assert agent_id == "agent-a"
-            return {
-                "schedule_id": "atsc-a",
-                "agent_id": agent_id,
-                "enabled": kwargs["enabled"],
-                "cron_expression": kwargs["cron_expression"],
-                "timezone": kwargs["timezone_name"],
-                "next_run_at": "2026-07-21T02:00:00+00:00",
-            }
-
-    app = FastAPI()
-    app.include_router(
-        create_agent_testing_router(
-            service=FakeTesting(),  # type: ignore[arg-type]
-            schedule_service=FakeSchedules(),  # type: ignore[arg-type]
-            require_api_key=lambda: None,
-        )
-    )
-    with TestClient(app) as client:
-        history = client.get("/api/agent-test-runs/history", params={"agent_id": "agent-a"})
-        updated = client.put(
-            "/api/agent-registry/agent-a/test-schedule",
-            json={"enabled": True, "cron_expression": "0 2 * * *", "timezone": "UTC"},
-        )
-        hostile = client.put(
-            "/api/agent-registry/agent-a/test-schedule",
-            json={
+    with pytest.raises(ValidationError):
+        AgentTestScheduleUpdateRequest.model_validate(
+            {
                 "enabled": True,
                 "cron_expression": "0 2 * * *",
                 "timezone": "UTC",
                 "next_run_at": "2000-01-01T00:00:00Z",
                 "test_run_id": "forged",
-            },
+            }
         )
-
-    assert history.status_code == 200
-    assert history.json() == {"items": [], "next_cursor": None}
-    assert updated.status_code == 200
-    assert updated.json()["schedule_id"] == "atsc-a"
-    assert hostile.status_code == 422

@@ -4,12 +4,14 @@ from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any, Literal, Protocol, TypeAlias
 
+from agentgov_run_permission import is_bounded_run_path_rule
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.runtime.json_types import JsonObject
 
 RuntimeReceiptPayload: TypeAlias = JsonObject
 RuntimeToolResultState: TypeAlias = Literal["success", "error", "interrupted", "denied", "running"]
+RuntimeToolCallState: TypeAlias = Literal["pending", "asking", "allowed", "submitted", "finished"]
 RuntimeTraceActionStatus: TypeAlias = Literal["pending", "resolved", "expired"]
 GOVERNED_EVIDENCE_ROOT_METADATA_KEY = "agentgov_governed_evidence_root"
 
@@ -35,7 +37,7 @@ class _SuggestedPermissionRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool_name: str = Field(min_length=1, max_length=256)
-    rule_content: str | None
+    rule_content: str | None = Field(max_length=1024)
     behavior: Literal["allow"]
     source: str = Field(min_length=1, max_length=128)
 
@@ -156,11 +158,11 @@ class RuntimeReceipt(BaseModel):
     receipt_id: str = Field(min_length=1, max_length=128)
     event_id: str = Field(min_length=1, max_length=128)
     session_id: str = Field(min_length=1, max_length=128)
-    run_id: str | None = Field(default=None, max_length=128)
+    run_id: str = Field(min_length=1, max_length=128)
     reply_id: str | None = Field(default=None, max_length=128)
     type: str = Field(min_length=1, max_length=64)
     payload: RuntimeReceiptPayload = Field(default_factory=dict)
-    trace_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    trace_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     trace_url: str | None = Field(default=None, max_length=2048)
 
 
@@ -212,11 +214,22 @@ class RuntimeBootAnnouncement(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     boot_id: str = Field(min_length=1, max_length=128)
-    runtime_version: str = Field(min_length=1, max_length=128)
+    runtime_version: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+    )
 
 
 class RuntimeBootAck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     boot_id: str
+    runtime_version: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+    )
     recovery_run_ids: list[str] = Field(default_factory=list)
 
 
@@ -249,15 +262,26 @@ class AgentRunResponse(BaseModel):
     completed_at: str | None = None
 
 
-class RuntimePendingActionResponse(BaseModel):
-    """供授权调用方恢复 HITL UI 的最小未决 action 投影。"""
+class RuntimeToolCallFingerprint(BaseModel):
+    """完整 canonical AgentScope ToolCall 的无正文指纹。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_call_id: str = Field(min_length=1, max_length=128)
+    tool_call_name: str = Field(min_length=1, max_length=256)
+    tool_call_state: RuntimeToolCallState
+    tool_call_utf8_length: int = Field(gt=0)
+    tool_call_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class RuntimePendingActionResponse(RuntimeToolCallFingerprint):
+    """未决 action 的无正文投影；原始 ToolCall 只从 AgentScope 获取。"""
 
     action_id: str
     session_id: str
     run_id: str
     reply_id: str
     kind: Literal["human", "external"]
-    tool_call: JsonObject
     status: Literal["pending"]
     created_at: str
 
@@ -300,15 +324,19 @@ class RuntimeTraceExpectations(BaseModel):
     team_children: list[RuntimeTraceTeamChildExpectation] = Field(default_factory=list)
     tool_results: list[RuntimeTraceToolExpectation] = Field(default_factory=list)
     actions: list[RuntimeTraceActionExpectation] = Field(default_factory=list)
+    interrupted_before_reply: bool = False
     control_integrity_complete: bool = True
 
 
 class AgentRunTraceResponse(BaseModel):
+    """公开 Trace 状态只暴露受管身份和链接，不返回 Langfuse 原始 payload。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     run_id: str
     trace_id: str | None
     trace_url: str | None
     trace_status: Literal["pending", "complete", "incomplete"]
-    trace: JsonObject | None = None
 
 
 class RuntimeInterruptResponse(BaseModel):
@@ -369,6 +397,10 @@ def governed_run_permission_rules(tool_call: JsonObject, run_id: str) -> list[Js
             raise ValueError("AgentScope suggested permission rule is invalid") from exc
         if rule.tool_name != tool_name:
             raise ValueError("AgentScope suggested permission rule does not match the pending tool")
+        if rule.source != "workspace_policy.ask_tools":
+            raise ValueError("Run-scoped approval requires an AgentGov governed suggestion source")
+        if not is_bounded_run_path_rule(rule.tool_name, rule.rule_content):
+            raise ValueError("Run-scoped approval requires a bounded AgentScope permission rule")
         identity = (rule.tool_name, rule.rule_content)
         if identity in seen:
             continue

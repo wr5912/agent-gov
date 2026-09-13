@@ -34,8 +34,6 @@ from app.services.generated_agent_tests import build_generated_agent_test
 logger = logging.getLogger(__name__)
 
 RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
-# 反馈整理同样通过独立 AgentScope governor，保证 API 控制面不持有 provider 凭据。
-FormatNormalizedFeedback = Callable[[str], Awaitable[FormatterOutputModel]]
 FindRunById = Callable[[str], JsonObject | None]
 
 
@@ -173,14 +171,12 @@ class ImprovementGovernorService:
         content_store: ImprovementContentStore,
         run_profile_json: RunProfileJson | None,
         data_dir: Path,
-        format_normalized_feedback: FormatNormalizedFeedback | None = None,
         find_run_by_id: FindRunById | None = None,
     ) -> None:
         self._improvements = improvement_store
         self._content = content_store
         self._run_profile_json = run_profile_json
         self._data_dir = data_dir
-        self._format_normalized_feedback = format_normalized_feedback
         self._find_run_by_id = find_run_by_id
 
     # ---- 系统理解 NormalizedFeedback（AgentScope governor；失败则确定性兜底）----
@@ -196,9 +192,15 @@ class ImprovementGovernorService:
         existing = self._content.get_normalized_feedback(improvement_id)
         raw = self._feedback_text(feedbacks)
         title, problem, generated_by = self._heuristic_normalized_feedback(item, feedbacks)
-        if self._format_normalized_feedback is not None and raw:
+        trace_ref: dict[str, str] = {}
+        if self._run_profile_json is not None and raw:
             try:
-                output = await self._format_normalized_feedback(raw)
+                output = await self._run_governor(
+                    AgentJobType.NORMALIZED_FEEDBACK,
+                    {"raw_feedback": raw},
+                    improvement_id,
+                    trace_ref=trace_ref,
+                )
                 data = output.model_dump() if hasattr(output, "model_dump") else dict(output)
                 problem = _text(data.get("problem")) or problem
                 title = _text(data.get("title")) or title
@@ -221,6 +223,8 @@ class ImprovementGovernorService:
             suggestion=getattr(existing, "suggestion", "") if existing else "",
             user_quote=user_quote,
             generated_by=generated_by,
+            generation_trace_id=trace_ref.get("trace_id", "") if generated_by == "llm" else "",
+            generation_trace_url=trace_ref.get("trace_url", "") if generated_by == "llm" else "",
             advance_to_stage=advance_to_stage,
             item_title=item_title,
         )
@@ -446,7 +450,7 @@ class ImprovementGovernorService:
         """阻止不完整 Runtime/Trace 证据进入自动改进分析。
 
         手工记录和提交反馈不受此门限制；只有配置了生产 run 查询器的自动
-        governor 路径执行该检查，便于纯领域单元测试继续使用最小 fake。
+        governor 路径执行该检查；无查询器的纯领域或离线路径不会冒充已有证据。
         """
 
         if self._find_run_by_id is None:

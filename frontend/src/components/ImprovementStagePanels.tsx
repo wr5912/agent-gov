@@ -110,7 +110,7 @@ export function ImprovementStagePanels({
       headerActions: normalizedTraceUrl
         ? <a className="iw-link-button" data-testid="generation-trace-langfuse" href={normalizedTraceUrl} target="_blank" rel="noreferrer">打开 Langfuse 完整 Trace</a>
         : undefined,
-      content: <TraceDetail clientConfig={clientConfig} traceId={traceId} />,
+      content: <TraceDetail traceId={traceId} />,
     });
   };
 

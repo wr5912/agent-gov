@@ -626,13 +626,14 @@ workspace/
 ├── subagents/
 └── tests/
     ├── README.md
-    ├── conftest.py       # 可选
+    ├── conftest.py       # 禁止；平台 plugin 独占真实 agent fixture
     └── test_*.py
 ```
 
 - 首版只接受 `tests/` 下的扁平 Python 文件；
 - `tests/test_*.py` 必须可被 Python 解析；
-- 测试依赖、fixture 和人工复核边界由 `tests/README.md` 说明；
+- 测试依赖和人工复核边界由 `tests/README.md` 说明；禁止 Workspace `conftest.py`、pytest plugin/hook、
+  test double、mock API、符号链接以及替换 `agent.run` 或修改真实调用结果；
 - 测试与 Agent Workspace 同 commit、同 Diff、同导入包和同发布版本；
 - 所有注册业务 Agent（含 `main-agent`）遵循相同结构；
 - governor 可使用项目测试目录验证自身，但不进入业务 Agent 注册表和发布链。
@@ -681,10 +682,13 @@ def test_expected_behavior():
 平台执行命令固定为：
 
 ```bash
-python -m pytest -q -p agentgov_testkit.pytest_plugin tests
+python -I -m pytest -q -p agentgov_testkit.pytest_plugin --noconftest --import-mode=importlib -c /dev/null tests
 ```
 
-客户端不能提交命令、工作目录、安装步骤、状态或报告。第一阶段只在 API 容器的受控 worktree 中执行，不自动安装任意依赖，也不把导入动作等同于执行测试。
+客户端不能提交命令、工作目录、安装步骤、状态或报告。Runner 设置
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`，checkout 后重新验证 suite digest；测试进程上报的 invocation 不作为权威，
+只有 API 服务端按短期 attestation 绑定到精确 `test_run_id` 的真实调用才进入终态证据。第一阶段只在 API
+容器的受控 worktree 中执行，不自动安装任意依赖，也不把导入动作等同于执行测试。
 
 `AgentTestRun` 保存：
 

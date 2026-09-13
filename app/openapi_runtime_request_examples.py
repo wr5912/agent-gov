@@ -25,6 +25,19 @@ RUNTIME_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
             )
         },
     ),
+    ("/api/runtime/sessions/{session_id}", "patch"): RequestExampleContract(
+        media_type="application/json",
+        operation_description=(
+            "Rename the owned AgentScope session. Only name is accepted; Runtime settings, permissions, "
+            "credentials, and workspace fields remain governed by the published session binding."
+        ),
+        examples={
+            "rename_session": example(
+                "Rename one existing session",
+                {"name": "SOC console follow-up"},
+            )
+        },
+    ),
     ("/api/runtime/chat/", "post"): RequestExampleContract(
         media_type="application/json",
         operation_description=(

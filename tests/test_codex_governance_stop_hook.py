@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
-import io
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -21,49 +21,59 @@ def _load_hook_module():
     return module
 
 
-def test_stop_hook_first_failure_requests_one_continuation(monkeypatch, capsys):
-    module = _load_hook_module()
-    monkeypatch.setattr(
-        module,
-        "GOVERNANCE_COMMANDS",
-        (("failing", [sys.executable, "-c", "import sys; print('failed'); sys.exit(1)"]),),
+def _run_hook(script: Path, cwd: Path, hook_input: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(script)],
+        cwd=cwd,
+        input=hook_input,
+        check=False,
+        capture_output=True,
+        text=True,
     )
-    monkeypatch.setattr(sys, "stdin", io.StringIO('{"stop_hook_active": false}'))
 
-    assert module.main() == 0
 
-    payload = json.loads(capsys.readouterr().out)
+def _standalone_hook_without_project_commands(tmp_path: Path) -> Path:
+    copied = tmp_path / ".codex/hooks/codex_governance_stop.py"
+    copied.parent.mkdir(parents=True)
+    shutil.copy2(HOOK_SCRIPT, copied)
+    return copied
+
+
+def test_stop_hook_first_real_command_failure_requests_one_continuation(tmp_path: Path) -> None:
+    copied = _standalone_hook_without_project_commands(tmp_path)
+
+    result = _run_hook(copied, tmp_path, '{"stop_hook_active": false}')
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
     assert payload["decision"] == "block"
-    assert "[failing]\nfailed" in payload["reason"]
+    assert "[agent configuration]" in payload["reason"]
+    assert "No such file or directory" in payload["reason"] or "can't open file" in payload["reason"]
 
 
-def test_stop_hook_repeated_failure_warns_without_continuation_loop(monkeypatch, capsys):
-    module = _load_hook_module()
-    monkeypatch.setattr(
-        module,
-        "GOVERNANCE_COMMANDS",
-        (("failing", [sys.executable, "-c", "import sys; print('failed'); sys.exit(1)"]),),
-    )
-    monkeypatch.setattr(sys, "stdin", io.StringIO('{"stop_hook_active": true}'))
+def test_stop_hook_repeated_real_command_failure_warns_without_continuation_loop(tmp_path: Path) -> None:
+    copied = _standalone_hook_without_project_commands(tmp_path)
 
-    assert module.main() == 0
+    result = _run_hook(copied, tmp_path, '{"stop_hook_active": true}')
 
-    payload = json.loads(capsys.readouterr().out)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
     assert "decision" not in payload
-    assert "[failing]\nfailed" in payload["systemMessage"]
+    assert "[agent configuration]" in payload["systemMessage"]
 
 
-def test_stop_hook_success_is_silent(monkeypatch, capsys):
+def test_stop_hook_runs_the_current_real_governance_commands() -> None:
     module = _load_hook_module()
-    monkeypatch.setattr(
-        module,
-        "GOVERNANCE_COMMANDS",
-        (("passing", [sys.executable, "-c", "raise SystemExit(0)"]),),
-    )
-    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    labels = {label for label, _command in module.GOVERNANCE_COMMANDS}
+    assert {"codex governance", "test quality policy", "docs governance"}.issubset(labels)
 
-    assert module.main() == 0
-    assert capsys.readouterr().out == ""
+    result = _run_hook(HOOK_SCRIPT, REPO_ROOT, "{}")
+
+    assert result.returncode == 0, result.stderr
+    if result.stdout:
+        payload = json.loads(result.stdout)
+        assert payload["decision"] == "block"
+        assert any(f"[{label}]" in payload["reason"] for label, _command in module.GOVERNANCE_COMMANDS)
 
 
 def test_stop_hook_command_resolves_nearest_project_from_monorepo_subdirectory(tmp_path: Path) -> None:
@@ -73,12 +83,12 @@ def test_stop_hook_command_resolves_nearest_project_from_monorepo_subdirectory(t
     hook_script = project_root / ".codex" / "hooks" / "codex_governance_stop.py"
     hook_script.parent.mkdir(parents=True)
     session_cwd.mkdir(parents=True)
-    hook_script.write_text("import sys\nprint(sys.stdin.read())\n", encoding="utf-8")
+    shutil.copy2(HOOK_SCRIPT, hook_script)
     subprocess.run(["git", "init", str(outer_root)], check=True, capture_output=True)
 
     config = json.loads(HOOK_CONFIG.read_text(encoding="utf-8"))
     command = config["hooks"]["Stop"][0]["hooks"][0]["command"]
-    hook_input = '{"hook_event_name":"Stop","cwd":"nested"}'
+    hook_input = '{"hook_event_name":"Stop","stop_hook_active":true}'
 
     result = subprocess.run(
         command,
@@ -91,4 +101,6 @@ def test_stop_hook_command_resolves_nearest_project_from_monorepo_subdirectory(t
     )
 
     assert result.returncode == 0
-    assert result.stdout.strip() == hook_input
+    payload = json.loads(result.stdout)
+    assert "decision" not in payload
+    assert "[agent configuration]" in payload["systemMessage"]

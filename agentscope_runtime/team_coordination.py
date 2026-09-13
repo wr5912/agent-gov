@@ -58,13 +58,22 @@ class RuntimeBootAnnouncement(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     boot_id: str = Field(min_length=1)
-    runtime_version: str = Field(min_length=1)
+    runtime_version: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+    )
 
 
 class RuntimeBootAck(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     boot_id: str = Field(min_length=1)
+    runtime_version: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+    )
     recovery_run_ids: list[str] = Field(default_factory=list)
 
 
@@ -75,11 +84,9 @@ class RuntimeBootCoordinator:
         self,
         settings: RuntimeSettings,
         *,
-        transport: httpx.AsyncBaseTransport | None = None,
         boot_id: str | None = None,
     ) -> None:
         self._settings = settings
-        self._transport = transport
         self.boot_id = boot_id or f"runtime-boot-{uuid.uuid4()}"
         self._acknowledged = asyncio.Event()
 
@@ -96,7 +103,7 @@ class RuntimeBootCoordinator:
                 async with httpx.AsyncClient(
                     base_url=self._settings.agentgov_api_base_url,
                     timeout=self._settings.request_timeout_seconds,
-                    transport=self._transport,
+                    trust_env=False,
                 ) as client:
                     response = await _post_signed_json(
                         client,
@@ -108,7 +115,7 @@ class RuntimeBootCoordinator:
                         ),
                     )
                 acknowledgement = RuntimeBootAck.model_validate(response)
-                if acknowledgement.boot_id != self.boot_id:
+                if acknowledgement.boot_id != self.boot_id or acknowledgement.runtime_version != self._settings.runtime_version:
                     raise RuntimeError("AgentGov returned a mismatched Runtime boot acknowledgement")
                 self._acknowledged.set()
             except asyncio.CancelledError:
@@ -162,7 +169,6 @@ async def register_team_child_session(
     user_id: str,
     child_session_id: str,
     team_id: str,
-    transport: httpx.AsyncBaseTransport | None = None,
 ) -> RuntimeContext | None:
     """Team leader 是顶层 session；worker 在唤醒前同步绑定到同一 run。"""
 
@@ -177,7 +183,7 @@ async def register_team_child_session(
     async with httpx.AsyncClient(
         base_url=settings.agentgov_api_base_url,
         timeout=settings.request_timeout_seconds,
-        transport=transport,
+        trust_env=False,
     ) as client:
         parent = await fetch_runtime_context(client, settings, team.session_id)
         response = await _post_signed_json(
@@ -209,12 +215,9 @@ class AgentGovInMemoryMessageBus(InMemoryMessageBus):
     def __init__(
         self,
         settings: RuntimeSettings,
-        *,
-        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings
-        self._transport = transport
         self._delivery_by_payload_id: dict[int, tuple[str, str, int]] = {}
         self._processed_generations: dict[tuple[str, str], int] = {}
 
@@ -240,7 +243,7 @@ class AgentGovInMemoryMessageBus(InMemoryMessageBus):
             async with httpx.AsyncClient(
                 base_url=self._settings.agentgov_api_base_url,
                 timeout=self._settings.request_timeout_seconds,
-                transport=self._transport,
+                trust_env=False,
             ) as client:
                 response = await _post_signed_json(
                     client,

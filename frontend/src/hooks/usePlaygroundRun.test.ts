@@ -1,158 +1,40 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
 import { ApiRequestError } from "../api/request";
-import type {
-  AgentScopeAgentEvent,
-  ChatMessage,
-  RuntimeExternalExecutionRequest,
-  RuntimeUserConfirmRequest,
-} from "../types/runtime";
 import type { PlaygroundRunState } from "../playgroundRunState";
-
-const mocks = vi.hoisted(() => ({
-  effects: [] as Array<() => void | (() => void)>,
-  connect: vi.fn(),
-  createSession: vi.fn(),
-  messages: vi.fn(),
-  status: vi.fn(),
-  interrupt: vi.fn(),
-  chat: vi.fn(),
-  getRun: vi.fn(),
-  getRunByOperation: vi.fn(),
-  getPendingActions: vi.fn(),
-}));
-
-vi.mock("react", () => ({
-  useEffect: (effect: () => void | (() => void)) => {
-    mocks.effects.push(effect);
-  },
-  useRef: <T>(initial: T) => ({ current: initial }),
-}));
-
-vi.mock("../api/runtime", () => ({
-  connectAgentScopeSessionStream: mocks.connect,
-  createRuntimeSession: mocks.createSession,
-  getRuntimeSessionMessages: mocks.messages,
-  getRuntimeSessionStatus: mocks.status,
-  interruptRuntimeSession: mocks.interrupt,
-  startRuntimeChat: mocks.chat,
-}));
-
-vi.mock("../api/feedback", () => ({
-  getAgentRun: mocks.getRun,
-  getAgentRunByClientOperation: mocks.getRunByOperation,
-  getAgentRunPendingActions: mocks.getPendingActions,
-}));
-
-import { usePlaygroundRun, type PlaygroundRunOptions } from "./usePlaygroundRun";
-
-beforeEach(() => {
-  mocks.effects.length = 0;
-  vi.clearAllMocks();
-  mocks.messages.mockResolvedValue({ messages: [], is_running: false, has_more: false });
-  mocks.status.mockResolvedValue({ session_id: "session-1", status: "awaiting_permission" });
-  mocks.interrupt.mockResolvedValue({ session_id: "session-1" });
-  mocks.getPendingActions.mockResolvedValue([]);
-});
-
-function toolRequest(): RuntimeUserConfirmRequest {
-  return {
-    requestId: "confirm-1",
-    replyId: "reply-1",
-    toolCalls: [{
-      type: "tool_call",
-      id: "tool-1",
-      name: "Read",
-      input: '{"path":"AGENT.md"}',
-      state: "asking",
-    }],
-    status: "waiting",
-  };
-}
-
-function externalRequest(): RuntimeExternalExecutionRequest {
-  return {
-    requestId: "external-1",
-    replyId: "reply-1",
-    toolCalls: [{
-      type: "tool_call",
-      id: "tool-external",
-      name: "ExternalLookup",
-      input: '{"query":"evidence"}',
-      state: "asking",
-    }],
-    status: "waiting",
-  };
-}
-
-function streamConnection(order: string[]) {
-  let resolveReply: ((event: AgentScopeAgentEvent) => void) | undefined;
-  const reply = new Promise<AgentScopeAgentEvent>((resolve) => {
-    resolveReply = resolve;
-  });
-  const connection = {
-    setRunId: vi.fn(() => order.push("setRunId")),
-    armReply: vi.fn(() => {
-      order.push("armReply");
-      return reply;
-    }),
-    close: vi.fn(),
-    closed: new Promise<void>(() => undefined),
-  };
-  mocks.connect.mockImplementation(async () => {
-    order.push("connect");
-    return connection;
-  });
-  return { connection, resolveReply };
-}
-
-function options(
-  runState: PlaygroundRunState,
-  overrides: Partial<PlaygroundRunOptions> = {},
-) {
-  const messages: ChatMessage[] = overrides.activeMessages || [];
-  return {
-    clientConfig: { apiBase: "http://runtime.test", apiKey: "" },
-    input: "hello",
-    runState,
-    dispatchRun: vi.fn(),
-    activeSessionId: "session-1",
-    activeMessages: messages,
-    activeMessagesLoaded: true,
-    selectedBusinessAgentId: "business-1",
-    runtimeAgentId: "runtime-1",
-    alertId: "",
-    caseId: "",
-    promptSuggestion: { clear: vi.fn() },
-    setInput: vi.fn(),
-    setStreamingAssistantMessageId: vi.fn(),
-    setLastError: vi.fn(),
-    setSessionSidebarOpen: vi.fn(),
-    setEvidencePanelOpen: vi.fn(),
-    setActiveTraceMessageId: vi.fn(),
-    setUserInputErrors: vi.fn(),
-    setSubmittingUserInputRequests: vi.fn(),
-    claimLocalSession: vi.fn(),
-    updateSessionMessages: vi.fn((_sessionId: string, updater: (current: ChatMessage[]) => ChatMessage[]) => {
-      updater(messages);
-    }),
-    updateUserConfirmRequest: vi.fn(),
-    updateExternalExecutionRequest: vi.fn(),
-    cancelUserConfirmForMessage: vi.fn(),
-    cancelExternalExecutionForMessage: vi.fn(),
-    calibrateTrace: vi.fn().mockResolvedValue(undefined),
-    refresh: vi.fn().mockResolvedValue(undefined),
-    ...overrides,
-  } as PlaygroundRunOptions;
-}
+import {
+  externalRequest,
+  mocks,
+  options,
+  streamConnection,
+  terminalRun,
+  toolRequest,
+} from "./usePlaygroundRun.test-support";
+import { usePlaygroundRun } from "./usePlaygroundRun";
 
 describe("usePlaygroundRun AgentScope recovery", () => {
-  it("rebuilds a parked HITL turn and connects, binds, then arms SSE before same-run continuation", async () => {
+  it("缺少已发布 Runtime 绑定时指向唯一候选发布流程", async () => {
+    const runOptions = options({ phase: "idle" }, { runtimeAgentId: "" });
+    const controller = usePlaygroundRun(runOptions);
+
+    await controller.sendMessage();
+
+    expect(runOptions.setLastError).toHaveBeenCalledWith(
+      "当前业务 Agent 没有可用的已发布 Runtime 绑定，请先完成候选测试、审批与发布。",
+    );
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mocks.chat).not.toHaveBeenCalled();
+  });
+
+  it("detached HITL 先 pre-arm 绑定精确 run，再向同一 run 续跑", async () => {
     const order: string[] = [];
     streamConnection(order);
     mocks.status.mockImplementation(async () => {
       order.push("status");
       return { session_id: "session-1", status: "awaiting_permission" };
     });
+    mocks.getRun.mockResolvedValue(terminalRun({ status: "waiting_human" }));
     mocks.chat.mockImplementation(async () => {
       order.push("post");
       return { status: "started", session_id: "session-1", runId: "run-1" };
@@ -165,7 +47,7 @@ describe("usePlaygroundRun AgentScope recovery", () => {
       sessionId: "session-1",
       runId: "run-1",
     };
-    const activeMessages: ChatMessage[] = [{
+    const runOptions = options(runState, { activeMessages: [{
       id: "assistant-1",
       role: "assistant",
       content: "",
@@ -173,14 +55,27 @@ describe("usePlaygroundRun AgentScope recovery", () => {
       sessionId: "session-1",
       runId: "run-1",
       userConfirmRequests: [request],
-    }];
-    const runOptions = options(runState, { activeMessages });
+    }] });
     const controller = usePlaygroundRun(runOptions);
+    const cleanup = mocks.effects[1]();
 
-    mocks.effects[0](); // React's detached-run connection effect.
+    mocks.effects[0]();
     await controller.submitUserConfirm(request, "allow_once");
 
-    expect(order.slice(0, 5)).toEqual(["connect", "setRunId", "armReply", "status", "post"]);
+    const connectIndex = order.indexOf("connect");
+    const bindIndex = order.indexOf("setRunId", connectIndex + 1);
+    const armIndex = order.indexOf("armReply", bindIndex + 1);
+    const attachedStatusIndex = order.indexOf("status", armIndex + 1);
+    const postIndex = order.indexOf("post", attachedStatusIndex + 1);
+    expect(connectIndex).toBeGreaterThanOrEqual(0);
+    expect(bindIndex).toBeGreaterThan(connectIndex);
+    expect(armIndex).toBeGreaterThan(bindIndex);
+    expect(attachedStatusIndex).toBeGreaterThan(armIndex);
+    expect(postIndex).toBeGreaterThan(attachedStatusIndex);
+    expect(mocks.connect.mock.calls[0][5]).toEqual({
+      captureReplyBeforeArm: true,
+      expectedReplyId: "assistant-1",
+    });
     expect(mocks.chat).toHaveBeenCalledWith(
       runOptions.clientConfig,
       "runtime-1",
@@ -188,20 +83,18 @@ describe("usePlaygroundRun AgentScope recovery", () => {
       expect.objectContaining({ type: "USER_CONFIRM_RESULT", reply_id: "reply-1" }),
       expect.objectContaining({
         expectedRunId: "run-1",
+        clientOperationId: "detached:session-1:run-1",
       }),
       expect.any(AbortSignal),
     );
-    expect(mocks.chat.mock.calls[0][4]).toMatchObject({
-      clientOperationId: "detached:session-1:run-1",
-      expectedRunId: "run-1",
-    });
     expect(runOptions.updateUserConfirmRequest).toHaveBeenCalledWith(
       "confirm-1",
       expect.objectContaining({ status: "resolved", decision: "allow_once" }),
     );
+    cleanup?.();
   });
 
-  it("recovers a lost initial POST response only through its exact client operation", async () => {
+  it("初始 POST 回执丢失时只用精确 client operation 恢复 run", async () => {
     const order: string[] = [];
     streamConnection(order);
     mocks.chat.mockRejectedValueOnce(new ApiRequestError("network", "connection reset"));
@@ -209,22 +102,13 @@ describe("usePlaygroundRun AgentScope recovery", () => {
       _config: unknown,
       sessionId: string,
       operationId: string,
-    ) => ({
+    ) => terminalRun({
       run_id: "run-recovered",
       session_id: sessionId,
-      runtime_agent_id: "runtime-1",
-      status: "succeeded",
       client_operation_id: operationId,
-    }));
-    mocks.getRun.mockResolvedValue({
-      run_id: "run-recovered",
-      session_id: "session-1",
-      runtime_agent_id: "runtime-1",
-      status: "succeeded",
-      metadata: {},
       reply_ids: [],
-    });
-    mocks.status.mockResolvedValue({ session_id: "session-1", status: "idle" });
+    }));
+    mocks.getRun.mockResolvedValue(terminalRun({ run_id: "run-recovered", reply_ids: [] }));
     const runOptions = options({ phase: "idle" });
     const controller = usePlaygroundRun(runOptions);
 
@@ -246,26 +130,77 @@ describe("usePlaygroundRun AgentScope recovery", () => {
     }]);
   });
 
-  it("submits recovered external execution output into the same detached run", async () => {
+  it("初始 POST 网络结果不确定且 operation 暂未投影时用完全相同请求幂等重试", async () => {
+    streamConnection([]);
+    mocks.chat
+      .mockRejectedValueOnce(new ApiRequestError("network", "connection reset"))
+      .mockResolvedValueOnce({ session_id: "session-1", runId: "run-retried" });
+    mocks.getRunByOperation.mockRejectedValueOnce(new ApiRequestError(
+      "http",
+      "not found",
+      { status: 404, errorCode: "RUNTIMEOBJECTNOTFOUND" },
+    ));
+    mocks.getRun.mockResolvedValue(terminalRun({
+      run_id: "run-retried",
+      client_operation_id: "will-be-overridden-by-assertion",
+      reply_ids: [],
+    }));
+    const runOptions = options({ phase: "idle" });
+    const controller = usePlaygroundRun(runOptions);
+
+    await controller.sendMessage();
+
+    expect(mocks.chat).toHaveBeenCalledTimes(2);
+    const firstCall = mocks.chat.mock.calls[0];
+    const retriedCall = mocks.chat.mock.calls[1];
+    expect(retriedCall.slice(0, 5)).toEqual(firstCall.slice(0, 5));
+    expect((retriedCall[4] as { clientOperationId: string }).clientOperationId).toMatch(/^runtime_/);
+    expect(mocks.getRunByOperation).toHaveBeenCalledTimes(1);
+    expect(runOptions.dispatchRun).toHaveBeenCalledWith(expect.objectContaining({
+      type: "run_handle",
+      runId: "run-retried",
+    }));
+  });
+
+  it("精确 operation 查询返回其他 session 时拒绝绑定", async () => {
+    streamConnection([]);
+    mocks.chat.mockRejectedValueOnce(new ApiRequestError("network", "connection reset"));
+    mocks.getRunByOperation.mockResolvedValue(terminalRun({
+      session_id: "session-other",
+      client_operation_id: "will-be-overridden-by-assertion",
+    }));
+    const runOptions = options({ phase: "idle" });
+    const controller = usePlaygroundRun(runOptions);
+
+    await controller.sendMessage();
+
+    const runHandleActions = (runOptions.dispatchRun as ReturnType<typeof vi.fn>).mock.calls
+      .map(([action]) => action)
+      .filter((action) => action.type === "run_handle");
+    expect(runHandleActions).toEqual([]);
+    expect(runOptions.setLastError).toHaveBeenLastCalledWith(expect.stringContaining("意图不一致"));
+  });
+
+  it("将 detached external execution 输出提交到同一精确 run", async () => {
     const order: string[] = [];
     streamConnection(order);
     mocks.status.mockImplementation(async () => {
       order.push("status");
       return { session_id: "session-1", status: "awaiting_external_result" };
     });
+    mocks.getRun.mockResolvedValue(terminalRun({ status: "waiting_external" }));
     mocks.chat.mockImplementation(async () => {
       order.push("post");
       return { status: "started", session_id: "session-1", runId: "run-1" };
     });
     const request = externalRequest();
-    const runState: PlaygroundRunState = {
+    const runOptions = options({
       phase: "awaiting_input",
       source: "detached",
       operationId: "detached:session-1:run-1",
       sessionId: "session-1",
       runId: "run-1",
-    };
-    const activeMessages: ChatMessage[] = [{
+    }, { activeMessages: [{
       id: "assistant-1",
       role: "assistant",
       content: "",
@@ -273,44 +208,65 @@ describe("usePlaygroundRun AgentScope recovery", () => {
       sessionId: "session-1",
       runId: "run-1",
       externalExecutionRequests: [request],
-    }];
-    const runOptions = options(runState, { activeMessages });
+    }] });
     const controller = usePlaygroundRun(runOptions);
+    const cleanup = mocks.effects[1]();
 
     mocks.effects[0]();
-    await controller.submitExternalExecution(request, "success", {
-      "tool-external": "verified output",
-    });
+    await controller.submitExternalExecution(request, "success", { "tool-external": "verified output" });
 
-    expect(order.slice(0, 5)).toEqual(["connect", "setRunId", "armReply", "status", "post"]);
-    expect(mocks.chat).toHaveBeenCalledWith(
-      runOptions.clientConfig,
-      "runtime-1",
-      "session-1",
-      {
-        type: "EXTERNAL_EXECUTION_RESULT",
-        reply_id: "reply-1",
-        execution_results: [{
-          type: "tool_result",
-          id: "tool-external",
-          name: "ExternalLookup",
-          output: "verified output",
-          state: "success",
-        }],
-      },
-      expect.objectContaining({
-        clientOperationId: "detached:session-1:run-1",
-        expectedRunId: "run-1",
-      }),
-      expect.any(AbortSignal),
-    );
-    expect(runOptions.updateExternalExecutionRequest).toHaveBeenCalledWith(
-      "external-1",
-      expect.objectContaining({ status: "resolved", resultState: "success" }),
-    );
+    const connectIndex = order.indexOf("connect");
+    const bindIndex = order.indexOf("setRunId", connectIndex + 1);
+    const armIndex = order.indexOf("armReply", bindIndex + 1);
+    const attachedStatusIndex = order.indexOf("status", armIndex + 1);
+    const postIndex = order.indexOf("post", attachedStatusIndex + 1);
+    expect(connectIndex).toBeGreaterThanOrEqual(0);
+    expect(bindIndex).toBeGreaterThan(connectIndex);
+    expect(armIndex).toBeGreaterThan(bindIndex);
+    expect(attachedStatusIndex).toBeGreaterThan(armIndex);
+    expect(postIndex).toBeGreaterThan(attachedStatusIndex);
+    expect(mocks.chat.mock.calls[0][3]).toEqual({
+      type: "EXTERNAL_EXECUTION_RESULT",
+      reply_id: "reply-1",
+      execution_results: [{
+        type: "tool_result",
+        id: "tool-external",
+        name: "ExternalLookup",
+        output: "verified output",
+        state: "success",
+      }],
+    });
+    expect(mocks.chat.mock.calls[0][4]).toMatchObject({
+      clientOperationId: "detached:session-1:run-1",
+      expectedRunId: "run-1",
+    });
+    cleanup?.();
   });
 
-  it("rotates a session idempotency key only for RUNTIMERESTARTREQUIRED", async () => {
+  it("续跑回执换成其他 run_id 时不将请求标记为 resolved", async () => {
+    streamConnection([]);
+    mocks.status.mockResolvedValue({ session_id: "session-1", status: "awaiting_permission" });
+    mocks.chat.mockResolvedValue({ status: "started", session_id: "session-1", runId: "run-other" });
+    const request = toolRequest();
+    const runOptions = options({
+      phase: "awaiting_input",
+      source: "detached",
+      operationId: "detached:session-1:run-1",
+      sessionId: "session-1",
+      runId: "run-1",
+    }, { activeMessages: [{
+      id: "assistant-1", role: "assistant", content: "", createdAt: "t",
+      sessionId: "session-1", runId: "run-1", userConfirmRequests: [request],
+    }] });
+    const controller = usePlaygroundRun(runOptions);
+
+    await controller.submitUserConfirm(request, "allow_once");
+
+    expect(runOptions.updateUserConfirmRequest).not.toHaveBeenCalled();
+    expect(runOptions.setUserInputErrors).toHaveBeenCalled();
+  });
+
+  it("仅 RUNTIMERESTARTREQUIRED 轮换 session idempotency key", async () => {
     mocks.createSession
       .mockRejectedValueOnce(new ApiRequestError(
         "http",

@@ -4,7 +4,7 @@ import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
-from threading import Event
+from threading import Barrier
 
 import pytest
 from app.runtime.agent_profile_resolver import resolve_business_profile
@@ -12,14 +12,17 @@ from app.runtime.agent_registry_db import AgentRegistryModel
 from app.runtime.business_agent_workspace import (
     WorkspaceProvisionEntry,
     WorkspaceProvisionPlan,
+    apply_business_agent_workspace_plan,
+    rollback_business_agent_workspace,
 )
 from app.runtime.errors import ConflictError, NotFoundError
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.settings import AppSettings
 from app.runtime.state_machines import StateTransitionError, validate_transition
 from app.runtime.stores.agent_registry_store import AgentProvisionReservation, AgentRegistryStore
-from app.services import business_agent_provisioning
 from app.services.business_agent_provisioning import provision_business_agent
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 
 def _store(tmp_path: Path) -> tuple[AgentRegistryStore, object]:
@@ -36,7 +39,7 @@ def _plan(*entries: tuple[str, bytes]) -> WorkspaceProvisionPlan:
                 b"schema_version: 1\n"
                 b"agent: {id: soc-ops, runtime: agentscope, runtime_contract: agentscope-app/2.0.8}\n"
                 b"session: {permission_mode: default}\n"
-                b"workspace_policy: {fail_closed: true, immutable_harness: true, allow_for_run: false}\n",
+                b"workspace_policy: {fail_closed: true, immutable_harness: true, allow_for_run: false, ask_tools: [ReviewAction]}\n",
             ),
             (
                 "mcp/soc.json",
@@ -135,15 +138,19 @@ def test_success_finalizes_after_workspace_and_derives_hitl_from_settings(tmp_pa
     assert store.get_agent("soc-ops").requires_web_hitl is False
 
 
-def test_finalize_failure_rolls_back_new_workspace_and_deletes_new_row(monkeypatch, tmp_path: Path) -> None:
+def test_real_database_finalize_failure_rolls_back_new_workspace_and_deletes_new_row(tmp_path: Path) -> None:
     store, factory = _store(tmp_path)
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
+    with factory.begin() as db:
+        db.execute(
+            text(
+                "CREATE TRIGGER reject_agent_finalize BEFORE UPDATE OF provision_state ON agent_registry "
+                "WHEN OLD.provision_state = 'provisioning' AND NEW.provision_state = 'ready' "
+                "AND NEW.deleted_at IS NULL BEGIN SELECT RAISE(ABORT, 'reject real finalize'); END"
+            )
+        )
 
-    def fail_finalize(_reservation):
-        raise RuntimeError("forced finalize failure")
-
-    monkeypatch.setattr(store, "finalize_business_agent", fail_finalize)
-    with pytest.raises(RuntimeError, match="forced finalize failure"):
+    with pytest.raises(IntegrityError, match="reject real finalize"):
         _provision(store, workspace)
 
     assert not workspace.exists()
@@ -152,28 +159,21 @@ def test_finalize_failure_rolls_back_new_workspace_and_deletes_new_row(monkeypat
         assert db.get(AgentRegistryModel, "soc-ops") is None
 
 
-def test_rollback_preserves_file_replaced_by_external_writer_and_keeps_tombstone(monkeypatch, tmp_path: Path) -> None:
-    store, factory = _store(tmp_path)
+def test_workspace_rollback_preserves_file_replaced_by_external_writer(tmp_path: Path) -> None:
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
+    journal = apply_business_agent_workspace_plan(workspace, _plan())
+    replacement = workspace / "external.tmp"
+    replacement.write_text("external-owner", encoding="utf-8")
+    os.replace(replacement, workspace / "AGENT.md")
 
-    def replace_owned_file_then_fail(_reservation):
-        replacement = workspace / "external.tmp"
-        replacement.write_text("external-owner", encoding="utf-8")
-        os.replace(replacement, workspace / "AGENT.md")
-        raise RuntimeError("forced finalize failure")
-
-    monkeypatch.setattr(store, "finalize_business_agent", replace_owned_file_then_fail)
-    with pytest.raises(RuntimeError, match="forced finalize failure"):
-        _provision(store, workspace)
+    assert rollback_business_agent_workspace(journal) is False
 
     assert (workspace / "AGENT.md").read_text(encoding="utf-8") == "external-owner"
-    assert store.get_agent("soc-ops") is None
-    with factory.begin() as db:
-        row = db.get(AgentRegistryModel, "soc-ops")
-        assert row is not None and row.deleted_at and row.provision_state == "ready"
+    assert not (workspace / "agent.yaml").exists()
+    assert not (workspace / "mcp" / "soc.json").exists()
 
 
-def test_apply_failure_preserves_preexisting_workspace_and_tombstones_new_row(monkeypatch, tmp_path: Path) -> None:
+def test_real_apply_failure_preserves_preexisting_workspace_and_tombstones_new_row(tmp_path: Path) -> None:
     store, factory = _store(tmp_path)
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
     workspace.mkdir(parents=True)
@@ -181,26 +181,15 @@ def test_apply_failure_preserves_preexisting_workspace_and_tombstones_new_row(mo
     keep.write_text("operator-owned", encoding="utf-8")
     prompt = workspace / "AGENT.md"
     prompt.write_text("custom", encoding="utf-8")
+    blocking_path = workspace / "mcp"
+    blocking_path.write_text("operator-owned file blocks package directory", encoding="utf-8")
 
-    import app.runtime.business_agent_workspace as workspace_module
-
-    real_publish = workspace_module._publish_entry
-    calls = 0
-
-    def fail_second_publish(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise OSError("forced write failure")
-        return real_publish(*args, **kwargs)
-
-    monkeypatch.setattr(workspace_module, "_publish_entry", fail_second_publish)
     with pytest.raises(ConflictError):
         _provision(store, workspace)
 
     assert keep.read_text(encoding="utf-8") == "operator-owned"
     assert prompt.read_text(encoding="utf-8") == "custom"
-    assert not (workspace / "mcp" / "soc.json").exists()
+    assert blocking_path.read_text(encoding="utf-8") == "operator-owned file blocks package directory"
     assert not (workspace / "agent.yaml").exists()
     assert store.get_agent("soc-ops") is None
     with factory.begin() as db:
@@ -208,7 +197,7 @@ def test_apply_failure_preserves_preexisting_workspace_and_tombstones_new_row(mo
         assert row is not None and row.deleted_at and row.provision_state == "ready"
 
 
-def test_workspace_symlink_fails_closed_without_touching_target(monkeypatch, tmp_path: Path) -> None:
+def test_workspace_symlink_fails_closed_without_touching_target(tmp_path: Path) -> None:
     store, factory = _store(tmp_path)
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
     target = tmp_path / "external"
@@ -256,7 +245,7 @@ def test_workspace_intermediate_symlink_cannot_escape_package_publish(tmp_path: 
         assert row is not None and row.deleted_at
 
 
-def test_failed_tombstone_reuse_restores_previous_row_and_workspace(monkeypatch, tmp_path: Path) -> None:
+def test_failed_tombstone_reuse_restores_previous_row_and_workspace(tmp_path: Path) -> None:
     store, factory = _store(tmp_path)
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
     workspace.mkdir(parents=True)
@@ -264,22 +253,18 @@ def test_failed_tombstone_reuse_restores_previous_row_and_workspace(monkeypatch,
     sentinel.write_text("old", encoding="utf-8")
     store.create_business_agent(name="Old", agent_id="soc-ops", workspace_dir=str(workspace))
     store.delete_business_agent("soc-ops")
+    blocking_path = workspace / "mcp"
+    blocking_path.write_text("old-owner", encoding="utf-8")
     with factory.begin() as db:
         old = db.get(AgentRegistryModel, "soc-ops")
         old_deleted_at = old.deleted_at
         old_created_at = old.created_at
 
-    def fail_apply(*_args, **_kwargs):
-        raise business_agent_provisioning.WorkspaceProvisioningError(
-            "forced apply failure",
-            cleanup_complete=True,
-        )
-
-    monkeypatch.setattr(business_agent_provisioning, "apply_business_agent_workspace_plan", fail_apply)
     with pytest.raises(ConflictError):
         _provision(store, workspace, name="New")
 
     assert sentinel.read_text(encoding="utf-8") == "old"
+    assert blocking_path.read_text(encoding="utf-8") == "old-owner"
     assert store.get_agent("soc-ops") is None
     with factory.begin() as db:
         restored = db.get(AgentRegistryModel, "soc-ops")
@@ -290,29 +275,31 @@ def test_failed_tombstone_reuse_restores_previous_row_and_workspace(monkeypatch,
         assert restored.provision_previous_json is None
 
 
-def test_concurrent_same_agent_id_has_exactly_one_winner(monkeypatch, tmp_path: Path) -> None:
+def test_concurrent_same_agent_id_has_exactly_one_winner(tmp_path: Path) -> None:
     store, _ = _store(tmp_path)
     workspace = tmp_path / "data" / "business-agents" / "soc-ops" / "workspace"
-    first_apply_started = Event()
-    release_first = Event()
-    real_apply = business_agent_provisioning.apply_business_agent_workspace_plan
+    ready = Barrier(2)
 
-    def blocking_apply(*args, **kwargs):
-        first_apply_started.set()
-        assert release_first.wait(timeout=10)
-        return real_apply(*args, **kwargs)
+    def provision_after_barrier(name: str):
+        ready.wait(timeout=10)
+        try:
+            return _provision(store, workspace, name=name)
+        except ConflictError as exc:
+            return exc
 
-    monkeypatch.setattr(business_agent_provisioning, "apply_business_agent_workspace_plan", blocking_apply)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(_provision, store, workspace)
-        assert first_apply_started.wait(timeout=10)
-        second = executor.submit(_provision, store, workspace, name="Duplicate")
-        with pytest.raises(ConflictError):
-            second.result(timeout=10)
-        release_first.set()
-        winner = first.result(timeout=10)
+        outcomes = [
+            future.result(timeout=15)
+            for future in (
+                executor.submit(provision_after_barrier, "SOC"),
+                executor.submit(provision_after_barrier, "Duplicate"),
+            )
+        ]
 
-    assert winner.agent_id == "soc-ops"
+    winners = [outcome for outcome in outcomes if not isinstance(outcome, ConflictError)]
+    conflicts = [outcome for outcome in outcomes if isinstance(outcome, ConflictError)]
+    assert len(winners) == len(conflicts) == 1
+    assert winners[0].agent_id == "soc-ops"
     assert [record.agent_id for record in store.list_agents()] == ["soc-ops"]
 
 

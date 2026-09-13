@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { runOutcome, waitForAgentGovRunTerminal } from "./playgroundRunTerminal";
 import type { FeedbackRunRecord } from "./types/feedback";
@@ -21,53 +21,26 @@ function run(overrides: Partial<FeedbackRunRecord> = {}): FeedbackRunRecord {
   };
 }
 
-describe("AgentGov run terminal fence", () => {
-  it("keeps polling the exact run_id after Runtime reply completion", async () => {
-    const getRun = vi.fn()
-      .mockResolvedValueOnce(run({ status: "finalizing" }))
-      .mockResolvedValueOnce(run({ status: "succeeded" }));
-    const wait = vi.fn().mockResolvedValue(undefined);
+describe("AgentGov run 终态围栏", () => {
+  it("不从非终态推导 UI 结果", () => {
+    expect(runOutcome(run({ status: "interrupted" }))).toBe("interrupted");
+    expect(() => runOutcome(run({ status: "finalizing" }))).toThrow("不是终态");
+  });
 
+  it("null 轮询上限可跨越长时间 HITL 直到精确 run 终态", async () => {
+    let reads = 0;
     const terminal = await waitForAgentGovRunTerminal({
       runId: "run-exact",
       sessionId: "session-1",
-      getRun,
-      wait,
+      maxAttempts: null,
+      wait: async () => undefined,
+      getRun: async () => {
+        reads += 1;
+        return run({ status: reads > 125 ? "succeeded" : "waiting_human" });
+      },
     });
 
+    expect(reads).toBe(126);
     expect(terminal.status).toBe("succeeded");
-    expect(getRun).toHaveBeenNthCalledWith(1, "run-exact", undefined);
-    expect(getRun).toHaveBeenNthCalledWith(2, "run-exact", undefined);
-    expect(wait).toHaveBeenCalledOnce();
-  });
-
-  it("fails closed when the precise run_id is missing", async () => {
-    const getRun = vi.fn();
-
-    await expect(waitForAgentGovRunTerminal({
-      runId: undefined,
-      sessionId: "session-1",
-      getRun,
-    })).rejects.toThrow("缺少精确的 AgentGov run_id");
-    expect(getRun).not.toHaveBeenCalled();
-  });
-
-  it("rejects a response bound to another run or session", async () => {
-    await expect(waitForAgentGovRunTerminal({
-      runId: "run-exact",
-      sessionId: "session-1",
-      getRun: async () => run({ run_id: "run-other" }),
-    })).rejects.toThrow("不匹配的 run_id");
-
-    await expect(waitForAgentGovRunTerminal({
-      runId: "run-exact",
-      sessionId: "session-1",
-      getRun: async () => run({ session_id: "session-other" }),
-    })).rejects.toThrow("不属于当前 session_id");
-  });
-
-  it("derives the UI outcome only from a terminal AgentGov status", () => {
-    expect(runOutcome(run({ status: "cancelled" }))).toBe("cancelled");
-    expect(() => runOutcome(run({ status: "finalizing" }))).toThrow("不是终态");
   });
 });

@@ -138,7 +138,7 @@ class AgentTestingStore:
             return _run_payload(row, items)
 
     def list_runs(self, *, agent_id: str | None = None, change_set_id: str | None = None, limit: int = 100) -> list[JsonObject]:
-        stmt = select(AgentTestRunModel).order_by(AgentTestRunModel.created_at.desc()).limit(limit)
+        stmt = select(AgentTestRunModel).order_by(AgentTestRunModel.created_at.desc(), AgentTestRunModel.test_run_id.desc()).limit(limit)
         if agent_id:
             stmt = stmt.where(AgentTestRunModel.agent_id == agent_id)
         if change_set_id:
@@ -260,9 +260,13 @@ class AgentTestingStore:
             if row.status != "running":
                 return _run_payload(row, ())
             validate_transition("agent_test_run", row.status, status)
+            attested_invocations = _attested_invocations(row.report_json)
+            final_report = dict(report)
+            final_report.pop("_attested_invocations", None)
+            final_report["invocations"] = attested_invocations
             row.status = status
             row.completed_at = utc_now()
-            row.report_json = report
+            row.report_json = final_report
             row.stdout_text = stdout
             row.stderr_text = stderr
             row.error_json = error or {}
@@ -280,6 +284,22 @@ class AgentTestingStore:
                     )
                 )
         return self.get_run(test_run_id) or {}
+
+    def record_attested_invocation(self, test_run_id: str, invocation: JsonObject) -> None:
+        with self.Session.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = db.get(AgentTestRunModel, test_run_id)
+            if row is None:
+                raise AgentTestRunNotFound(test_run_id)
+            if row.status != "running":
+                raise RuntimeError("Agent test invocation cannot be attested outside an active run")
+            report = dict(row.report_json or {})
+            invocations = _attested_invocations(report)
+            run_id = str(invocation.get("run_id") or "")
+            if run_id and not any(str(item.get("run_id") or "") == run_id for item in invocations):
+                invocations.append(dict(invocation))
+            report["_attested_invocations"] = invocations
+            row.report_json = report
 
     def reconcile_interrupted_runs(self) -> list[str]:
         now = utc_now()
@@ -309,17 +329,60 @@ class AgentTestingStore:
 
     def latest_passed_for_commit(self, *, agent_id: str, commit_sha: str) -> JsonObject | None:
         with self.Session() as db:
+            has_item = exists(select(AgentTestRunItemModel.test_run_item_id).where(AgentTestRunItemModel.test_run_id == AgentTestRunModel.test_run_id))
+            has_nonpassing_item = exists(
+                select(AgentTestRunItemModel.test_run_item_id).where(
+                    AgentTestRunItemModel.test_run_id == AgentTestRunModel.test_run_id,
+                    AgentTestRunItemModel.outcome != "passed",
+                )
+            )
             row = db.scalar(
                 select(AgentTestRunModel)
                 .where(
                     AgentTestRunModel.agent_id == agent_id,
                     AgentTestRunModel.commit_sha == commit_sha,
                     AgentTestRunModel.status == "passed",
+                    has_item,
+                    ~has_nonpassing_item,
                 )
-                .order_by(AgentTestRunModel.completed_at.desc())
+                .order_by(AgentTestRunModel.completed_at.desc(), AgentTestRunModel.test_run_id.desc())
                 .limit(1)
             )
-            return _run_payload(row, ()) if row else None
+            if row is None:
+                return None
+            items = list(
+                db.scalars(
+                    select(AgentTestRunItemModel).where(AgentTestRunItemModel.test_run_id == row.test_run_id).order_by(AgentTestRunItemModel.nodeid)
+                ).all()
+            )
+            return _run_payload(row, items)
+
+    def latest_for_candidate(
+        self,
+        *,
+        agent_id: str,
+        commit_sha: str,
+        change_set_id: str,
+    ) -> JsonObject | None:
+        with self.Session() as db:
+            row = db.scalar(
+                select(AgentTestRunModel)
+                .where(
+                    AgentTestRunModel.agent_id == agent_id,
+                    AgentTestRunModel.commit_sha == commit_sha,
+                    AgentTestRunModel.change_set_id == change_set_id,
+                )
+                .order_by(AgentTestRunModel.created_at.desc(), AgentTestRunModel.test_run_id.desc())
+                .limit(1)
+            )
+            if row is None:
+                return None
+            items = list(
+                db.scalars(
+                    select(AgentTestRunItemModel).where(AgentTestRunItemModel.test_run_id == row.test_run_id).order_by(AgentTestRunItemModel.nodeid)
+                ).all()
+            )
+            return _run_payload(row, items)
 
     def record_import(
         self,
@@ -422,6 +485,12 @@ def _run_payload(row: AgentTestRunModel, items: Iterable[AgentTestRunItemModel])
         "stderr": row.stderr_text or "",
         "error": dict(row.error_json or {}),
     }
+
+
+def _attested_invocations(report: JsonObject | None) -> list[JsonObject]:
+    payload = dict(report or {})
+    raw = payload.get("_attested_invocations")
+    return [dict(item) for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
 
 
 def _active_run_stmt(

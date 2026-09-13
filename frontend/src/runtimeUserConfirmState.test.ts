@@ -4,6 +4,7 @@ import {
   cancelWaitingUserConfirmRequests,
   clearProjectedUserConfirmRequest,
   mergeUserConfirmRequests,
+  runtimeRunPermissionScopes,
   userConfirmRequestsFromEvent,
 } from "./runtimeUserConfirmState";
 import type { AgentScopeAgentEvent, AgentScopeToolCallBlock, ChatMessage } from "./types/runtime";
@@ -15,7 +16,12 @@ function toolCall(id = "tool-1"): AgentScopeToolCallBlock {
     name: "Read",
     input: '{"path":"AGENT.md"}',
     state: "asking",
-    suggested_rules: [{ tool: "Read" }],
+    suggested_rules: [{
+      tool_name: "Read",
+      rule_content: "reports/**",
+      behavior: "allow",
+      source: "workspace_policy.ask_tools",
+    }],
   };
 }
 
@@ -37,6 +43,87 @@ describe("AgentScope user confirmation state", () => {
       confirmationScope: "once",
       input: { confirm_results: [{ confirmed: false }] },
     });
+  });
+
+  it("shows only bounded Runtime-authored run permission scopes", () => {
+    const request = {
+      requestId: "confirm-1",
+      replyId: "reply-1",
+      toolCalls: [toolCall()],
+      status: "waiting" as const,
+    };
+
+    expect(runtimeRunPermissionScopes(request)).toEqual([
+      { toolName: "Read", ruleContent: "reports/**" },
+    ]);
+
+    for (const ruleContent of [null, "", "*", "**", "./**", "/**/*"]) {
+      const unsafe = toolCall();
+      unsafe.suggested_rules = [{
+        tool_name: "Read",
+        rule_content: ruleContent,
+        behavior: "allow",
+        source: "workspace_policy.ask_tools",
+      }];
+      expect(runtimeRunPermissionScopes({ ...request, toolCalls: [unsafe] })).toBeUndefined();
+    }
+
+    for (const [toolName, ruleContent] of [
+      ["Bash", "*a*"],
+      ["mcp__security__lookup", "incident-123"],
+      ["Glob", "reports/**"],
+      ["Read", "**/secret.txt"],
+      ["Write", "../outputs/**"],
+      ["Unknown", "reports/**"],
+    ]) {
+      const unsafe = toolCall();
+      unsafe.name = toolName;
+      unsafe.suggested_rules = [{
+        tool_name: toolName,
+        rule_content: ruleContent,
+        behavior: "allow",
+        source: "workspace_policy.ask_tools",
+      }];
+      expect(runtimeRunPermissionScopes({ ...request, toolCalls: [unsafe] })).toBeUndefined();
+    }
+  });
+
+  it("disables run scope when any suggested rule is missing or mismatched", () => {
+    const missing = toolCall();
+    delete missing.suggested_rules;
+    const mismatched = toolCall();
+    mismatched.suggested_rules = [{
+      tool_name: "Write",
+      rule_content: "reports/**",
+      behavior: "allow",
+      source: "workspace_policy.ask_tools",
+    }];
+    const untrustedSource = toolCall();
+    untrustedSource.suggested_rules = [{
+      tool_name: "Read",
+      rule_content: "reports/**",
+      behavior: "allow",
+      source: "suggested",
+    }];
+
+    expect(runtimeRunPermissionScopes({
+      requestId: "confirm-1",
+      replyId: "reply-1",
+      toolCalls: [missing],
+      status: "waiting",
+    })).toBeUndefined();
+    expect(runtimeRunPermissionScopes({
+      requestId: "confirm-2",
+      replyId: "reply-1",
+      toolCalls: [mismatched],
+      status: "waiting",
+    })).toBeUndefined();
+    expect(runtimeRunPermissionScopes({
+      requestId: "confirm-3",
+      replyId: "reply-1",
+      toolCalls: [untrustedSource],
+      status: "waiting",
+    })).toBeUndefined();
   });
 
   it("keeps every native tool call intact in one reply-scoped request", () => {

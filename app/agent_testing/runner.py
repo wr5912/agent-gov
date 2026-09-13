@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import shutil
 import signal
 import subprocess
@@ -13,17 +14,33 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeAlias
+from typing import TextIO, TypeAlias
+
+from pydantic.types import JsonValue
 
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.json_types import JsonObject
 
 from .store import AgentTestingStore
+from .suite import inspect_agent_test_suite
 
 logger = logging.getLogger(__name__)
 
 MAX_CAPTURED_OUTPUT_BYTES = 256_000
-FIXED_PYTEST_COMMAND = [sys.executable, "-m", "pytest", "-q", "-p", "agentgov_testkit.pytest_plugin", "tests"]
+FIXED_PYTEST_COMMAND = [
+    sys.executable,
+    "-I",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "agentgov_testkit.pytest_plugin",
+    "--noconftest",
+    "--import-mode=importlib",
+    "-c",
+    "/dev/null",
+    "tests",
+]
 ProcessEnvironment: TypeAlias = dict[str, str]
 
 
@@ -33,6 +50,14 @@ class _RunPaths:
     report: Path
     stdout: Path
     stderr: Path
+
+
+@dataclass(frozen=True)
+class _RunAttestation:
+    token: str
+    agent_id: str
+    commit_sha: str
+    change_set_id: str | None
 
 
 class AgentTestRunner:
@@ -54,6 +79,7 @@ class AgentTestRunner:
         self._timeout_seconds = timeout_seconds
         self._executor = self._new_executor()
         self._processes: dict[str, subprocess.Popen[str]] = {}
+        self._attestations: dict[str, _RunAttestation] = {}
         self._lock = threading.RLock()
         self._closed = False
         artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -83,6 +109,27 @@ class AgentTestRunner:
                 _terminate_process_group(process)
         return payload
 
+    def require_attestation(
+        self,
+        *,
+        test_run_id: str,
+        token: str,
+        agent_id: str,
+        commit_sha: str,
+        change_set_id: str | None,
+    ) -> None:
+        with self._lock:
+            attestation = self._attestations.get(test_run_id)
+        valid = (
+            attestation is not None
+            and secrets.compare_digest(attestation.token, token)
+            and attestation.agent_id == agent_id
+            and attestation.commit_sha == commit_sha
+            and attestation.change_set_id == change_set_id
+        )
+        if not valid:
+            raise PermissionError("Agent test run attestation is invalid or no longer active")
+
     def close(self) -> None:
         with self._lock:
             self._closed = True
@@ -91,6 +138,8 @@ class AgentTestRunner:
         for process in processes:
             if process.poll() is None:
                 _terminate_process_group(process)
+        with self._lock:
+            self._attestations.clear()
         self._executor.shutdown(wait=True, cancel_futures=True)
 
     @staticmethod
@@ -122,11 +171,18 @@ class AgentTestRunner:
         agent_id = str(claimed["agent_id"])
         commit_sha = str(claimed["commit_sha"])
         change_set_id = str(claimed.get("change_set_id") or "") or None
+        suite_digest = str(claimed.get("suite_digest") or "")
         paths = _run_paths(self._artifacts_dir, test_run_id)
         store: GitAgentVersionStore | None = None
         try:
             store = self._store_for(agent_id)
             self.checkout(store=store, commit_sha=commit_sha, destination=paths.checkout)
+            self._verify_checked_out_suite(
+                paths.checkout,
+                agent_id=agent_id,
+                commit_sha=commit_sha,
+                expected_digest=suite_digest,
+            )
             self._run_pytest(
                 test_run_id,
                 agent_id=agent_id,
@@ -140,6 +196,21 @@ class AgentTestRunner:
             if store is not None:
                 self._remove_checkout_safely(test_run_id, store=store, destination=paths.checkout)
 
+    @staticmethod
+    def _verify_checked_out_suite(
+        checkout: Path,
+        *,
+        agent_id: str,
+        commit_sha: str,
+        expected_digest: str,
+    ) -> None:
+        suite = inspect_agent_test_suite(checkout, agent_id=agent_id, commit_sha=commit_sha)
+        if not suite.runnable or not suite.suite_digest:
+            codes = ",".join(item.code for item in suite.diagnostics) or "empty suite"
+            raise RuntimeError(f"checked-out Agent test suite is not runnable: {codes}")
+        if not expected_digest or suite.suite_digest != expected_digest:
+            raise RuntimeError("checked-out Agent test suite digest differs from the scheduled run")
+
     def _run_pytest(
         self,
         test_run_id: str,
@@ -149,45 +220,51 @@ class AgentTestRunner:
         change_set_id: str | None,
         paths: _RunPaths,
     ) -> None:
-        env = self._test_environment(
+        attestation_token = self._register_attestation(
+            test_run_id,
             agent_id=agent_id,
             commit_sha=commit_sha,
             change_set_id=change_set_id,
-            report_path=paths.report,
         )
-        with paths.stdout.open("w", encoding="utf-8") as stdout_file, paths.stderr.open("w", encoding="utf-8") as stderr_file:
+        try:
+            env = self._test_environment(
+                test_run_id=test_run_id,
+                attestation_token=attestation_token,
+                agent_id=agent_id,
+                commit_sha=commit_sha,
+                change_set_id=change_set_id,
+                report_path=paths.report,
+            )
+            self._execute_pytest_process(
+                test_run_id,
+                paths=paths,
+                env=env,
+                redactions=(attestation_token,),
+            )
+        finally:
             with self._lock:
-                if self._closed:
-                    return
-                process = subprocess.Popen(
-                    FIXED_PYTEST_COMMAND,
-                    cwd=paths.checkout,
-                    env=env,
-                    stdout=stdout_file,
-                    stderr=stderr_file,
-                    text=True,
-                    start_new_session=True,
-                )
-                self._processes[test_run_id] = process
+                self._attestations.pop(test_run_id, None)
+
+    def _execute_pytest_process(
+        self,
+        test_run_id: str,
+        *,
+        paths: _RunPaths,
+        env: ProcessEnvironment,
+        redactions: tuple[str, ...],
+    ) -> None:
+        with paths.stdout.open("w", encoding="utf-8") as stdout_file, paths.stderr.open("w", encoding="utf-8") as stderr_file:
+            process = self._start_pytest_process(test_run_id, paths=paths, env=env, stdout_file=stdout_file, stderr_file=stderr_file)
             try:
                 started_at = time.monotonic()
-                timed_out = False
-                while process.poll() is None:
-                    if self._store.cancel_requested(test_run_id):
-                        _terminate_process_group(process)
-                        break
-                    if time.monotonic() - started_at >= self._timeout_seconds:
-                        timed_out = True
-                        _terminate_process_group(process)
-                        break
-                    time.sleep(0.2)
-                _wait_for_process(process)
+                timed_out = self._wait_for_pytest(test_run_id, process, started_at=started_at)
                 self._finish_process(
                     test_run_id,
                     process=process,
                     paths=paths,
                     duration_seconds=time.monotonic() - started_at,
                     timed_out=timed_out,
+                    redactions=redactions,
                 )
             finally:
                 with self._lock:
@@ -195,22 +272,79 @@ class AgentTestRunner:
                 if process.poll() is None:
                     _terminate_process_group(process, kill=True)
 
+    def _start_pytest_process(
+        self,
+        test_run_id: str,
+        *,
+        paths: _RunPaths,
+        env: ProcessEnvironment,
+        stdout_file: TextIO,
+        stderr_file: TextIO,
+    ) -> subprocess.Popen[str]:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Agent test runner is closed")
+            process = subprocess.Popen(
+                FIXED_PYTEST_COMMAND,
+                cwd=paths.checkout,
+                env=env,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                text=True,
+                start_new_session=True,
+            )
+            self._processes[test_run_id] = process
+            return process
+
+    def _wait_for_pytest(self, test_run_id: str, process: subprocess.Popen[str], *, started_at: float) -> bool:
+        timed_out = False
+        while process.poll() is None:
+            if self._store.cancel_requested(test_run_id):
+                _terminate_process_group(process)
+                break
+            if time.monotonic() - started_at >= self._timeout_seconds:
+                timed_out = True
+                _terminate_process_group(process)
+                break
+            time.sleep(0.2)
+        _wait_for_process(process)
+        return timed_out
+
+    def _register_attestation(
+        self,
+        test_run_id: str,
+        *,
+        agent_id: str,
+        commit_sha: str,
+        change_set_id: str | None,
+    ) -> str:
+        token = secrets.token_urlsafe(32)
+        with self._lock:
+            self._attestations[test_run_id] = _RunAttestation(token, agent_id, commit_sha, change_set_id)
+        return token
+
     def _test_environment(
         self,
         *,
+        test_run_id: str,
+        attestation_token: str,
         agent_id: str,
         commit_sha: str,
         change_set_id: str | None,
         report_path: Path,
     ) -> ProcessEnvironment:
-        env = dict(os.environ)
+        env = {key: value for key, value in os.environ.items() if not key.startswith(("AGENTGOV_", "PYTEST_", "PYTHON"))}
         env.update(
             {
                 "AGENTGOV_API_BASE": self._api_base_url,
                 "AGENTGOV_AGENT_ID": agent_id,
                 "AGENTGOV_COMMIT_SHA": commit_sha,
                 "AGENTGOV_TEST_REPORT_PATH": str(report_path),
+                "AGENTGOV_TEST_RUN_ATTESTATION": attestation_token,
+                "AGENTGOV_TEST_RUN_ID": test_run_id,
                 "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTEST_ADDOPTS": "",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
             }
         )
         if self._api_key:
@@ -227,10 +361,15 @@ class AgentTestRunner:
         paths: _RunPaths,
         duration_seconds: float,
         timed_out: bool,
+        redactions: tuple[str, ...] = (),
     ) -> None:
         cancelled = self._store.cancel_requested(test_run_id)
         status = "error" if timed_out and not cancelled else _process_status(process.returncode, cancelled=cancelled)
-        report = _read_report(paths.report)
+        report = _redact_report(_read_report(paths.report), redactions)
+        items = _report_items(report)
+        invalid_success_report = status == "passed" and (not items or any(item.get("outcome") != "passed" for item in items))
+        if invalid_success_report:
+            status = "error"
         report.update(
             {
                 "duration_seconds": duration_seconds,
@@ -241,16 +380,20 @@ class AgentTestRunner:
             test_run_id,
             status=status,
             report=report,
-            items=_report_items(report),
-            stdout=_truncate(_read_text_limited(paths.stdout)),
-            stderr=_truncate(_read_text_limited(paths.stderr)),
+            items=items,
+            stdout=_truncate(_redact(_read_text_limited(paths.stdout), redactions)),
+            stderr=_truncate(_redact(_read_text_limited(paths.stderr), redactions)),
             error=(
                 {}
                 if status in {"passed", "failed", "cancelled"}
                 else {
-                    "error_code": "AGENT_TEST_RUN_TIMEOUT" if timed_out else "AGENT_PYTEST_EXECUTION_ERROR",
+                    "error_code": (
+                        "AGENT_TEST_REPORT_INVALID" if invalid_success_report else "AGENT_TEST_RUN_TIMEOUT" if timed_out else "AGENT_PYTEST_EXECUTION_ERROR"
+                    ),
                     "message": (
-                        f"pytest exceeded the platform timeout of {self._timeout_seconds} seconds"
+                        "pytest exited successfully without a complete all-passed structured report"
+                        if invalid_success_report
+                        else f"pytest exceeded the platform timeout of {self._timeout_seconds} seconds"
                         if timed_out
                         else f"pytest exited with code {process.returncode}"
                     ),
@@ -342,6 +485,28 @@ def _truncate(value: str) -> str:
     if len(encoded) <= MAX_CAPTURED_OUTPUT_BYTES:
         return value
     return encoded[:MAX_CAPTURED_OUTPUT_BYTES].decode("utf-8", errors="replace") + "\n[output truncated]"
+
+
+def _redact(value: str, secrets_to_remove: tuple[str, ...]) -> str:
+    redacted = value
+    for secret in secrets_to_remove:
+        if secret:
+            redacted = redacted.replace(secret, "[REDACTED]")
+    return redacted
+
+
+def _redact_report(report: JsonObject, secrets_to_remove: tuple[str, ...]) -> JsonObject:
+    return {_redact(key, secrets_to_remove): _redact_json_value(value, secrets_to_remove) for key, value in report.items()}
+
+
+def _redact_json_value(value: JsonValue, secrets_to_remove: tuple[str, ...]) -> JsonValue:
+    if isinstance(value, str):
+        return _redact(value, secrets_to_remove)
+    if isinstance(value, list):
+        return [_redact_json_value(item, secrets_to_remove) for item in value]
+    if isinstance(value, dict):
+        return {_redact(str(key), secrets_to_remove): _redact_json_value(item, secrets_to_remove) for key, item in value.items()}
+    return value
 
 
 def _read_text_limited(path: Path) -> str:

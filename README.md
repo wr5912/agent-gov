@@ -15,8 +15,8 @@ AgentGov 负责身份、版本、策略、反馈与发布治理，AgentScope
 可选 `docker/docker-compose.langfuse.yml` 的 `langfuse` profile 提供 Langfuse 及其存储服务；
 公共 Make 入口按需加载该文件，核心服务不要求填写未启用的 Langfuse 存储凭据。浏览器和外部调用方只访问
 AgentGov API，不直接访问 AgentScope Runtime 管理面。模型与 MCP 凭据只注入
-`agentscope-runtime`；AgentGov API 仅持有 Runtime 共享密钥和可选的 Langfuse
-只读查询凭据。
+`agentscope-runtime`；AgentGov API 仅把可选 Langfuse 项目凭据用于查询，不执行写入。
+这对凭据同时供 Runtime 摄取使用，凭据本身没有降权成只读 key。
 
 前端是运行调试与治理观察界面，不提供 Terminal，不接管 AgentScope Runtime
 进程或生产处置；所有运行交互均通过 AgentGov API 完成。AgentGov 负责治理，
@@ -113,6 +113,7 @@ Harness 声明的完整工具、资源和模板清单。需要认证的 MCP 应�
 启动三个核心服务：
 
 ```bash
+make images-prepare  # 新 Docker host 首次联网准备 digest-pinned 依赖镜像
 make build
 make up
 ```
@@ -120,13 +121,29 @@ make up
 连同 Langfuse 启动：
 
 ```bash
+sed -i 's/^LANGFUSE_ENABLED=false$/LANGFUSE_ENABLED=true/' docker/.env
+make langfuse-env
 make all-up
 ```
 
-`make up` / `make all-up` 会先只读检查现有 Runtime 数据库；旧或未知 schema 会在
-初始化与重建前拒绝，不自动清空。服务启动后必须通过 Runtime readiness，否则命令失败。
+`make images-prepare` 只拉取 Compose 当前声明的第三方镜像，以及三个项目 Dockerfile
+声明的构建基础镜像；所有引用都必须以 `@sha256` 固定。拉取后逐一复核本地 image ID
+和 Docker daemon/host-filesystem 边界。它是新机器的显式
+联网准备步骤；日常 `build/up/all-up` 始终使用 `--pull never`，缺镜像时 fail closed。
+离线发布应使用 `scripts/deploy_agent_gov_to_host` 产生并校验 SHA-256 的项目镜像与
+Langfuse 依赖镜像包；目标机在首次 `docker load` 前会校验两个归档，加载后仍按
+Compose 精确 digest 和 image ID 放行。
 
-本项目容器映射到宿主机的端口统一使用 **50400–50499（含边界）**，默认分配如下：
+`docker/.env.example` 默认关闭 Langfuse，避免核心三服务在可选观测栈未启动时误连内部
+Langfuse，也避免非空模板 key 被当作可用凭据。已有私有 `docker/.env` 应保留既有身份和
+存储加密参数；`make langfuse-env` 只补齐空值或 `replace-with-*`，不轮换已有值。
+
+`make up` / `make all-up` 会先只读检查现有 Runtime 数据库。空库创建当前
+`agentscope-runtime-v3`；精确匹配的 `agentscope-runtime-v1` / `agentscope-runtime-v2` 可在启动锁内迁移到 v3，
+其余旧 Claude、未知或漂移 schema 均在初始化与重建前拒绝，不自动清空。服务启动后必须
+通过 Runtime readiness，否则命令失败。
+
+本项目容器映射到宿主机的端口统一使用 **50400–50499（含边界）**，并由启动前置检查强制范围与五个端口互不重复；默认分配如下：
 
 | 服务 | 默认宿主机端口 | 容器内部端口 |
 | --- | --- | --- |
@@ -153,18 +170,28 @@ make ui-logs              # 前端日志
 make compose-diagnose     # 服务、容器与公开健康契约诊断
 make down                 # 停止核心服务
 make langfuse-stop        # 停止 Langfuse profile
+make runtime-recreate     # 已构建当前源码镜像后，只重建 Runtime；保留 API 候选测试 Session
+make ui-recreate          # 已构建当前源码镜像后，只重建 UI；保留 API、Runtime 与候选测试 Session
 ```
+
+候选 Harness 新增 subagent 模板后，先 `make build`，在候选测试 Session 保持活动时运行
+`make COMPOSE_ENV_FILE=docker/.env runtime-recreate`，再重试真实候选对话；该命令不发布候选，
+也不替代最终的整栈重建与 Playground 验收。
 
 ## AgentScope Runtime 公共契约
 
 外部客户端通过 AgentGov API 使用 Runtime：
 
 - `GET /api/runtime/agents/{agent_id}/current`：读取当前发布版本到 Runtime Agent 的精确绑定。
-- `POST /api/runtime/agents/{agent_id}/provision`：幂等 provision 当前发布版本。
+- `GET /api/runtime/agent-schema`：读取固定 AgentScope 版本的原生 Agent 创建表单 schema。
 - `POST /api/runtime/sessions/`：创建绑定 Agent 版本的会话。
 - `GET /api/runtime/sessions/?governance_agent_id=...`：按业务 Agent 聚合各发布版本的会话。
+- `PATCH /api/runtime/sessions/{session_id}`：只允许重命名已绑定会话。
 - `GET /api/runtime/sessions/{session_id}/messages`：读取 canonical messages。
 - `GET /api/runtime/sessions/{session_id}/status`：读取会话状态。
+- `GET /api/runtime/sessions/{session_id}/workspace/status`：读取不含路径的 Workspace 状态投影。
+- `GET /api/runtime/sessions/{session_id}/workspace/mcp`：读取不含配置与凭据的 MCP 连接及工具投影。
+- `GET /api/runtime/sessions/{session_id}/workspace/skills`：读取当前 Session 实际加载的 skill 投影。
 - `GET /api/runtime/sessions/{session_id}/stream`：透传 AgentScope `AgentEvent` SSE。
 - `POST /api/runtime/chat/`：触发一次受治理运行。
 - `POST /api/runtime/sessions/{session_id}/interrupt`：中断会话中的运行。
@@ -189,7 +216,8 @@ make langfuse-stop        # 停止 Langfuse profile
 映射；`GET /api/agent-runs/{run_id}/trace` 再从 `trace_id` 查询 Langfuse 语义轨迹。
 
 Session 创建、chat 和会话读写请求中的 `agent_id` 使用该会话绑定的 `runtime_agent_id`；
-业务 Agent ID 用于查询/provision 发布绑定和跨版本会话列表。调用步骤见
+业务 Agent ID 用于查询发布绑定和跨版本会话列表。若 `/current` 未返回已激活绑定，必须回到
+候选的测试、审批与发布命令重试，客户端不能另走 provision 旁路。调用步骤见
 [集成指南](docs/AgentGov集成指南.md)。替换决策、原方案修订和完整验收门槛见
 [Runtime 替换实施基线与验收](docs/engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md)。
 
@@ -233,10 +261,17 @@ make smoke                   # 基于当前工作树 rebuild/force-recreate 后�
 make container-core-smoke    # readiness、UI 与 OpenAPI 并行只读验收
 make container-openapi-check
 make ui-smoke
-make ui-feedback-smoke
-make ui-playground-cancel-smoke
-make langfuse-smoke
-REQUIRE_LIVE_RUNTIME=1 make container-live-test
+REQUIRE_LIVE_RUNTIME=1 \
+REAL_ACCEPTANCE_AGENT_ID=security-operations-expert \
+REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json \
+make container-live-test langfuse-smoke
+REQUIRE_LIVE_RUNTIME=1 \
+REAL_ACCEPTANCE_AGENT_ID=security-operations-expert \
+REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json \
+make ui-playground-cancel-smoke ui-feedback-smoke
+REQUIRE_LIVE_RUNTIME=1 \
+BROWSER_TECHNICAL_SCENARIO_FILE=/outside/browser-technical-scenarios.json \
+make ui-playground-technical-smoke
 make test
 make typecheck
 ```
@@ -253,41 +288,97 @@ AgentGov 的公开端口，不暴露 Runtime 管理面。
 
 OpenAPI 离线导出始终使用独立临时环境，不沿用容器或宿主机的运行卷。
 
-普通启动、原子切换和隔离验收都在 Runtime 启动前，使用 API 镜像初始化合法业务 Git 并物化
+普通启动和隔离验收都在 Runtime 启动前，使用 API 镜像初始化合法业务 Git 并物化
 clean HEAD 的不可变 Harness 快照；Runtime 仍只读加载快照中的 subagent 模板。该步骤不提交
 已有 Workspace 的未提交变更、不创建 Session 或调用模型。运行中新发布或候选 Harness 的
-模板仍遵循显式重启提示；首次启动通过不代表候选测试与发布后的重载已经验收。
+模板仍遵循显式重启提示：Runtime 用 `409 / RUNTIME_TEMPLATE_RESTART_REQUIRED` 表达尚未加载的
+模板；控制面保留精确快照和重试定位信息。发布等待重启时也保留审批证据与发布意图，处理在途运行并
+执行受控 Runtime 重启后重试同一发布命令。详见[发布激活契约](docs/业务AgentWorkspace包导入与热加载产品工程方案.md#5-测试审批和发布激活)；
+首次启动通过不代表候选测试与发布后的重载已经验收。
 
 Runtime 镜像在构建期封存沙箱 gateway 的依赖与工具；运行时只使用镜像内的离线 wheel，
 每个 Workspace 仍有独立的可写环境，不共享 gateway venv。缺少离线资产时明确失败，
 不在线下载或退回无沙箱执行。Workspace 初始化和 MCP 能力校验共用有界等待预算。
 Runtime 容器使用 Docker init 回收沙箱与健康探针的孤儿进程；不关闭沙箱探针。
 内部签名校验仅重放一次已校验请求体，随后保留原始连接断开通知，SSE 仍透传原生字节。
+Playground 为建连保留 60 秒预算并显示连接中状态。Gateway 只立即发送一个无业务语义的
+SSE readiness comment `:\n\n`，使 Firefox 不必与 AgentScope 约 30 秒的空闲心跳竞态；随后使用
+`aiter_raw()` 原样透传上游字节。Vite 不再注入额外前导帧，两层都不伪造业务事件或改写事件正文。
+Playground 在初始 chat 尚未提交时建连失败，应保留具体错误并允许重试；请求已提交但结果
+不确定时仍须按 `session_id/client_operation_id` 核对精确 run。暂时查询 `404` 时只用完全相同的
+input、上下文和操作 ID 幂等重试，不能生成新意图；只有 chat 明确返回不会启动执行的 4xx 且
+精确 operation 不存在时，才回滚 optimistic turn。恢复失败的具体原因不得被通用“等待终态”提示覆盖。
+精确 run 终态确认后，还需通过 Runtime 公共 Session 状态确认执行槽已释放，才恢复发送；
+例如 Runtime 的会话标题生成可能晚于治理 run 终态，不能在这段收尾期间提前提交下一轮。
 
 `container-live-test` 和 `ui-feedback-smoke` 使用带 Langfuse 的隔离项目，验证真实运行和反馈来源的
 完整 Trace，而不是在关闭观测的 core profile 下要求 Trace complete。
 Trace 对账读取 Langfuse OTel 返回的 `metadata.attributes`，仅对内容长度做严格非负整数解析；
 冲突属性、缺失身份、错误父链或不完整指纹仍不能被判为 complete。
 `container-live-test` 会调用真实 provider，所以默认拒绝执行；必须显式设置
-`REQUIRE_LIVE_RUNTIME=1`，隔离栈的一次性 API 密钥与所选 env 的模型凭据都须通过非占位校验。默认只运行一个最小
-场景。50-run/10 并发验收必须提供人工复核后至少 50 条实质不同的 JSON 场景，runner 会拒绝循环
-复制输入制造证据：
+`REQUIRE_LIVE_RUNTIME=1`，隔离栈的一次性 API 密钥与所选 env 的模型凭据都须通过非占位校验。
+该入口不再内置“最小成功”数据，必须提供源码仓库外的人工复核场景文件和明确的已发布 Agent；
+runner 会拒绝仓库内场景、重复输入或循环复制输入制造证据：
 
 ```bash
-REQUIRE_LIVE_RUNTIME=1 make container-live-test \
-  LIVE_ACCEPTANCE_ARGS="--scenario-file /path/to/reviewed-scenarios.json --runs 50 --concurrency 10 --require-trace-complete"
+REQUIRE_LIVE_RUNTIME=1 \
+REAL_ACCEPTANCE_AGENT_ID=security-operations-expert \
+REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json \
+LIVE_ACCEPTANCE_RUNS=50 \
+LIVE_ACCEPTANCE_CONCURRENCY=10 \
+make container-live-test
 ```
 
-若只验证通用 Runtime 基础链路，可显式添加 `--fixture-agent --require-trace-complete`。
-该选项通过公共 Workspace 导入接口创建无 MCP/subagents 的独立临时 Agent，结束后通过
-公共删除接口清理；不会在业务 Agent 失败时自动替代，也不会修改内置 Agent 的批准能力。
-其通过只证明模型、会话、SSE、Trace 和反馈来源关联，不代表安全业务能力、HITL 或效果改善通过。
+完整候选门使用 `REQUIRE_LIVE_RUNTIME=1 REAL_ACCEPTANCE_AGENT_ID=security-operations-expert
+REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json make container-release-candidate`。该目标会先重建
+隔离 Compose，再执行 50 个实质不同场景、并发 10、Chromium 与 Firefox 各 3 次真实浏览器
+取消验证；四阶段反馈闭环只执行一次真实生成、测试与发布，随后由 Chromium 与 Firefox 各 3 次
+读取同一组已持久化闭环证据，避免重复发布污染后续 baseline。它还会在任何
+`container-live-acceptance` GAP 仍打开时失败；它的名称刻意不宣称已经覆盖重启演练和最终发布签字。
+正式公共浏览器入口强制 `BROWSER=both`，单浏览器只能从内部实现入口进行非正式调试，不生成
+候选发布通过证据。
 
-场景文件是由 `{ "id", "prompt", "feedback_comment" }` 对象组成的 JSON array。该入口覆盖
-Session 创建、原生 SSE、chat、canonical messages、run/reply/trace 关联和反馈提交。
+验收对象是 AgentGov 平台，业务 Agent 只是端到端调测载体。业务依赖缺失不作为平台验收前置条件；
+专属外部服务的可用性与专业业务效果另行验收。平台的 MCP 接入、权限、人工审批、恢复和反馈改进
+能力仍须用明确的测试 Agent 与受控工具验证，不能随业务依赖一并跳过。
+
+底层 runner 仍保留 `--technical-integration-seed` 供开发者诊断模型、会话、SSE、Trace 和反馈
+来源关联；它通过公共 Workspace 导入/删除 API 使用无 MCP/subagents 的临时 Agent，但不属于
+`container-live-test` 或正式验收入口，也不会在业务 Agent 失败时自动替代。技术种子通过不代表
+HITL、MCP 或平台改进效果通过，不能据此关闭正式验收 GAP。
+它只能通过独立的公共隔离入口执行，并要求显式真实模型授权和仓库外技术场景；场景顶层
+`agent_id` 固定为 `runtime-technical-integration-package`：
+
+```bash
+REQUIRE_LIVE_RUNTIME=1 \
+TECHNICAL_SCENARIO_FILE=/outside/technical-scenario.json \
+make container-technical-live-smoke
+```
+
+Playground 取消、断线恢复和幂等重试可通过独立的非正式浏览器技术入口检查。该入口仍由公共
+隔离 runner 重建当前工作树镜像，将仓库外场景冻结为私有快照，并使用真实 Chromium、真实 API
+和真实 provider；场景 `agent_id` 固定为 `security-operations-expert`，但提示不得调用业务工具：
+
+```bash
+REQUIRE_LIVE_RUNTIME=1 \
+BROWSER_TECHNICAL_SCENARIO_FILE=/outside/browser-technical-scenarios.json \
+make ui-playground-technical-smoke
+```
+
+它只形成 AgentGov Playground 技术证据，不验证该业务 Agent 的 MCP 或专业输出效果，也不满足
+双浏览器各三次、50 个不同输入、并发 10 或人工发布签字，不能替代
+`ui-playground-cancel-smoke` / `container-release-candidate` 的正式门禁。
+
+场景文件必须符合 [正式场景 schema](config/live_acceptance_scenario.schema.json)：顶层只含
+`agent_id` 与 `scenarios`；每条场景至少提供 `scenario_id`、`purpose`、`input`、`source_ref`、
+`reviewed_by`、带时区的 `reviewed_at`，改进场景还要提供反馈及允许变更路径。元数据只用于
+可追溯和机器拒绝明显伪证据，不能代替人工复核本身。该入口覆盖 Session 创建、原生 SSE、
+chat、canonical messages、run/reply/trace 关联和反馈提交。
+完整 SSE `data` frame 只要非法就 fail-closed；`success`/`retry` 还必须形成 reply_id 一致的
+`REPLY_START -> 非空 TEXT_BLOCK_DELTA -> REPLY_END` 有序链，且 SSE 终态 reply 集合与持久 run 精确一致。
 本轮通过范围见 [Runtime 替换验收基线](docs/engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md#63-当前能力边界)。
-Trace 按实际完成场景记账；该入口不自动证明三次完整浏览器、HITL、重启恢复、候选发布闭环、
-两小时 soak 或业务效果通过。完整验收未执行前不得宣称原子切换生产验收通过。
+Trace 按实际完成场景记账；单独的 `container-live-test` 不自动证明双浏览器各三次、HITL、重启恢复、候选发布闭环、
+平台改进效果通过。完整验收未执行前不得宣称原子切换生产验收通过。
 
 ## Langfuse 与 OTel
 
@@ -301,20 +392,31 @@ AgentScope Runtime 通过标准 OTLP 导出 trace；AgentGov API 只负责按 `t
 事实完整对账；业务 terminal 不等于观测完整。详见
 [AgentScope 与 Langfuse 观测契约及验收](docs/engineering/AgentScope与Langfuse观测契约及验收.md)。
 
-首次自托管时，从 `docker/.env.example` 复制一份私有 `docker/.env`，填写管理员邮箱，运行
-`make langfuse-env` 生成缺失的 Langfuse 凭据；其他 API、Runtime、模型和 MCP 必填项仍需自行配置。
+首次自托管时，从 `docker/.env.example` 复制一份私有 `docker/.env`，填写管理员邮箱，将
+`LANGFUSE_ENABLED` 改为 `true`，再运行 `make langfuse-env` 生成缺失的 Langfuse 凭据；其他
+API、Runtime、模型和 MCP 必填项仍需自行配置。
 初始化只处理空值和 `replace-with-*` 模板值，不轮换已有值；检测到已有数据且缺凭据时拒绝生成。
 文件修改前保存权限为 `0600` 的同目录 `.env.bak-*` 备份。然后运行：
 
 ```bash
 make all-up
+REQUIRE_LIVE_RUNTIME=1 \
+REAL_ACCEPTANCE_AGENT_ID=security-operations-expert \
+REAL_SCENARIO_FILE=/outside/reviewed-scenarios.json \
 make langfuse-smoke
 ```
 
 `langfuse-smoke` 触发真实 AgentScope run，并验证同一 trace 下的
 `agentgov.run` 根 observation、`invoke_agent` 和 `chat` 子 observation，以及核心
-run/session/reply/version 关联属性。安全出口会将 AgentScope span 名归一化，不携带模型名、
+run/session/reply/version 关联属性。它从外部复核文件选择真实 `success` 场景；公开 API 只返回
+授权后的 trace 引用与完整性状态，smoke 在隔离进程内用私有查询凭据读取严格正向投影，不把
+observation payload 暴露给浏览器。安全出口会将 AgentScope span 名归一化，不携带模型名、
 Agent 名或内容。
+
+本地 Langfuse web 与 worker 默认成对锁定为 `3.225.7` 的多架构 manifest digest，四项存储
+依赖也锁定到本轮已验证的 manifest digest，避免不同部署时间解析到不同实现。若通过私有 env 覆盖镜像，必须同时覆盖 web/worker，
+并在升级前完成数据冷备、迁移检查和真实摄取/查询复验；v3 到 v4 属于独立的大版本迁移，
+不能只改镜像标签。
 
 示例只保留 12 项 Langfuse 输入：统一开关、一对项目 key、管理员邮箱/密码、盐、加密 key、
 登录 secret 和四项存储密码。其余参数使用默认值，需要自定义时才加入私有 env：
@@ -354,7 +456,7 @@ Agent 名或内容。
 - `/api/improvements/{improvement_id}/execution/apply`
 - `/api/improvements/{improvement_id}/regression-test-design/generate`
 - `/api/agent-change-sets/{change_set_id}/publish`
-- `/api/langfuse/traces/{trace_id}`
+- `/api/agent-runs/{run_id}/trace`
 
 接口字段、状态码和请求示例以运行中的 `/openapi.json` 为唯一真相源。
 
@@ -363,15 +465,26 @@ Agent 名或内容。
 ```bash
 scripts/deploy_agent_gov_to_host
 # 或
-scripts/deploy_agent_gov_to_host 172.16.112.232
+DEPLOY_REF=<已提交且本机可解析的commit或tag> scripts/deploy_agent_gov_to_host 172.16.112.232
 ```
 
-普通部署脚本先用临时只读检查器校验远端 Runtime DB epoch，通过后才允许 rsync 覆盖远端
+远程脚本默认部署 `origin/master`；它拒绝运行脚本与 `DEPLOY_REF` 中的脚本内容不一致，因而不会
+用新脚本的镜像假设部署旧 Compose，也不支持直接搬运未提交工作树。当前工作树的本机重建应使用
+`make build` 与 `make all-up COMPOSE_UP_FLAGS=--force-recreate`。
+普通部署脚本先校验本机与远端 Docker 架构一致，再用临时只读检查器校验远端 Runtime DB epoch，通过后才允许 rsync 覆盖远端
 源码；它在停服前还会校验必需配置和 Compose 契约，随后加载
 `agent-gov-agentscope-runtime`、`agent-gov-api`、`agent-gov-ui` 三个镜像，启动可选
-Langfuse profile，并通过 `/health/ready` 验收。私有 `docker/.env` 会被保留。空卷或精确
-`agentscope-runtime-v1` 才允许普通部署；发现旧 Claude/未知 schema 时会在停服前 fail closed，
-绝不自动清空。
+Langfuse profile，并通过 `/health/ready` 验收。私有 `docker/.env` 会被保留。空卷、精确
+`agentscope-runtime-v3` 或可迁移的精确 v1/v2 才允许普通部署；迁移重建 Session intent 与 run 表，
+使用请求指纹并迁入 chat operation 关联。v1 会从 `session_name` 计算指纹后删除正文副本，v2 使用未知历史指纹标记；
+并且只在旧 `agent_release_operations` 表结构、索引和外键均
+精确且表为空时删除该表。非空旧操作记录或结构漂移会拒绝迁移；发现旧 Claude/未知 schema 时会在停服前 fail closed，
+绝不自动清空或静默丢弃。
+
+同一启动锁内还执行一次 HITL 隐私迁移：先把历史 tool call payload 收敛为指纹，再启用
+SQLite `secure_delete`、截断 WAL、`VACUUM` 并再次截断 WAL；只有逻辑迁移和物理净化都成功，
+才在独立事务写入 `agentscope-hitl-fingerprint-v1` marker。任一步失败都不写 marker，后续启动可安全
+重试；未知 marker 或不符合精确契约的数据仍 fail closed。
 
 如果操作者明确选择放弃旧数据、从空卷重新部署，应先停用本项目服务，核对解析后的全部数据挂载、
 目录与占用容器，再将已确认的旧项目卷移出活动路径，创建空的 Runtime root。私有 env 与外部
@@ -379,42 +492,14 @@ MCP/模型服务不随数据卷重置；新栈仍走 `make build` 和 `make all-
 这是重新初始化，不是旧数据迁移，也不能作为备份恢复演练通过的证据。新栈开始写入后不能将旧卷
 回挂到新 binary；旧卷残留的处置须单独核定，不能执行跨项目清理。
 
-需要保留恢复能力的旧 epoch 原子切换必须与普通部署分开，并只在已批准维护窗口执行：
+旧 epoch 切换目前只开放只读检查：
 
 ```bash
-# 1. 操作者先关闭 mutating API/Compose project，确认业务停机。
-make down
-
-# 2. 在活动 Runtime root 之外创建数据/env/ownership/SHA 快照，同时导出已解析旧 Compose
-#    和精确 image digest/tar，并完成数据与 image archive restore drill；不清空。
-#    CUTOVER_ROLLBACK_COMPOSE_FILE 必须指向切换前旧栈的 Compose 文件，不得填新树的同名文件。
-make cutover-prepare \
-  CUTOVER_BACKUP_DIR=/var/backups/agent-gov-cutover \
-  CUTOVER_ROLLBACK_COMPOSE_FILE=/srv/agent-gov-legacy/docker/docker-compose.yml \
-  CUTOVER_CONFIRMATION_TOKEN=PREPARE-AGENTSCOPE-FRESH-EPOCH
-
-# 3. 使用 prepare 输出的一次性 execute token；再次校验 active run/HITL/test/publish 全为 0，
-#    才精确清空该 root、bootstrap 并 force-recreate 为 loopback + 一次性 API key 的验收态。
-make cutover-execute \
-  CUTOVER_MANIFEST=/var/backups/agent-gov-cutover/<cutover-id>/cutover-manifest.json \
-  CUTOVER_CONFIRMATION_TOKEN=<execute-token>
-
-# 4. 不可逆点前，用 manifest 中 cutover_id 构造 RESTORE-<cutover-id>；restore 会停掉验收栈，
-#    校验并恢复数据/env/image digest，再从外置 resolved Compose 自动启动旧栈。
-make cutover-restore CUTOVER_MANIFEST=<manifest> CUTOVER_CONFIRMATION_TOKEN=RESTORE-<cutover-id>
-
-# 5. 只有五类验收 artifact 都是 passed 且有 SHA-256 才可用 prepare 输出的 finalize token。
-#    finalize 先以生产 bind/key + drain gate force-recreate 并通过 readiness；这一步失败仍可 restore。
-#    随后才以 fsync + os.replace 原子更新同一个只读挂载 gate-state 文件为 open；无需再次重启，
-#    该单次 rename 同时开放写请求并成为旧快照恢复的不可逆标记。
-make cutover-finalize \
-  CUTOVER_MANIFEST=<manifest> CUTOVER_EVIDENCE_FILE=<final-evidence.json> \
-  CUTOVER_CONFIRMATION_TOKEN=<finalize-token>
+make cutover-inspect
 ```
 
-`finalize` 在生产 bind/API key 的 `drain` 栈 ready 后，以同一个外置且容器只读挂载的
-`api-gate-state.json` 作为 mutation latch 与不可逆标记；只有该文件原子切到 `open` 后才禁止旧
-快照恢复。工具同时写入代码/image/schema/OpenAPI/Harness/AgentScope/验收 artifact 的 cutover ledger；此后禁止旧
-binary、旧卷或旧快照恢复，并删除
-含旧数据与 secret 的快照归档。任何 token、路径、inode、env hash、snapshot hash、恢复演练或验收
-artifact 不匹配都会拒绝继续。
+`maintenance-down`、`prepare`、`execute`、`finalize`、`recover-finalize` 和 `restore` 均已统一
+fail closed，Make 不提供这些目标。原因是高权限冷备/旧栈演练、整根切换的 crash-resume、跨入口
+互斥及 root filesystem custody 尚未形成可证明闭环；内部 helper 构造器同样拒绝执行。需要切换时
+只能走经独立审批的人工维护方案，先用普通 `make down` 完整停服并保留原目录；不得递归清理旧卷，
+也不能把普通重建结果声明为原子切换、冷备或恢复验收通过。

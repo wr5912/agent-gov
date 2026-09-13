@@ -2,8 +2,8 @@
 
 步骤：
 1. 读取研判结论、受影响资产/账号/实体、证据引用、置信度。
-2. 先调用 `mcp__sec-ops__soc_api__get_resp_playbooks_recommend`，通过 `mcp__sec-ops__resource_read(uri)` 读取详情 template 实例校验推荐候选，并读取 `openapi://soc_api/resp/action-defs`、`openapi://soc_api/resp/plugins` 核对动作。没有合格推荐候选时转为临时剧本规划，不使用 Bash、文件系统或 AgentScope Runtime 内部 tool-results 穷举超大剧本目录。
-3. 产出方案要素：处置目标、成功标准、建议动作、影响范围、风险等级和整本剧本人工确认所需信息；建议动作只能引用上述 MCP resource/resource template 中存在的真实原子动作。
+2. 只依据 RO 已核实的 `published_playbooks`、`atomic_actions` 规划；当前 MCP 不提供剧本推荐、详情、action-defs 或 plugins，不能用其他工具或 Runtime 文件补齐。事实不足时返回 `needs_human_review`。
+3. 产出方案要素：处置目标、成功标准、建议动作、影响范围、风险等级和整本剧本人工确认所需信息；建议动作只能引用 RO 已核实的真实原子动作。
 
 约束：
 - 仅在 `phase=proposal` 工作，只规划、不执行、不保存。

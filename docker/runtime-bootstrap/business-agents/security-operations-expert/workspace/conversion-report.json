@@ -10,11 +10,11 @@
       "targets": [
         {
           "path": "subagents/response-playbook-builder/agent.yaml",
-          "sha256": "4614a3d9ca800a1e6a1a1610ff8bf7de3f1e10024911585cd5dfbf25e78a59d3"
+          "sha256": "0d9bfd4c9d6d28a39f8cbb9e51c0ab63c74865492cd72bd4573676679d57f019"
         },
         {
           "path": "subagents/response-playbook-builder/AGENT.md",
-          "sha256": "c1e4da676c07feac043e446ed8421196d3e2bc79727542f1e73f17bc257683e7"
+          "sha256": "5a682cfa2b13769a0496d27f865bb6503213a50ad3fc3e5f0cc0a7ac01df950a"
         }
       ]
     },
@@ -27,11 +27,11 @@
       "targets": [
         {
           "path": "subagents/response-playbook-planning/agent.yaml",
-          "sha256": "8368c3563ffb47edca3d109d823d43e1640acf28097f9de105ebc63f2309e9b0"
+          "sha256": "00d27479f067d96825e2cf97a6c7f6f718f641b4409903de3417f8ee7617ab6e"
         },
         {
           "path": "subagents/response-playbook-planning/AGENT.md",
-          "sha256": "921d58fcfeca2da21900d1b5c1d66c8c0b47c9d41e055ffd703edf9e8989350a"
+          "sha256": "28ceff87ba8d6c835fefe96df15bbafee3d2cbee48ff2087f442274981cd42bf"
         }
       ]
     },
@@ -44,7 +44,7 @@
       "targets": [
         {
           "path": "subagents/response-playbook-summarizer/agent.yaml",
-          "sha256": "9f2fa5c2432add96b74a3e76414482256f6d4e3e677acb98075aa697f376066b"
+          "sha256": "5f32bd4ddbc1a3994df1943506e5152661105857e243f502a088ed0c59f418c7"
         },
         {
           "path": "subagents/response-playbook-summarizer/AGENT.md",
@@ -87,7 +87,7 @@
       "targets": [
         {
           "path": "AGENT.md",
-          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+          "sha256": "b9f6d16302df29245d7f55999b916e65e492851b90fa859b7b3c580e325168b0"
         }
       ]
     },
@@ -100,7 +100,7 @@
       "targets": [
         {
           "path": "AGENT.md",
-          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+          "sha256": "b9f6d16302df29245d7f55999b916e65e492851b90fa859b7b3c580e325168b0"
         }
       ]
     },
@@ -113,7 +113,7 @@
       "targets": [
         {
           "path": "AGENT.md",
-          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+          "sha256": "b9f6d16302df29245d7f55999b916e65e492851b90fa859b7b3c580e325168b0"
         }
       ]
     },
@@ -126,7 +126,7 @@
       "targets": [
         {
           "path": "agent.yaml",
-          "sha256": "99e5ebe65d010997bbfeefd0e1e7d95a52ca600de4af38266da12f19c318d6a9"
+          "sha256": "1cc3d35636fc2c05a67b9165c2e730c653171eeafe1a819424e99376e3673fe1"
         }
       ]
     },
@@ -139,7 +139,7 @@
       "targets": [
         {
           "path": "skills/playbook-dry-run/SKILL.md",
-          "sha256": "34f00ff9a0766202a5f45157b38cd2429dcbca599aeb7197be10751ad837b50f"
+          "sha256": "504611438e59d26c0c0093cfb6087ba250a5765efef9f2d5e1fff1029291b6f2"
         }
       ]
     },
@@ -152,7 +152,7 @@
       "targets": [
         {
           "path": "skills/security-operations-analysis/SKILL.md",
-          "sha256": "72c7128a8e2e82e046bf6ce9069428ed2eb5cc915cbb9950e2f9d483c334fb23"
+          "sha256": "5c8a490039d4129f1b9723e36f851ac085277a54d5c6267464db9f7627ba8c1f"
         }
       ]
     },
@@ -165,7 +165,7 @@
       "targets": [
         {
           "path": "skills/threat-response-disposition/SKILL.md",
-          "sha256": "c5f6b2874f669730e8dc70ee3bd8e1bee3dbc7a7dae1e574be56ef1730a21d94"
+          "sha256": "ced7642f5c61614906858bd8f20d6a8787cc7ea9b6c868f3c7d8c3417cf7b11d"
         }
       ]
     },
@@ -191,7 +191,7 @@
       "targets": [
         {
           "path": "mcp/sec-ops.json",
-          "sha256": "856b47e949900b8ed00d85863bf1ce59effc46c0c5076d113669132b92ad703a"
+          "sha256": "5106caa810d98f76ca25ecb100608d4813ec22947c722da02919436269111dd9"
         }
       ]
     },
@@ -217,7 +217,7 @@
       "targets": [
         {
           "path": "AGENT.md",
-          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+          "sha256": "b9f6d16302df29245d7f55999b916e65e492851b90fa859b7b3c580e325168b0"
         }
       ]
     },
@@ -230,7 +230,7 @@
       "targets": [
         {
           "path": "README.md",
-          "sha256": "5c640650825a56dbac5fa7c47f3c9600f9f6fd5da68f9d3f608f8217fdd6656d"
+          "sha256": "c518de175559eb3cb2f0e626e9a401198cfffeb89b7c3b8c78986b94f388a97a"
         }
       ]
     },
@@ -243,7 +243,7 @@
       "targets": [
         {
           "path": "agent.yaml",
-          "sha256": "99e5ebe65d010997bbfeefd0e1e7d95a52ca600de4af38266da12f19c318d6a9"
+          "sha256": "1cc3d35636fc2c05a67b9165c2e730c653171eeafe1a819424e99376e3673fe1"
         }
       ]
     },
@@ -256,11 +256,11 @@
       "targets": [
         {
           "path": "agent.yaml",
-          "sha256": "99e5ebe65d010997bbfeefd0e1e7d95a52ca600de4af38266da12f19c318d6a9"
+          "sha256": "1cc3d35636fc2c05a67b9165c2e730c653171eeafe1a819424e99376e3673fe1"
         },
         {
           "path": "AGENT.md",
-          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+          "sha256": "b9f6d16302df29245d7f55999b916e65e492851b90fa859b7b3c580e325168b0"
         }
       ]
     },
@@ -273,11 +273,11 @@
       "targets": [
         {
           "path": "agent.yaml",
-          "sha256": "99e5ebe65d010997bbfeefd0e1e7d95a52ca600de4af38266da12f19c318d6a9"
+          "sha256": "1cc3d35636fc2c05a67b9165c2e730c653171eeafe1a819424e99376e3673fe1"
         },
         {
           "path": "AGENT.md",
-          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+          "sha256": "b9f6d16302df29245d7f55999b916e65e492851b90fa859b7b3c580e325168b0"
         }
       ]
     },
@@ -290,59 +290,44 @@
       "targets": [
         {
           "path": "agent.yaml",
-          "sha256": "99e5ebe65d010997bbfeefd0e1e7d95a52ca600de4af38266da12f19c318d6a9"
+          "sha256": "1cc3d35636fc2c05a67b9165c2e730c653171eeafe1a819424e99376e3673fe1"
         },
         {
           "path": "AGENT.md",
-          "sha256": "26abb4e872629a3ddf06afe34880d8a022411aa404813594fa7193013583c743"
+          "sha256": "b9f6d16302df29245d7f55999b916e65e492851b90fa859b7b3c580e325168b0"
         }
       ]
     },
     {
       "human_confirmation": "not_required",
-      "rule": "test_documentation_rewrite",
+      "rule": "legacy_claude_tests_replaced_by_agentscope_live_test",
       "source_path": "tests/README.md",
       "source_sha256": "45d0d2413f6d1e0ee55a2df86e1375d201b3df6e692930958fb7d558010a34da",
-      "status": "mapped",
-      "targets": [
-        {
-          "path": "tests/README.md",
-          "sha256": "8a0f7782589f8b4834533e3c22314cbe26180576b52471a8b720580623c06f1b"
-        }
-      ]
+      "status": "retired",
+      "targets": []
     },
     {
       "human_confirmation": "not_required",
-      "rule": "legacy_contract_tests_to_agentscope_contract",
+      "rule": "legacy_claude_tests_replaced_by_agentscope_live_test",
       "source_path": "tests/test_hooks.py",
       "source_sha256": "3022414c70ab989c27b1249b5e39033eee8d17b15b003f9a7ad4d1107d6afaa9",
-      "status": "mapped",
-      "targets": [
-        {
-          "path": "tests/test_security_operations_expert_agentscope_harness.py",
-          "sha256": "647d3fffb27af5c7aaf646c9880e76628288015630c2ddd21ac82c34fb94e8c5"
-        }
-      ]
+      "status": "retired",
+      "targets": []
     },
     {
       "human_confirmation": "not_required",
-      "rule": "legacy_contract_tests_to_agentscope_contract",
+      "rule": "legacy_claude_tests_replaced_by_agentscope_live_test",
       "source_path": "tests/test_native_config.py",
       "source_sha256": "aa2732d453fe2ec09ec02646dc20315a5b3ceb1c5862ee37a9c3e9c0b6404a57",
-      "status": "mapped",
-      "targets": [
-        {
-          "path": "tests/test_security_operations_expert_agentscope_harness.py",
-          "sha256": "647d3fffb27af5c7aaf646c9880e76628288015630c2ddd21ac82c34fb94e8c5"
-        }
-      ]
+      "status": "retired",
+      "targets": []
     }
   ],
-  "harness_digest": "57e02e36602b95f7effbbda4bd2a5966a64eefa46c854416e0a04e06f6fb7085",
-  "mapped_count": 24,
-  "output_tree_sha256": "0d4da820a84744a6d867e245c372054f1f8c84931124ceeafb42aefebcf6bceb",
+  "harness_digest": "99772137a5dfbbca603af7c4171e8778c90b2b07e1216070a46803679e2ec340",
+  "mapped_count": 21,
+  "output_tree_sha256": "18499b03c9f3bc5b95d81ff2d888ad15455ca6d458f6de03d7a70d71a591aa25",
   "rejected_count": 0,
-  "retired_count": 0,
+  "retired_count": 3,
   "schema_version": 1,
   "source_coverage_percent": 100.0,
   "source_file_count": 24,

@@ -31,12 +31,10 @@ interface ChatPanelProps {
   agentName: string;
   agentPresentation: AgentPresentation | null;
   runtimeReady: boolean;
-  runtimeProvisioning: boolean;
   promptSuggestions?: string[];
   onInputChange: (value: string) => void;
   onUsePromptSuggestion: (suggestion: string) => void;
   onSend: () => void;
-  onProvisionRuntime: () => void;
   onStop: () => void;
   onToggleSession: () => void;
   onOpenRuntimeSettings: () => void;
@@ -65,12 +63,10 @@ export function ChatPanel({
   agentName,
   agentPresentation,
   runtimeReady,
-  runtimeProvisioning,
   promptSuggestions,
   onInputChange,
   onUsePromptSuggestion,
   onSend,
-  onProvisionRuntime,
   onStop,
   onToggleSession,
   onOpenRuntimeSettings,
@@ -222,21 +218,16 @@ export function ChatPanel({
             }}
             placeholder={runtimeReady
               ? agentPresentation?.composer_placeholder || "输入任务或问题，Ctrl/⌘ + Enter 发送..."
-              : "当前版本尚未启用 Runtime，请先显式供给。"}
-            disabled={!runtimeReady || runtimeProvisioning}
+              : "当前发布版本尚未完成 Runtime 激活，请在测试与发布工作台重试发布。"}
+            disabled={!runtimeReady}
           />
         </div>
         <div className="composer-actions">
           {streaming ? (
             <button className="secondary-button" data-testid="chat-stop" onClick={onStop} disabled={stopDisabled}><Square size={15} /> {stopLabel}</button>
           ) : !runtimeReady ? (
-            <button
-              className="primary-button"
-              data-testid="runtime-provision"
-              onClick={onProvisionRuntime}
-              disabled={runtimeProvisioning}
-            >
-              {runtimeProvisioning ? <><Loader2 size={15} className="spin" /> 启用中…</> : "启用 Runtime"}
+            <button className="primary-button" type="button" disabled>
+              尚未发布激活
             </button>
           ) : (
             <button className="primary-button" data-testid="chat-send" onClick={onSend} disabled={!input.trim() || !runtimeReady}><Send size={15} /> 发送</button>

@@ -3,22 +3,19 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
-import tarfile
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "deploy_agent_gov_to_host"
 CUTOVER_SCRIPT = REPO_ROOT / "scripts" / "agentscope_atomic_cutover.py"
-CUTOVER_SUPPORT = REPO_ROOT / "scripts" / "agentscope_atomic_cutover_support.py"
-CUTOVER_TYPES = REPO_ROOT / "scripts" / "agentscope_atomic_cutover_types.py"
-CUTOVER_EVIDENCE = REPO_ROOT / "scripts" / "agentscope_atomic_cutover_evidence.py"
-CUTOVER_RECOVERY = REPO_ROOT / "scripts" / "agentscope_atomic_cutover_recovery.py"
 
 
 def _script_text() -> str:
@@ -36,110 +33,6 @@ def _load_cutover() -> ModuleType:
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
-
-
-def _write_bound_machine_evidence(cutover: ModuleType, root: Path, manifest: dict[str, object]) -> Path:
-    evidence_module = importlib.import_module("scripts.agentscope_atomic_cutover_evidence")
-    acceptance = manifest["acceptance_artifacts"]
-    assert isinstance(acceptance, dict)
-    image_ids = acceptance["image_ids"]
-    assert isinstance(image_ids, dict)
-    binding = cutover._evidence_binding_sha256(acceptance)
-    results = {
-        "static_gates": {"checks": list(evidence_module.STATIC_CHECKS), "failure_count": 0},
-        "contract_tests": {
-            "contracts": list(evidence_module.CONTRACTS),
-            "passed": len(evidence_module.CONTRACTS),
-            "failed": 0,
-            "skipped": 0,
-        },
-        "container_acceptance": {
-            "profile": "core",
-            "services": list(evidence_module.CORE_SERVICES),
-            "fresh_build": True,
-            "force_recreate": True,
-            "image_ids": image_ids,
-            "failure_count": 0,
-        },
-        "browser_acceptance": {
-            "consecutive_passes": 3,
-            "mock_sse": False,
-            "workflows": list(evidence_module.BROWSER_WORKFLOWS),
-            "failure_count": 0,
-            "artifact_set_sha256": "c" * 64,
-        },
-        "live_runtime": {
-            "total_runs": 50,
-            "distinct_inputs": 50,
-            "max_concurrency": 10,
-            "identity_link_percent": 100.0,
-            "feedback_matches": 10,
-            "cross_scope_authorizations": 0,
-            "soak_seconds": 7200,
-            "unexpected_restarts": 0,
-            "unhandled_errors": 0,
-            "residual_runs": 0,
-            "terminal_loss": 0,
-            "trace_count": 50,
-            "unique_trace_count": 50,
-            "missing_required_spans": 0,
-            "trace_query_p95_seconds": 30.0,
-            "trace_query_max_seconds": 60.0,
-            "secret_plaintext_hits": 0,
-            "p95_latency_ratio": 1.2,
-            "p99_latency_ratio": 1.5,
-            "error_rate_delta_percentage_points": 0.5,
-            "otel_p95_overhead_ratio": 0.1,
-            "run_set_sha256": "d" * 64,
-            "scenario_set_sha256": "e" * 64,
-            "trace_set_sha256": "f" * 64,
-            "soak_artifact_sha256": "0" * 64,
-        },
-    }
-    receipt_dir = root / "evidence"
-    receipt_dir.mkdir()
-    gates: dict[str, object] = {}
-    for gate in cutover.FINAL_EVIDENCE_KEYS:
-        receipt = {
-            "schema_version": 1,
-            "producer": evidence_module.RECEIPT_PRODUCER,
-            "gate_id": gate,
-            "command_id": evidence_module.COMMAND_IDS[gate],
-            "receipt_id": "",
-            "cutover_id": manifest["cutover_id"],
-            "source_artifact_sha256": manifest["source_artifact_sha256"],
-            "acceptance_artifacts_sha256": binding,
-            "acceptance_identity": acceptance["acceptance_identity"],
-            "image_ids": image_ids,
-            "status": "passed",
-            "started_at": "2026-09-10T00:00:01+00:00",
-            "completed_at": "2026-09-10T00:00:02+00:00",
-            "exit_code": 0,
-            "result": results[gate],
-        }
-        receipt["receipt_id"] = evidence_module.build_machine_receipt_id(receipt)
-        receipt_path = receipt_dir / f"{gate}.receipt.json"
-        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
-        gates[gate] = {
-            "status": "passed",
-            "receipt_path": f"evidence/{gate}.receipt.json",
-            "receipt_sha256": cutover._sha256_file(receipt_path),
-        }
-    evidence = root / "final-evidence.json"
-    evidence.write_text(
-        json.dumps(
-            {
-                "schema_version": 2,
-                "cutover_id": manifest["cutover_id"],
-                "source_artifact_sha256": manifest["source_artifact_sha256"],
-                "acceptance_artifacts_sha256": binding,
-                "status": "passed",
-                **gates,
-            }
-        ),
-        encoding="utf-8",
-    )
-    return evidence
 
 
 def test_deploy_script_is_executable_and_has_valid_bash_syntax() -> None:
@@ -180,18 +73,19 @@ def test_deploy_fails_before_sync_when_remote_python_is_older_than_311() -> None
 
     assert "sys.version_info < (3, 11)" in text
     assert "remote Python >=3.11 is required" in text
-    assert text.index("sys.version_info < (3, 11)") < text.index("Syncing origin/master tracked code")
+    assert text.index("sys.version_info < (3, 11)") < text.index("Syncing ${DEPLOY_REF} tracked code")
 
 
 def test_deploy_rejects_legacy_epoch_before_overwriting_remote_source() -> None:
     text = _script_text()
 
     preflight = "Preflighting remote Runtime epoch before source sync"
-    sync = "Syncing origin/master tracked code"
+    sync = "Syncing ${DEPLOY_REF} tracked code"
     assert preflight in text
-    assert ".agentscope_atomic_cutover.preflight.py" in text
+    assert ".agentscope-cutover-preflight.XXXXXX" in text
+    assert "./app/runtime/sqlite_schema_contract.py" in text
     assert "--require-current-or-empty" in text
-    assert "trap 'rm -f \"$preflight_script\"' EXIT" in text
+    assert "trap 'rm -rf -- \"$preflight_root\"' EXIT" in text
     assert text.index(preflight) < text.index(sync)
 
 
@@ -216,24 +110,42 @@ def test_deploy_script_packages_project_and_langfuse_dependency_images() -> None
         assert env_key in text
 
     assert "docker save" in text
-    assert "docker load" in text
+    assert '"${docker_cmd[@]}" load' in text
     assert "sha256sum" in text
     assert "agent-gov-${VERSION}-images.tar.gz" in text
     assert "agent-gov-${VERSION}-langfuse-deps-images.tar.gz" in text
+
+
+def test_deploy_validates_every_remote_archive_before_first_docker_load() -> None:
+    text = _script_text()
+    validation = "python3 scripts/agentscope_atomic_cutover_archive.py"
+    load = '"${docker_cmd[@]}" load'
+
+    assert text.count(validation) == 2
+    assert text.rindex(validation) < text.index(load)
+    assert "LOCAL_DOCKER=(env -i" in text
+    assert 'DOCKER_HOST=unix:///var/run/docker.sock "$LOCAL_DOCKER_BIN")' in text
+    assert 'DOCKER_HOST=unix:///var/run/docker.sock "$docker_boundary/docker")' in text
+    assert "prepare_docker_toolchain" in text
+    assert 'install -m 0500 "$source_cli" "$docker_boundary/docker"' in text
 
 
 def test_deploy_script_uses_loaded_images_for_full_compose_stack() -> None:
     text = _script_text()
 
     assert "git fetch origin master" in text
-    assert "origin/master" in text
-    assert "git show origin/master:VERSION" in text
-    assert "git archive origin/master" in text
+    assert 'DEPLOY_REF="${DEPLOY_REF:-origin/master}"' in text
+    assert 'git show "${TARGET_COMMIT}:VERSION"' in text
+    assert 'git archive "$TARGET_COMMIT"' in text
+    assert "the running deploy script differs from DEPLOY_REF" in text
     assert "working tree must be clean" not in text
-    assert "--profile langfuse down --remove-orphans" in text
-    assert "COMPOSE_ENV_FILE=docker/.env" in text
-    assert 'COMPOSE_UP_FLAGS="--no-build --pull never"' in text
-    assert "make --no-print-directory all-up" in text
+    assert "scripts/run_selected_env_operation.py" in text
+    assert "--operation all-up --no-build --force-recreate" in text
+    assert "--operation up --no-build --force-recreate" in text
+    assert "compose=(" not in text
+    assert '"$docker_boundary/docker"' in text
+    assert "COMPOSE_UP_FLAGS" not in text
+    assert "make --no-print-directory all-up" not in text
     assert 'docker ps -aq --filter "name=agent-gov"' not in text
     assert "--profile langfuse up -d --no-build --pull never" not in text
     assert "runtime_root=$(expand_remote_value" not in text
@@ -241,14 +153,27 @@ def test_deploy_script_uses_loaded_images_for_full_compose_stack() -> None:
     assert "rm -rf '${HOME}'" not in text
 
 
-def test_normal_deploy_checks_fresh_epoch_before_stopping_existing_services() -> None:
+def test_deploy_script_rejects_cross_architecture_image_archives_before_sync_or_stop() -> None:
     text = _script_text()
-    inspect = "python3 scripts/agentscope_atomic_cutover.py inspect"
-    down = "--profile langfuse down --remove-orphans"
+    mismatch = '[[ "$LOCAL_DOCKER_ARCH" = "$REMOTE_DOCKER_ARCH" ]]'
+
+    assert "normalize_architecture" in text
+    assert mismatch in text
+    assert text.index(mismatch) < text.index('log "Syncing ${DEPLOY_REF} tracked code"')
+    assert "image platform mismatch before transfer" in text
+    assert '--architecture "$remote_arch"' in text
+    assert text.index('--architecture "$remote_arch"') < text.index("--operation all-up --no-build --force-recreate")
+
+
+def test_normal_deploy_checks_fresh_epoch_before_sync_and_activation() -> None:
+    text = _script_text()
+    inspect = 'python3 "$preflight_script" inspect'
+    sync = 'log "Syncing ${DEPLOY_REF} tracked code"'
+    activation = "--operation all-up --no-build --force-recreate"
 
     assert inspect in text
     assert "--require-current-or-empty" in text
-    assert text.index(inspect) < text.index(down)
+    assert text.index(inspect) < text.index(sync) < text.index(activation)
     assert "普通部署" in text
     assert "destructive cutover" in text
     assert "agentscope_atomic_cutover.py execute" not in text
@@ -257,7 +182,9 @@ def test_normal_deploy_checks_fresh_epoch_before_stopping_existing_services() ->
 def test_deploy_script_uses_python_health_checks_without_remote_curl_dependency() -> None:
     text = _script_text()
 
-    assert "from urllib.request import Request, urlopen" in text
+    assert "from urllib.request import ProxyHandler, Request, build_opener" in text
+    assert "direct_http = build_opener(ProxyHandler({}))" in text
+    assert "direct_http.open(request" in text
     assert '("API and AgentScope Runtime readiness", "http://127.0.0.1:${host_port}/health/ready", 60, True)' in text
     assert '("UI", "http://127.0.0.1:${frontend_port}", 60, False)' in text
     assert '("Langfuse", "http://127.0.0.1:${langfuse_port}", 90, False)' in text
@@ -288,8 +215,9 @@ def test_deploy_script_preflights_agentscope_secrets_and_service_set_before_cuto
     assert 'require_public_bind_opt_in "AgentGov API" API_BIND_IP API_ALLOW_PUBLIC_BIND' in text
     assert 'require_public_bind_opt_in "AgentGov UI" FRONTEND_BIND_IP FRONTEND_ALLOW_PUBLIC_BIND' in text
     assert "single-tenant operator control plane without cross-user isolation" in text
-    assert "--profile langfuse config >/dev/null" in text
-    assert "agent-gov-api agent-gov-ui agentscope-runtime" in text
+    assert "scripts/run_selected_env_operation.py" in text
+    assert "--operation all-up --no-build --force-recreate" in text
+    assert "compose=(" not in text
 
 
 def test_cutover_epoch_inspection_refuses_legacy_database_without_mutation(tmp_path) -> None:
@@ -306,22 +234,61 @@ def test_cutover_epoch_inspection_refuses_legacy_database_without_mutation(tmp_p
     assert db_path.read_bytes() == before
 
 
-def test_standalone_remote_preflight_inspect_does_not_require_destructive_helper(tmp_path) -> None:
-    remote_root = tmp_path / "remote"
-    images = remote_root / "images"
-    images.mkdir(parents=True)
-    standalone = images / ".agentscope_atomic_cutover.preflight.py"
-    standalone.write_bytes(CUTOVER_SCRIPT.read_bytes())
-    runtime_root = remote_root / "runtime-volume"
-    runtime_root.mkdir()
-    env_file = remote_root / "docker.env"
+def _load_selected_env_runner() -> ModuleType:
+    return importlib.import_module("scripts.run_selected_env_operation")
+
+
+def _image_contract_fixture() -> tuple[dict[str, object], dict[str, str], dict[str, str]]:
+    runner = _load_selected_env_runner()
+    names = (*runner._LOCAL_IMAGES, *runner._THIRD_PARTY_SERVICES)
+    references: dict[str, str] = {}
+    image_ids: dict[str, str] = {}
+    services: dict[str, object] = {}
+    for index, service in enumerate(names, start=1):
+        reference = f"agent-gov-local:{index}" if service in runner._LOCAL_IMAGES else f"registry.example/{service}@sha256:{index:064x}"
+        references[reference] = service
+        image_ids[service] = f"sha256:{(index + 20):064x}"
+        services[service] = {"image": reference}
+    return {"services": services}, references, image_ids
+
+
+def _write_digest_pinned_build_dockerfiles(root: Path) -> None:
+    references = {
+        "docker/Dockerfile": "python:3.11-slim@sha256:" + "a" * 64,
+        "docker/agentscope-runtime.Dockerfile": "python:3.11-slim@sha256:" + "a" * 64,
+        "docker/frontend.Dockerfile": "node:22-alpine@sha256:" + "b" * 64,
+    }
+    for relative, reference in references.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"FROM {reference}\n", encoding="utf-8")
+
+
+def test_remote_preflight_bundle_inspect_remains_read_only_and_self_contained(tmp_path) -> None:
+    operator_home = tmp_path / "operator"
+    runtime_root = operator_home / "volume-agent-gov"
+    runtime_root.mkdir(parents=True)
+    preflight_root = tmp_path / "remote/images/.agentscope-cutover-preflight.fixture"
+    scripts = preflight_root / "scripts"
+    runtime_package = preflight_root / "app/runtime"
+    scripts.mkdir(parents=True)
+    runtime_package.mkdir(parents=True)
+    standalone = scripts / "agentscope_atomic_cutover.py"
+    shutil.copyfile(CUTOVER_SCRIPT, standalone)
+    shutil.copyfile(REPO_ROOT / "app/__init__.py", preflight_root / "app/__init__.py")
+    shutil.copyfile(REPO_ROOT / "app/runtime/__init__.py", runtime_package / "__init__.py")
+    shutil.copyfile(REPO_ROOT / "app/runtime/sqlite_schema_contract.py", runtime_package / "sqlite_schema_contract.py")
+    env_file = tmp_path / "remote/docker.env"
     env_file.write_text(f"HOST_RUNTIME_VOLUME_ROOT={runtime_root}\n", encoding="utf-8")
-    env = dict(os.environ)
-    env.pop("PYTHONPATH", None)
+    env = {
+        "HOME": operator_home.as_posix(),
+        "PATH": os.environ["PATH"],
+        "PYTHONPATH": preflight_root.as_posix(),
+    }
 
     result = subprocess.run(
         [sys.executable, str(standalone), "inspect", "--env-file", str(env_file), "--require-current-or-empty"],
-        cwd=remote_root,
+        cwd=tmp_path,
         env=env,
         check=False,
         capture_output=True,
@@ -330,108 +297,104 @@ def test_standalone_remote_preflight_inspect_does_not_require_destructive_helper
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["classification"] == "empty"
-
-
-@pytest.mark.parametrize("command", ["execute", "restore"])
-def test_standalone_mutating_commands_fail_before_touching_runtime_without_helper(tmp_path, command: str) -> None:
-    isolated = tmp_path / "isolated"
-    isolated.mkdir()
-    standalone = isolated / "agentscope_atomic_cutover.py"
-    standalone.write_bytes(CUTOVER_SCRIPT.read_bytes())
-    runtime_root = isolated / "runtime-volume"
-    runtime_root.mkdir()
-    sentinel = runtime_root / "must-survive"
-    sentinel.write_text("safe", encoding="utf-8")
-    env = dict(os.environ)
-    env.pop("PYTHONPATH", None)
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(standalone),
-            command,
-            "--manifest",
-            str(isolated / "missing-manifest.json"),
-            "--runtime-root",
-            str(runtime_root),
-            "--confirmation-token",
-            "invalid",
-        ],
-        cwd=isolated,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 1
-    assert "helper 缺失" in result.stderr
-    assert sentinel.read_text(encoding="utf-8") == "safe"
+    assert list(runtime_root.iterdir()) == []
 
 
 @pytest.mark.parametrize(
-    ("include_types", "expected_error"),
-    [
-        (False, "helper 无法完整加载；未执行任何切换动作"),
-        (True, "cutover manifest 无法读取"),
-    ],
+    "command",
+    ["maintenance-down", "prepare", "execute", "finalize", "recover-finalize", "restore"],
 )
-def test_restore_helper_bundle_is_complete_or_fails_before_mutation(
-    tmp_path,
-    include_types: bool,
-    expected_error: str,
-) -> None:
-    isolated = tmp_path / "isolated"
-    isolated.mkdir()
-    standalone = isolated / "agentscope_atomic_cutover.py"
-    standalone.write_bytes(CUTOVER_SCRIPT.read_bytes())
-    (isolated / CUTOVER_SUPPORT.name).write_bytes(CUTOVER_SUPPORT.read_bytes())
-    if include_types:
-        (isolated / CUTOVER_TYPES.name).write_bytes(CUTOVER_TYPES.read_bytes())
-    runtime_root = isolated / "runtime-volume"
-    runtime_root.mkdir()
-    sentinel = runtime_root / "must-survive"
+def test_retired_atomic_commands_fail_closed_without_touching_files(tmp_path, command: str) -> None:
+    sentinel = tmp_path / "must-survive"
     sentinel.write_text("safe", encoding="utf-8")
-    env = dict(os.environ)
-    env.pop("PYTHONPATH", None)
 
     result = subprocess.run(
-        [
-            sys.executable,
-            str(standalone),
-            "restore",
-            "--manifest",
-            str(isolated / "missing-manifest.json"),
-            "--runtime-root",
-            str(runtime_root),
-            "--confirmation-token",
-            "invalid",
-        ],
-        cwd=isolated,
-        env=env,
+        [sys.executable, str(CUTOVER_SCRIPT), command],
+        cwd=tmp_path,
         check=False,
         capture_output=True,
         text=True,
     )
 
+    label = command if command != "recover-finalize" else "finalize/recover-finalize"
     assert result.returncode == 1
-    assert expected_error in result.stderr
+    assert f"{label} 已安全禁用" in result.stderr
     assert sentinel.read_text(encoding="utf-8") == "safe"
 
 
-def test_cutover_epoch_inspection_accepts_only_agentscope_marker(tmp_path) -> None:
+@pytest.mark.parametrize("command", ["prepare", "execute", "finalize", "recover-finalize", "restore"])
+def test_retired_atomic_commands_do_not_accept_legacy_activation_arguments(tmp_path, command: str) -> None:
+    sentinel = tmp_path / "must-survive"
+    sentinel.write_text("safe", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(CUTOVER_SCRIPT), command, "--confirmation-token", "hostile"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "unrecognized arguments" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "safe"
+
+
+def test_atomic_main_exposes_no_private_destructive_aliases() -> None:
+    cutover = _load_cutover()
+
+    for name in (
+        "__getattr__",
+        "_capture_rollback_bundle",
+        "_destructive_support",
+        "_recovery_support",
+        "_bootstrap_and_force_recreate",
+        "_restore_rollback_images_and_start",
+        "_safe_extract_regular_archive",
+        "_write_production_gate_state_atomic",
+    ):
+        assert not hasattr(cutover, name)
+
+
+def test_retired_support_modules_fail_before_any_injected_mutation() -> None:
+    support = importlib.import_module("scripts.agentscope_atomic_cutover_support")
+    images = importlib.import_module("scripts.agentscope_atomic_cutover_images")
+    rollback = importlib.import_module("scripts.agentscope_atomic_cutover_rollback")
+    recovery = importlib.import_module("scripts.agentscope_atomic_cutover_recovery")
+    mutations: list[str] = []
+
+    injected = {
+        "run_command": lambda *_args, **_kwargs: mutations.append("run") or "",
+        "write_json": lambda *_args, **_kwargs: mutations.append("write"),
+        "atomic_write_gate": lambda *_args, **_kwargs: mutations.append("gate"),
+    }
+    for constructor in (
+        support.CutoverSupport,
+        images.CutoverImageSupport,
+        rollback.CutoverRollbackSupport,
+    ):
+        with pytest.raises(RuntimeError, match="退役"):
+            constructor(error_type=RuntimeError, **injected)
+
+    recovery_support = recovery.CutoverRecoverySupport(error_type=RuntimeError, **injected)
+    with pytest.raises(RuntimeError, match="安全禁用"):
+        recovery_support.open_production_gate()
+    with pytest.raises(RuntimeError, match="安全禁用"):
+        recovery_support.resume_irreversible_transition()
+
+    assert mutations == []
+
+
+def test_cutover_epoch_inspection_accepts_exact_current_agentscope_schema(tmp_path) -> None:
     cutover = _load_cutover()
     db_path = tmp_path / "runtime.sqlite3"
-    with sqlite3.connect(db_path) as connection:
-        connection.execute("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT)")
-        connection.execute(
-            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-            (cutover.SCHEMA_EPOCH, "2026-09-09T00:00:00Z"),
-        )
+    from app.runtime.runtime_db import make_session_factory
 
-    result = cutover.classify_runtime_epoch(db_path)
+    factory = make_session_factory(db_path)
+    factory.kw["bind"].dispose()
 
-    assert result["classification"] == "agentscope"
+    assert cutover.SCHEMA_EPOCH == "agentscope-runtime-v3"
+    assert cutover.classify_runtime_epoch(db_path)["classification"] == "agentscope"
 
 
 def test_cutover_quiescence_gate_counts_old_and_new_runtime_work(tmp_path) -> None:
@@ -440,694 +403,370 @@ def test_cutover_quiescence_gate_counts_old_and_new_runtime_work(tmp_path) -> No
     with sqlite3.connect(db_path) as connection:
         connection.executescript(
             """
-            CREATE TABLE sessions (active_run_id TEXT);
-            INSERT INTO sessions VALUES ('run-old');
-            CREATE TABLE session_turn_intents (status TEXT);
-            INSERT INTO session_turn_intents VALUES ('running');
-            CREATE TABLE claude_user_input_requests (status TEXT);
-            INSERT INTO claude_user_input_requests VALUES ('waiting');
-            CREATE TABLE agent_test_runs (status TEXT);
-            INSERT INTO agent_test_runs VALUES ('queued');
-            CREATE TABLE agent_jobs (status TEXT);
-            INSERT INTO agent_jobs VALUES ('running');
-            CREATE TABLE agent_change_sets (status TEXT);
-            INSERT INTO agent_change_sets VALUES ('publishing');
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, active_run_id TEXT);
+            CREATE TABLE runtime_session_bindings (id TEXT PRIMARY KEY, active_run_id TEXT);
+            CREATE TABLE agent_runs (id TEXT PRIMARY KEY, status TEXT);
+            CREATE TABLE session_turn_intents (id TEXT PRIMARY KEY, status TEXT);
+            CREATE TABLE claude_user_input_requests (id TEXT PRIMARY KEY, status TEXT);
+            CREATE TABLE runtime_pending_actions (id TEXT PRIMARY KEY, status TEXT);
+            CREATE TABLE agent_test_runs (id TEXT PRIMARY KEY, status TEXT);
+            CREATE TABLE agent_jobs (id TEXT PRIMARY KEY, status TEXT);
+            CREATE TABLE agent_change_sets (id TEXT PRIMARY KEY, status TEXT);
+            CREATE TABLE agent_release_operations (id TEXT PRIMARY KEY, status TEXT);
+            CREATE TABLE execution_records (id TEXT PRIMARY KEY, status TEXT);
+            INSERT INTO sessions VALUES ('s1', 'run-1');
+            INSERT INTO runtime_session_bindings VALUES ('b1', 'run-2');
+            INSERT INTO agent_runs VALUES ('r1', 'finalizing');
+            INSERT INTO session_turn_intents VALUES ('t1', 'running');
+            INSERT INTO claude_user_input_requests VALUES ('h1', 'waiting');
+            INSERT INTO runtime_pending_actions VALUES ('h2', 'pending');
+            INSERT INTO agent_test_runs VALUES ('test1', 'queued');
+            INSERT INTO agent_jobs VALUES ('job1', 'running');
+            INSERT INTO agent_change_sets VALUES ('c1', 'publishing');
+            INSERT INTO agent_release_operations VALUES ('o1', 'git_applied');
+            INSERT INTO execution_records VALUES ('e1', 'applying');
             """
         )
 
     counts = cutover.active_work_counts(db_path)
 
     assert counts == {
-        "active_sessions": 1,
-        "active_runs": 1,
-        "hitl_waits": 1,
+        "active_sessions": 2,
+        "active_runs": 2,
+        "hitl_waits": 2,
         "active_tests": 1,
         "active_agent_jobs": 1,
-        "active_publications": 1,
+        "active_publications": 3,
     }
 
 
-def test_cutover_snapshot_is_external_verified_and_exact_clear_keeps_siblings(tmp_path) -> None:
+def test_runtime_root_guard_rejects_broad_and_unrelated_paths(tmp_path, monkeypatch) -> None:
     cutover = _load_cutover()
-    runtime_root = tmp_path / "volume-agent-gov"
-    runtime_root.mkdir()
-    (runtime_root / "data").mkdir()
-    (runtime_root / "data/runtime.sqlite3").write_bytes(b"legacy-db")
-    (runtime_root / ".hidden").write_text("legacy", encoding="utf-8")
-    env_file = tmp_path / "docker.env"
-    env_file.write_text(f"HOST_RUNTIME_VOLUME_ROOT={runtime_root}\n", encoding="utf-8")
-    backup = tmp_path / "backups" / "cutover-one"
-    sibling = tmp_path / "must-survive"
-    sibling.write_text("safe", encoding="utf-8")
+    operator_home = tmp_path / "operator"
+    operator_home.mkdir()
+    monkeypatch.setattr(cutover, "_operator_home", lambda: operator_home.resolve())
+    env_file = tmp_path / "selected.env"
 
-    archive, digest, tree = cutover.create_snapshot_with_restore_drill(runtime_root, env_file, backup)
-
-    assert archive.parent == backup
-    assert archive.is_file()
-    assert digest == cutover._sha256_file(archive)
-    assert {item["path"] for item in tree} == {".hidden", "data", "data/runtime.sqlite3"}
-    cutover._clear_runtime_root(runtime_root)
-    assert list(runtime_root.iterdir()) == []
-    assert sibling.read_text(encoding="utf-8") == "safe"
-
-    cutover._safe_extract_regular_archive(archive, runtime_root)
-    assert (runtime_root / "data/runtime.sqlite3").read_bytes() == b"legacy-db"
-    assert (runtime_root / ".hidden").read_text(encoding="utf-8") == "legacy"
+    for candidate in (Path("/"), operator_home, tmp_path):
+        env_file.write_text(f"HOST_RUNTIME_VOLUME_ROOT={candidate}\n", encoding="utf-8")
+        with pytest.raises(cutover.CutoverError, match="拒绝危险"):
+            cutover.resolve_runtime_root(env_file, require_exists=False)
 
 
-def test_cutover_target_must_match_env_and_backup_must_be_external(tmp_path) -> None:
-    cutover = _load_cutover()
-    runtime_root = tmp_path / "volume-agent-gov"
-    runtime_root.mkdir()
-    env_file = tmp_path / "docker.env"
-    env_file.write_text(f"HOST_RUNTIME_VOLUME_ROOT={runtime_root}\n", encoding="utf-8")
-
-    assert cutover.resolve_runtime_root(env_file, runtime_root, require_exists=True) == runtime_root.resolve()
-    with pytest.raises(cutover.CutoverError, match="精确一致"):
-        cutover.resolve_runtime_root(env_file, tmp_path / "other", require_exists=True)
-    with pytest.raises(cutover.CutoverError, match="之外"):
-        cutover.create_snapshot_with_restore_drill(runtime_root, env_file, runtime_root / "backup")
-
-
-def test_cutover_finalize_requires_machine_receipt_for_every_gate(tmp_path) -> None:
-    cutover = _load_cutover()
-    evidence = tmp_path / "final-evidence.json"
-    acceptance_artifacts = {
-        "acceptance_identity": "cutover-one",
-        "source_artifact_sha256": "b" * 64,
-        "openapi_sha256": "a" * 64,
-        "image_ids": {
-            "agentscope-runtime": "sha256:" + "1" * 64,
-            "agent-gov-api": "sha256:" + "2" * 64,
-            "agent-gov-ui": "sha256:" + "3" * 64,
-        },
-    }
-    manifest = {
-        "cutover_id": "cutover-one",
-        "source_artifact_sha256": "b" * 64,
-        "acceptance_artifacts": acceptance_artifacts,
-        "executed_at": "2026-09-10T00:00:00+00:00",
-        "snapshot_archive": str(tmp_path / "runtime-root.tar"),
-    }
-    evidence.write_text(
-        json.dumps(
-            {
-                "schema_version": 2,
-                "cutover_id": "cutover-one",
-                "source_artifact_sha256": "b" * 64,
-                "acceptance_artifacts_sha256": cutover._evidence_binding_sha256(acceptance_artifacts),
-                "status": "passed",
-            }
-        ),
-        encoding="utf-8",
+def test_runtime_validate_dispatches_before_generic_runtime_branch(tmp_path, monkeypatch) -> None:
+    runner = _load_selected_env_runner()
+    calls: list[list[str]] = []
+    snapshot = tmp_path / "selected.env"
+    snapshot.write_text("AGENTGOV_API_MODE=open\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "_preflight", lambda *_args: calls.append(["preflight"]))
+    monkeypatch.setattr(runner, "_run", lambda command, _env, **_kwargs: calls.append(command) or 0)
+    monkeypatch.setattr(
+        runner,
+        "_execute_runtime_operation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("generic runtime dispatch reached")),
     )
 
-    with pytest.raises(cutover.CutoverError, match="schema"):
-        cutover._validate_final_evidence(evidence, manifest)
+    result = runner._execute_operation(
+        "runtime-validate",
+        snapshot,
+        runner.REPO_ROOT,
+        tmp_path,
+        {},
+        no_build=False,
+        force_recreate=False,
+    )
+
+    assert result == 0
+    assert calls[0] == ["preflight"]
+    assert any(any(item.endswith("bootstrap_runtime_volume.py") for item in command) for command in calls[1:])
+    assert any(any(item.endswith("check_agentscope_cutover.py") for item in command) for command in calls[1:])
 
 
-def test_cutover_finalize_recomputes_bound_machine_receipt_hashes(tmp_path) -> None:
-    cutover = _load_cutover()
-    acceptance_artifacts = {
-        "acceptance_identity": "cutover-one",
-        "source_artifact_sha256": "b" * 64,
-        "openapi_sha256": "a" * 64,
-        "image_ids": {
-            "agentscope-runtime": "sha256:" + "1" * 64,
-            "agent-gov-api": "sha256:" + "2" * 64,
-            "agent-gov-ui": "sha256:" + "3" * 64,
-        },
-    }
-    manifest = {
-        "cutover_id": "cutover-one",
-        "source_artifact_sha256": "b" * 64,
-        "acceptance_artifacts": acceptance_artifacts,
-        "executed_at": "2026-09-10T00:00:00+00:00",
-        "snapshot_archive": str(tmp_path / "runtime-root.tar"),
-    }
-    evidence = _write_bound_machine_evidence(cutover, tmp_path, manifest)
+@pytest.mark.parametrize(
+    ("child_env", "socket_available", "message"),
+    [
+        ({"DOCKER_HOST": "tcp://remote.invalid:2376"}, True, "固定本机"),
+        ({"DOCKER_HOST": "unix:///var/run/docker.sock"}, False, "Unix socket 不可用"),
+    ],
+)
+def test_selected_env_daemon_gate_rejects_remote_or_missing_socket_before_mutation(
+    tmp_path,
+    monkeypatch,
+    child_env: dict[str, str],
+    socket_available: bool,
+    message: str,
+) -> None:
+    runner = _load_selected_env_runner()
+    mutations: list[str] = []
+    real_stat = os.stat
 
-    payload, digest = cutover._validate_final_evidence(evidence, manifest)
-    assert payload["status"] == "passed"
-    assert digest == cutover._sha256_file(evidence)
+    def guarded_stat(path, *args, **kwargs):
+        if os.fspath(path) == "/var/run/docker.sock":
+            if not socket_available:
+                raise FileNotFoundError(path)
+            return SimpleNamespace(st_mode=stat.S_IFSOCK)
+        return real_stat(path, *args, **kwargs)
 
-    (tmp_path / "evidence/static_gates.receipt.json").write_text("tampered", encoding="utf-8")
-    with pytest.raises(cutover.CutoverError, match="receipt digest 不匹配"):
-        cutover._validate_final_evidence(evidence, manifest)
+    monkeypatch.setattr(runner.os, "stat", guarded_stat)
+    with pytest.raises(runner.SelectedEnvError, match=message):
+        with runner._daemon_mutation_lock("down", child_env):
+            mutations.append("execute")
 
-
-def test_cutover_finalize_rejects_free_text_command_and_self_declared_receipt(tmp_path) -> None:
-    cutover = _load_cutover()
-    acceptance = {
-        "acceptance_identity": "cutover-one",
-        "source_artifact_sha256": "b" * 64,
-        "openapi_sha256": "a" * 64,
-        "image_ids": {
-            "agentscope-runtime": "sha256:" + "1" * 64,
-            "agent-gov-api": "sha256:" + "2" * 64,
-            "agent-gov-ui": "sha256:" + "3" * 64,
-        },
-    }
-    manifest = {
-        "cutover_id": "cutover-one",
-        "source_artifact_sha256": "b" * 64,
-        "acceptance_artifacts": acceptance,
-        "executed_at": "2026-09-10T00:00:00+00:00",
-        "snapshot_archive": str(tmp_path / "runtime-root.tar"),
-    }
-    evidence = _write_bound_machine_evidence(cutover, tmp_path, manifest)
-    receipt_path = tmp_path / "evidence/static_gates.receipt.json"
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    receipt["command"] = "make whatever-passes"
-    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
-    outer = json.loads(evidence.read_text(encoding="utf-8"))
-    outer["static_gates"]["receipt_sha256"] = cutover._sha256_file(receipt_path)
-    evidence.write_text(json.dumps(outer), encoding="utf-8")
-
-    with pytest.raises(cutover.CutoverError, match="receipt schema 不精确"):
-        cutover._validate_final_evidence(evidence, manifest)
+    assert mutations == []
 
 
-def test_cutover_finalize_rejects_non_allowlisted_machine_command(tmp_path) -> None:
-    cutover = _load_cutover()
-    evidence_module = importlib.import_module("scripts.agentscope_atomic_cutover_evidence")
-    acceptance = {
-        "acceptance_identity": "cutover-one",
-        "source_artifact_sha256": "b" * 64,
-        "openapi_sha256": "a" * 64,
-        "image_ids": {
-            "agentscope-runtime": "sha256:" + "1" * 64,
-            "agent-gov-api": "sha256:" + "2" * 64,
-            "agent-gov-ui": "sha256:" + "3" * 64,
-        },
-    }
-    manifest = {
-        "cutover_id": "cutover-one",
-        "source_artifact_sha256": "b" * 64,
-        "acceptance_artifacts": acceptance,
-        "executed_at": "2026-09-10T00:00:00+00:00",
-        "snapshot_archive": str(tmp_path / "runtime-root.tar"),
-    }
-    evidence = _write_bound_machine_evidence(cutover, tmp_path, manifest)
-    receipt_path = tmp_path / "evidence/static_gates.receipt.json"
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    receipt["command_id"] = "operator-claimed-pass"
-    receipt["receipt_id"] = evidence_module.build_machine_receipt_id(receipt)
-    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
-    outer = json.loads(evidence.read_text(encoding="utf-8"))
-    outer["static_gates"]["receipt_sha256"] = cutover._sha256_file(receipt_path)
-    evidence.write_text(json.dumps(outer), encoding="utf-8")
+def test_source_digest_binds_mode_and_rejects_symlinks(tmp_path, monkeypatch) -> None:
+    bootstrap = importlib.import_module("scripts.agentscope_atomic_cutover_bootstrap")
+    app = tmp_path / "app"
+    app.mkdir()
+    entrypoint = app / "entrypoint.py"
+    entrypoint.write_text("print('safe')\n", encoding="utf-8")
+    monkeypatch.setattr(bootstrap, "_source_candidates", lambda root: (root / "app",))
 
-    with pytest.raises(cutover.CutoverError, match="固定 allowlist"):
-        cutover._validate_final_evidence(evidence, manifest)
+    initial = bootstrap.source_artifact_sha256(tmp_path)
+    entrypoint.chmod(0o755)
+    assert bootstrap.source_artifact_sha256(tmp_path) != initial
+
+    symlink = app / "active.py"
+    symlink.symlink_to(entrypoint.name)
+    with pytest.raises(ValueError, match="symlink/special"):
+        bootstrap.source_artifact_sha256(tmp_path)
+
+    symlink.unlink()
+    snapshot = tmp_path / "source-snapshot"
+    frozen_digest = bootstrap.freeze_deployable_source(tmp_path, snapshot)
+    entrypoint.write_text("print('changed after freeze')\n", encoding="utf-8")
+
+    assert snapshot.stat().st_mode & 0o777 == 0o700
+    assert (snapshot / "app/entrypoint.py").read_text(encoding="utf-8") == "print('safe')\n"
+    assert bootstrap.source_artifact_sha256(snapshot) == frozen_digest
+    assert bootstrap.source_artifact_sha256(tmp_path) != frozen_digest
 
 
-def test_cutover_exports_exact_rollback_compose_env_and_images(tmp_path, monkeypatch) -> None:
-    cutover = _load_cutover()
-    env_file = tmp_path / "compose.env"
-    env_file.write_text("API_KEY=private\n", encoding="utf-8")
-    backup = tmp_path / "external-backup"
-    backup.mkdir()
-    legacy_compose = tmp_path / "legacy-compose.yml"
-    legacy_compose.write_text("services: {}\n", encoding="utf-8")
+def test_stack_image_contract_accepts_null_labels_only_for_digest_pinned_third_party(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    runner = _load_selected_env_runner()
+    config, references, image_ids = _image_contract_fixture()
+    source_digest = "a" * 64
 
-    def fake_run(command, label, *, capture=False):
-        del label
-        if command[-2:] == ["config", "--images"]:
-            return "old-api:one\nold-runtime:one\n"
-        if command[-1:] == ["config"]:
-            return "name: old-agent-gov\nservices: {}\n"
+    def output(command, _child_env):
+        if command[-3:] == ["config", "--format", "json"]:
+            return json.dumps(config)
         if command[:3] == ["docker", "image", "inspect"]:
-            reference = command[-1]
-            digit = "1" if reference.startswith("old-api") else "2"
-            return json.dumps([{"Id": "sha256:" + digit * 64}])
-        if command[:3] == ["docker", "image", "save"]:
-            output = Path(command[command.index("--output") + 1])
-            payload = tmp_path / "manifest.json"
-            payload.write_text("{}", encoding="utf-8")
-            with tarfile.open(output, "w") as archive:
-                archive.add(payload, arcname="manifest.json")
-            return ""
+            service = references[command[3]]
+            labels = {"io.agentgov.source-artifact-sha256": source_digest} if service in runner._LOCAL_IMAGES else None
+            return json.dumps([{"Id": image_ids[service], "Config": {"Labels": labels}}])
         raise AssertionError(command)
 
-    monkeypatch.setattr(cutover, "_run", fake_run)
+    monkeypatch.setattr(runner, "_run_output", output)
 
-    bundle = cutover._capture_rollback_bundle(env_file, backup, legacy_compose)
+    actual = runner._verify_stack_images(
+        {},
+        tmp_path / "selected.env",
+        "4.0.0",
+        source_digest,
+        langfuse=True,
+        running=False,
+    )
 
-    assert bundle["rollback_image_restore_drill"] == "passed"
-    assert len(bundle["rollback_images"]) == 2
-    assert Path(bundle["rollback_compose"]).read_text(encoding="utf-8").startswith("name: old-agent-gov")
-    assert bundle["rollback_compose_source"] == str(legacy_compose)
-    assert bundle["rollback_compose_source_sha256"] == cutover._sha256_file(legacy_compose)
-    assert Path(bundle["rollback_image_archive"]).is_file()
-    cutover._verify_rollback_bundle({**bundle, "snapshot_archive": str(backup / "runtime-root.tar")})
-
-
-def test_cutover_agentscope_version_comes_from_runtime_lockfile() -> None:
-    cutover = _load_cutover()
-
-    assert cutover._agent_scope_version() == "2.0.8"
+    assert actual == image_ids
 
 
-def test_cutover_source_hash_covers_frontend_lock_and_docker_build_inputs(tmp_path, monkeypatch) -> None:
-    cutover = _load_cutover()
-    for directory in ("app", "agentscope_runtime", "scripts", "frontend/src", "docker/api-gate"):
-        (tmp_path / directory).mkdir(parents=True, exist_ok=True)
-    files = {
-        "frontend/package.json": "{}\n",
-        "frontend/pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
-        "frontend/tsconfig.json": "{}\n",
-        "frontend/tsconfig.node.json": "{}\n",
-        "frontend/vite.config.ts": "export default {}\n",
-        "frontend/index.html": "<main></main>\n",
-        "docker/Dockerfile": "FROM scratch\n",
-        "docker/Dockerfile.dockerignore": ".git\n",
-        "docker/frontend.Dockerfile": "FROM scratch\n",
-        "docker/frontend.Dockerfile.dockerignore": "node_modules\n",
-        "docker/agentscope-runtime.Dockerfile": "FROM scratch\n",
-        "docker/agentscope-runtime.Dockerfile.dockerignore": ".git\n",
-        "docker/docker-compose.yml": "services: {}\n",
-        "docker/docker-compose.langfuse.yml": "services: {}\n",
-        "docker/api-gate/api-gate-state.json": "{}\n",
-        "Makefile": "all:\n\ttrue\n",
-        "VERSION": "0.0.0\n",
-        "pyproject.toml": "[project]\nname='test'\n",
-        "requirements.txt": "httpx==1\n",
-        "requirements-api.txt": "fastapi==1\n",
-        "agentgov_harness_digest.py": "VALUE = 1\n",
+def test_build_base_image_contract_rejects_mutable_missing_and_symlinked_from(tmp_path) -> None:
+    inventory = importlib.import_module("scripts.selected_env_image_inventory")
+    _write_digest_pinned_build_dockerfiles(tmp_path)
+
+    references = inventory.build_base_image_references(tmp_path)
+
+    assert len(references) == 3
+    assert references["build-base:docker/Dockerfile:0"] == references["build-base:docker/agentscope-runtime.Dockerfile:0"]
+
+    frontend = tmp_path / "docker/frontend.Dockerfile"
+    frontend.write_text("FROM node:22-alpine\n", encoding="utf-8")
+    with pytest.raises(inventory.SelectedEnvError, match="digest pin"):
+        inventory.build_base_image_references(tmp_path)
+
+    frontend.write_text("RUN true\n", encoding="utf-8")
+    with pytest.raises(inventory.SelectedEnvError, match="缺少 FROM"):
+        inventory.build_base_image_references(tmp_path)
+
+    target = tmp_path / "frontend.real.Dockerfile"
+    target.write_text("FROM node:22-alpine@sha256:" + "b" * 64 + "\n", encoding="utf-8")
+    frontend.unlink()
+    frontend.symlink_to(target)
+    with pytest.raises(inventory.SelectedEnvError, match="普通非符号链接"):
+        inventory.build_base_image_references(tmp_path)
+
+
+def test_images_prepare_pulls_only_missing_digest_pinned_images(tmp_path, monkeypatch) -> None:
+    runner = _load_selected_env_runner()
+    _config, references, _image_ids = _image_contract_fixture()
+    third_party_references = {service: reference for reference, service in references.items() if service in runner._THIRD_PARTY_SERVICES}
+    python_base = "python:3.11-slim@sha256:" + "a" * 64
+    node_base = "node:22-alpine@sha256:" + "b" * 64
+    required_references = {
+        **third_party_references,
+        "build-base:docker/Dockerfile:0": python_base,
+        "build-base:docker/agentscope-runtime.Dockerfile:0": python_base,
+        "build-base:docker/frontend.Dockerfile:0": node_base,
     }
-    for relative, content in files.items():
-        (tmp_path / relative).write_text(content, encoding="utf-8")
-    monkeypatch.setattr(cutover, "REPO_ROOT", tmp_path)
-
-    initial = cutover._source_artifact_sha256()
-    (tmp_path / "frontend/pnpm-lock.yaml").write_text("lockfileVersion: '9.1'\n", encoding="utf-8")
-    lock_changed = cutover._source_artifact_sha256()
-    (tmp_path / "docker/Dockerfile.dockerignore").write_text(".git\n.env\n", encoding="utf-8")
-    docker_changed = cutover._source_artifact_sha256()
-    (tmp_path / "docker/agentscope-runtime.Dockerfile.dockerignore").write_text(".git\n**/.env*\n", encoding="utf-8")
-    runtime_docker_changed = cutover._source_artifact_sha256()
-
-    assert initial != lock_changed
-    assert lock_changed != docker_changed
-    assert docker_changed != runtime_docker_changed
-
-
-def _cutover_recovery_fixture(cutover: ModuleType, tmp_path: Path, monkeypatch) -> dict[str, object]:
-    operations = cutover._destructive_support()
-    recovery_module = importlib.import_module("scripts.agentscope_atomic_cutover_recovery")
-    types_module = importlib.import_module("scripts.agentscope_atomic_cutover_types")
-    backup = tmp_path / "external-backup"
-    backup.mkdir()
-    target_names = (
-        "runtime-root.tar",
-        "rollback-images.tar",
-        "compose.env.snapshot",
-        "rollback-compose.resolved.yml",
-        "rollback-images.json",
-        "acceptance-only.env",
-        "production-drain.env",
-    )
-    for name in target_names:
-        (backup / name).write_text(f"artifact:{name}\n", encoding="utf-8")
-    gate = backup / "api-gate/api-gate-state.json"
-    operations.atomic_write_gate_state(gate, state="drain", cutover_id="cutover-one")
-    database = tmp_path / "runtime.sqlite3"
-    with sqlite3.connect(database) as connection:
-        connection.execute(
-            "CREATE TABLE runtime_cutover_ledger (cutover_id TEXT PRIMARY KEY, phase TEXT, status TEXT, detail TEXT, artifacts_json TEXT, created_at TEXT)"
-        )
-    monkeypatch.setattr(operations, "_classify_runtime_epoch", lambda _path: {"classification": "agentscope"})
-    clock = ["2026-09-10T00:00:00+00:00"]
-    manifest = {
-        "cutover_id": "cutover-one",
-        "state": "production_drain_ready",
-        "irreversible": False,
-        "snapshot_archive": str(backup / "runtime-root.tar"),
-        "rollback_image_archive": str(backup / "rollback-images.tar"),
-        "env_snapshot": str(backup / "compose.env.snapshot"),
-        "rollback_compose": str(backup / "rollback-compose.resolved.yml"),
-        "rollback_image_inventory": str(backup / "rollback-images.json"),
-        "acceptance_env": str(backup / "acceptance-only.env"),
-        "production_drain_env": str(backup / "production-drain.env"),
-        "api_gate_state_file": str(gate),
-        "acceptance_artifacts": {
-            "source_artifact_sha256": "c" * 64,
-            "openapi_sha256": "b" * 64,
-            "image_ids": {
-                "agentscope-runtime": "sha256:" + "1" * 64,
-                "agent-gov-api": "sha256:" + "2" * 64,
-                "agent-gov-ui": "sha256:" + "3" * 64,
-            },
-        },
-        "production_drain_artifacts": {
-            "evidence_sha256": "a" * 64,
-            "evidence": {"schema_version": 2, "status": "passed"},
-            "openapi_sha256": "b" * 64,
-            "image_ids": {
-                "agentscope-runtime": "sha256:" + "1" * 64,
-                "agent-gov-api": "sha256:" + "2" * 64,
-                "agent-gov-ui": "sha256:" + "3" * 64,
-            },
-            "api_mode": "drain",
-        },
-    }
-    manifest_path = backup / "cutover-manifest.json"
-    operations.write_json(manifest_path, manifest)
-    recovery = recovery_module.CutoverRecoverySupport(
-        error_type=cutover.CutoverError,
-        utc_now=lambda: clock[0],
-        sha256_file=cutover._sha256_file,
-        write_json=operations.write_json,
-        read_gate_state=operations.read_gate_state,
-        atomic_write_gate_state=operations.atomic_write_gate_state,
-        record_ledger=operations.record_ledger,
-        database_path=lambda _root, _env: database,
-    )
-    artifacts = manifest["production_drain_artifacts"]
-    drain = types_module.ProductionDrain(database, gate, "a" * 64, artifacts)
-    runtime_root = tmp_path / "runtime-root"
-    runtime_root.mkdir()
-    env_file = tmp_path / "source.env"
-    env_file.write_text("HOST_RUNTIME_VOLUME_ROOT=/unused\n", encoding="utf-8")
-    return {
-        "operations": operations,
-        "recovery": recovery,
-        "manifest": manifest,
-        "manifest_path": manifest_path,
-        "gate": gate,
-        "database": database,
-        "backup": backup,
-        "target_names": target_names,
-        "drain": drain,
-        "clock": clock,
-        "runtime_root": runtime_root,
-        "env_file": env_file,
-    }
-
-
-@pytest.mark.parametrize("after_gate_write", [False, True])
-def test_cutover_finalize_recovers_crash_around_atomic_gate_write(tmp_path, monkeypatch, after_gate_write) -> None:
-    cutover = _load_cutover()
-    context = _cutover_recovery_fixture(cutover, tmp_path, monkeypatch)
-    recovery = context["recovery"]
-    operations = context["operations"]
-    original_gate_write = recovery._atomic_write_gate_state
-
-    def crash_gate_write(*args, **kwargs):
-        if after_gate_write:
-            original_gate_write(*args, **kwargs)
-        raise cutover.CutoverError("simulated gate-write crash")
-
-    monkeypatch.setattr(recovery, "_atomic_write_gate_state", crash_gate_write)
-    with pytest.raises(cutover.CutoverError, match="simulated"):
-        recovery.open_production_gate(
-            manifest_path=context["manifest_path"],
-            manifest=context["manifest"],
-            drain=context["drain"],
-        )
-
-    manifest = context["manifest"]
-    assert manifest["state"] == "deletion_intent_ready"
-    assert manifest["legacy_deletion_deadline"] == "2026-09-10T00:15:00+00:00"
-    assert (context["backup"] / "irreversible-deletion-intent.json").is_file()
-    if after_gate_write:
-        with pytest.raises(cutover.CutoverError, match="永久禁止"):
-            operations.require_restore_allowed(manifest)
-    else:
-        operations.require_restore_allowed(manifest)
-
-    monkeypatch.setattr(recovery, "_atomic_write_gate_state", original_gate_write)
-    recovery.resume_irreversible_transition(
-        manifest_path=context["manifest_path"],
-        manifest=manifest,
-        runtime_root=context["runtime_root"],
-        env_file=context["env_file"],
-        expected_evidence_sha256="a" * 64,
-    )
-    recovery.resume_irreversible_transition(
-        manifest_path=context["manifest_path"],
-        manifest=manifest,
-        runtime_root=context["runtime_root"],
-        env_file=context["env_file"],
-        expected_evidence_sha256="a" * 64,
-    )
-
-    assert manifest["state"] == "irreversible"
-    assert all(not (context["backup"] / name).exists() for name in context["target_names"])
-    assert (context["backup"] / "irreversible-deletion-completion.json").is_file()
-    with sqlite3.connect(context["database"]) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM runtime_cutover_ledger WHERE phase = 'opened'").fetchone()[0] == 1
-
-
-def test_cutover_finalize_recovers_partial_delete_before_opened_ledger(tmp_path, monkeypatch) -> None:
-    cutover = _load_cutover()
-    context = _cutover_recovery_fixture(cutover, tmp_path, monkeypatch)
-    recovery = context["recovery"]
-    original_delete = recovery._delete_legacy_rollback_artifacts
-
-    def crash_after_one_delete(manifest_path, manifest, intent, completed_at):
-        del manifest, completed_at
-        (manifest_path.parent / intent["targets"][0]["path"]).unlink()
-        raise cutover.CutoverError("simulated partial-delete crash")
-
-    monkeypatch.setattr(recovery, "_delete_legacy_rollback_artifacts", crash_after_one_delete)
-    with pytest.raises(cutover.CutoverError, match="partial-delete"):
-        recovery.open_production_gate(
-            manifest_path=context["manifest_path"],
-            manifest=context["manifest"],
-            drain=context["drain"],
-        )
-    with sqlite3.connect(context["database"]) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM runtime_cutover_ledger WHERE phase = 'opened'").fetchone()[0] == 0
-
-    monkeypatch.setattr(recovery, "_delete_legacy_rollback_artifacts", original_delete)
-    recovery.resume_irreversible_transition(
-        manifest_path=context["manifest_path"],
-        manifest=context["manifest"],
-        runtime_root=context["runtime_root"],
-        env_file=context["env_file"],
-        expected_evidence_sha256="a" * 64,
-    )
-
-    assert all(not (context["backup"] / name).exists() for name in context["target_names"])
-    with sqlite3.connect(context["database"]) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM runtime_cutover_ledger WHERE phase = 'opened'").fetchone()[0] == 1
-
-
-def test_cutover_finalize_recovers_ledger_write_after_artifacts_are_deleted(tmp_path, monkeypatch) -> None:
-    cutover = _load_cutover()
-    context = _cutover_recovery_fixture(cutover, tmp_path, monkeypatch)
-    recovery = context["recovery"]
-    original_record = recovery._record_opened_ledger
-
-    def crash_before_opened_ledger(*_args, **_kwargs):
-        raise cutover.CutoverError("simulated opened-ledger crash")
-
-    monkeypatch.setattr(recovery, "_record_opened_ledger", crash_before_opened_ledger)
-    with pytest.raises(cutover.CutoverError, match="opened-ledger"):
-        recovery.open_production_gate(
-            manifest_path=context["manifest_path"],
-            manifest=context["manifest"],
-            drain=context["drain"],
-        )
-    assert all(not (context["backup"] / name).exists() for name in context["target_names"])
-    assert context["manifest"]["state"] == "irreversible"
-
-    monkeypatch.setattr(recovery, "_record_opened_ledger", original_record)
-    recovery.resume_irreversible_transition(
-        manifest_path=context["manifest_path"],
-        manifest=context["manifest"],
-        runtime_root=context["runtime_root"],
-        env_file=context["env_file"],
-        expected_evidence_sha256="a" * 64,
-    )
-    with sqlite3.connect(context["database"]) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM runtime_cutover_ledger WHERE phase = 'opened'").fetchone()[0] == 1
-
-
-def test_cutover_finalize_does_not_alert_when_only_ledger_replay_crosses_deadline(tmp_path, monkeypatch) -> None:
-    cutover = _load_cutover()
-    context = _cutover_recovery_fixture(cutover, tmp_path, monkeypatch)
-    recovery = context["recovery"]
-    original_record = recovery._record_opened_ledger
+    reference_ids = {reference: f"sha256:{index:064x}" for index, reference in enumerate(dict.fromkeys(required_references.values()), start=40)}
+    expected_ids = {service: reference_ids[reference] for service, reference in required_references.items()}
+    available = set(required_references.values()) - {python_base}
+    pulls: list[str] = []
 
     monkeypatch.setattr(
-        recovery,
-        "_record_opened_ledger",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(cutover.CutoverError("simulated ledger crash")),
-    )
-    with pytest.raises(cutover.CutoverError, match="ledger crash"):
-        recovery.open_production_gate(
-            manifest_path=context["manifest_path"],
-            manifest=context["manifest"],
-            drain=context["drain"],
-        )
-    context["clock"][0] = "2026-09-10T00:16:00+00:00"
-    monkeypatch.setattr(recovery, "_record_opened_ledger", original_record)
-
-    recovery.resume_irreversible_transition(
-        manifest_path=context["manifest_path"],
-        manifest=context["manifest"],
-        runtime_root=context["runtime_root"],
-        env_file=context["env_file"],
+        runner,
+        "_required_external_image_references",
+        lambda *_args: dict(required_references),
     )
 
-    assert "legacy_deletion_timeout_alert_at" not in context["manifest"]
-    with sqlite3.connect(context["database"]) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM runtime_cutover_ledger WHERE status = 'alert'").fetchone()[0] == 0
+    def inspect(reference: str, _child_env: dict[str, str], *, service: str) -> str:
+        del service
+        if reference not in available:
+            raise runner.operation_contract.MissingImageError("missing")
+        return reference_ids[reference]
+
+    def run(command: list[str], _child_env: dict[str, str], **_kwargs) -> int:
+        assert command[:2] == ["docker", "pull"]
+        pulls.append(command[2])
+        available.add(command[2])
+        return 0
+
+    monkeypatch.setattr(runner, "_inspect_image_id", inspect)
+    monkeypatch.setattr(runner, "_run", run)
+
+    actual = runner._prepare_required_external_images(tmp_path / "selected.env", tmp_path, {})
+
+    assert actual == expected_ids
+    assert pulls == [python_base]
 
 
-def test_cutover_finalize_records_timeout_alert_and_still_deletes(tmp_path, monkeypatch) -> None:
-    cutover = _load_cutover()
-    context = _cutover_recovery_fixture(cutover, tmp_path, monkeypatch)
-    recovery = context["recovery"]
-    original_reconcile = recovery._reconcile_irreversible_open
+def test_images_prepare_rejects_mutable_reference_before_pull(tmp_path, monkeypatch) -> None:
+    runner = _load_selected_env_runner()
+    config, _references, _image_ids = _image_contract_fixture()
+    service = runner._THIRD_PARTY_SERVICES[0]
+    config["services"][service]["image"] = "registry.example/mutable:latest"
+    pulls: list[list[str]] = []
+    monkeypatch.setattr(runner, "_rendered_services", lambda *_args, **_kwargs: config["services"])
+    monkeypatch.setattr(runner, "_run", lambda command, _env, **_kwargs: pulls.append(command) or 0)
 
-    def crash_after_open(*_args, **_kwargs):
-        raise cutover.CutoverError("simulated post-open crash")
+    with pytest.raises(runner.SelectedEnvError, match="digest pin"):
+        runner._prepare_required_external_images(tmp_path / "selected.env", tmp_path, {})
 
-    monkeypatch.setattr(recovery, "_reconcile_irreversible_open", crash_after_open)
-    with pytest.raises(cutover.CutoverError, match="post-open"):
-        recovery.open_production_gate(
-            manifest_path=context["manifest_path"],
-            manifest=context["manifest"],
-            drain=context["drain"],
-        )
-    context["clock"][0] = "2026-09-10T00:16:00+00:00"
-    monkeypatch.setattr(recovery, "_reconcile_irreversible_open", original_reconcile)
-
-    recovery.resume_irreversible_transition(
-        manifest_path=context["manifest_path"],
-        manifest=context["manifest"],
-        runtime_root=context["runtime_root"],
-        env_file=context["env_file"],
-        expected_evidence_sha256="a" * 64,
-    )
-
-    assert context["manifest"]["legacy_deletion_timeout_alert_at"] == "2026-09-10T00:16:00+00:00"
-    context["clock"][0] = "2026-09-10T00:20:00+00:00"
-    recovery.resume_irreversible_transition(
-        manifest_path=context["manifest_path"],
-        manifest=context["manifest"],
-        runtime_root=context["runtime_root"],
-        env_file=context["env_file"],
-        expected_evidence_sha256="a" * 64,
-    )
-    with sqlite3.connect(context["database"]) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM runtime_cutover_ledger WHERE status = 'alert'").fetchone()[0] == 1
+    assert pulls == []
 
 
-def test_gate_flip_is_single_irreversible_marker_and_restore_decision(tmp_path) -> None:
-    cutover = _load_cutover()
-    backup = tmp_path / "external-backup"
-    gate = backup / "api-gate/api-gate-state.json"
-    manifest = {
-        "cutover_id": "cutover-one",
-        "state": "production_drain_failed",
-        "irreversible": False,
-        "snapshot_archive": str(backup / "runtime-root.tar"),
-        "api_gate_state_file": str(gate),
+def test_images_prepare_verifies_host_boundary_with_pulled_postgres_image(tmp_path, monkeypatch) -> None:
+    runner = _load_selected_env_runner()
+    image_ids = {service: f"sha256:{index:064x}" for index, service in enumerate(runner._THIRD_PARTY_SERVICES, 1)}
+    identity = {
+        "endpoint": "unix:///run/docker.sock",
+        "id": "engine",
+        "socket_device": 1,
+        "socket_inode": 2,
+        "socket_uid": os.getuid(),
+        "socket_mode": stat.S_IFSOCK | 0o660,
     }
-
-    cutover._atomic_write_gate_state(gate, state="drain", cutover_id="cutover-one")
-    cutover._require_restore_allowed(manifest)
-    drain_inode = gate.stat().st_ino
-
-    cutover._atomic_write_gate_state(
-        gate,
-        state="open",
-        cutover_id="cutover-one",
-        irreversible_at="2026-09-09T00:00:00Z",
+    probes: list[tuple[object, str]] = []
+    monkeypatch.setattr(runner, "_verify_required_external_images", lambda *_args: dict(image_ids))
+    monkeypatch.setattr(
+        runner,
+        "_verify_local_daemon",
+        lambda _env, expected, image: probes.append((expected, image)),
     )
 
-    assert gate.stat().st_ino != drain_inode
-    assert not [path for path in gate.parent.iterdir() if path.suffix == ".tmp"]
-    with pytest.raises(cutover.CutoverError, match="永久禁止"):
-        cutover._require_restore_allowed(manifest)
+    runner._verify_daemon_after_operation(
+        "images-prepare",
+        tmp_path / "selected.env",
+        tmp_path,
+        {},
+        "4.0.1",
+        "a" * 64,
+        identity,
+        None,
+        None,
+    )
+
+    assert probes == [(identity, image_ids["langfuse-postgres"])]
 
 
-def test_cutover_script_has_acceptance_gate_drain_ledger_and_atomic_open() -> None:
-    entrypoint_source = CUTOVER_SCRIPT.read_text(encoding="utf-8")
-    support_source = CUTOVER_SUPPORT.read_text(encoding="utf-8")
-    recovery_source = CUTOVER_RECOVERY.read_text(encoding="utf-8")
-    evidence_source = CUTOVER_EVIDENCE.read_text(encoding="utf-8")
-    source = entrypoint_source + support_source + recovery_source + evidence_source
+def test_stack_image_contract_rejects_mutable_third_party_and_image_id_drift(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    runner = _load_selected_env_runner()
+    config, references, image_ids = _image_contract_fixture()
+    source_digest = "a" * 64
 
-    for required in (
-        "PREPARE-AGENTSCOPE-FRESH-EPOCH",
-        "active run/HITL/test/publish",
-        "restore_drill",
-        "snapshot_sha256",
-        "source_artifact_sha256",
-        "--force-recreate --no-build --pull never",
-        "AGENTGOV_CUTOVER_ACCEPTANCE_ONLY",
-        "AGENTGOV_API_MODE",
-        "AGENTGOV_ACCEPTANCE_IDENTITY",
-        "production_drain",
-        "rollback_image_archive",
-        'docker", "image", "load',
-        "127.0.0.1",
-        '"API_BIND_IP": "127.0.0.1"',
-        '"HOST_PORT": host_port',
-        "runtime_cutover_ledger",
-        "api-gate-state.json",
-        "irreversible-deletion-intent.json",
-        "legacy_deletion_deadline",
-        "machine receipt",
-        "os.replace",
-    ):
-        assert required in source
-    assert "shutil.rmtree(runtime_root)" not in source
-    assert "rm -rf" not in source
-    assert "DO_NOT_RESTORE_AFTER_OPEN" not in source
-    finalize_source = entrypoint_source.split("def command_finalize", 1)[1].split("def command_restore", 1)[0]
-    assert finalize_source.index("start_production_drain") < finalize_source.index("open_production_gate")
-    drain_source = support_source.split("def start_production_drain", 1)[1].split("def open_production_gate", 1)[0]
-    open_source = recovery_source.split("def open_production_gate", 1)[1].split("def resume_irreversible_transition", 1)[0]
-    assert drain_source.count("bootstrap_and_force_recreate") == 1
-    ordered_implementation = drain_source + open_source
-    assert ordered_implementation.index("wait_ready(production_drain_env)") < ordered_implementation.index('state="open"')
+    def output(command, _child_env):
+        if command[-3:] == ["config", "--format", "json"]:
+            return json.dumps(config)
+        if command[:3] == ["docker", "image", "inspect"]:
+            service = references[command[3]]
+            labels = {"io.agentgov.source-artifact-sha256": source_digest} if service in runner._LOCAL_IMAGES else None
+            return json.dumps([{"Id": image_ids[service], "Config": {"Labels": labels}}])
+        raise AssertionError(command)
 
+    third_party = runner._THIRD_PARTY_SERVICES[0]
+    config["services"][third_party]["image"] = "registry.example/mutable:latest"
+    monkeypatch.setattr(runner, "_run_output", output)
+    with pytest.raises(runner.SelectedEnvError, match="digest pin"):
+        runner._verify_stack_images({}, tmp_path / "selected.env", "4.0.0", source_digest, langfuse=True, running=False)
 
-def test_cutover_prepare_requires_explicit_legacy_compose_source() -> None:
-    cutover = _load_cutover()
-
-    with pytest.raises(SystemExit):
-        cutover.build_parser().parse_args(
-            [
-                "prepare",
-                "--env-file",
-                "docker/.env",
-                "--backup-dir",
-                "/tmp/agentgov-backup",
-                "--confirmation-token",
-                cutover.PREPARE_CONFIRMATION,
-            ]
+    config, references, image_ids = _image_contract_fixture()
+    expected_ids = dict(image_ids)
+    expected_ids["agent-gov-api"] = "sha256:" + "f" * 64
+    with pytest.raises(runner.SelectedEnvError, match="identity 漂移"):
+        runner._verify_stack_images(
+            {},
+            tmp_path / "selected.env",
+            "4.0.0",
+            source_digest,
+            langfuse=True,
+            running=False,
+            expected_ids=expected_ids,
         )
 
-    parsed = cutover.build_parser().parse_args(
-        [
-            "prepare",
-            "--env-file",
-            "docker/.env",
-            "--backup-dir",
-            "/tmp/agentgov-backup",
-            "--rollback-compose-file",
-            "/srv/agent-gov-legacy/docker/docker-compose.yml",
-            "--confirmation-token",
-            cutover.PREPARE_CONFIRMATION,
-        ]
-    )
-    assert parsed.rollback_compose_file == Path("/srv/agent-gov-legacy/docker/docker-compose.yml")
 
-    recovery = cutover.build_parser().parse_args(
-        [
-            "recover-finalize",
-            "--manifest",
-            "/srv/cutover/cutover-manifest.json",
-            "--confirmation-token",
-            "FINALIZE-cutover-token",
-        ]
-    )
-    assert recovery.evidence_file is None
+def test_stack_image_contract_rejects_running_container_image_drift(tmp_path, monkeypatch) -> None:
+    runner = _load_selected_env_runner()
+    config, references, image_ids = _image_contract_fixture()
+    source_digest = "a" * 64
+
+    def output(command, _child_env):
+        if command[-3:] == ["config", "--format", "json"]:
+            return json.dumps(config)
+        if command[:3] == ["docker", "image", "inspect"]:
+            service = references[command[3]]
+            labels = {"io.agentgov.source-artifact-sha256": source_digest} if service in runner._LOCAL_IMAGES else None
+            return json.dumps([{"Id": image_ids[service], "Config": {"Labels": labels}}])
+        if "ps" in command and "-q" in command:
+            return f"container-{command[-1]}"
+        if command[:3] == ["docker", "container", "inspect"]:
+            return json.dumps(
+                [
+                    {
+                        "Image": "sha256:" + "f" * 64,
+                        "Config": {"Env": [], "Labels": {}},
+                        "HostConfig": {"PortBindings": {}, "Tmpfs": {}},
+                        "Mounts": [],
+                    },
+                ],
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(runner, "_run_output", output)
+
+    with pytest.raises(runner.SelectedEnvError, match="运行容器未使用"):
+        runner._verify_stack_images(
+            {},
+            tmp_path / "selected.env",
+            "4.0.0",
+            source_digest,
+            langfuse=True,
+            running=True,
+            expected_ids=image_ids,
+        )

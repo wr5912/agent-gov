@@ -13,7 +13,7 @@ import {
   listBusinessAgents,
   setBusinessAgentLifecycle,
 } from "../api/runtime";
-import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
+import type { AgentChangeSet, AgentRelease, AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import { BusinessAgentManagementPanel } from "./BusinessAgentManagementPanel";
 import "./SettingsModal.css";
 
@@ -21,7 +21,7 @@ import "./SettingsModal.css";
 // 资产 Registry 已提升为一级导航「资产复利」（W3 修订，三支柱 Playground/改进事项/资产复利）；旧反馈优化、API Docs、Langfuse 仍在此处。
 
 const SETTINGS_TABS: { key: SettingsTab; label: string; eyebrow: string; description: string; Icon: LucideIcon }[] = [
-  { key: "agents", label: "业务 Agent", eyebrow: "Agents", description: "导入、停用和维护业务 Agent。", Icon: Bot },
+  { key: "agents", label: "业务 Agent", eyebrow: "Agents", description: "创建、导入并管理业务 Agent 候选与生命周期。", Icon: Bot },
   { key: "developer", label: "Developer", eyebrow: "Runtime", description: "配置本浏览器连接的 Runtime 与调试入口。", Icon: Wrench },
 ];
 type SettingsTab = "agents" | "developer";
@@ -29,15 +29,30 @@ type SettingsTab = "agents" | "developer";
 interface SettingsModalProps {
   open: boolean;
   config: RuntimeClientConfig;
+  changeSets: AgentChangeSet[];
+  releases: AgentRelease[];
   apiDocsUrl: string;
   langfuseUrl: string;
   onClose: () => void;
   onSave: (config: RuntimeClientConfig) => void;
   onAgentsChanged: () => void;
+  onGovernanceRefresh: () => void | Promise<void>;
   onOpenAgentTestAssets: (agentId: string) => void;
 }
 
-export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, onSave, onAgentsChanged, onOpenAgentTestAssets }: SettingsModalProps) {
+export function SettingsModal({
+  open,
+  config,
+  changeSets,
+  releases,
+  apiDocsUrl,
+  langfuseUrl,
+  onClose,
+  onSave,
+  onAgentsChanged,
+  onGovernanceRefresh,
+  onOpenAgentTestAssets,
+}: SettingsModalProps) {
   const [apiBase, setApiBase] = useState(config.apiBase);
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
@@ -50,6 +65,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
 
   const activeTabMeta = useMemo(() => SETTINGS_TABS.find((tab) => tab.key === activeTab) ?? SETTINGS_TABS[0], [activeTab]);
+  const settingsBusy = pending !== null || workspaceBusy;
 
   const reloadAgents = useCallback(async () => {
     setError(undefined);
@@ -130,7 +146,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
           <div className="settings-header-status" aria-label="设置摘要">
             <span><Bot size={14} />{agents.length} Agent</span>
           </div>
-          <button className="icon-button settings-close" type="button" onClick={onClose} aria-label="关闭">
+          <button className="icon-button settings-close" type="button" disabled={settingsBusy} onClick={onClose} aria-label="关闭">
             <X size={18} />
           </button>
         </header>
@@ -174,11 +190,13 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                 <BusinessAgentManagementPanel
                   config={config}
                   agents={agents}
+                  changeSets={changeSets}
+                  releases={releases}
                   loading={agentsLoading}
                   externalBusy={pending !== null}
                   pending={pending}
                   reloadAgents={reloadAgents}
-                  onAgentsChanged={onAgentsChanged}
+                  onGovernanceRefresh={onGovernanceRefresh}
                   onBusyChange={setWorkspaceBusy}
                   onLifecycle={handleLifecycle}
                   onOpenTestAssets={onOpenAgentTestAssets}
@@ -213,8 +231,8 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
         </div>
 
         <footer className="settings-footer">
-          <button className="secondary-button" type="button" onClick={onClose}>关闭</button>
-          <button className="primary-button" type="button" data-testid="settings-save" onClick={() => onSave({ apiBase: apiBase.trim(), apiKey: apiKey.trim() })}>
+          <button className="secondary-button" type="button" disabled={settingsBusy} onClick={onClose}>关闭</button>
+          <button className="primary-button" type="button" data-testid="settings-save" disabled={settingsBusy} onClick={() => onSave({ apiBase: apiBase.trim(), apiKey: apiKey.trim() })}>
             <Save size={15} />保存 Runtime 并刷新
           </button>
         </footer>

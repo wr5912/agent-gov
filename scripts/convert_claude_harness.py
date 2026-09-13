@@ -60,14 +60,16 @@ from harness_conversion_io import (
 from harness_conversion_io import (
     write_yaml as _write_yaml,
 )
+from harness_permission_policy import convert_permission_rules as _convert_permission_rules
+from harness_permission_policy import validate_converted_permission_rules as _validate_converted_permission_rules
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agentgov_agentscope_contract import AGENTSCOPE_RUNTIME_CONTRACT  # noqa: E402
 from agentgov_harness_digest import harness_content_digest  # noqa: E402
 
-AGENTSCOPE_RUNTIME_CONTRACT = "agentscope-app/2.0.8"
 CONVERTER_ID = "agentgov-claude-to-agentscope/v1"
 ENV_REFERENCE_RE = re.compile(r"\$\{(?P<name>[A-Z][A-Z0-9_]*)\}")
 KNOWN_HOOK_DIGESTS = {
@@ -290,7 +292,8 @@ def _convert_subagents(source: Path, output: Path) -> list[AssetRecord]:
             "invite_config": {"invitable": False},
             "session": {"permission_mode": "dont_ask"},
             "workspace_policy": {
-                "allowed_tools": _string_list(metadata.get("tools")),
+                "allowed_tools": sorted({*_string_list(metadata.get("tools")), "TeamSay"}),
+                "ask_tools": [],
                 "denied_tools": _string_list(metadata.get("disallowedTools")),
                 "fail_closed": True,
             },
@@ -490,12 +493,19 @@ def _workspace_policy(
         raise ValueError("sandbox filesystem/network must be objects")
     immutable = ["AGENT.md", "agent.yaml", "skills/**", "mcp/**", "subagents/**"]
     allowed_tools = _convert_permission_rules(permissions.get("allow"))
+    ask_tools = _convert_permission_rules(permissions.get("ask"))
+    denied_tools = _convert_permission_rules(permissions.get("deny"))
     if kind == "governor":
         allowed_tools = sorted({*allowed_tools, "HarnessList", "HarnessRead"})
     if has_subagents:
         allowed_tools = sorted(
             {*allowed_tools, "TeamCreate", "AgentCreate", "TeamSay", "TeamDelete"},
         )
+    _validate_converted_permission_rules(
+        allowed_tools=allowed_tools,
+        ask_tools=ask_tools,
+        denied_tools=denied_tools,
+    )
     denied_read_paths = _convert_path_values(filesystem.get("denyRead"))
     if kind == "governor":
         denied_read_paths = sorted(
@@ -519,7 +529,8 @@ def _workspace_policy(
         "fail_closed": True,
         "allow_for_run": False,
         "allowed_tools": allowed_tools,
-        "denied_tools": _convert_permission_rules(permissions.get("deny")),
+        "ask_tools": ask_tools,
+        "denied_tools": denied_tools,
         "immutable_paths": immutable,
         "writable_paths": [] if kind == "governor" else _convert_path_values(filesystem.get("allowWrite")),
         "denied_read_paths": denied_read_paths,
@@ -531,7 +542,7 @@ def _workspace_policy(
         },
         "guard": {
             "implementation": "agentgov_runtime_middleware",
-            "mode": "deny_only",
+            "mode": "deny_ask" if ask_tools else "deny_only",
             "denied_command_families": [
                 "destructive_filesystem",
                 "direct_production_mutation",
@@ -563,24 +574,6 @@ def _runtime_middlewares(settings: Mapping[str, object], *, kind: str) -> list[H
 def _declares_hook(settings: Mapping[str, object], filename: str) -> bool:
     hooks = settings.get("hooks", {})
     return filename in json.dumps(hooks, ensure_ascii=False, sort_keys=True)
-
-
-def _convert_permission_rules(value: Any) -> list[str]:
-    converted: list[str] = []
-    for rule in _string_list(value):
-        if "claude-root" in rule or ".claude/projects" in rule or "./hooks/**" in rule:
-            continue
-        rewritten = _rewrite_text(rule)
-        if "skills/**" in rewritten and rewritten.startswith(("Edit", "Write", "NotebookEdit")):
-            converted.extend(
-                [
-                    rewritten,
-                    rewritten.replace("skills/**", "subagents/**"),
-                ],
-            )
-        else:
-            converted.append(rewritten)
-    return sorted(dict.fromkeys(converted))
 
 
 def _convert_path_values(value: Any) -> list[str]:

@@ -1,4 +1,8 @@
-"""四阶段改进治理：执行记录 governor 自动 apply + 待发布版本绑定（编排逻辑，git 层用 fake）。"""
+"""改进执行的持久化 fence 与生成测试资产回归。
+
+完整的 Governor -> 真实 Git worktree -> 发布链路由容器验收执行；本文件只验证
+无需替代 Runtime、Git 或服务对象即可确定的数据库与文件系统契约。
+"""
 
 from __future__ import annotations
 
@@ -29,17 +33,200 @@ from feedback_store_test_utils import _seed_execution_record
 def _content(tmp_path: Path) -> ImprovementContentStore:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     with factory.begin() as db:
-        if db.get(ImprovementItemModel, "imp-1") is None:
-            db.add(
-                ImprovementItemModel(
-                    improvement_id="imp-1",
-                    agent_id="soc-ops",
-                    title="告警误报治理",
-                    improvement_stage="optimization",
-                    improvement_status="active",
-                )
+        db.add(
+            ImprovementItemModel(
+                improvement_id="imp-1",
+                agent_id="soc-ops",
+                title="告警误报治理",
+                improvement_stage="optimization",
+                improvement_status="active",
             )
+        )
     return ImprovementContentStore(factory)
+
+
+def _confirm_plan(content: ImprovementContentStore) -> None:
+    content.upsert_optimization_plan(
+        "imp-1",
+        summary="收紧时间校验",
+        changes=[{"target": "prompt", "change": "增加时间校验"}],
+    )
+    content.set_optimization_plan_status("imp-1", status="confirmed")
+
+
+def _claim_source(content: ImprovementContentStore) -> dict[str, str]:
+    plan = content.get_optimization_plan("imp-1")
+    assert plan is not None
+    attribution = content.get_attribution("imp-1")
+    return {
+        "source_optimization_plan_id": plan.optimization_plan_id,
+        "source_optimization_plan_updated_at": plan.updated_at,
+        "source_attribution_id": attribution.attribution_id if attribution else "",
+        "source_attribution_updated_at": attribution.updated_at if attribution else "",
+    }
+
+
+def test_execution_claim_rejects_parallel_request_and_fences_stale_owner(tmp_path: Path) -> None:
+    content = _content(tmp_path)
+    _confirm_plan(content)
+    claims = content.execution_claims
+    first = claims.claim_execution(
+        "imp-1",
+        change_set_id="agc-11111111",
+        base_commit_sha="base-sha",
+        **_claim_source(content),
+        claim_token="claim-one",
+        now="2026-07-10T00:00:00+00:00",
+        claim_expires_at="2026-07-10T00:01:00+00:00",
+    )
+
+    with pytest.raises(ConflictError):
+        claims.claim_execution(
+            "imp-1",
+            change_set_id=first.change_set_id,
+            base_commit_sha=first.base_commit_sha,
+            **_claim_source(content),
+            claim_token="parallel",
+            now="2026-07-10T00:00:30+00:00",
+            claim_expires_at="2026-07-10T00:01:30+00:00",
+        )
+
+    takeover = claims.claim_execution(
+        "imp-1",
+        change_set_id=first.change_set_id,
+        base_commit_sha=first.base_commit_sha,
+        **_claim_source(content),
+        claim_token="claim-two",
+        now="2026-07-10T00:02:00+00:00",
+        claim_expires_at="2026-07-10T00:03:00+00:00",
+    )
+    with pytest.raises(ConflictError):
+        claims.finish_without_application(
+            "imp-1",
+            claim_token=first.claim_token,
+            claim_generation=first.claim_generation,
+            summary="过期 owner 不得完成执行",
+        )
+    claims.finish_without_application(
+        "imp-1",
+        claim_token=takeover.claim_token,
+        claim_generation=takeover.claim_generation,
+        summary="新 owner 已安全结束",
+    )
+
+    record = content.get_execution("imp-1")
+    assert record is not None
+    assert record.summary == "新 owner 已安全结束"
+    assert record.claim_generation == 2
+    assert not record.claim_token
+
+
+def test_archive_and_delete_reject_active_execution_claim(tmp_path: Path) -> None:
+    content = _content(tmp_path)
+    _confirm_plan(content)
+    claim = content.execution_claims.claim_execution(
+        "imp-1",
+        change_set_id="agc-22222222",
+        base_commit_sha="base-sha",
+        **_claim_source(content),
+        claim_token="claim-active",
+        now="2026-07-10T00:00:00+00:00",
+        claim_expires_at="2026-07-10T00:01:00+00:00",
+    )
+    improvements = ImprovementStore(make_session_factory(tmp_path / "runtime.sqlite3"))
+
+    with pytest.raises(ConflictError, match="execution is applying"):
+        improvements.archive_improvement("imp-1")
+    with pytest.raises(ConflictError, match="execution is applying"):
+        improvements.delete_improvement("imp-1")
+
+    content.execution_claims.finish_without_application(
+        "imp-1",
+        claim_token=claim.claim_token,
+        claim_generation=claim.claim_generation,
+        summary="归档前已结束",
+        retain_change_set=False,
+    )
+    assert improvements.archive_improvement("imp-1").improvement_status == "archived"
+
+
+def test_source_revision_fences_finalize_and_same_change_set_takeover(tmp_path: Path) -> None:
+    content = _content(tmp_path)
+    _confirm_plan(content)
+    source = _claim_source(content)
+    claim = content.execution_claims.claim_execution(
+        "imp-1",
+        change_set_id="agc-33333333",
+        base_commit_sha="base-sha",
+        **source,
+        claim_token="claim-old-source",
+        now="2026-07-10T00:00:00+00:00",
+        claim_expires_at="2026-07-10T00:01:00+00:00",
+    )
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    with factory.begin() as db:
+        plan = db.get(OptimizationPlanModel, source["source_optimization_plan_id"])
+        assert plan is not None
+        plan.updated_at = "2026-07-10T00:01:30+00:00"
+
+    with pytest.raises(ConflictError, match="revision changed"):
+        content.execution_claims.finalize_execution_claim(
+            "imp-1",
+            claim_token=claim.claim_token,
+            claim_generation=claim.claim_generation,
+            summary="过期候选",
+            changes_applied=["edit: AGENT.md"],
+            agent_version="ver-stale",
+            risk_level="low",
+            rollback_strategy="reset",
+            rollback_instructions=["reset"],
+            applied_diff={"changed_files": ["AGENT.md"]},
+        )
+    with pytest.raises(ConflictError, match="different source revision"):
+        content.execution_claims.claim_execution(
+            "imp-1",
+            change_set_id=claim.change_set_id,
+            base_commit_sha=claim.base_commit_sha,
+            **_claim_source(content),
+            claim_token="claim-new-source",
+            now="2026-07-10T00:02:00+00:00",
+            claim_expires_at="2026-07-10T00:03:00+00:00",
+        )
+
+
+def test_generated_feedback_tests_are_flat_immutable_and_idempotent(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    candidate = build_generated_agent_test(
+        improvement_id="imp-1",
+        index=1,
+        test_code=(
+            "def test_evidence_boundary(agent):\n"
+            "    result = agent.run('分析告警')\n"
+            "    assert not result.errors\n"
+            "    normalized_text = ''.join(result.text.split())\n"
+            "    assert '证据' in normalized_text\n"
+            "    assert '核验' in normalized_text\n"
+        ),
+        test_intent="解释证据边界",
+        assertion_rationale="回答必须指出证据与核验动作",
+    )
+
+    files = [(candidate.target_path, candidate.test_code)]
+    first = _create_generated_test_assets(worktree, files=files)
+    second = _create_generated_test_assets(worktree, files=files)
+
+    assert first == ["tests/README.md", candidate.target_path]
+    assert second == [candidate.target_path]
+    assert Path(worktree, candidate.target_path).read_text(encoding="utf-8") == candidate.test_code
+    assert Path(candidate.target_path).parent.as_posix() == "tests"
+
+    Path(worktree, candidate.target_path).write_text("# developer-owned replacement\n", encoding="utf-8")
+    with pytest.raises(ConflictError, match="cannot be overwritten"):
+        _create_generated_test_assets(worktree, files=files)
+
+
+# 从原有组件测试恢复的确定性故障注入与负向回归。
 
 
 class _FakeImprovements:
@@ -199,23 +386,6 @@ def _service(tmp_path, *, gov, run_profile_json, exec_app=None):
     return svc, content
 
 
-def _confirm_plan(content, improvement_id="imp-1"):
-    content.upsert_optimization_plan(improvement_id, summary="收紧时间校验", changes=[{"target": "prompt", "change": "加时间校验"}])
-    content.set_optimization_plan_status(improvement_id, status="confirmed")
-
-
-def _claim_source(content: ImprovementContentStore, improvement_id: str = "imp-1") -> dict[str, str]:
-    plan = content.get_optimization_plan(improvement_id)
-    attribution = content.get_attribution(improvement_id)
-    assert plan is not None
-    return {
-        "source_optimization_plan_id": plan.optimization_plan_id,
-        "source_optimization_plan_updated_at": plan.updated_at,
-        "source_attribution_id": attribution.attribution_id if attribution else "",
-        "source_attribution_updated_at": attribution.updated_at if attribution else "",
-    }
-
-
 def _stage(tmp_path: Path) -> str:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     with factory() as db:
@@ -233,7 +403,7 @@ def test_heuristic_when_no_runner(tmp_path):
         run_profile_json=None,
     )
     rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
-    assert rec.generated_by == "heuristic" and not rec.applied_agent_version_id and not rec.changes_applied  # C1：heuristic 不填 changes_applied
+    assert rec.generated_by == "heuristic" and not rec.applied_agent_version_id and not rec.changes_applied
 
 
 def test_missing_plan_rejected_without_creating_execution(tmp_path):
@@ -363,7 +533,7 @@ def test_real_guard_blocks_settings_escalation_and_falls_back(tmp_path):
     rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
     assert rec.generated_by == "heuristic"  # 护栏拦截 → 回退
     assert gov.abandoned == gov.created and gov.store.removed == gov.created and not gov.committed
-    assert "Bash(*)" not in settings.read_text(encoding="utf-8")  # 提权内容未落盘
+    assert "Bash(*)" not in settings.read_text(encoding="utf-8")
 
 
 def test_real_allowlist_blocks_settings_local_and_falls_back(tmp_path):
@@ -384,7 +554,7 @@ def test_real_allowlist_blocks_settings_local_and_falls_back(tmp_path):
     rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
     assert rec.generated_by == "heuristic"
     assert gov.abandoned == gov.created and gov.store.removed == gov.created and not gov.committed
-    assert not (worktree / ".claude" / "settings.local.json").exists()  # 白名单外未落盘
+    assert not (worktree / ".claude" / "settings.local.json").exists()
 
 
 def test_apply_failure_abandons_change_set_and_falls_back(tmp_path):
@@ -423,7 +593,7 @@ def test_idempotent_when_already_applied(tmp_path):
     assert first.applied_agent_version_id
     again = asyncio.run(svc.generate_and_apply_execution("imp-1"))
     assert again.applied_agent_version_id == first.applied_agent_version_id
-    assert calls["n"] == 1  # 第二次幂等返回，不再调 governor
+    assert calls["n"] == 1
 
 
 def test_applied_execution_is_not_reused_for_a_new_plan_revision(tmp_path):
@@ -568,85 +738,6 @@ def test_git_infrastructure_failure_surfaces_after_safe_compensation(tmp_path, m
     assert gov.abandoned == gov.created
 
 
-def test_execution_claim_rejects_parallel_request_and_fences_stale_owner(tmp_path):
-    content = _content(tmp_path)
-    _confirm_plan(content)
-    claims = content.execution_claims
-    first = claims.claim_execution(
-        "imp-1",
-        change_set_id="agc-11111111",
-        base_commit_sha="base-sha",
-        **_claim_source(content),
-        claim_token="claim-one",
-        now="2026-07-10T00:00:00+00:00",
-        claim_expires_at="2026-07-10T00:01:00+00:00",
-    )
-    with pytest.raises(ConflictError):
-        claims.claim_execution(
-            "imp-1",
-            change_set_id=first.change_set_id,
-            base_commit_sha=first.base_commit_sha,
-            **_claim_source(content),
-            claim_token="parallel",
-            now="2026-07-10T00:00:30+00:00",
-            claim_expires_at="2026-07-10T00:01:30+00:00",
-        )
-    takeover = claims.claim_execution(
-        "imp-1",
-        change_set_id=first.change_set_id,
-        base_commit_sha=first.base_commit_sha,
-        **_claim_source(content),
-        claim_token="claim-two",
-        now="2026-07-10T00:02:00+00:00",
-        claim_expires_at="2026-07-10T00:03:00+00:00",
-    )
-    with pytest.raises(ConflictError):
-        claims.finish_without_application(
-            "imp-1",
-            claim_token=first.claim_token,
-            claim_generation=first.claim_generation,
-            summary="stale owner must not win",
-        )
-    claims.finish_without_application(
-        "imp-1",
-        claim_token=takeover.claim_token,
-        claim_generation=takeover.claim_generation,
-        summary="new owner finished without apply",
-    )
-    record = content.get_execution("imp-1")
-    assert record is not None and record.summary == "new owner finished without apply"
-    assert record.claim_generation == 2 and not record.claim_token
-
-
-def test_archive_and_delete_reject_active_execution_claim(tmp_path):
-    content = _content(tmp_path)
-    _confirm_plan(content)
-    claim = content.execution_claims.claim_execution(
-        "imp-1",
-        change_set_id="agc-22222222",
-        base_commit_sha="base-sha",
-        **_claim_source(content),
-        claim_token="claim-archived",
-        now="2026-07-10T00:00:00+00:00",
-        claim_expires_at="2026-07-10T00:01:00+00:00",
-    )
-    improvements = ImprovementStore(make_session_factory(tmp_path / "runtime.sqlite3"))
-    with pytest.raises(ConflictError, match="execution is applying"):
-        improvements.archive_improvement("imp-1")
-    with pytest.raises(ConflictError, match="execution is applying"):
-        improvements.delete_improvement("imp-1")
-    record = content.get_execution("imp-1")
-    assert record is not None and not record.applied_agent_version_id and record.status == "applying"
-    content.execution_claims.finish_without_application(
-        "imp-1",
-        claim_token=claim.claim_token,
-        claim_generation=claim.claim_generation,
-        summary="cancelled before archive",
-        retain_change_set=False,
-    )
-    assert improvements.archive_improvement("imp-1").improvement_status == "archived"
-
-
 def test_parallel_apply_creates_only_one_change_set(tmp_path):
     gov = _FakeGovernance(tmp_path)
     entered = asyncio.Event()
@@ -719,53 +810,6 @@ def test_plan_and_attribution_cannot_change_while_execution_is_applying(tmp_path
     assert record.source_optimization_plan_updated_at == expected_source["source_optimization_plan_updated_at"]
     assert record.source_attribution_id == expected_source["source_attribution_id"]
     assert record.source_attribution_updated_at == expected_source["source_attribution_updated_at"]
-
-
-def test_source_revision_fences_finalize_and_same_change_set_takeover(tmp_path):
-    content = _content(tmp_path)
-    _confirm_plan(content)
-    source = _claim_source(content)
-    claim = content.execution_claims.claim_execution(
-        "imp-1",
-        change_set_id="agc-33333333",
-        base_commit_sha="base-sha",
-        **source,
-        claim_token="claim-old-source",
-        now="2026-07-10T00:00:00+00:00",
-        claim_expires_at="2026-07-10T00:01:00+00:00",
-    )
-    factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    with factory.begin() as db:
-        plan = db.get(OptimizationPlanModel, source["source_optimization_plan_id"])
-        assert plan is not None
-        plan.updated_at = "2026-07-10T00:01:30+00:00"
-
-    with pytest.raises(ConflictError, match="revision changed"):
-        content.execution_claims.finalize_execution_claim(
-            "imp-1",
-            claim_token=claim.claim_token,
-            claim_generation=claim.claim_generation,
-            summary="stale candidate",
-            changes_applied=["edit: AGENT.md"],
-            agent_version="ver-stale",
-            risk_level="low",
-            rollback_strategy="reset",
-            rollback_instructions=["reset"],
-            applied_diff={"changed_files": ["AGENT.md"]},
-        )
-    with pytest.raises(ConflictError, match="different source revision"):
-        content.execution_claims.claim_execution(
-            "imp-1",
-            change_set_id=claim.change_set_id,
-            base_commit_sha=claim.base_commit_sha,
-            **_claim_source(content),
-            claim_token="claim-new-source",
-            now="2026-07-10T00:02:00+00:00",
-            claim_expires_at="2026-07-10T00:03:00+00:00",
-        )
-    record = content.get_execution("imp-1")
-    assert record is not None and record.status == "applying" and not record.applied_agent_version_id
-    assert _stage(tmp_path) == "optimization"
 
 
 def test_candidate_reconciles_in_same_request_after_execution_finalize_failure(tmp_path, monkeypatch):
@@ -924,39 +968,6 @@ def test_missing_link_is_reconciled_in_same_request_after_finalize(tmp_path):
     repeated = asyncio.run(svc.generate_and_apply_execution("imp-1"))
     assert repeated.execution_id == recovered.execution_id
     assert calls["n"] == 1 and len(gov.created) == 1 and len(improvements.links) == 1
-
-
-def test_generated_feedback_tests_are_flat_immutable_and_idempotent(tmp_path):
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
-    candidate = build_generated_agent_test(
-        improvement_id="imp-1",
-        index=1,
-        test_code=(
-            "def test_evidence_boundary(agent):\n"
-            "    result = agent.run('分析告警')\n"
-            "    assert not result.errors\n"
-            "    normalized_text = ''.join(result.text.split())\n"
-            "    assert '证据' in normalized_text\n"
-            "    assert '核验' in normalized_text\n"
-        ),
-        test_intent="解释证据边界",
-        assertion_rationale="回答必须指出证据与核验动作",
-    )
-
-    files = [(candidate.target_path, candidate.test_code)]
-    first = _create_generated_test_assets(worktree, files=files)
-    second = _create_generated_test_assets(worktree, files=files)
-
-    assert first == ["tests/README.md", candidate.target_path]
-    assert second == [candidate.target_path]
-    assert Path(worktree, candidate.target_path).read_text(encoding="utf-8") == candidate.test_code
-    assert Path(candidate.target_path).parent.as_posix() == "tests"
-
-    Path(worktree, candidate.target_path).write_text("# developer-owned replacement\n", encoding="utf-8")
-    with pytest.raises(ConflictError, match="cannot be overwritten"):
-        _create_generated_test_assets(worktree, files=files)
-    assert Path(worktree, candidate.target_path).read_text(encoding="utf-8") == "# developer-owned replacement\n"
 
 
 def test_materialized_feedback_test_rebinds_same_unpublished_change_set(tmp_path):

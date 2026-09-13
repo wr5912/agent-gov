@@ -1,5 +1,6 @@
 import type {
   AgentScopeAgentEvent,
+  AgentScopeReplyEndEvent,
   AgentTraceEvent,
   RuntimeClientConfig,
 } from "../types/runtime";
@@ -9,13 +10,13 @@ import { makeUrl, runtimeHeaders } from "./request";
 export interface AgentScopeEventEffects {
   traceEvent: AgentTraceEvent;
   textDelta?: string;
-  replyEnd?: AgentScopeAgentEvent;
+  replyEnd?: AgentScopeReplyEndEvent;
 }
 
 export interface AgentScopeStreamHandlers {
   onEvent?: (event: AgentScopeAgentEvent) => void;
   onTraceEvent?: (event: AgentTraceEvent) => void;
-  onText?: (text: string) => void;
+  onText?: (text: string, event: AgentScopeAgentEvent) => void;
   onReplyStart?: (event: AgentScopeAgentEvent) => void;
   onReplyEnd?: (event: AgentScopeAgentEvent) => void;
   onUserConfirmRequired?: (
@@ -53,10 +54,74 @@ export interface AgentScopeStreamConnection {
   closed: Promise<void>;
 }
 
-interface ReplyWaiter {
-  replyId?: string;
-  resolve: (event: AgentScopeAgentEvent) => void;
-  reject: (error: Error) => void;
+export interface AgentScopeStreamOptions {
+  /**
+   * 已存在的 detached/recovery run 可能在 connect 返回前继续产出本次回复事件。
+   * 新发送不得开启此选项：其 arm 前事件属于旧会话历史，不能满足新 turn。
+   */
+  captureReplyBeforeArm?: boolean;
+  /** Detached replay 已知的精确 reply；旧 START/END 不得抢占完成门。 */
+  expectedReplyId?: string;
+}
+
+/**
+ * 在 SSE 消费开始前创建完成 Promise，并与 `armReply()` 的领取动作分离。
+ * Runtime 即使在 HTTP response 同一轮就发出 REPLY_END，也不能跑在调用方
+ * 等到 connection 对象之前导致终态丢失。
+ */
+export class AgentScopeReplyCompletion {
+  private claimed = false;
+  private settled = false;
+  private observing: boolean;
+  private replyId: string | undefined;
+  private readonly completion: Promise<AgentScopeAgentEvent>;
+  private resolveCompletion!: (event: AgentScopeAgentEvent) => void;
+  private rejectCompletion!: (error: Error) => void;
+
+  constructor(captureBeforeArm = false, private readonly expectedReplyId?: string) {
+    this.observing = captureBeforeArm;
+    this.completion = new Promise<AgentScopeAgentEvent>((resolve, reject) => {
+      this.resolveCompletion = resolve;
+      this.rejectCompletion = reject;
+    });
+    // connection 可能在调用方领取 Promise 前就关闭；立即观察 rejection
+    // 以防未处理拒绝，原 Promise 仍保留给后续 arm() 调用方。
+    void this.completion.catch(() => undefined);
+  }
+
+  arm(): Promise<AgentScopeAgentEvent> {
+    if (this.claimed) return Promise.reject(new Error("已有回复正在等待 REPLY_END。"));
+    this.claimed = true;
+    this.observing = true;
+    return this.completion;
+  }
+
+  observeReplyStart(event: AgentScopeAgentEvent): void {
+    if (event.type !== "REPLY_START") return;
+    if (
+      this.observing
+      && !this.settled
+      && !this.replyId
+      && event.reply_id
+      && (!this.expectedReplyId || event.reply_id === this.expectedReplyId)
+    ) this.replyId = event.reply_id;
+  }
+
+  observeReplyEnd(event: AgentScopeAgentEvent): void {
+    if (event.type !== "REPLY_END") return;
+    // REPLY_END 不能单独确定它属于当前 turn。只有已观察到
+    // REPLY_START 后的同 reply_id 终态才能完成等待，防止重连时
+    // 旧 replay/orphan REPLY_END 误解锁新回复。
+    if (this.settled || !this.observing || !this.replyId || this.replyId !== event.reply_id) return;
+    this.settled = true;
+    this.resolveCompletion(event);
+  }
+
+  fail(error: Error): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.rejectCompletion(error);
+  }
 }
 
 /** Reduces native AgentScope events without rewriting their payload. */
@@ -96,16 +161,69 @@ export async function connectAgentScopeSessionStream(
   sessionId: string,
   handlers: AgentScopeStreamHandlers = {},
   signal?: AbortSignal,
+  options: AgentScopeStreamOptions = {},
 ): Promise<AgentScopeStreamConnection> {
+  const opened = await openAgentScopeStream(config, agentId, sessionId, signal);
+  const { controller, detachCallerAbort, response } = opened;
+
+  const reducer = new AgentScopeEventReducer();
+  // reader 启动前预先建立完成门。detached/recovery 可显式保留
+  // connect 返回前已被浏览器缓冲的 START/END 精确事件链。
+  const replyCompletion = new AgentScopeReplyCompletion(
+    options.captureReplyBeforeArm,
+    options.expectedReplyId,
+  );
+  let closedError: Error | undefined;
+  const dispatch = createEventDispatcher(reducer, handlers, replyCompletion);
+
+  const closed = consumeAgentScopeSse(response.body!, dispatch, handlers, controller.signal)
+    .catch((error: unknown) => {
+      closedError ||= controller.signal.aborted
+        ? new Error("Runtime 事件流已关闭。")
+        : normalizeStreamError(error);
+    })
+    .finally(() => {
+      detachCallerAbort();
+      closedError ||= controller.signal.aborted
+        ? new Error("Runtime 事件流已关闭。")
+        : new Error("Runtime 事件流在 REPLY_END 前断开。");
+      replyCompletion.fail(closedError);
+    });
+
+  return {
+    armReply: () => replyCompletion.arm(),
+    setRunId: (runId) => reducer.setRunId(runId),
+    close: () => {
+      closedError ||= new Error("Runtime 事件流已由客户端关闭。");
+      replyCompletion.fail(closedError);
+      controller.abort("stream_closed_by_client");
+    },
+    closed,
+  };
+}
+
+interface OpenedAgentScopeStream {
+  controller: AbortController;
+  response: Response;
+  detachCallerAbort: () => void;
+}
+
+async function openAgentScopeStream(
+  config: RuntimeClientConfig,
+  agentId: string,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<OpenedAgentScopeStream> {
   const controller = new AbortController();
   let connectTimedOut = false;
   const connectTimeoutId = globalThis.setTimeout(() => {
     connectTimedOut = true;
     controller.abort("connect_timeout");
-  }, 30_000);
+  }, 60_000);
   const abortFromCaller = () => controller.abort(signal?.reason || "caller_aborted");
   if (signal?.aborted) controller.abort(signal.reason || "caller_aborted");
   else signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const detachCallerAbort = () => signal?.removeEventListener("abort", abortFromCaller);
 
   const query = new URLSearchParams({ agent_id: agentId });
   let response: Response;
@@ -123,31 +241,38 @@ export async function connectAgentScopeSessionStream(
     );
   } catch (error) {
     globalThis.clearTimeout(connectTimeoutId);
-    signal?.removeEventListener("abort", abortFromCaller);
+    detachCallerAbort();
     if (connectTimedOut) throw new Error("建立 Runtime 事件流超时。");
     throw normalizeStreamError(error);
   }
   globalThis.clearTimeout(connectTimeoutId);
-  if (!response.ok || !response.body) {
-    signal?.removeEventListener("abort", abortFromCaller);
-    throw new Error((await readResponseError(response)) || `无法建立 Runtime 事件流（HTTP ${response.status}）。`);
+  const mediaType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+  if (response.status !== 200 || mediaType !== "text/event-stream" || !response.body) {
+    detachCallerAbort();
+    const detail = response.status === 200 ? "" : await readResponseError(response);
+    await response.body?.cancel().catch(() => undefined);
+    controller.abort("invalid_stream_response");
+    const responseContract = `HTTP ${response.status}，Content-Type ${mediaType || "missing"}`;
+    throw new Error(detail
+      ? `无法建立 Runtime 事件流（${responseContract}）：${detail}`
+      : `无法建立 Runtime 事件流（${responseContract}）。`);
   }
+  return { controller, response, detachCallerAbort };
+}
 
-  const reducer = new AgentScopeEventReducer();
-  let waiter: ReplyWaiter | undefined;
-  const rejectWaiter = (error: Error) => {
-    const current = waiter;
-    waiter = undefined;
-    current?.reject(error);
-  };
-  const dispatch = (event: AgentScopeAgentEvent) => {
+function createEventDispatcher(
+  reducer: AgentScopeEventReducer,
+  handlers: AgentScopeStreamHandlers,
+  replyCompletion: AgentScopeReplyCompletion,
+) {
+  return (event: AgentScopeAgentEvent) => {
     handlers.onEvent?.(event);
     const effects = reducer.reduce(event);
     handlers.onTraceEvent?.(effects.traceEvent);
-    if (effects.textDelta) handlers.onText?.(effects.textDelta);
+    if (effects.textDelta && event.type === "TEXT_BLOCK_DELTA") handlers.onText?.(effects.textDelta, event);
     if (event.type === "REPLY_START") {
       handlers.onReplyStart?.(event);
-      if (waiter && !waiter.replyId && event.reply_id) waiter.replyId = event.reply_id;
+      replyCompletion.observeReplyStart(event);
     }
     if (event.type === "REQUIRE_USER_CONFIRM") handlers.onUserConfirmRequired?.(event);
     if (event.type === "REQUIRE_EXTERNAL_EXECUTION") handlers.onExternalExecutionRequired?.(event);
@@ -162,38 +287,8 @@ export async function connectAgentScopeSessionStream(
     if (projectedResolution) handlers.onUserConfirmResolved?.(projectedResolution);
     if (effects.replyEnd) {
       handlers.onReplyEnd?.(effects.replyEnd);
-      if (waiter && (!waiter.replyId || waiter.replyId === effects.replyEnd.reply_id)) {
-        const current = waiter;
-        waiter = undefined;
-        current.resolve(effects.replyEnd);
-      }
+      replyCompletion.observeReplyEnd(effects.replyEnd);
     }
-  };
-
-  const closed = consumeAgentScopeSse(response.body, dispatch, handlers, controller.signal)
-    .catch((error: unknown) => {
-      if (!controller.signal.aborted) rejectWaiter(normalizeStreamError(error));
-    })
-    .finally(() => {
-      signal?.removeEventListener("abort", abortFromCaller);
-      if (!controller.signal.aborted) {
-        rejectWaiter(new Error("Runtime 事件流在 REPLY_END 前断开。"));
-      }
-    });
-
-  return {
-    armReply: () => {
-      if (waiter) return Promise.reject(new Error("已有回复正在等待 REPLY_END。"));
-      return new Promise<AgentScopeAgentEvent>((resolve, reject) => {
-        waiter = { resolve, reject };
-      });
-    },
-    setRunId: (runId) => reducer.setRunId(runId),
-    close: () => {
-      rejectWaiter(new Error("Runtime 事件流已由客户端关闭。"));
-      controller.abort("stream_closed_by_client");
-    },
-    closed,
   };
 }
 
@@ -241,13 +336,16 @@ export function subagentHitlResolution(event: AgentScopeAgentEvent): SubagentHit
   return { worker_session_id: workerSessionId, reply_id: replyId };
 }
 
-async function consumeAgentScopeSse(
+export async function consumeAgentScopeSse(
   body: ReadableStream<Uint8Array>,
   dispatch: (event: AgentScopeAgentEvent) => void,
   handlers: AgentScopeStreamHandlers,
   signal: AbortSignal,
 ) {
   const reader = body.getReader();
+  const cancelReader = () => { void reader.cancel(signal.reason).catch(() => undefined); };
+  if (signal.aborted) cancelReader();
+  else signal.addEventListener("abort", cancelReader, { once: true });
   const decoder = new TextDecoder();
   let buffer = "";
   try {
@@ -263,6 +361,7 @@ async function consumeAgentScopeSse(
     const parsed = extractSseFrames(buffer, true);
     for (const data of parsed.data) dispatchFrame(data, dispatch, handlers);
   } finally {
+    signal.removeEventListener("abort", cancelReader);
     reader.releaseLock();
   }
 }

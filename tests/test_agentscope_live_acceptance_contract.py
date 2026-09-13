@@ -2,453 +2,723 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import importlib.util
 import json
-import os
 import subprocess
 import sys
-from contextlib import asynccontextmanager
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
 
-import httpx
 import pytest
+from scripts import agentscope_live_acceptance_scenarios as scenario_contract
+from scripts import agentscope_mcp_live_acceptance as mcp_live
+from scripts import run_agentscope_live_acceptance as live
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPO_ROOT / "scripts/run_agentscope_live_acceptance.py"
-
-
-def _load_module() -> ModuleType:
-    module_name = "_agentgov_agentscope_live_acceptance_test"
-    cached = sys.modules.get(module_name)
-    if cached is not None:
-        return cached
-    spec = importlib.util.spec_from_file_location(module_name, SCRIPT_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts/run_agentscope_live_acceptance.py"
+REPO_ROOT = SCRIPT_PATH.parents[1]
+AGENT_ID = "security-operations-expert"
+BROWSER_CONTRACT = REPO_ROOT / "scripts/improvement_ui_e2e/browser_acceptance_contract.mjs"
 
 
-def test_live_acceptance_fails_closed_without_explicit_authorization(monkeypatch) -> None:
-    live = _load_module()
-    monkeypatch.delenv("REQUIRE_LIVE_RUNTIME", raising=False)
-    monkeypatch.setenv("AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE", "1")
-    monkeypatch.setenv("AGENT_GOV_ACCEPTANCE_RUN_ID", "acceptance-test")
-    monkeypatch.setenv("AGENT_GOV_CONTAINER_ACCEPTANCE_PROFILE", "core")
-
-    with pytest.raises(live.LiveAcceptanceError, match="REQUIRE_LIVE_RUNTIME=1"):
-        live._require_explicit_live_authorization(
-            {
-                "API_KEY": "private-api-key",
-                "MODEL_PROVIDER_API_KEY": "private-provider-key",
-                "AGENTSCOPE_MODEL_NAME": "real-model",
-            }
-        )
-
-
-def test_live_acceptance_rejects_placeholder_credentials(monkeypatch) -> None:
-    live = _load_module()
-    monkeypatch.setenv("REQUIRE_LIVE_RUNTIME", "1")
-    monkeypatch.setenv("AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE", "1")
-    monkeypatch.setenv("AGENT_GOV_ACCEPTANCE_RUN_ID", "acceptance-test")
-    monkeypatch.setenv("AGENT_GOV_CONTAINER_ACCEPTANCE_PROFILE", "core")
-
-    with pytest.raises(live.LiveAcceptanceError, match="MODEL_PROVIDER_API_KEY"):
-        live._require_explicit_live_authorization(
-            {
-                "API_KEY": "private-api-key",
-                "MODEL_PROVIDER_API_KEY": "replace-with-private-provider-key",
-                "AGENTSCOPE_MODEL_NAME": "real-model",
-            }
-        )
-
-
-def test_cutover_acceptance_requires_identity_bound_to_api_key(monkeypatch) -> None:
-    live = _load_module()
-    monkeypatch.setenv("REQUIRE_LIVE_RUNTIME", "1")
-    monkeypatch.setenv("AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE", "1")
-    monkeypatch.setenv("AGENT_GOV_ACCEPTANCE_RUN_ID", "acceptance-test")
-    monkeypatch.setenv("AGENT_GOV_CONTAINER_ACCEPTANCE_PROFILE", "core")
-    env = {
-        "API_KEY": "one-time-key",
-        "MODEL_PROVIDER_API_KEY": "private-provider-key",
-        "AGENTSCOPE_MODEL_NAME": "real-model",
-        "AGENTGOV_API_MODE": "acceptance",
-        "AGENTGOV_ACCEPTANCE_IDENTITY": "cutover-one",
-        "AGENTGOV_ACCEPTANCE_API_KEY": "different-key",
+def _mcp_scenario() -> dict[str, object]:
+    return {
+        "scenario_id": "reviewed-mcp-readonly",
+        "purpose": "mcp_readonly",
+        "capability": "mcp_readonly",
+        "input": "执行平台 MCP 只读链路验收。",
+        "source_ref": "operator-mcp-service-2026-09-12",
+        "reviewed_by": "release-operator",
+        "reviewed_at": "2026-09-12T10:00:00+08:00",
+        "mcp_expectation": {
+            "server_name": scenario_contract.MCP_TECHNICAL_SERVER_NAME,
+            "allowed_tool_names": [scenario_contract.MCP_TECHNICAL_RAW_TOOL_NAME],
+            "unapproved_tool_names": sorted(scenario_contract.MCP_TECHNICAL_UNAPPROVED_RAW_TOOLS),
+            "resource_uris": [scenario_contract.MCP_TECHNICAL_RESOURCE_URI],
+            "resource_templates": [scenario_contract.MCP_TECHNICAL_RESOURCE_TEMPLATE],
+            "read_resource_uri": scenario_contract.MCP_TECHNICAL_RESOURCE_URI,
+        },
     }
 
-    with pytest.raises(live.LiveAcceptanceError, match="Bearer key"):
-        live._require_explicit_live_authorization(env)
+
+def _sse(*payloads: object) -> bytes:
+    return b"".join(b"data: " + json.dumps(payload, ensure_ascii=False).encode() + b"\n\n" for payload in payloads)
 
 
-def test_fifty_run_mode_requires_fifty_substantively_distinct_scenarios(tmp_path) -> None:
-    live = _load_module()
-    scenario_file = tmp_path / "scenarios.json"
-    scenario_file.write_text(
-        json.dumps([{"id": "one", "prompt": "first"}, {"id": "two", "prompt": "second"}]),
-        encoding="utf-8",
+def _write_scenarios(path: Path, *, agent_id: str = AGENT_ID, scenarios: list[dict[str, object]] | None = None) -> Path:
+    payload = {
+        "agent_id": agent_id,
+        "scenarios": scenarios
+        or [
+            {
+                "scenario_id": "reviewed-success",
+                "purpose": "success",
+                "capability": "generic_runtime",
+                "input": "分析这条真实业务输入并给出可核验结论。",
+                "source_ref": "operator-session-2026-09-11",
+                "reviewed_by": "release-operator",
+                "reviewed_at": "2026-09-11T10:00:00+08:00",
+            }
+        ],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_reviewed_scenario_file_is_external_typed_and_bound_to_agent(tmp_path: Path) -> None:
+    path = _write_scenarios(tmp_path / "reviewed.json")
+    loaded = live.load_scenarios(path, expected_agent_id=AGENT_ID)
+    assert loaded.agent_id == AGENT_ID
+    assert loaded.sha256
+    assert loaded.scenarios[0].purpose == "success"
+    assert loaded.scenarios[0].capability == "generic_runtime"
+    assert loaded.scenarios[0].feedback_comment is None
+
+
+def test_formal_schema_and_real_browser_effect_gate_share_required_literal_contract() -> None:
+    schema = json.loads((REPO_ROOT / "config/live_acceptance_scenario.schema.json").read_text(encoding="utf-8"))
+    scenario_schema = schema["$defs"]["scenario"]
+    acceptance_schema = schema["$defs"]["acceptance"]
+    browser_flow = (REPO_ROOT / "scripts/improvement_ui_e2e/real_container_flow.mjs").read_text(encoding="utf-8")
+
+    assert "capability" in scenario_schema["required"]
+    assert acceptance_schema["properties"]["required_test_literals"]["minItems"] == 1
+    assert "if (!requiredLiterals.length)" in browser_flow
+    assert "requiredLiterals.every((literal) => compactBaseline.includes(literal))" in browser_flow
+    assert "requiredLiterals.some((literal) => !compactCandidate.includes(literal))" in browser_flow
+
+
+def test_reviewed_scenario_rejects_agent_mismatch(tmp_path: Path) -> None:
+    path = _write_scenarios(tmp_path / "reviewed.json", agent_id="another-agent")
+    with pytest.raises(live.LiveAcceptanceError, match="agent_id"):
+        live.load_scenarios(path, expected_agent_id=AGENT_ID)
+
+
+def test_reviewed_scenario_rejects_duplicate_inputs(tmp_path: Path) -> None:
+    common = {
+        "purpose": "success",
+        "capability": "generic_runtime",
+        "input": "相同输入",
+        "source_ref": "operator-session-2026-09-11",
+        "reviewed_by": "release-operator",
+        "reviewed_at": "2026-09-11T10:00:00+08:00",
+    }
+    path = _write_scenarios(
+        tmp_path / "reviewed.json",
+        scenarios=[{"scenario_id": "one", **common}, {"scenario_id": "two", **common}],
+    )
+    with pytest.raises(live.LiveAcceptanceError, match="不能重复"):
+        live.load_scenarios(path, expected_agent_id=AGENT_ID)
+
+
+def test_improvement_scenario_requires_feedback_target_paths_and_effect_literal(tmp_path: Path) -> None:
+    scenario = {
+        "scenario_id": "reviewed-improvement",
+        "purpose": "improvement",
+        "capability": "improvement_effect",
+        "input": "根据真实反馈执行受控改进。",
+        "feedback_comment": "该真实回复遗漏必要处置步骤。",
+        "source_ref": "operator-session-2026-09-11-improvement",
+        "reviewed_by": "release-operator",
+        "reviewed_at": "2026-09-11T10:00:00+08:00",
+        "acceptance": {
+            "allowed_target_paths": ["AGENT.md"],
+            "required_test_literals": ["必须升级"],
+        },
+    }
+    path = _write_scenarios(tmp_path / "reviewed.json", scenarios=[scenario])
+    loaded = live.load_scenarios(path, expected_agent_id=AGENT_ID)
+    assert loaded.scenarios[0].acceptance is not None
+    assert loaded.scenarios[0].acceptance.allowed_target_paths == ("AGENT.md",)
+    assert loaded.scenarios[0].acceptance.required_test_literals == ("必须升级",)
+
+    scenario["acceptance"] = {"allowed_target_paths": ["AGENT.md"], "required_test_literals": []}
+    _write_scenarios(path, scenarios=[scenario])
+    with pytest.raises(live.LiveAcceptanceError, match="required_test_literals"):
+        live.load_scenarios(path, expected_agent_id=AGENT_ID)
+
+
+def test_scenario_capability_must_match_purpose(tmp_path: Path) -> None:
+    path = _write_scenarios(tmp_path / "reviewed.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["scenarios"][0]["capability"] = "runtime_cancel"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(live.LiveAcceptanceError, match="capability"):
+        live.load_scenarios(path, expected_agent_id=AGENT_ID)
+
+
+def test_generic_run_quota_does_not_count_platform_scenarios(tmp_path: Path) -> None:
+    base = {
+        "input": "真实输入",
+        "source_ref": "operator-session-2026-09-11",
+        "reviewed_by": "release-operator",
+        "reviewed_at": "2026-09-11T10:00:00+08:00",
+    }
+    path = _write_scenarios(
+        tmp_path / "reviewed.json",
+        scenarios=[
+            {"scenario_id": "generic-one", "purpose": "success", "capability": "generic_runtime", **base},
+            {
+                "scenario_id": "cancel-one",
+                "purpose": "early_cancel",
+                "capability": "runtime_cancel",
+                **{**base, "input": "不同的取消输入"},
+            },
+        ],
+    )
+    loaded = live.load_scenarios(path, expected_agent_id=AGENT_ID)
+
+    with pytest.raises(live.LiveAcceptanceError, match="不得混算"):
+        live.select_scenarios(loaded.scenarios, runs=2, concurrency=1)
+    selected = live.select_scenarios(
+        loaded.scenarios,
+        runs=1,
+        concurrency=1,
+        capability="runtime_cancel",
+    )
+    assert tuple(item.scenario_id for item in selected) == ("cancel-one",)
+
+
+def test_improvement_effect_cannot_use_generic_runtime_selector(tmp_path: Path) -> None:
+    path = _write_scenarios(
+        tmp_path / "reviewed.json",
+        scenarios=[
+            {
+                "scenario_id": "effect-one",
+                "purpose": "improvement",
+                "capability": "improvement_effect",
+                "input": "核查改进效果",
+                "feedback_comment": "缺少升级结论",
+                "source_ref": "operator-session-2026-09-11",
+                "reviewed_by": "release-operator",
+                "reviewed_at": "2026-09-11T10:00:00+08:00",
+                "acceptance": {
+                    "allowed_target_paths": ["AGENT.md"],
+                    "required_test_literals": ["必须升级"],
+                },
+            }
+        ],
+    )
+    loaded = live.load_scenarios(path, expected_agent_id=AGENT_ID)
+
+    with pytest.raises(live.LiveAcceptanceError, match="尚无精确 Runtime 验证器"):
+        live.select_scenarios(
+            loaded.scenarios,
+            runs=1,
+            concurrency=1,
+            capability="improvement_effect",
+        )
+
+
+def test_mcp_scenario_is_exact_typed_platform_contract(tmp_path: Path) -> None:
+    path = _write_scenarios(
+        tmp_path / "mcp-reviewed.json",
+        agent_id="runtime-mcp-technical-integration-package",
+        scenarios=[_mcp_scenario()],
     )
 
-    scenarios = live.load_scenarios(scenario_file)
-    with pytest.raises(live.LiveAcceptanceError, match="不得循环复制场景制造 50-run 证据"):
-        live.select_scenarios(scenarios, 50, 10)
+    loaded = live.load_scenarios(path, expected_agent_id="runtime-mcp-technical-integration-package")
+    selected = live.select_scenarios(loaded.scenarios, runs=1, concurrency=1, capability="mcp_readonly")
+
+    assert selected[0].mcp_expectation is not None
+    assert selected[0].mcp_expectation.read_resource_uri == scenario_contract.MCP_TECHNICAL_RESOURCE_URI
 
 
-def test_live_acceptance_make_target_uses_isolated_public_runner() -> None:
-    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-    target = makefile.split("container-live-test:", 1)[1].split("\n\n", 1)[0]
-    internal = makefile.split("_container-live-test:", 1)[1].split("\n\n", 1)[0]
-
-    assert "REQUIRE_LIVE_RUNTIME" in target
-    assert "$(CONTAINER_ACCEPTANCE) --profile langfuse" in target
-    assert "scripts/run_agentscope_live_acceptance.py" in internal
-    assert "tests/test_live_runtime_acceptance.py" not in makefile
-    assert "docker compose run" not in internal
-
-
-def test_live_acceptance_quality_gap_is_explicit_and_not_claimed_complete() -> None:
-    policy = json.loads((REPO_ROOT / "tests/quality_policy.json").read_text(encoding="utf-8"))
-    gap = next(item for item in policy["gaps"] if item["id"] == "agentscope-live-cutover-evidence")
-
-    assert gap["target_lane"] == "container-live-acceptance"
-    joined = " ".join(gap["acceptance"])
-    for requirement in ("50", "10 并发", "3 次", "2 小时", "OTLP", "trace_status=complete"):
-        assert requirement in joined
-
-
-def test_live_acceptance_script_does_not_embed_mock_or_runtime_admin_access() -> None:
-    source = SCRIPT_PATH.read_text(encoding="utf-8")
-
-    assert "MockTransport" not in source
-    assert "monkeypatch" not in source
-    assert "/internal/" not in source
-    assert "agentscope-runtime:8090" not in source
-    assert "http://agentscope-runtime" not in source
-    assert "X-AgentGov-Acceptance-Identity" in source
-    assert '"client_operation_id": client_operation_id' in source
-
-
-def test_live_acceptance_cli_rejects_default_execution_before_network(tmp_path) -> None:
-    env_file = tmp_path / "compose.env"
-    env_file.write_text(
-        "API_KEY=private-api-key\nMODEL_PROVIDER_API_KEY=private-provider-key\nAGENTSCOPE_MODEL_NAME=real-model\nAPI_BASE=http://127.0.0.1:1\n",
-        encoding="utf-8",
-    )
-    env = dict(os.environ)
-    env.pop("REQUIRE_LIVE_RUNTIME", None)
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--env-file", str(env_file)],
-        cwd=REPO_ROOT,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
+def test_mcp_technical_seed_does_not_require_an_existing_agent_id() -> None:
+    args = argparse.Namespace(
+        technical_integration_seed=False,
+        mcp_technical_seed=True,
+        agent_id=None,
+        runs=1,
+        concurrency=1,
+        capability="mcp_readonly",
+        timeout_seconds=1.0,
+        require_trace_complete=False,
     )
 
-    assert result.returncode == 1
-    assert "REQUIRE_LIVE_RUNTIME=1" in result.stderr
-
-
-def test_complete_trace_requires_langfuse_profile(monkeypatch) -> None:
-    live = _load_module()
-    monkeypatch.setenv("REQUIRE_LIVE_RUNTIME", "1")
-    monkeypatch.setenv("AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE", "1")
-    monkeypatch.setenv("AGENT_GOV_ACCEPTANCE_RUN_ID", "acceptance-test")
-    monkeypatch.setenv("AGENT_GOV_CONTAINER_ACCEPTANCE_PROFILE", "core")
-    env = {"API_KEY": "private-api-key", "MODEL_PROVIDER_API_KEY": "private-provider-key", "AGENTSCOPE_MODEL_NAME": "real-model"}
-
-    with pytest.raises(live.LiveAcceptanceError, match="langfuse"):
-        live._require_explicit_live_authorization(env, require_trace_complete=True)
-    monkeypatch.setenv("AGENT_GOV_CONTAINER_ACCEPTANCE_PROFILE", "langfuse")
-    live._require_explicit_live_authorization(env, require_trace_complete=True)
-
-
-class PublicApiFixture:
-    """仅用于脚本契约单测；这些响应不构成真实 Runtime 验收证据。"""
-
-    def __init__(self) -> None:
-        self.requests: list[httpx.Request] = []
-        self.governance_agent_id = "security-operations-expert"
-        self.trace_states = ["complete"]
-        self.binding = {
-            "governance_agent_id": "security-operations-expert",
-            "runtime_agent_id": "runtime-published-one",
-            "agent_version_id": "version-one",
-            "harness_digest": "b" * 64,
-            "provisioned": True,
-        }
-        self.run = {
-            "run_id": "run-one",
-            "session_id": "session-one",
-            "agent_id": self.binding["governance_agent_id"],
-            "runtime_agent_id": self.binding["runtime_agent_id"],
-            "agent_version_id": self.binding["agent_version_id"],
-            "harness_digest": self.binding["harness_digest"],
-            "status": "succeeded",
-            "reply_ids": ["reply-one"],
-            "persisted_reply_ids": ["reply-one"],
-            "trace_id": "a" * 32,
-        }
-        self.messages = [{"id": "reply-one", "role": "assistant", "finished_reason": "completed", "content": [{"type": "text", "text": "已收到。"}]}]
-        self.signal = {
-            "signal_id": "signal-one",
-            "source_type": "explicit_feedback",
-            "run_id": "run-one",
-            "matched_run_id": "run-one",
-            "session_id": "session-one",
-            "agent_id": self.binding["governance_agent_id"],
-        }
-        self.persisted_signal = dict(self.signal)
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        path = request.url.path
-        if path == "/health/ready":
-            return httpx.Response(200, json={"ready": True})
-        if path.endswith("/provision"):
-            assert path == f"/api/runtime/agents/{self.governance_agent_id}/provision"
-            return httpx.Response(200, json=self.binding)
-        if path == "/api/runtime/sessions/":
-            assert json.loads(request.content)["agent_id"] == "runtime-published-one"
-            return httpx.Response(200, json={"session_id": "session-one"}, headers={"X-AgentGov-Session-Id": "session-one"})
-        if path == "/api/runtime/chat/":
-            body = json.loads(request.content)
-            assert body["agent_id"] == "runtime-published-one"
-            assert body["session_id"] == "session-one"
-            return httpx.Response(200, json={}, headers={"X-AgentGov-Run-Id": "run-one", "X-AgentGov-Session-Id": "session-one"})
-        if path == "/api/runtime/sessions/session-one/stream":
-            assert request.url.params["agent_id"] == "runtime-published-one"
-            return httpx.Response(200, content=b'data: {"type":"REPLY_END"}\n\n', headers={"Content-Type": "text/event-stream"})
-        if path == "/api/runtime/sessions/session-one/messages":
-            assert request.url.params["agent_id"] == "runtime-published-one"
-            return httpx.Response(200, json={"messages": self.messages})
-        if path == "/api/agent-runs/run-one":
-            return httpx.Response(200, json=self.run)
-        if path == "/api/agent-runs/run-one/trace":
-            status = self.trace_states.pop(0) if len(self.trace_states) > 1 else self.trace_states[0]
-            return httpx.Response(200, json={"run_id": "run-one", "trace_id": "a" * 32, "trace_status": status})
-        if path == "/api/feedback-signals":
-            return httpx.Response(200, json=self.signal)
-        if path == "/api/feedback-signals/signal-one":
-            return httpx.Response(200, json=self.persisted_signal)
-        if path == "/api/runtime/sessions/session-one" and request.method == "DELETE":
-            assert request.url.params["agent_id"] == "runtime-published-one"
-            return httpx.Response(200, json={})
-        raise AssertionError(f"Unexpected public request: {request.method} {path}")
-
-
-@pytest.fixture
-def public_api(monkeypatch):
-    live = _load_module()
-    api = PublicApiFixture()
-    client_factory = httpx.AsyncClient
-    transport = httpx.MockTransport(api)
-    monkeypatch.setattr(live.httpx, "AsyncClient", lambda **kwargs: client_factory(transport=transport, **kwargs))
-    monkeypatch.setenv("AGENT_GOV_ACCEPTANCE_RUN_ID", "acceptance-test")
-    return api
-
-
-def _execute_public_acceptance(*, fixture_agent=False):
-    live = _load_module()
-    args = argparse.Namespace(runs=1, concurrency=1, timeout_seconds=0.05, require_trace_complete=True, fixture_agent=fixture_agent)
-    env = {"API_BASE": "http://127.0.0.1:50400", "API_KEY": "private-api-key"}
-    return asyncio.run(live.run_live_acceptance(args, env, live.DEFAULT_SCENARIOS))
-
-
-def test_live_script_provisions_exact_binding_and_verifies_public_evidence(public_api) -> None:
-    public_api.trace_states = ["pending", "complete"]
-    evidence = _execute_public_acceptance()
-
-    assert len(evidence) == 1
-    assert evidence[0].binding.governance_agent_id == "security-operations-expert"
-    assert evidence[0].binding.runtime_agent_id == "runtime-published-one"
-    assert evidence[0].reply_ids == ("reply-one",)
-    assert evidence[0].trace_status == "complete"
-    assert evidence[0].feedback_signal_id == "signal-one"
-    assert public_api.requests[-1].method == "DELETE"
-    assert sum(request.url.path.endswith("/provision") for request in public_api.requests) == 1
-    assert any(request.url.path == "/api/feedback-signals/signal-one" for request in public_api.requests)
+    with pytest.raises(live.LiveAcceptanceError, match="隔离 live 验收"):
+        asyncio.run(
+            live.run_live_acceptance(
+                args,
+                {"API_BASE": "invalid", "API_KEY": "private"},
+                (),
+            ),
+        )
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("governance_agent_id", "other-agent"), ("runtime_agent_id", ""), ("agent_version_id", None), ("provisioned", False)],
+    (
+        ("allowed_tool_names", ["soc_api__list_alerts_api_v1_alerts_get"]),
+        ("unapproved_tool_names", ["soc_api__list_alerts_api_v1_alerts_get"]),
+        ("resource_uris", ["openapi://soc_api/unreviewed"]),
+        ("read_resource_uri", "openapi://soc_api/unreviewed"),
+    ),
 )
-def test_live_script_rejects_unconfirmed_provision_binding(public_api, field, value) -> None:
-    public_api.binding[field] = value
-    with pytest.raises(_load_module().LiveAcceptanceError, match="provision"):
-        _execute_public_acceptance()
-    assert not any(request.url.path == "/api/runtime/sessions/" for request in public_api.requests)
+def test_mcp_scenario_rejects_weakened_or_drifted_expectation(tmp_path: Path, field: str, value: object) -> None:
+    scenario = _mcp_scenario()
+    expectation = scenario["mcp_expectation"]
+    assert isinstance(expectation, dict)
+    expectation[field] = value
+    path = _write_scenarios(
+        tmp_path / "mcp-reviewed.json",
+        agent_id="runtime-mcp-technical-integration-package",
+        scenarios=[scenario],
+    )
+
+    with pytest.raises(live.LiveAcceptanceError, match="精确匹配"):
+        live.load_scenarios(path, expected_agent_id="runtime-mcp-technical-integration-package")
 
 
-@pytest.mark.parametrize("field", ["run_id", "session_id", "agent_id", "runtime_agent_id", "agent_version_id", "harness_digest"])
-def test_live_script_rejects_terminal_run_binding_mismatch(public_api, field) -> None:
-    public_api.run[field] = "other-binding"
-    with pytest.raises(_load_module().LiveAcceptanceError, match="发布绑定"):
-        _execute_public_acceptance()
-    assert not any(request.url.path == "/api/feedback-signals" for request in public_api.requests)
+def _mcp_messages(*, include_dashboard: bool = True, read_uri: str | None = None) -> list[dict[str, object]]:
+    prefix = f"mcp__{scenario_contract.MCP_TECHNICAL_SERVER_NAME}__"
+    specifications = [
+        (
+            f"{prefix}resources_list",
+            {},
+            {
+                "resources": [{"name": "health", "uri": scenario_contract.MCP_TECHNICAL_RESOURCE_URI}],
+                "next_cursor": None,
+            },
+        ),
+        (
+            f"{prefix}resource_templates_list",
+            {},
+            {
+                "resource_templates": [
+                    {"name": "analysis", "uri_template": scenario_contract.MCP_TECHNICAL_RESOURCE_TEMPLATE},
+                ],
+                "next_cursor": None,
+            },
+        ),
+        (
+            f"{prefix}resource_read",
+            {"uri": read_uri or scenario_contract.MCP_TECHNICAL_RESOURCE_URI},
+            {
+                "contents": [
+                    {
+                        "uri": scenario_contract.MCP_TECHNICAL_RESOURCE_URI,
+                        "mime_type": "application/json",
+                        "text": '{"status":"healthy"}',
+                    },
+                ],
+            },
+        ),
+        (
+            f"{prefix}{scenario_contract.MCP_TECHNICAL_RAW_TOOL_NAME}",
+            {},
+            {"status": "available"},
+        ),
+    ]
+    if not include_dashboard:
+        specifications.pop()
+    blocks: list[dict[str, object]] = []
+    for index, (name, arguments, output) in enumerate(specifications):
+        tool_id = f"tool-{index}"
+        blocks.extend(
+            (
+                {
+                    "type": "tool_call",
+                    "id": tool_id,
+                    "name": name,
+                    "input": json.dumps(arguments),
+                    "state": "finished",
+                },
+                {
+                    "type": "tool_result",
+                    "id": tool_id,
+                    "name": name,
+                    "output": [{"type": "text", "text": json.dumps(output)}],
+                    "state": "success",
+                },
+            ),
+        )
+    blocks.append({"type": "text", "text": scenario_contract.MCP_TECHNICAL_COMPLETION_TEXT})
+    return [{"id": "reply-mcp", "role": "assistant", "content": blocks}]
 
 
-@pytest.mark.parametrize("status", ["failed", "cancelled", "interrupted"])
-def test_live_script_rejects_non_success_terminal(public_api, status) -> None:
-    public_api.run["status"] = status
-    with pytest.raises(_load_module().LiveAcceptanceError, match="未成功"):
-        _execute_public_acceptance()
+def _mcp_sse(*, result_state: str = "success") -> bytes:
+    payloads: list[dict[str, object]] = [{"type": "REPLY_START", "reply_id": "reply-mcp"}]
+    for index, name in enumerate(scenario_contract.MCP_TECHNICAL_TOOL_NAMES):
+        tool_id = f"tool-{index}"
+        payloads.extend(
+            (
+                {"type": "TOOL_CALL_START", "reply_id": "reply-mcp", "tool_call_id": tool_id, "tool_call_name": name},
+                {"type": "TOOL_CALL_END", "reply_id": "reply-mcp", "tool_call_id": tool_id},
+                {"type": "TOOL_RESULT_START", "reply_id": "reply-mcp", "tool_call_id": tool_id, "tool_call_name": name},
+                {"type": "TOOL_RESULT_END", "reply_id": "reply-mcp", "tool_call_id": tool_id, "state": result_state},
+            ),
+        )
+    payloads.extend(
+        (
+            {"type": "TEXT_BLOCK_DELTA", "reply_id": "reply-mcp", "delta": scenario_contract.MCP_TECHNICAL_COMPLETION_TEXT},
+            {"type": "REPLY_END", "reply_id": "reply-mcp"},
+        ),
+    )
+    return _sse(*payloads)
+
+
+def test_mcp_evidence_requires_exact_public_roster_canonical_tools_resources_and_sse(tmp_path: Path) -> None:
+    path = _write_scenarios(
+        tmp_path / "mcp-reviewed.json",
+        agent_id="runtime-mcp-technical-integration-package",
+        scenarios=[_mcp_scenario()],
+    )
+    scenario = live.load_scenarios(path, expected_agent_id="runtime-mcp-technical-integration-package").scenarios[0]
+    expected_workspace_tool = f"mcp__{scenario_contract.MCP_TECHNICAL_SERVER_NAME}__{scenario_contract.MCP_TECHNICAL_RAW_TOOL_NAME}"
+    workspace = mcp_live.validate_workspace_mcp_payload(
+        [
+            {
+                "name": scenario_contract.MCP_TECHNICAL_SERVER_NAME,
+                "is_stateful": False,
+                "is_healthy": True,
+                "error": None,
+                "tools": [{"name": expected_workspace_tool}],
+            },
+        ],
+        scenario,
+    )
+
+    evidence = mcp_live.validate_canonical_mcp_payload(
+        _mcp_messages(),
+        scenario,
+        reply_ids=("reply-mcp",),
+        raw_sse=_mcp_sse(),
+        workspace=workspace,
+    )
+    summary = evidence.summary()
+
+    assert evidence.workspace.tool_names == (expected_workspace_tool,)
+    assert evidence.resource_uris == (scenario_contract.MCP_TECHNICAL_RESOURCE_URI,)
+    assert evidence.resource_templates == (scenario_contract.MCP_TECHNICAL_RESOURCE_TEMPLATE,)
+    assert {item.tool_name for item in evidence.tool_results} == set(scenario_contract.MCP_TECHNICAL_TOOL_NAMES)
+    assert summary["resource_content_count"] == 1
+    assert "healthy" not in json.dumps(summary)
+
+
+def test_mcp_workspace_roster_rejects_unapproved_server_tool(tmp_path: Path) -> None:
+    path = _write_scenarios(
+        tmp_path / "mcp-reviewed.json",
+        agent_id="runtime-mcp-technical-integration-package",
+        scenarios=[_mcp_scenario()],
+    )
+    scenario = live.load_scenarios(path, expected_agent_id="runtime-mcp-technical-integration-package").scenarios[0]
+    prefix = f"mcp__{scenario_contract.MCP_TECHNICAL_SERVER_NAME}__"
+
+    with pytest.raises(live.LiveAcceptanceError, match="allowlist"):
+        mcp_live.validate_workspace_mcp_payload(
+            [
+                {
+                    "name": scenario_contract.MCP_TECHNICAL_SERVER_NAME,
+                    "is_healthy": True,
+                    "error": None,
+                    "tools": [
+                        {"name": f"{prefix}{scenario_contract.MCP_TECHNICAL_RAW_TOOL_NAME}"},
+                        {"name": f"{prefix}soc_api__list_alerts_api_v1_alerts_get"},
+                    ],
+                },
+            ],
+            scenario,
+        )
 
 
 @pytest.mark.parametrize(
-    "messages",
-    [
-        [],
-        [{"id": "reply-one", "role": "user", "content": []}],
-        [{"id": "unrelated-reply", "role": "assistant", "finished_reason": "completed", "content": [{"type": "text", "text": "历史结果"}]}],
-        [{"id": "reply-one", "role": "assistant", "finished_reason": "interrupted", "content": []}],
-        [{"id": "reply-one", "role": "assistant", "finished_reason": "completed", "content": [{"type": "text", "text": " "}]}],
-    ],
+    ("messages", "raw_sse", "message"),
+    (
+        (_mcp_messages(include_dashboard=False), _mcp_sse(), "四个批准工具"),
+        (_mcp_messages(read_uri="openapi://soc_api/unreviewed"), _mcp_sse(), "批准 URI"),
+        (_mcp_messages(), _mcp_sse().replace(b"tool-0", b"sse-tool-0"), "精确对账"),
+        (_mcp_messages(), _mcp_sse(result_state="error"), "生命周期不完整"),
+    ),
 )
-def test_live_script_rejects_empty_or_unrelated_canonical_output(public_api, messages) -> None:
-    public_api.messages = messages
-    with pytest.raises(_load_module().LiveAcceptanceError, match="canonical"):
-        _execute_public_acceptance()
+def test_mcp_canonical_or_sse_evidence_fails_closed(
+    tmp_path: Path,
+    messages: list[dict[str, object]],
+    raw_sse: bytes,
+    message: str,
+) -> None:
+    path = _write_scenarios(
+        tmp_path / "mcp-reviewed.json",
+        agent_id="runtime-mcp-technical-integration-package",
+        scenarios=[_mcp_scenario()],
+    )
+    scenario = live.load_scenarios(path, expected_agent_id="runtime-mcp-technical-integration-package").scenarios[0]
+    workspace = mcp_live.McpWorkspaceEvidence(scenario_contract.MCP_TECHNICAL_SERVER_NAME, (), ())
+
+    with pytest.raises(live.LiveAcceptanceError, match=message):
+        mcp_live.validate_canonical_mcp_payload(
+            messages,
+            scenario,
+            reply_ids=("reply-mcp",),
+            raw_sse=raw_sse,
+            workspace=workspace,
+        )
 
 
-def test_live_script_requires_durable_reply_confirmation(public_api) -> None:
-    public_api.run["persisted_reply_ids"] = ["unrelated-reply"]
-    with pytest.raises(_load_module().LiveAcceptanceError, match="持久化确认"):
-        _execute_public_acceptance()
-
-
-def test_live_script_fails_when_trace_does_not_become_complete(public_api) -> None:
-    public_api.trace_states = ["pending"]
-    with pytest.raises(_load_module().LiveAcceptanceError, match="时限内达到 complete"):
-        _execute_public_acceptance()
-
-
-@pytest.mark.parametrize("record", ["signal", "persisted_signal"])
-@pytest.mark.parametrize("field", ["source_type", "run_id", "matched_run_id", "session_id", "agent_id"])
-def test_live_script_rejects_feedback_source_mismatch(public_api, record, field) -> None:
-    getattr(public_api, record)[field] = "other-source"
-    with pytest.raises(_load_module().LiveAcceptanceError, match="反馈"):
-        _execute_public_acceptance()
-
-
-def test_fixture_agent_option_is_explicit_without_environment_default(monkeypatch) -> None:
-    live = _load_module()
-    monkeypatch.setenv("LIVE_ACCEPTANCE_FIXTURE_AGENT", "1")
-    assert live.parse_args(["--env-file", "unused"]).fixture_agent is False
-    assert live.parse_args(["--env-file", "unused", "--fixture-agent"]).fixture_agent is True
-
-
-def _install_fixture_selection(monkeypatch, public_api, *, version="version-one"):
-    live = _load_module()
-    agent_id = "runtime-acceptance-new-agent"
-    public_api.governance_agent_id = agent_id
-    public_api.binding["governance_agent_id"] = agent_id
-    public_api.run["agent_id"] = agent_id
-    public_api.signal["agent_id"] = agent_id
-    public_api.persisted_signal["agent_id"] = agent_id
-    events = []
-
-    @asynccontextmanager
-    async def temporary_agent(client):
-        events.append("create")
-        try:
-            yield SimpleNamespace(agent=SimpleNamespace(agent_id=agent_id), current_commit_sha=version)
-        finally:
-            events.append("cleanup")
-
-    monkeypatch.setattr(live, "temporary_runtime_agent", temporary_agent)
-    return events
-
-
-def test_fixture_selection_reuses_run_canonical_trace_and_feedback_checks(public_api, monkeypatch) -> None:
-    events = _install_fixture_selection(monkeypatch, public_api)
-    evidence = _execute_public_acceptance(fixture_agent=True)
-    assert events == ["create", "cleanup"]
-    assert evidence[0].binding.governance_agent_id == "runtime-acceptance-new-agent"
-    assert evidence[0].trace_status == "complete"
-    assert evidence[0].feedback_signal_id == "signal-one"
-    assert any(request.url.path.endswith("/messages") for request in public_api.requests)
-    assert any(request.url.path.endswith("/trace") for request in public_api.requests)
-
-
-def test_fixture_selection_preserves_existing_failure_and_cleans_up(public_api, monkeypatch) -> None:
-    events = _install_fixture_selection(monkeypatch, public_api)
-    public_api.messages = []
-    with pytest.raises(_load_module().LiveAcceptanceError, match="canonical"):
-        _execute_public_acceptance(fixture_agent=True)
-    assert events == ["create", "cleanup"]
-
-
-def test_fixture_selection_checks_import_commit_against_provision(public_api, monkeypatch) -> None:
-    events = _install_fixture_selection(monkeypatch, public_api, version="other-commit")
-    with pytest.raises(_load_module().LiveAcceptanceError, match="导入 Git"):
-        _execute_public_acceptance(fixture_agent=True)
-    assert events == ["create", "cleanup"]
-    assert not any(request.url.path == "/api/runtime/sessions/" for request in public_api.requests)
-
-
-def test_default_agent_failure_does_not_activate_fixture(public_api, monkeypatch) -> None:
-    def forbidden_fixture(_client):
-        pytest.fail("Fixture must never be an automatic fallback")
-
-    live = _load_module()
-    monkeypatch.setattr(live, "temporary_runtime_agent", forbidden_fixture)
-    public_api.binding["provisioned"] = False
-    with pytest.raises(live.LiveAcceptanceError, match="provision"):
-        _execute_public_acceptance()
-
-
-def test_fixture_summary_names_only_generic_scope(public_api, monkeypatch, capsys) -> None:
-    live = _load_module()
-    _install_fixture_selection(monkeypatch, public_api)
-    monkeypatch.setattr(live, "_read_env_file", lambda _path: {"API_BASE": "http://127.0.0.1:50400", "API_KEY": "private-api-key"})
-    monkeypatch.setattr(live, "_require_explicit_live_authorization", lambda *_args, **_kwargs: None)
-    assert live.main(["--env-file", "unused", "--fixture-agent", "--require-trace-complete"]) == 0
-    output = capsys.readouterr().out
-    summary = json.loads(output)
-    assert summary["acceptance_scope"] == "generic-runtime"
-    assert {"mcp", "subagents", "hitl", "session-resume", "runtime-restart-recovery", "model-effect-improvement"}.issubset(summary["excluded_claims"])
-    assert "private-api-key" not in output
-    assert "已收到。" not in output
-
-
-def test_parallel_failure_waits_for_sibling_cleanup_before_return(monkeypatch) -> None:
-    live = _load_module()
-    sibling_started = asyncio.Event()
-    sibling_cleaned = []
-
-    async def scenario(_client, item, **_kwargs):
-        if item.scenario_id == "first":
-            await sibling_started.wait()
-            raise live.LiveAcceptanceError("first failed")
-        try:
-            sibling_started.set()
-            await asyncio.Event().wait()
-        finally:
-            sibling_cleaned.append(True)
-
-    monkeypatch.setattr(live, "run_scenario", scenario)
-    args = argparse.Namespace(concurrency=2, timeout_seconds=1, require_trace_complete=True)
-    selected = (live.Scenario("first", "one", "feedback"), live.Scenario("second", "two", "feedback"))
-    with pytest.raises(live.LiveAcceptanceError, match="first failed"):
-        asyncio.run(live._run_selected_scenarios(None, args, selected, None))
-    assert sibling_cleaned == [True]
-
-
-def test_live_cli_help_loads_fixture_module_without_pythonpath() -> None:
-    env = dict(os.environ)
-    env.pop("PYTHONPATH", None)
+def test_live_cli_has_no_default_scenario_or_agent() -> None:
     result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--help"],
+        [sys.executable, str(SCRIPT_PATH), "--env-file", "/tmp/not-used"],
         cwd="/tmp",
-        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "--scenario-file" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        b'data: {"type":\n\n',
+        b"data\n\n",
+        _sse(["REPLY_START"]),
+        _sse({"id": "event-without-type"}),
+    ),
+)
+def test_sse_parser_rejects_every_malformed_complete_data_frame(raw: bytes) -> None:
+    with pytest.raises(live.LiveAcceptanceError, match="SSE data frame"):
+        scenario_contract.parse_sse_events(raw)
+
+
+def test_success_sse_requires_ordered_nonempty_exact_reply_chain() -> None:
+    raw = _sse(
+        {"id": "start", "type": "REPLY_START", "reply_id": "reply-one"},
+        {"id": "future", "type": "FUTURE_AGENT_EVENT", "value": {"kept": True}},
+        {"id": "empty", "type": "TEXT_BLOCK_DELTA", "reply_id": "reply-one", "delta": ""},
+        {"id": "text", "type": "TEXT_BLOCK_DELTA", "reply_id": "reply-one", "delta": "真实结果"},
+        {"id": "end", "type": "REPLY_END", "reply_id": "reply-one"},
+    )
+
+    assert scenario_contract.validate_sse_evidence(
+        raw,
+        purpose="success",
+        terminal_reply_ids=("reply-one",),
+    ) == (
+        "REPLY_START",
+        "FUTURE_AGENT_EVENT",
+        "TEXT_BLOCK_DELTA",
+        "TEXT_BLOCK_DELTA",
+        "REPLY_END",
+    )
+
+
+@pytest.mark.parametrize(
+    ("payloads", "terminal_reply_ids", "message"),
+    (
+        (
+            ({"type": "TEXT_BLOCK_DELTA", "reply_id": "reply-one", "delta": "越序"},),
+            (),
+            "TEXT_BLOCK_DELTA",
+        ),
+        (
+            (
+                {"type": "REPLY_START", "reply_id": "reply-one"},
+                {"type": "TEXT_BLOCK_DELTA", "reply_id": "reply-one", "delta": "   "},
+                {"type": "REPLY_END", "reply_id": "reply-one"},
+            ),
+            ("reply-one",),
+            "非空 TEXT_BLOCK_DELTA",
+        ),
+        (
+            (
+                {"type": "REPLY_START", "reply_id": "reply-one"},
+                {"type": "TEXT_BLOCK_DELTA", "reply_id": "reply-two", "delta": "错绑"},
+            ),
+            (),
+            "reply_id",
+        ),
+        (
+            (
+                {"type": "REPLY_START", "reply_id": "reply-one"},
+                {"type": "TEXT_BLOCK_DELTA", "reply_id": "reply-one", "delta": "无终态"},
+            ),
+            (),
+            "缺少 REPLY_END",
+        ),
+        (
+            (
+                {"type": "REPLY_START", "reply_id": "reply-one"},
+                {"type": "TEXT_BLOCK_DELTA", "reply_id": "reply-one", "delta": "完成"},
+                {"type": "REPLY_END", "reply_id": "reply-one"},
+            ),
+            ("reply-other",),
+            "持久终态 reply_ids",
+        ),
+    ),
+)
+def test_success_sse_rejects_incomplete_or_cross_reply_evidence(
+    payloads: tuple[dict[str, object], ...],
+    terminal_reply_ids: tuple[str, ...],
+    message: str,
+) -> None:
+    with pytest.raises(live.LiveAcceptanceError, match=message):
+        scenario_contract.validate_sse_evidence(
+            _sse(*payloads),
+            purpose="retry",
+            terminal_reply_ids=terminal_reply_ids,
+        )
+
+
+def test_cancel_sse_contract_keeps_early_and_partial_semantics_distinct() -> None:
+    assert (
+        scenario_contract.validate_sse_evidence(
+            b"",
+            purpose="early_cancel",
+            terminal_reply_ids=(),
+        )
+        == ()
+    )
+    partial = _sse(
+        {"type": "REPLY_START", "reply_id": "reply-partial"},
+        {"type": "TEXT_BLOCK_DELTA", "reply_id": "reply-partial", "delta": "部分结果"},
+    )
+    assert scenario_contract.validate_sse_evidence(
+        partial,
+        purpose="partial_cancel",
+        terminal_reply_ids=(),
+    ) == ("REPLY_START", "TEXT_BLOCK_DELTA")
+    with pytest.raises(live.LiveAcceptanceError, match="没有非空文本增量"):
+        scenario_contract.validate_sse_evidence(
+            _sse({"type": "REPLY_START", "reply_id": "reply-partial"}),
+            purpose="partial_cancel",
+            terminal_reply_ids=(),
+        )
+
+
+def test_formal_browser_contract_requires_both_engines_exactly_three_times() -> None:
+    module_uri = BROWSER_CONTRACT.resolve().as_uri()
+    program = f"""
+import {{ browserExecutionPlan, requireFormalBrowserResultMatrix }} from {json.dumps(module_uri)};
+const plan = browserExecutionPlan("both", {{ formal: true }});
+if (plan.join(",") !== "chromium,firefox") process.exit(10);
+const good = plan.flatMap((engine) => [1, 2, 3].map((attempt) => ({{ engine, attempt }})));
+requireFormalBrowserResultMatrix(good, {{ formal: true }});
+let rejectedSingle = false;
+let rejectedMissing = false;
+try {{ browserExecutionPlan("chromium", {{ formal: true }}); }} catch {{ rejectedSingle = true; }}
+try {{ requireFormalBrowserResultMatrix(good.slice(0, 5), {{ formal: true }}); }} catch {{ rejectedMissing = true; }}
+if (!rejectedSingle || !rejectedMissing) process.exit(11);
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", program],
         check=False,
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert "--fixture-agent" in result.stdout
+
+
+def test_public_browser_and_release_candidate_targets_force_formal_matrix() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    assert makefile.count("AGENT_GOV_FORMAL_BROWSER_ACCEPTANCE=1 BROWSER=both") == 4
+    verifier = (REPO_ROOT / "scripts/verify_playground_cancel.mjs").read_text(encoding="utf-8")
+    improvement_verifier = (REPO_ROOT / "scripts/verify_improvement_ui_real_container.mjs").read_text(encoding="utf-8")
+    evidence = (REPO_ROOT / "scripts/improvement_ui_e2e/playground_cancel_evidence.mjs").read_text(encoding="utf-8")
+    assert "requireFormalBrowserResultMatrix(results" in verifier
+    assert "requireFormalBrowserResultMatrix(results" in improvement_verifier
+    assert "const { chromium, firefox }" in improvement_verifier
+    assert "FORMAL_BROWSER_REPETITIONS" in improvement_verifier
+    assert improvement_verifier.count("runRealContainerAcceptance(") == 1
+    assert "verifyCompletedImprovementAcceptance(" in improvement_verifier
+    assert "mutation_runs: 1" in improvement_verifier
+    assert 'mode: "read-only-completed-loop"' in improvement_verifier
+    real_flow = (REPO_ROOT / "scripts/improvement_ui_e2e/real_container_flow.mjs").read_text(encoding="utf-8")
+    assert 'page.getByTestId("improvement-scope-filter")' in real_flow
+    assert 'url.searchParams.get("agent_id") === seed.agent.agent_id' in real_flow
+    assert "formal_browser_acceptance: formalBrowserAcceptance" in verifier
+    assert "cancelClosesRecoveredStream: Boolean(cancellation && cancelledStream" in evidence
+    assert "reloadRecoveredExactActiveRun: reloadRecovered === true" in evidence
+    assert "successfulStreamClosed: Boolean(successfulStream?.closedAt)" in evidence
+    assert "const allStreamsClosed = await network.settle(config.actionTimeoutMs);" in evidence
+    assert verifier.index("const resourceFailures = await cleanupResources") < verifier.index("const expectedDiagnostics = new Set(")
+    assert '"expected_reload_stream_cancel"' in verifier
+
+
+def test_public_browser_technical_target_is_real_isolated_and_non_formal() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "ui-playground-technical-smoke: browser-technical-live-preflight" in makefile
+    assert 'REAL_SCENARIO_FILE="$${BROWSER_TECHNICAL_SCENARIO_FILE}"' in makefile
+    assert "REAL_ACCEPTANCE_AGENT_ID=security-operations-expert" in makefile
+    assert "AGENT_GOV_FORMAL_BROWSER_ACCEPTANCE=0" in makefile
+    assert "BROWSER=both REAL_ACCEPTANCE_AGENT_ID=security-operations-expert" in makefile
+    assert "$(CONTAINER_ACCEPTANCE) --profile core" in makefile
+
+
+def test_public_candidate_lifecycle_target_is_real_isolated_and_dual_browser() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    verifier = (REPO_ROOT / "scripts/verify_agent_candidate_lifecycle.mjs").read_text(encoding="utf-8")
+    package_scripts = json.loads((REPO_ROOT / "frontend/package.json").read_text(encoding="utf-8"))["scripts"]
+
+    recipe = makefile.split("\nui-agent-candidate-technical-smoke: technical-live-preflight", 1)[1].split("\n\n", 1)[0]
+    private_recipe = makefile.split("\n_ui-agent-candidate-technical-smoke:", 1)[1].split("\n\n", 1)[0]
+    assert "$(CONTAINER_ACCEPTANCE) --profile langfuse --" in recipe
+    assert "_ui-agent-candidate-technical-smoke BROWSER=both" in recipe
+    assert "$(REQUIRE_CONTAINER_ACCEPTANCE)" in private_recipe
+    assert '"$${AGENTGOV_ACCEPTANCE_NODE:?missing bound acceptance node}" scripts/verify_agent_candidate_lifecycle.mjs' in private_recipe
+    assert "verify:agent-candidate:impl" not in private_recipe
+    assert "npm" not in private_recipe
+    assert package_scripts["verify:agent-candidate"] == "cd .. && make ui-agent-candidate-technical-smoke"
+    assert package_scripts["verify:agent-candidate:impl"] == "cd .. && node scripts/verify_agent_candidate_lifecycle.mjs"
+    assert "requireContainerAcceptance();" in verifier
+    assert 'process.env.AGENT_GOV_CONTAINER_ACCEPTANCE_PROFILE !== "langfuse"' in verifier
+    assert "loadReviewedScenarios(" in verifier
+    assert "process.env.TECHNICAL_SCENARIO_FILE" in verifier
+    assert 'browserPlan.includes("chromium")' in verifier
+    assert 'browserPlan.includes("firefox")' in verifier
+    assert ".route(" not in verifier
+    assert ".setContent(" not in verifier
+    assert ".addInitScript(" not in verifier
+
+
+def test_evidence_summary_rejects_cross_scenario_identity_reuse() -> None:
+    with pytest.raises(live.LiveAcceptanceError, match="run_id"):
+        live.validate_evidence_identities(
+            expected_runs=2,
+            configured_concurrency=2,
+            max_concurrency_observed=2,
+            scenario_ids=("one", "two"),
+            session_ids=("session-one", "session-two"),
+            run_ids=("same-run", "same-run"),
+            trace_ids=("1" * 32, "2" * 32),
+            reply_ids=("reply-one", "reply-two"),
+            expected_capability="generic_runtime",
+            capabilities=("generic_runtime", "generic_runtime"),
+        )
+
+
+def test_evidence_summary_requires_configured_concurrency_peak() -> None:
+    with pytest.raises(live.LiveAcceptanceError, match="服务端 run 生命周期重叠"):
+        live.validate_evidence_identities(
+            expected_runs=2,
+            configured_concurrency=2,
+            max_concurrency_observed=1,
+            scenario_ids=("one", "two"),
+            session_ids=("session-one", "session-two"),
+            run_ids=("run-one", "run-two"),
+            trace_ids=("1" * 32, "2" * 32),
+            reply_ids=(),
+            expected_capability="generic_runtime",
+            capabilities=("generic_runtime", "generic_runtime"),
+        )
+
+
+def test_concurrency_peak_uses_server_run_intervals_not_client_tasks() -> None:
+    runs = (
+        {
+            "status": "succeeded",
+            "started_at": "2026-09-11T10:00:00+00:00",
+            "completed_at": "2026-09-11T10:00:03+00:00",
+        },
+        {
+            "status": "cancelled",
+            "started_at": "2026-09-11T10:00:01+00:00",
+            "completed_at": "2026-09-11T10:00:02+00:00",
+        },
+        {
+            "status": "succeeded",
+            "started_at": "2026-09-11T10:00:03+00:00",
+            "completed_at": "2026-09-11T10:00:04+00:00",
+        },
+    )
+
+    assert live.observed_run_concurrency(runs) == 2

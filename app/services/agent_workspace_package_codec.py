@@ -19,14 +19,21 @@ import yaml
 from app.runtime.business_agent_workspace import WorkspaceProvisionEntry
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.json_types import JsonObject
+from app.runtime.workspace_commit_path import (
+    MAX_WORKSPACE_COMMIT_DEPTH,
+    MAX_WORKSPACE_COMMIT_PATH_BYTES,
+    WorkspaceCommitPathError,
+    WorkspaceCommitPathTooLarge,
+    validate_workspace_commit_path,
+)
 
 MAX_COMPRESSED_PACKAGE_BYTES = 64 * 1024 * 1024
 MAX_MULTIPART_REQUEST_BYTES = MAX_COMPRESSED_PACKAGE_BYTES + 1024 * 1024
 MAX_SINGLE_MEMBER_BYTES = 64 * 1024 * 1024
 MAX_EXTRACTED_PACKAGE_BYTES = 256 * 1024 * 1024
 MAX_PACKAGE_MEMBERS = 10_000
-MAX_PACKAGE_PATH_BYTES = 4 * 1024
-MAX_PACKAGE_DEPTH = 32
+MAX_PACKAGE_PATH_BYTES = MAX_WORKSPACE_COMMIT_PATH_BYTES
+MAX_PACKAGE_DEPTH = MAX_WORKSPACE_COMMIT_DEPTH
 MAX_TAR_METADATA_BYTES = 64 * 1024
 MAX_CONSECUTIVE_TAR_METADATA = 16
 COPY_CHUNK_BYTES = 1024 * 1024
@@ -120,17 +127,11 @@ def validate_workspace_config_entries(entries: tuple[WorkspaceProvisionEntry, ..
 
 def validate_commit_path(raw_path: bytes) -> PurePosixPath:
     try:
-        path = raw_path.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise WorkspacePackageError(422, "WORKSPACE_EXPORT_PATH_INVALID", "Workspace Git path must be UTF-8") from exc
-    if not path or "\x00" in path or "\\" in path or path.startswith("/"):
-        raise WorkspacePackageError(422, "WORKSPACE_EXPORT_PATH_INVALID", f"Unsafe workspace Git path: {path!r}")
-    parts = path.split("/")
-    if any(part in {"", ".", ".."} for part in parts) or ".git" in parts:
-        raise WorkspacePackageError(422, "WORKSPACE_EXPORT_PATH_INVALID", f"Unsafe workspace Git path: {path!r}")
-    if len(path.encode("utf-8")) + len("workspace/") > MAX_PACKAGE_PATH_BYTES or len(parts) > MAX_PACKAGE_DEPTH:
-        raise WorkspacePackageError(413, "WORKSPACE_PACKAGE_PATH_TOO_LARGE", f"Workspace Git path exceeds limits: {path!r}")
-    return PurePosixPath(*parts)
+        return validate_workspace_commit_path(raw_path)
+    except WorkspaceCommitPathTooLarge as exc:
+        raise WorkspacePackageError(413, "WORKSPACE_PACKAGE_PATH_TOO_LARGE", str(exc)) from exc
+    except WorkspaceCommitPathError as exc:
+        raise WorkspacePackageError(422, "WORKSPACE_EXPORT_PATH_INVALID", str(exc)) from exc
 
 
 def read_commit_entries(

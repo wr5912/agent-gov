@@ -14,9 +14,9 @@ from scripts.audit_openapi_contract import REQUIRED_RUNTIME_OPERATIONS, audit_li
 from scripts.export_openapi import build_openapi_schema
 
 
-def test_build_schema_preserves_parent_environment_and_working_directory(monkeypatch) -> None:
-    monkeypatch.setenv("RUNTIME_CONTAINER", "1")
-    monkeypatch.setenv("HOST_RUNTIME_VOLUME_ROOT", "/unusable-deployment-volume")
+def test_build_schema_preserves_parent_environment_and_working_directory(process_environment) -> None:
+    process_environment.set("RUNTIME_CONTAINER", "1")
+    process_environment.set("HOST_RUNTIME_VOLUME_ROOT", "/unusable-deployment-volume")
     before_env, before_cwd = dict(os.environ), Path.cwd()
 
     schema = build_openapi_schema()
@@ -47,7 +47,7 @@ def test_export_script_writes_current_schema(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("container_marker", ["0", "1"])
-def test_fresh_export_ignores_deployment_paths_private_env_and_preloaded_app(tmp_path: Path, container_marker: str) -> None:
+def test_fresh_export_ignores_deployment_paths_and_private_env(tmp_path: Path, container_marker: str) -> None:
     project_root = Path(__file__).resolve().parents[1]
     selected_volume = tmp_path / "existing-volume"
     selected_volume.mkdir()
@@ -64,9 +64,8 @@ def test_fresh_export_ignores_deployment_paths_private_env_and_preloaded_app(tmp
         [
             sys.executable,
             "-c",
-            "import json, os, sys, types; from pathlib import Path; "
+            "import json, os; from pathlib import Path; "
             "from scripts.export_openapi import build_openapi_schema; "
-            "sys.modules['app.main'] = types.ModuleType('app.main'); "
             "before = dict(os.environ); cwd = Path.cwd(); schema = build_openapi_schema(); "
             "assert dict(os.environ) == before and Path.cwd() == cwd; "
             "print(json.dumps({'openapi': schema['openapi'], 'paths': sorted(schema['paths'])}))",
@@ -137,6 +136,13 @@ def test_runtime_stream_documents_native_byte_passthrough() -> None:
 
     assert set(content) == {"text/event-stream"}
     assert operation["x-agentgov-sse-contract"] == runtime_sse_contract()
+    assert operation["x-agentgov-sse-contract"]["mode"] == "readiness-comment-then-raw-byte-proxy"
+    assert operation["x-agentgov-sse-contract"]["readiness"] == {
+        "frame": ":\n\n",
+        "semantics": "sse-comment",
+        "position": "before-upstream",
+    }
+    assert operation["x-agentgov-sse-contract"]["upstream_bytes"] == "pass-through"
     assert operation["x-agentgov-sse-contract"]["unknown_events"] == "pass-through"
     assert operation["x-agentgov-sse-contract"]["terminal_event"] == "REPLY_END"
 

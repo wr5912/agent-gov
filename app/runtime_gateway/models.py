@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import JSON, Index, Integer, LargeBinary, String, Text, text
+from sqlalchemy import JSON, ForeignKey, Index, Integer, LargeBinary, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.runtime.json_types import JsonObject
@@ -116,7 +116,7 @@ class RuntimeSessionCreationIntentModel(Base):
     runtime_agent_id: Mapped[str] = mapped_column(String(128), index=True)
     harness_digest: Mapped[str] = mapped_column(String(64))
     workspace_id: Mapped[str] = mapped_column(String(320), index=True)
-    session_name: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
     session_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), index=True)
     error_json: Mapped[Optional[JsonObject]] = mapped_column(JSON, nullable=True)
@@ -146,9 +146,6 @@ class AgentRunModel(Base):
     harness_digest: Mapped[str] = mapped_column(String(64))
     client_operation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     input_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    trigger_response_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    trigger_response_body: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
-    trigger_response_content_type: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     status: Mapped[str] = mapped_column(String(32), index=True)
     # reply_ids_json 是 Runtime lifecycle 已观察到的 expected 集合；下面
     # 两个集合分别记录 canonical Message 可读以及 Session state 已提交。
@@ -187,6 +184,35 @@ Index(
     unique=True,
     sqlite_where=text("client_operation_id IS NOT NULL"),
 )
+
+
+class RuntimeChatOperationModel(Base):
+    """一次初始提交或 HITL continuation 的不可变请求与响应账本。"""
+
+    __tablename__ = "runtime_chat_operations"
+
+    operation_key: Mapped[str] = mapped_column(String(384), primary_key=True)
+    client_operation_id: Mapped[str] = mapped_column(String(128), index=True)
+    operation_kind: Mapped[str] = mapped_column(String(32), index=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    run_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("agent_runs.run_id", ondelete="CASCADE"),
+        index=True,
+    )
+    root_session_id: Mapped[str] = mapped_column(String(128), index=True)
+    action_session_id: Mapped[str] = mapped_column(String(128), index=True)
+    runtime_agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    reply_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    action_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    tool_call_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    confirmation_scope: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    response_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    response_body: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+    response_content_type: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    response_headers_json: Mapped[Optional[JsonObject]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
 
 
 class RuntimePendingActionModel(Base):

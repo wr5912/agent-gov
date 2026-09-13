@@ -7,20 +7,27 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
-import yaml
+from agentgov_agentscope_contract import is_runtime_template_restart_response
 
 from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.agent_worktree_inspection import inspect_clean_worktree
 from app.runtime.json_types import JsonObject
+from app.runtime.state_machines import is_agent_lifecycle_runnable
 from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
 
 from .client import AgentScopeRuntimeClient, RuntimeUpstreamError
 from .contracts import AgentRunResponse
+from .harness_contract import agent_payload_from_workspace, session_settings_from_workspace
 from .harness_snapshots import PublishedHarnessSnapshotStore
 from .models import RuntimeSessionBindingModel
+from .release_activation import ReleaseActivation, published_runtime_name, release_activation_key
+from .release_registry_activation import activate_registry_after_release
 from .store import RuntimeObjectNotFound, RuntimeRunStore, RuntimeStateConflict, harness_digest
 
 _PROVISION_TIMEOUT_SECONDS = 30.0
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,7 @@ class RuntimeAgentBinding:
     permission_mode: str
     cwd: str
     model_profile: str
+    activation_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,7 +72,7 @@ async def _published_provision_lock(workspace: Path) -> AsyncIterator[None]:
         os.close(descriptor)
 
 
-async def _settle_provision_operation(operation: Awaitable[str]) -> str:
+async def _settle_provision_operation(operation: Awaitable[_T]) -> _T:
     """取消调用方不能提前释放锁；非流式请求在有界期限内完成对账。"""
 
     pending = asyncio.create_task(asyncio.wait_for(operation, timeout=_PROVISION_TIMEOUT_SECONDS))
@@ -102,6 +110,7 @@ class RuntimeAgentProvisioner:
         version_store_for: Callable[[str], GitAgentVersionStore],
         snapshot_store: PublishedHarnessSnapshotStore,
         read_version_store_for: Callable[[str], GitAgentVersionStore] | None = None,
+        release_session_config: JsonObject | None = None,
     ) -> None:
         self.client = client
         self.store = store
@@ -109,6 +118,12 @@ class RuntimeAgentProvisioner:
         self.version_store_for = version_store_for
         self.read_version_store_for = read_version_store_for or version_store_for
         self.snapshot_store = snapshot_store
+        self.release_activation = ReleaseActivation(
+            client=client,
+            store=store,
+            snapshot_store=snapshot_store,
+            session_config=dict(release_session_config or {}),
+        )
 
     async def ensure(self, agent_id: str) -> RuntimeAgentBinding:
         _record, workspace, version_id, digest, workspace_id, settings = await asyncio.to_thread(
@@ -137,6 +152,71 @@ class RuntimeAgentProvisioner:
             model_profile,
         )
 
+    async def ensure_version(
+        self,
+        *,
+        agent_id: str,
+        agent_version_id: str,
+        candidate_worktree: Path,
+    ) -> RuntimeAgentBinding:
+        """在 Git 活动指针切换前准备并验证一个精确候选版本。"""
+
+        for _ in range(2):
+            workspace, digest, workspace_id, settings = await asyncio.to_thread(
+                self._candidate_source,
+                agent_id,
+                agent_version_id,
+                candidate_worktree,
+            )
+            permission_mode, cwd, model_profile = settings
+            activation_key = release_activation_key(agent_id, agent_version_id, digest)
+            source_id = workspace_id.split("--v-", 1)[0]
+            async with _published_provision_lock(workspace):
+                result = await _settle_provision_operation(
+                    self.release_activation.ensure(
+                        agent_id=agent_id,
+                        version_id=agent_version_id,
+                        digest=digest,
+                        workspace=workspace,
+                        workspace_id=workspace_id,
+                        source_id=source_id,
+                        activation_key=activation_key,
+                    ),
+                )
+            if result is not None:
+                runtime_agent_id, owns_activation = result
+                break
+            # 补偿删除了旧快照；释放目录锁后重新从同一 Git commit 准备。
+        else:
+            raise RuntimeStateConflict("Release activation cleanup changed repeatedly; retry the same publish command")
+        return RuntimeAgentBinding(
+            agent_id,
+            agent_version_id,
+            runtime_agent_id,
+            digest,
+            workspace_id,
+            permission_mode,
+            cwd,
+            model_profile,
+            activation_key if owns_activation else None,
+        )
+
+    async def complete_release_activation(self, binding: RuntimeAgentBinding) -> None:
+        """Git 活动指针确认切换后，完成 ledger 与 draft 生命周期激活。"""
+
+        if binding.activation_key is not None:
+            await asyncio.to_thread(
+                self.store.mark_release_activation_active,
+                binding.activation_key,
+            )
+        await asyncio.to_thread(activate_registry_after_release, self.registry, binding.agent_id)
+
+    async def compensate_release_activation(self, binding: RuntimeAgentBinding) -> None:
+        """Git 未激活时只清理本次 activation ledger 明确拥有的资源。"""
+
+        if binding.activation_key is not None:
+            await self.release_activation.cleanup(binding.activation_key)
+
     async def _ensure_runtime_agent(
         self,
         *,
@@ -149,7 +229,7 @@ class RuntimeAgentProvisioner:
         # 远端稳定名称也是响应丢失和补偿失败后的恢复定位符。已绑定时不能
         # 提前返回，否则此前创建但未成功删除的同名资源将永远不可见。
         existing = self.store.get_agent_version(agent_id=agent_id, agent_version_id=version_id, digest=digest)
-        runtime_name = _published_runtime_name(workspace_id)
+        runtime_name = published_runtime_name(workspace_id)
         matches = await self.client.list_agent_ids_by_name(runtime_name)
         if existing is not None:
             if existing.runtime_agent_id not in matches:
@@ -170,7 +250,7 @@ class RuntimeAgentProvisioner:
                 )
             )
         except RuntimeUpstreamError as exc:
-            if b"published after Runtime startup; restart Runtime" in exc.body:
+            if is_runtime_template_restart_response(exc.status_code, exc.body):
                 raise RuntimeStateConflict(
                     "Published subagent templates are prepared; restart AgentScope Runtime and retry provision",
                 ) from exc
@@ -268,7 +348,7 @@ class RuntimeAgentProvisioner:
 
     def require_session(self, session_id: str, runtime_agent_id: str) -> RuntimeSessionBindingModel:
         binding = self.store.get_session(session_id, runtime_agent_id=runtime_agent_id)
-        self._require_active_agent_generation(binding.agent_id, binding.created_at)
+        self._require_runnable_agent_generation(binding.agent_id, binding.created_at)
         self.snapshot_store.require_existing(
             agent_id=binding.agent_id,
             agent_version_id=binding.agent_version_id,
@@ -277,17 +357,17 @@ class RuntimeAgentProvisioner:
         return binding
 
     def authorize_run(self, run: AgentRunResponse) -> None:
-        self._require_active_agent_generation(run.agent_id, run.created_at)
+        self._require_runnable_agent_generation(run.agent_id, run.created_at)
         self.snapshot_store.require_existing(
             agent_id=run.agent_id,
             agent_version_id=run.agent_version_id,
             expected_digest=run.harness_digest,
         )
 
-    def _require_active_agent_generation(self, agent_id: str, bound_at: str) -> None:
+    def _require_runnable_agent_generation(self, agent_id: str, bound_at: str) -> None:
         record = self.registry.get_agent(agent_id)
-        if record is None or record.status != "active" or record.created_at > bound_at or self.store.agent_deletion_pending(agent_id):
-            raise RuntimeObjectNotFound("Runtime resource does not belong to an active Agent generation")
+        if record is None or not is_agent_lifecycle_runnable(record.status) or record.created_at > bound_at or self.store.agent_deletion_pending(agent_id):
+            raise RuntimeObjectNotFound("Runtime resource does not belong to a runnable Agent generation")
 
     def _current_source(
         self,
@@ -312,6 +392,42 @@ class RuntimeAgentProvisioner:
             session_settings_from_workspace(snapshot.workspace),
         )
 
+    def _candidate_source(
+        self,
+        agent_id: str,
+        agent_version_id: str,
+        candidate_worktree: Path,
+    ) -> tuple[Path, str, str, tuple[str, str, str]]:
+        if self.store.agent_deletion_pending(agent_id):
+            raise RuntimeObjectNotFound(f"Business Agent deletion is pending: {agent_id}")
+        record = self.registry.get_agent(agent_id)
+        if record is None or record.status not in {"active", "draft"}:
+            raise RuntimeObjectNotFound(f"Business Agent not found: {agent_id}")
+        version_store = self.version_store_for(agent_id)
+        resolved = version_store.resolve_commit_sha(agent_version_id)
+        if resolved != agent_version_id:
+            raise RuntimeStateConflict("Release candidate must be a fully resolved Git commit")
+        worktree = Path(candidate_worktree)
+        worktree_commit, dirty = inspect_clean_worktree(version_store, worktree)
+        if worktree_commit != resolved:
+            raise RuntimeStateConflict("Release candidate worktree HEAD does not match the publication intent")
+        if dirty:
+            raise RuntimeStateConflict("Release candidate worktree has uncommitted changes")
+        digest = harness_digest(worktree)
+        existing_versions = [version for version in self.store.agent_versions_for_agent(agent_id) if version.agent_version_id == resolved]
+        if existing_versions and any(version.harness_digest != digest for version in existing_versions):
+            raise RuntimeStateConflict("Release candidate commit conflicts with its immutable Runtime binding")
+        snapshot = self.snapshot_store.materialize(
+            version_store=version_store,
+            agent_id=agent_id,
+            agent_version_id=resolved,
+            expected_digest=digest,
+        )
+        # 在任何远程副作用前完成本地 Harness 契约校验。
+        agent_payload_from_workspace(snapshot.workspace, display_name=published_runtime_name(snapshot.workspace_id))
+        settings = session_settings_from_workspace(snapshot.workspace)
+        return snapshot.workspace, digest, snapshot.workspace_id, settings
+
     def _current_version_source(
         self,
         agent_id: str,
@@ -321,8 +437,8 @@ class RuntimeAgentProvisioner:
         if self.store.agent_deletion_pending(agent_id):
             raise RuntimeObjectNotFound(f"Business Agent deletion is pending: {agent_id}")
         record = self.registry.get_agent(agent_id)
-        if record is None:
-            raise RuntimeObjectNotFound(f"Business Agent not found: {agent_id}")
+        if record is None or not is_agent_lifecycle_runnable(record.status):
+            raise RuntimeObjectNotFound(f"Business Agent is not runnable: {agent_id}")
         workspace = Path(record.workspace_dir)
         provider = self.version_store_for if bootstrap else self.read_version_store_for
         version_store: GitAgentVersionStore = provider(agent_id)
@@ -335,87 +451,3 @@ class RuntimeAgentProvisioner:
             )
         digest = harness_digest(workspace)
         return record, workspace, version_store, version_id, digest
-
-
-def agent_payload_from_workspace(workspace: Path, *, display_name: str) -> JsonObject:
-    manifest_path = workspace / "agent.yaml"
-    instructions_path = workspace / "AGENT.md"
-    if not manifest_path.is_file() or not instructions_path.is_file():
-        raise RuntimeObjectNotFound("Harness must contain agent.yaml and AGENT.md")
-    loaded = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(loaded, dict):
-        raise RuntimeObjectNotFound("agent.yaml must be a mapping")
-    agent = loaded.get("agent")
-    if not isinstance(agent, dict) or agent.get("runtime") != "agentscope":
-        raise RuntimeObjectNotFound("agent.yaml must declare the AgentScope runtime")
-    context = loaded.get("context_config")
-    react = loaded.get("react_config")
-    invite = loaded.get("invite_config")
-    system_prompt = instructions_path.read_text(encoding="utf-8")
-    subagent_instructions = _subagent_runtime_instructions(workspace)
-    if subagent_instructions:
-        system_prompt = system_prompt.rstrip() + "\n\n" + subagent_instructions
-    request_data: JsonObject = {
-        "name": display_name,
-        "system_prompt": system_prompt,
-    }
-    if isinstance(context, dict):
-        request_data["context_config"] = context
-    if isinstance(react, dict):
-        request_data["react_config"] = react
-    if isinstance(invite, dict):
-        request_data["invite_config"] = invite
-    return request_data
-
-
-def _published_runtime_name(workspace_id: str) -> str:
-    source_id = workspace_id.split("--v-", 1)[0]
-    if not source_id.startswith("published-"):
-        raise RuntimeStateConflict("Published Runtime workspace identity is invalid")
-    return f"agentgov-{source_id}"
-
-
-def _subagent_runtime_instructions(workspace: Path) -> str:
-    root = workspace / "subagents"
-    if not root.exists():
-        return ""
-    if root.is_symlink() or not root.is_dir():
-        raise RuntimeObjectNotFound("subagents must be a safe directory")
-    digest = harness_digest(workspace)
-    templates: list[tuple[str, str]] = []
-    for path in sorted(root.iterdir()):
-        if path.is_symlink() or not path.is_dir() or not (path / "agent.yaml").is_file():
-            raise RuntimeObjectNotFound("subagent entry is invalid")
-        templates.append((path.name, f"agentgov-{digest}-{path.name}"))
-    if not templates:
-        return ""
-    declarations = "\n".join(f"- `{name}`: `subagent_type={template_type}`" for name, template_type in templates)
-    return (
-        "## AgentScope 团队委派契约\n\n"
-        "需要委派时依次调用 `TeamCreate`、`AgentCreate`、`TeamSay`，结束后调用 `TeamDelete`。"
-        "`AgentCreate` 必须使用下列当前 Harness 版本的精确 `subagent_type`，不得使用 `default` 或其他版本：\n"
-        f"{declarations}\n"
-    )
-
-
-def session_settings_from_workspace(workspace: Path) -> tuple[str, str, str]:
-    """读取只能由已发布 Harness 控制的 Session 字段。"""
-
-    manifest_path = workspace / "agent.yaml"
-    try:
-        loaded = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as exc:
-        raise RuntimeObjectNotFound("agent.yaml is not readable") from exc
-    session = loaded.get("session") if isinstance(loaded, dict) else None
-    if not isinstance(session, dict):
-        raise RuntimeObjectNotFound("agent.yaml must declare session settings")
-    permission_mode = session.get("permission_mode")
-    if permission_mode not in {"default", "explore", "accept_edits", "dont_ask"}:
-        raise RuntimeStateConflict("Harness session.permission_mode is unsupported or unsafe")
-    cwd = session.get("cwd", ".")
-    if not isinstance(cwd, str) or not cwd.strip():
-        raise RuntimeStateConflict("Harness session.cwd must be a non-empty string")
-    model_profile = session.get("model_profile", "default")
-    if model_profile != "default":
-        raise RuntimeStateConflict("Only the governed default model profile is configured")
-    return permission_mode, cwd, model_profile

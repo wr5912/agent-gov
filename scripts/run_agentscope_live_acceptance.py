@@ -11,7 +11,6 @@ import re
 import sys
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, TypeAlias, cast
 from urllib.parse import quote
@@ -21,160 +20,49 @@ import httpx
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.runtime_acceptance_fixture import (
-    FIXTURE_EXCLUDED_CLAIMS,
-    FIXTURE_SCOPE,
-    FixtureAgentError,
-    temporary_runtime_agent,
+from scripts.agentscope_live_acceptance_cli import parse_args
+from scripts.agentscope_live_acceptance_report import (
+    BindingEvidence,
+    RunEvidence,
+    TerminalEvidence,
+    build_live_acceptance_summary,
+)
+from scripts.agentscope_live_acceptance_scenarios import (
+    MCP_READONLY_CAPABILITY,
+    LiveAcceptanceError,
+    Scenario,
+    has_nonempty_sse_text,
+    load_scenarios,
+    observed_run_concurrency,
+    select_scenarios,
+    validate_evidence_identities,
+    validate_sse_evidence,
+)
+from scripts.agentscope_mcp_live_acceptance import (
+    validate_mcp_evidence_if_present,
+    validate_workspace_mcp_if_required,
+)
+from scripts.container_acceptance_inputs import (
+    read_compose_env as _read_env_file,
+)
+from scripts.container_acceptance_inputs import (
+    require_live_authorization as _require_explicit_live_authorization,
+)
+from scripts.runtime_technical_integration_seed import (
+    MCP_TECHNICAL_INTEGRATION_EXCLUDED_CLAIMS,
+    MCP_TECHNICAL_INTEGRATION_SCOPE,
+    TECHNICAL_INTEGRATION_EXCLUDED_CLAIMS,
+    TECHNICAL_INTEGRATION_SCOPE,
+    TechnicalIntegrationSeedError,
+    temporary_technical_integration_agent,
 )
 
-TRUTHY: Final = frozenset({"1", "true", "yes", "on"})
 TERMINAL_STATUSES: Final = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 TRACE_ID_PATTERN: Final = re.compile(r"^[0-9a-f]{32}$")
-PLACEHOLDER_MARKERS: Final = ("replace-with", "change-me", "example", "dummy", "test-only")
-
-
-class LiveAcceptanceError(RuntimeError):
-    """真实验收前置或公共契约不满足。"""
-
-
-@dataclass(frozen=True)
-class Scenario:
-    scenario_id: str
-    prompt: str
-    feedback_comment: str
-
-
-@dataclass(frozen=True)
-class RunEvidence:
-    scenario_id: str
-    binding: BindingEvidence
-    session_id: str
-    run_id: str
-    reply_ids: tuple[str, ...]
-    trace_id: str
-    trace_status: str
-    feedback_signal_id: str
-    sse_event_types: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class TerminalEvidence:
-    """已通过 run/session/reply/trace 身份校验的终态证据。"""
-
-    reply_ids: tuple[str, ...]
-    trace_id: str
-
-
-@dataclass(frozen=True)
-class BindingEvidence:
-    """公开 provision 响应确认的不可变发布身份，不是客户端自造的 Agent ID。"""
-
-    governance_agent_id: str
-    runtime_agent_id: str
-    agent_version_id: str
-    harness_digest: str
 
 
 EnvValues: TypeAlias = dict[str, str]
 JsonObject: TypeAlias = dict[str, object]
-
-
-DEFAULT_SCENARIOS: Final = (
-    Scenario(
-        scenario_id="basic-runtime-contract",
-        prompt="这是 AgentScope Runtime 真实验收。请用一句简短中文确认已收到本消息，不调用外部工具。",
-        feedback_comment="AgentScope 真实验收自动提交的正向链路反馈。",
-    ),
-)
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="通过 AgentGov 公共 API 验收真实 AgentScope 运行链路。")
-    parser.add_argument("--env-file", type=Path, required=True)
-    parser.add_argument("--scenario-file", type=Path)
-    parser.add_argument("--fixture-agent", action="store_true", help="显式创建无 MCP/subagents 的临时业务 Agent；仅验收通用 Runtime 基础链路")
-    parser.add_argument("--runs", type=int, default=int(os.environ.get("LIVE_ACCEPTANCE_RUNS", "1")))
-    parser.add_argument("--concurrency", type=int, default=int(os.environ.get("LIVE_ACCEPTANCE_CONCURRENCY", "1")))
-    parser.add_argument("--timeout-seconds", type=float, default=300.0)
-    parser.add_argument(
-        "--require-trace-complete",
-        action="store_true",
-        default=os.environ.get("LIVE_ACCEPTANCE_REQUIRE_TRACE_COMPLETE", "").strip().lower() in TRUTHY,
-    )
-    return parser.parse_args(argv)
-
-
-def _read_env_file(path: Path) -> EnvValues:
-    if not path.is_file():
-        raise LiveAcceptanceError("所选隔离 Compose env 文件不存在")
-    values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
-
-
-def _require_explicit_live_authorization(env: EnvValues, *, require_trace_complete: bool = False) -> None:
-    if os.environ.get("REQUIRE_LIVE_RUNTIME", "").strip().lower() not in TRUTHY:
-        raise LiveAcceptanceError("必须显式设置 REQUIRE_LIVE_RUNTIME=1 才能调用真实模型")
-    if os.environ.get("AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE") != "1":
-        raise LiveAcceptanceError("必须通过 make container-live-test 的隔离容器 runner 执行")
-    if not os.environ.get("AGENT_GOV_ACCEPTANCE_RUN_ID", "").strip():
-        raise LiveAcceptanceError("缺少隔离容器验收 run id")
-    profile = os.environ.get("AGENT_GOV_CONTAINER_ACCEPTANCE_PROFILE")
-    if profile not in {"core", "langfuse"}:
-        raise LiveAcceptanceError("AgentScope live 验收必须使用 core 或 langfuse 隔离 profile")
-    if require_trace_complete and profile != "langfuse":
-        raise LiveAcceptanceError("完整 Trace 验收必须使用 langfuse 隔离 profile")
-    for key in ("API_KEY", "MODEL_PROVIDER_API_KEY", "AGENTSCOPE_MODEL_NAME"):
-        value = env.get(key, "").strip()
-        if not value or any(marker in value.lower() for marker in PLACEHOLDER_MARKERS):
-            raise LiveAcceptanceError(f"真实验收要求所选 env 提供非占位 {key}")
-    if env.get("AGENTGOV_API_MODE") == "acceptance":
-        if not env.get("AGENTGOV_ACCEPTANCE_IDENTITY", "").strip():
-            raise LiveAcceptanceError("cutover acceptance 模式缺少一次性 identity")
-        if env.get("AGENTGOV_ACCEPTANCE_API_KEY") != env.get("API_KEY"):
-            raise LiveAcceptanceError("cutover acceptance Bearer key 与 API_KEY 未绑定")
-
-
-def load_scenarios(path: Path | None) -> tuple[Scenario, ...]:
-    if path is None:
-        return DEFAULT_SCENARIOS
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise LiveAcceptanceError("场景文件必须是可读 JSON") from exc
-    if not isinstance(payload, list) or not payload:
-        raise LiveAcceptanceError("场景文件必须是非空 JSON array")
-    scenarios: list[Scenario] = []
-    for index, item in enumerate(payload):
-        if not isinstance(item, dict):
-            raise LiveAcceptanceError(f"场景 {index} 必须是 JSON object")
-        scenario_id = str(item.get("id") or "").strip()
-        prompt = str(item.get("prompt") or "").strip()
-        feedback = str(item.get("feedback_comment") or "AgentScope 真实验收链路反馈。 ").strip()
-        if not scenario_id or not prompt:
-            raise LiveAcceptanceError(f"场景 {index} 缺少非空 id 或 prompt")
-        scenarios.append(Scenario(scenario_id, prompt, feedback))
-    if len({item.scenario_id for item in scenarios}) != len(scenarios):
-        raise LiveAcceptanceError("场景 id 必须唯一")
-    if len({" ".join(item.prompt.split()) for item in scenarios}) != len(scenarios):
-        raise LiveAcceptanceError("场景 prompt 必须实质不同，不能只重复同一输入")
-    return tuple(scenarios)
-
-
-def select_scenarios(scenarios: tuple[Scenario, ...], runs: int, concurrency: int) -> tuple[Scenario, ...]:
-    if runs < 1:
-        raise LiveAcceptanceError("--runs 必须大于零")
-    if concurrency < 1 or concurrency > runs:
-        raise LiveAcceptanceError("--concurrency 必须在 1 与 --runs 之间")
-    if runs > len(scenarios):
-        raise LiveAcceptanceError(f"要求 {runs} 次实质不同 run，但场景文件只有 {len(scenarios)} 条；不得循环复制场景制造 50-run 证据")
-    return scenarios[:runs]
 
 
 def _json_object(response: httpx.Response, label: str) -> JsonObject:
@@ -185,22 +73,6 @@ def _json_object(response: httpx.Response, label: str) -> JsonObject:
     if not isinstance(payload, dict):
         raise LiveAcceptanceError(f"{label} 未返回 JSON object")
     return cast(JsonObject, payload)
-
-
-def _sse_event_types(raw: bytes) -> tuple[str, ...]:
-    normalized = raw.replace(b"\r\n", b"\n")
-    event_types: list[str] = []
-    for frame in normalized.split(b"\n\n"):
-        data = b"\n".join(line[5:].lstrip() for line in frame.split(b"\n") if line.startswith(b"data:"))
-        if not data:
-            continue
-        try:
-            payload = json.loads(data)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            continue
-        if isinstance(payload, dict) and isinstance(payload.get("type"), str):
-            event_types.append(payload["type"])
-    return tuple(event_types)
 
 
 async def _consume_sse(
@@ -269,15 +141,15 @@ async def _create_session(client: httpx.AsyncClient, scenario: Scenario, agent_i
     return session_id
 
 
-async def _provision_agent(client: httpx.AsyncClient, governance_agent_id: str) -> BindingEvidence:
-    response = await client.post(f"/api/runtime/agents/{quote(governance_agent_id, safe='')}/provision")
+async def _current_agent_binding(client: httpx.AsyncClient, governance_agent_id: str) -> BindingEvidence:
+    response = await client.get(f"/api/runtime/agents/{quote(governance_agent_id, safe='')}/current")
     response.raise_for_status()
-    binding = _json_object(response, "Agent provision")
+    binding = _json_object(response, "Agent current binding")
     if binding.get("governance_agent_id") != governance_agent_id or binding.get("provisioned") is not True:
-        raise LiveAcceptanceError("provision 未确认所选治理 Agent 的发布绑定")
+        raise LiveAcceptanceError("当前发布版本尚无已验证的 Runtime 绑定")
     fields = [binding.get(key) for key in ("runtime_agent_id", "agent_version_id", "harness_digest")]
     if not all(isinstance(value, str) and value.strip() for value in fields):
-        raise LiveAcceptanceError("provision 缺少 Runtime Agent 或发布版本绑定")
+        raise LiveAcceptanceError("current 缺少 Runtime Agent 或发布版本绑定")
     runtime_agent_id, version_id, digest = cast(list[str], fields)
     return BindingEvidence(governance_agent_id, runtime_agent_id, version_id, digest)
 
@@ -289,18 +161,19 @@ async def _trigger_run(
     agent_id: str,
     session_id: str,
     timeout_seconds: float,
-) -> str:
-    client_operation_id = f"live-op-{scenario.scenario_id}-{uuid.uuid4().hex}"
+    client_operation_id: str | None = None,
+) -> tuple[str, str]:
+    operation_id = client_operation_id or f"live-op-{scenario.scenario_id}-{uuid.uuid4().hex}"
     chat = await client.post(
         "/api/runtime/chat/",
         json={
             "agent_id": agent_id,
             "session_id": session_id,
-            "client_operation_id": client_operation_id,
+            "client_operation_id": operation_id,
             "input": {
                 "name": "user",
                 "role": "user",
-                "content": [{"type": "text", "text": scenario.prompt}],
+                "content": [{"type": "text", "text": scenario.input_text}],
             },
             "metadata": {
                 "source": "agentscope_live_acceptance",
@@ -314,7 +187,94 @@ async def _trigger_run(
     run_id = str(chat.headers.get("X-AgentGov-Run-Id") or "")
     if not run_id or chat.headers.get("X-AgentGov-Session-Id") != session_id:
         raise LiveAcceptanceError("chat 未返回一致的 run/session headers")
-    return run_id
+    return run_id, operation_id
+
+
+def _validate_run_identity(
+    run: JsonObject,
+    run_id: str,
+    *,
+    session_id: str,
+    binding: BindingEvidence,
+) -> None:
+    expected = {
+        "run_id": run_id,
+        "session_id": session_id,
+        "agent_id": binding.governance_agent_id,
+        "runtime_agent_id": binding.runtime_agent_id,
+        "agent_version_id": binding.agent_version_id,
+        "harness_digest": binding.harness_digest,
+    }
+    if any(run.get(key) != value for key, value in expected.items()):
+        raise LiveAcceptanceError("run 与 session/Agent 发布绑定不一致")
+
+
+async def _wait_for_session_idle(
+    client: httpx.AsyncClient,
+    *,
+    session_id: str,
+    runtime_agent_id: str,
+    timeout_seconds: float,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while asyncio.get_running_loop().time() < deadline:
+        response = await client.get(
+            f"/api/runtime/sessions/{session_id}/status",
+            params={"agent_id": runtime_agent_id},
+        )
+        response.raise_for_status()
+        status = _json_object(response, "Runtime Session 状态")
+        if status.get("session_id") != session_id:
+            raise LiveAcceptanceError("Runtime Session 状态返回了不同 session_id")
+        if status.get("status") == "idle":
+            return
+        await asyncio.sleep(0.25)
+    raise LiveAcceptanceError(f"Runtime Session {session_id} 未在时限内释放执行槽")
+
+
+async def _cancel_exact_run(
+    client: httpx.AsyncClient,
+    run_id: str,
+    *,
+    session_id: str,
+    binding: BindingEvidence,
+    timeout_seconds: float,
+) -> JsonObject:
+    response = await client.post(f"/api/agent-runs/{run_id}/cancel")
+    if response.status_code != 202:
+        response.raise_for_status()
+        raise LiveAcceptanceError("精确 run 取消未返回 HTTP 202")
+    cancelled = _json_object(response, "run 取消")
+    if (
+        cancelled.get("run_id") != run_id
+        or cancelled.get("session_id") != session_id
+        or response.headers.get("X-AgentGov-Run-Id") != run_id
+        or response.headers.get("X-AgentGov-Session-Id") != session_id
+    ):
+        raise LiveAcceptanceError("取消回执未绑定精确 run/session")
+    terminal = await _wait_for_terminal(client, run_id, timeout_seconds)
+    _validate_run_identity(terminal, run_id, session_id=session_id, binding=binding)
+    if terminal.get("status") != "cancelled":
+        raise LiveAcceptanceError(f"取消场景未进入 cancelled 终态: {terminal.get('status')}")
+    metadata = terminal.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("cancellation_requested") is not True:
+        raise LiveAcceptanceError("取消终态缺少服务端 cancellation_requested 事实")
+    await _wait_for_session_idle(
+        client,
+        session_id=session_id,
+        runtime_agent_id=binding.runtime_agent_id,
+        timeout_seconds=timeout_seconds,
+    )
+    return terminal
+
+
+async def _wait_for_partial_text(raw: bytearray, timeout_seconds: float) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while asyncio.get_running_loop().time() < deadline:
+        if has_nonempty_sse_text(bytes(raw)):
+            return
+        await asyncio.sleep(0.05)
+    raise LiveAcceptanceError("partial_cancel 场景在时限内未观测到真实文本增量")
 
 
 async def _validate_terminal_run(
@@ -328,16 +288,7 @@ async def _validate_terminal_run(
     run = await _wait_for_terminal(client, run_id, timeout_seconds)
     if run.get("status") != "succeeded":
         raise LiveAcceptanceError(f"真实 AgentScope run 未成功: {run.get('status')}")
-    expected = {
-        "run_id": run_id,
-        "session_id": session_id,
-        "agent_id": binding.governance_agent_id,
-        "runtime_agent_id": binding.runtime_agent_id,
-        "agent_version_id": binding.agent_version_id,
-        "harness_digest": binding.harness_digest,
-    }
-    if any(run.get(key) != value for key, value in expected.items()):
-        raise LiveAcceptanceError("run 与 session/Agent 发布绑定不一致")
+    _validate_run_identity(run, run_id, session_id=session_id, binding=binding)
     raw_reply_ids = run.get("reply_ids")
     reply_ids = tuple(value for value in raw_reply_ids if isinstance(value, str) and value) if isinstance(raw_reply_ids, list) else ()
     if not reply_ids:
@@ -447,6 +398,161 @@ async def _submit_feedback(
     return signal_id
 
 
+async def _cancelled_evidence(
+    client: httpx.AsyncClient,
+    run_id: str,
+    *,
+    session_id: str,
+    binding: BindingEvidence,
+    require_trace_complete: bool,
+    timeout_seconds: float,
+) -> tuple[tuple[str, ...], str, str]:
+    cancelled = await _cancel_exact_run(
+        client,
+        run_id,
+        session_id=session_id,
+        binding=binding,
+        timeout_seconds=timeout_seconds,
+    )
+    raw_reply_ids = cancelled.get("reply_ids")
+    reply_ids = tuple(value for value in raw_reply_ids if isinstance(value, str) and value) if isinstance(raw_reply_ids, list) else ()
+    trace_id = str(cancelled.get("trace_id") or "")
+    if not TRACE_ID_PATTERN.fullmatch(trace_id):
+        raise LiveAcceptanceError("取消终态缺少合法 OTel trace_id")
+    trace_status = await _wait_for_trace(
+        client,
+        run_id,
+        trace_id,
+        require_trace_complete,
+        timeout_seconds,
+    )
+    return reply_ids, trace_id, trace_status
+
+
+async def _successful_evidence(
+    client: httpx.AsyncClient,
+    run_id: str,
+    *,
+    session_id: str,
+    binding: BindingEvidence,
+    require_trace_complete: bool,
+    timeout_seconds: float,
+) -> tuple[tuple[str, ...], str, str]:
+    terminal = await _validate_terminal_run(
+        client,
+        run_id,
+        session_id=session_id,
+        binding=binding,
+        timeout_seconds=timeout_seconds,
+    )
+    trace_status = await _validate_messages_and_trace(
+        client,
+        run_id,
+        session_id=session_id,
+        agent_id=binding.runtime_agent_id,
+        trace_id=terminal.trace_id,
+        reply_ids=terminal.reply_ids,
+        require_trace_complete=require_trace_complete,
+        timeout_seconds=timeout_seconds,
+    )
+    return terminal.reply_ids, terminal.trace_id, trace_status
+
+
+async def _finish_stream_evidence(
+    task: asyncio.Task[None],
+    raw: bytearray,
+    *,
+    purpose: str,
+    terminal_reply_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    try:
+        await asyncio.wait_for(task, timeout=5.0)
+    except TimeoutError:
+        task.cancel()
+    return validate_sse_evidence(
+        bytes(raw),
+        purpose=purpose,
+        terminal_reply_ids=terminal_reply_ids,
+    )
+
+
+async def _trigger_with_required_replay(
+    client: httpx.AsyncClient,
+    scenario: Scenario,
+    *,
+    agent_id: str,
+    session_id: str,
+    timeout_seconds: float,
+) -> tuple[str, bool]:
+    run_id, operation_id = await _trigger_run(
+        client,
+        scenario,
+        agent_id=agent_id,
+        session_id=session_id,
+        timeout_seconds=timeout_seconds,
+    )
+    if scenario.purpose != "retry":
+        return run_id, False
+    replayed_run_id, _ = await _trigger_run(
+        client,
+        scenario,
+        agent_id=agent_id,
+        session_id=session_id,
+        timeout_seconds=timeout_seconds,
+        client_operation_id=operation_id,
+    )
+    if replayed_run_id != run_id:
+        raise LiveAcceptanceError("重试相同 client_operation_id 创建了第二个 run")
+    return run_id, True
+
+
+async def _scenario_terminal_evidence(
+    client: httpx.AsyncClient,
+    scenario: Scenario,
+    run_id: str,
+    *,
+    session_id: str,
+    binding: BindingEvidence,
+    require_trace_complete: bool,
+    timeout_seconds: float,
+) -> tuple[tuple[str, ...], str, str]:
+    if scenario.purpose in {"early_cancel", "partial_cancel"}:
+        return await _cancelled_evidence(
+            client,
+            run_id,
+            session_id=session_id,
+            binding=binding,
+            require_trace_complete=require_trace_complete,
+            timeout_seconds=timeout_seconds,
+        )
+    return await _successful_evidence(
+        client,
+        run_id,
+        session_id=session_id,
+        binding=binding,
+        require_trace_complete=require_trace_complete,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+async def _optional_feedback(
+    client: httpx.AsyncClient,
+    scenario: Scenario,
+    run_id: str,
+    session_id: str,
+    governance_agent_id: str,
+) -> str | None:
+    if not scenario.feedback_comment or scenario.purpose in {"early_cancel", "partial_cancel"}:
+        return None
+    return await _submit_feedback(
+        client,
+        scenario,
+        run_id=run_id,
+        session_id=session_id,
+        governance_agent_id=governance_agent_id,
+    )
+
+
 async def run_scenario(
     client: httpx.AsyncClient,
     scenario: Scenario,
@@ -462,50 +568,64 @@ async def run_scenario(
     stream_ready = asyncio.Event()
     stream_task = asyncio.create_task(_consume_sse(client, session_id, agent_id, stream_ready, stream_raw))
     try:
-        await asyncio.wait_for(stream_ready.wait(), timeout=30.0)
-        run_id = await _trigger_run(
+        mcp_workspace = await validate_workspace_mcp_if_required(
+            client,
+            scenario,
+            session_id=session_id,
+            runtime_agent_id=agent_id,
+        )
+        await asyncio.wait_for(stream_ready.wait(), timeout=60.0)
+        run_id, operation_replayed = await _trigger_with_required_replay(
             client,
             scenario,
             agent_id=agent_id,
             session_id=session_id,
             timeout_seconds=timeout_seconds,
         )
-        terminal = await _validate_terminal_run(
+
+        if scenario.purpose == "partial_cancel":
+            await _wait_for_partial_text(stream_raw, min(timeout_seconds, 60.0))
+
+        reply_ids, trace_id, trace_status = await _scenario_terminal_evidence(
             client,
+            scenario,
             run_id,
             session_id=session_id,
             binding=binding,
-            timeout_seconds=timeout_seconds,
-        )
-        trace_status = await _validate_messages_and_trace(
-            client,
-            run_id,
-            session_id=session_id,
-            agent_id=agent_id,
-            trace_id=terminal.trace_id,
-            reply_ids=terminal.reply_ids,
             require_trace_complete=require_trace_complete,
             timeout_seconds=timeout_seconds,
         )
-        signal_id = await _submit_feedback(client, scenario, run_id=run_id, session_id=session_id, governance_agent_id=binding.governance_agent_id)
+        signal_id = await _optional_feedback(client, scenario, run_id, session_id, binding.governance_agent_id)
 
-        try:
-            await asyncio.wait_for(stream_task, timeout=5.0)
-        except TimeoutError:
-            stream_task.cancel()
-        event_types = _sse_event_types(bytes(stream_raw))
-        if not event_types:
-            raise LiveAcceptanceError("SSE 未观测到任何 AgentScope 原生事件")
+        event_types = await _finish_stream_evidence(
+            stream_task,
+            stream_raw,
+            purpose=scenario.purpose,
+            terminal_reply_ids=reply_ids,
+        )
+        mcp_evidence = await validate_mcp_evidence_if_present(
+            client,
+            scenario,
+            session_id=session_id,
+            runtime_agent_id=agent_id,
+            reply_ids=reply_ids,
+            raw_sse=bytes(stream_raw),
+            workspace=mcp_workspace,
+        )
         return RunEvidence(
             scenario_id=scenario.scenario_id,
+            purpose=scenario.purpose,
+            capability=scenario.capability,
             binding=binding,
             session_id=session_id,
             run_id=run_id,
-            reply_ids=terminal.reply_ids,
-            trace_id=terminal.trace_id,
+            reply_ids=reply_ids,
+            trace_id=trace_id,
             trace_status=trace_status,
             feedback_signal_id=signal_id,
             sse_event_types=event_types,
+            operation_replayed=operation_replayed,
+            mcp=mcp_evidence,
         )
     finally:
         if not stream_task.done():
@@ -519,7 +639,7 @@ async def _run_selected_scenarios(
     args: argparse.Namespace,
     selected: tuple[Scenario, ...],
     binding: BindingEvidence,
-) -> list[RunEvidence]:
+) -> tuple[list[RunEvidence], int]:
     semaphore = asyncio.Semaphore(args.concurrency)
 
     async def limited(scenario: Scenario) -> RunEvidence:
@@ -534,7 +654,8 @@ async def _run_selected_scenarios(
 
     tasks = [asyncio.create_task(limited(scenario)) for scenario in selected]
     try:
-        return list(await asyncio.gather(*tasks))
+        evidence = list(await asyncio.gather(*tasks))
+        return evidence, await _server_observed_concurrency(client, evidence)
     finally:
         # 部分场景失败时先完成兄弟任务的 Session/run 清理，再删除临时 Agent。
         for task in tasks:
@@ -543,28 +664,65 @@ async def _run_selected_scenarios(
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def run_live_acceptance(args: argparse.Namespace, env: EnvValues, scenarios: tuple[Scenario, ...]) -> list[RunEvidence]:
+async def _server_observed_concurrency(
+    client: httpx.AsyncClient,
+    evidence: list[RunEvidence],
+) -> int:
+    """从 API 持久化的 started_at/completed_at 计算半开运行区间重叠峰值。"""
+
+    async def fetch(item: RunEvidence) -> JsonObject:
+        response = await client.get(f"/api/agent-runs/{item.run_id}")
+        response.raise_for_status()
+        run = _json_object(response, "并发运行查询")
+        _validate_run_identity(
+            run,
+            item.run_id,
+            session_id=item.session_id,
+            binding=item.binding,
+        )
+        return run
+
+    runs = tuple(await asyncio.gather(*(fetch(item) for item in evidence)))
+    return observed_run_concurrency(runs)
+
+
+async def run_live_acceptance(
+    args: argparse.Namespace,
+    env: EnvValues,
+    scenarios: tuple[Scenario, ...],
+) -> tuple[list[RunEvidence], int]:
     api_base = (env.get("API_BASE") or "").rstrip("/")
     api_key = env["API_KEY"]
-    agent_id = (env.get("LIVE_ACCEPTANCE_AGENT_ID") or "security-operations-expert").strip()
+    agent_id = (args.agent_id or "").strip()
+    if not (args.technical_integration_seed or args.mcp_technical_seed) and not agent_id:
+        raise LiveAcceptanceError("正式验收 Agent ID 不能为空")
     if not api_base.startswith(("http://127.0.0.1:", "http://localhost:")):
         raise LiveAcceptanceError("隔离 live 验收只允许访问 runner 生成的本机公开 API")
-    selected = select_scenarios(scenarios, args.runs, args.concurrency)
+    selected = select_scenarios(scenarios, args.runs, args.concurrency, capability=args.capability)
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
     acceptance_identity = env.get("AGENTGOV_ACCEPTANCE_IDENTITY", "").strip()
     if env.get("AGENTGOV_API_MODE") == "acceptance" and acceptance_identity:
         headers["X-AgentGov-Acceptance-Identity"] = acceptance_identity
     timeout = httpx.Timeout(args.timeout_seconds, connect=30.0)
-    async with httpx.AsyncClient(base_url=api_base, headers=headers, timeout=timeout) as client:
+    async with httpx.AsyncClient(
+        base_url=api_base,
+        headers=headers,
+        timeout=timeout,
+        trust_env=False,
+    ) as client:
         ready = await client.get("/health/ready")
         ready.raise_for_status()
-        if args.fixture_agent:
-            async with temporary_runtime_agent(client) as imported:
-                binding = await _provision_agent(client, imported.agent.agent_id)
-                if binding.agent_version_id != imported.current_commit_sha:
-                    raise LiveAcceptanceError("临时 Agent provision 版本与本次导入 Git 提交不一致")
+        if args.technical_integration_seed or args.mcp_technical_seed:
+            async with temporary_technical_integration_agent(client, mcp_readonly=args.mcp_technical_seed) as activated:
+                binding = await _current_agent_binding(client, activated.agent_id)
+                if (
+                    binding.agent_version_id != activated.agent_version_id
+                    or binding.runtime_agent_id != activated.runtime_agent_id
+                    or binding.harness_digest != activated.harness_digest
+                ):
+                    raise LiveAcceptanceError("技术集成 Agent 发布回执与 current Runtime 绑定不一致")
                 return await _run_selected_scenarios(client, args, selected, binding)
-        binding = await _provision_agent(client, agent_id)
+        binding = await _current_agent_binding(client, agent_id)
         return await _run_selected_scenarios(client, args, selected, binding)
 
 
@@ -573,35 +731,57 @@ def main(argv: list[str] | None = None) -> int:
         args = parse_args(argv)
         env = _read_env_file(args.env_file.resolve())
         _require_explicit_live_authorization(env, require_trace_complete=args.require_trace_complete)
-        scenarios = load_scenarios(args.scenario_file)
-        evidence = asyncio.run(run_live_acceptance(args, env, scenarios))
-    except (LiveAcceptanceError, FixtureAgentError, httpx.HTTPError, OSError, ValueError) as exc:
+        if (args.capability == MCP_READONLY_CAPABILITY) != args.mcp_technical_seed:
+            raise LiveAcceptanceError("mcp_readonly capability 必须且只能使用 --mcp-technical-seed")
+        expected_agent_id = (
+            MCP_TECHNICAL_INTEGRATION_SCOPE
+            if args.mcp_technical_seed
+            else TECHNICAL_INTEGRATION_SCOPE
+            if args.technical_integration_seed
+            else str(args.agent_id or "")
+        )
+        scenario_set = load_scenarios(args.scenario_file, expected_agent_id=expected_agent_id)
+        evidence, max_concurrency = asyncio.run(run_live_acceptance(args, env, scenario_set.scenarios))
+        validate_evidence_identities(
+            expected_runs=args.runs,
+            configured_concurrency=args.concurrency,
+            max_concurrency_observed=max_concurrency,
+            scenario_ids=tuple(item.scenario_id for item in evidence),
+            session_ids=tuple(item.session_id for item in evidence),
+            run_ids=tuple(item.run_id for item in evidence),
+            trace_ids=tuple(item.trace_id for item in evidence),
+            reply_ids=tuple(reply_id for item in evidence for reply_id in item.reply_ids),
+            expected_capability=args.capability,
+            capabilities=tuple(item.capability for item in evidence),
+        )
+    except (LiveAcceptanceError, TechnicalIntegrationSeedError, httpx.HTTPError, OSError, ValueError) as exc:
         print(f"AGENTSCOPE_LIVE_ACCEPTANCE_FAIL: {exc}", file=sys.stderr)
         return 1
-    summary = {
-        "schema_version": 1,
-        "runtime": "agentscope",
-        "acceptance_scope": FIXTURE_SCOPE if args.fixture_agent else "selected-agent-runtime",
-        "excluded_claims": list(FIXTURE_EXCLUDED_CLAIMS) if args.fixture_agent else [],
-        "acceptance_run_id": os.environ["AGENT_GOV_ACCEPTANCE_RUN_ID"],
-        "runs": [
-            {
-                "scenario_id": item.scenario_id,
-                "governance_agent_id": item.binding.governance_agent_id,
-                "runtime_agent_id": item.binding.runtime_agent_id,
-                "agent_version_id": item.binding.agent_version_id,
-                "harness_digest": item.binding.harness_digest,
-                "session_id": item.session_id,
-                "run_id": item.run_id,
-                "reply_ids": list(item.reply_ids),
-                "trace_id": item.trace_id,
-                "trace_status": item.trace_status,
-                "feedback_signal_id": item.feedback_signal_id,
-                "sse_event_types": list(item.sse_event_types),
-            }
-            for item in evidence
-        ],
-    }
+    scope = (
+        MCP_TECHNICAL_INTEGRATION_SCOPE
+        if args.mcp_technical_seed
+        else TECHNICAL_INTEGRATION_SCOPE
+        if args.technical_integration_seed
+        else "published-business-agent-runtime"
+    )
+    excluded = (
+        MCP_TECHNICAL_INTEGRATION_EXCLUDED_CLAIMS
+        if args.mcp_technical_seed
+        else TECHNICAL_INTEGRATION_EXCLUDED_CLAIMS
+        if args.technical_integration_seed
+        else ()
+    )
+    summary = build_live_acceptance_summary(
+        acceptance_scope=scope,
+        excluded_claims=excluded,
+        scenario_file_sha256=scenario_set.sha256,
+        acceptance_run_id=os.environ["AGENT_GOV_ACCEPTANCE_RUN_ID"],
+        configured_concurrency=args.concurrency,
+        max_concurrency_observed=max_concurrency,
+        requested_runs=args.runs,
+        requested_capability=args.capability,
+        evidence=evidence,
+    )
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     return 0
 

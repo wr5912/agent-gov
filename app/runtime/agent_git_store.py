@@ -18,8 +18,10 @@ from app.runtime.agent_git_raw_storage import RawGitStorageError, configure_raw_
 from app.runtime.agent_git_read_helpers import (
     file_diff_status,
     file_entry,
+    parse_name_status_z,
     read_file_at_ref,
     run_git_read_only,
+    run_git_read_only_bytes,
     safe_relative_path,
     sha256_file,
 )
@@ -195,44 +197,6 @@ class GitAgentVersionStore:
             status["degraded_reason"] = f"{exc.__class__.__name__}: {exc}"
         return status
 
-    def create_snapshot(
-        self,
-        *,
-        reason: str = "manual_snapshot",
-        source_change_set_ids: Optional[list[str]] = None,
-        note: Optional[str] = None,
-        parent_version_id: Optional[str] = None,
-        rollback_of_version_id: Optional[str] = None,
-    ) -> JsonObject:
-        with self._mutation_guard():
-            self._ensure_repo_ready()
-            self._stage_complete_workspace(self.repository_dir)
-            if self._has_staged_changes(self.repository_dir):
-                self._git(["commit", "-m", note or reason], cwd=self.repository_dir)
-            commit_sha = self._current_commit_sha_no_bootstrap() or ""
-            summary = self.version_summary(commit_sha, reason=reason, note=note, rollback_of_version_id=rollback_of_version_id)
-            summary["source_change_set_ids"] = source_change_set_ids or []
-            if parent_version_id:
-                summary["parent_version_id"] = parent_version_id
-            return summary
-
-    def discard_workspace_changes(self, paths: list[str]) -> JsonObject:
-        with self._mutation_guard():
-            self._ensure_repo_ready()
-            current = {str(item["path"]): item for item in self._workspace_changes()}
-            requested = self._requested_dirty_paths(paths, current)
-            if not requested:
-                return self.repository_status()
-            tracked_paths = [path for path in requested if not bool(current[path].get("untracked"))]
-            if tracked_paths:
-                self._git(["restore", "--staged", "--", *tracked_paths], cwd=self.repository_dir, check=False)
-                self._git(["restore", "--worktree", "--", *tracked_paths], cwd=self.repository_dir, check=False)
-            self._git(["clean", "-fdx", "--", *requested], cwd=self.repository_dir, check=False)
-            remaining = {str(item["path"]) for item in self._workspace_changes()} & set(requested)
-            if remaining:
-                raise AgentGitError(f"Failed to discard workspace changes: {', '.join(sorted(remaining))}")
-            return self.repository_status()
-
     def workspace_file_diff(self, path: str) -> JsonObject:
         safe_path = safe_relative_path(path)
         if not safe_path:
@@ -263,25 +227,12 @@ class GitAgentVersionStore:
             result["reason"] = "文件变化无法生成文本 diff。"
         return result
 
-    def restore_version(self, version_id: str, *, note: Optional[str] = None) -> Optional[JsonObject]:
-        target = self.version_summary(version_id, reason="rollback_target")
-        pre_restore = self.version_summary(self.current_commit_sha() or "", reason="pre_restore")
-        result = self.rollback_to_ref(version_id)
-        current = self.version_summary(str(result.get("current_commit_sha") or ""), reason="rollback", note=note)
-        return {
-            "restored_from_version": target,
-            "pre_restore_version": pre_restore,
-            "current_version": current,
-            "requires_runtime_restart": True,
-        }
-
     def version_summary(
         self,
         commit_sha: str,
         *,
         reason: str = "git_commit",
         note: str | None = None,
-        rollback_of_version_id: str | None = None,
     ) -> JsonObject:
         if not commit_sha:
             return {
@@ -298,7 +249,6 @@ class GitAgentVersionStore:
             "parent_version_id": parent,
             "created_at": created_at,
             "reason": reason,
-            "rollback_of_version_id": rollback_of_version_id,
             "source_change_set_ids": [],
             "note": note,
             "repository_dir": str(self.repository_dir),
@@ -379,24 +329,27 @@ class GitAgentVersionStore:
         try:
             left = self._resolve_ref(from_version_id)
             right = self._resolve_ref(to_version_id)
-            name_status = self._git(["diff", "--name-status", "--no-renames", left, right], cwd=self.repository_dir)
+            name_status = run_git_read_only_bytes(
+                ["diff", "--name-status", "-z", "--no-renames", left, right],
+                cwd=self.repository_dir,
+            )
+            changes = parse_name_status_z(name_status)
+            added: list[JsonObject] = []
+            modified: list[JsonObject] = []
+            deleted: list[JsonObject] = []
+            for status, path in changes:
+                before = file_entry(self.repository_dir, left, path) if status in {"M", "D"} else None
+                after = file_entry(self.repository_dir, right, path) if status in {"M", "A"} else None
+                if status == "A" and before is None and after is not None:
+                    added.append(after)
+                elif status == "D" and before is not None and after is None:
+                    deleted.append(before)
+                elif status == "M" and before is not None and after is not None:
+                    modified.append({"path": path, "before": before, "after": after})
+                else:
+                    raise AgentGitError(f"Git diff blob contract mismatch for {path!r}")
         except AgentGitError:
             return None
-        added: list[JsonObject] = []
-        modified: list[JsonObject] = []
-        deleted: list[JsonObject] = []
-        for line in name_status.splitlines():
-            if not line.strip():
-                continue
-            status, _, path = line.partition("\t")
-            before = file_entry(self.repository_dir, left, path) if status in {"M", "D"} else None
-            after = file_entry(self.repository_dir, right, path) if status in {"M", "A"} else None
-            if status == "A" and after:
-                added.append(after)
-            elif status == "D" and before:
-                deleted.append(before)
-            elif status == "M":
-                modified.append({"path": path, "before": before, "after": after})
         return {
             "from_version_id": left,
             "to_version_id": right,
@@ -509,7 +462,7 @@ class GitAgentVersionStore:
                     "published_commit_sha": candidate,
                     "tag_name": tag_name,
                     "archive": archive,
-                    "requires_runtime_restart": True,
+                    "requires_runtime_restart": False,
                 }
             finally:
                 self._maintenance = False
@@ -527,7 +480,37 @@ class GitAgentVersionStore:
             if tagged_commit and tagged_commit != candidate:
                 raise AgentGitError(f"Release tag {tag_name!r} already points to a different commit")
 
-    def publication_side_effects_present(self, commit_sha: str, tag_name: str) -> bool:
+    def publication_side_effects_present(
+        self,
+        commit_sha: str,
+        tag_name: str,
+        *,
+        previous_commit_sha: str | None = None,
+    ) -> bool:
+        """仅在 tag 不存在且 HEAD 精确等于发布前提交时判定没有副作用。"""
+
+        with self._lock:
+            self._ensure_repo_ready()
+            candidate = self._resolve_commit(commit_sha)
+            tagged_commit = self._git(
+                ["rev-parse", "--verify", f"refs/tags/{tag_name}^{{commit}}"],
+                cwd=self.repository_dir,
+                check=False,
+            ).strip()
+            if tagged_commit:
+                return True
+            current = str(self.current_commit_sha() or "")
+            if current == candidate:
+                return True
+            if not previous_commit_sha:
+                return True
+            try:
+                previous = self._resolve_commit(previous_commit_sha)
+            except AgentGitError:
+                return True
+            return current != previous
+
+    def published_identity_matches(self, commit_sha: str, tag_name: str) -> bool:
         with self._lock:
             self._ensure_repo_ready()
             candidate = self._resolve_commit(commit_sha)
@@ -537,9 +520,11 @@ class GitAgentVersionStore:
                 check=False,
             ).strip()
             current = str(self.current_commit_sha() or "")
-            if current == candidate:
-                return True
-            merge_base = self._git(["merge-base", candidate, current], cwd=self.repository_dir, check=False).strip()
+            merge_base = self._git(
+                ["merge-base", candidate, current],
+                cwd=self.repository_dir,
+                check=False,
+            ).strip()
             return tagged_commit == candidate and merge_base == candidate
 
     def archive_ref(self, ref: str) -> JsonObject:
@@ -561,37 +546,6 @@ class GitAgentVersionStore:
             "archive_path": str(archive_path),
             "sha256": sha256_file(archive_path),
         }
-
-    def rollback_to_ref(
-        self,
-        ref: str,
-        *,
-        expected_current_ref: str | None = None,
-        validate_ref: Callable[[str], None] | None = None,
-    ) -> JsonObject:
-        with self._mutation_guard():
-            self._maintenance = True
-            try:
-                self._ensure_repo_ready()
-                target = self._resolve_ref(ref)
-                if self._git(["status", "--porcelain"], cwd=self.repository_dir).strip():
-                    raise AgentGitError("Business Agent Workspace has uncommitted changes")
-                if validate_ref is not None:
-                    validate_ref(target)
-                previous = self.current_commit_sha()
-                if expected_current_ref is not None:
-                    expected = self._resolve_ref(expected_current_ref)
-                    if previous != expected:
-                        raise AgentGitError(f"Agent workspace HEAD changed before version maintenance (expected {expected}, found {previous or 'missing'})")
-                self._git(["reset", "--hard", target], cwd=self.repository_dir)
-                return {
-                    "previous_commit_sha": previous,
-                    "current_commit_sha": self.current_commit_sha(),
-                    "rollback_target_ref": ref,
-                    "requires_runtime_restart": True,
-                }
-            finally:
-                self._maintenance = False
 
     def workspace_changes(self) -> list[JsonObject]:
         with self._mutation_guard():
@@ -650,18 +604,6 @@ class GitAgentVersionStore:
             cwd=self.repository_dir,
         )
         return parse_workspace_changes(raw, normalize_path=safe_relative_path)
-
-    def _requested_dirty_paths(self, paths: list[str], current: dict[str, JsonObject]) -> list[str]:
-        requested: list[str] = []
-        for path in paths:
-            safe_path = safe_relative_path(path)
-            if not safe_path:
-                raise AgentGitError(f"Invalid workspace path: {path}")
-            if safe_path not in current:
-                raise AgentGitError(f"Workspace path has no uncommitted changes: {safe_path}")
-            if safe_path not in requested:
-                requested.append(safe_path)
-        return requested
 
     def _ensure_repo_ready(self) -> None:
         self.ensure_bootstrap()

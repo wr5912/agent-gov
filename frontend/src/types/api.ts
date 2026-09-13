@@ -133,6 +133,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-change-sets/{change_set_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one UTF-8 file from an isolated unpublished Agent candidate */
+        get: operations["read_agent_candidate_file_api_agent_change_sets__change_set_id__files_get"];
+        /**
+         * Commit one or more files to an isolated unpublished Agent candidate
+         * @description Commit one or more reviewed UTF-8 files to the isolated candidate worktree. Pass the candidate commit and per-file hashes returned by GET to reject stale concurrent edits; this operation never changes the active release.
+         */
+        put: operations["update_agent_candidate_files_api_agent_change_sets__change_set_id__files_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-change-sets/{change_set_id}/publish": {
         parameters: {
             query?: never;
@@ -204,27 +225,6 @@ export interface paths {
          * @description Retry persisted worktree cleanup for a terminal change set after inspecting its cleanup error. The operation does not change the published Agent version.
          */
         post: operations["retry_agent_change_set_worktree_cleanup_api_agent_change_sets__change_set_id__worktree_cleanup_retry_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-config-file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read an editable business-agent project config file */
-        get: operations["read_agent_config_file_api_agent_config_file_get"];
-        /**
-         * Update an editable business-agent project config file
-         * @description Replace the selected editable UTF-8 config file. Read the file first and pass its sha256 as expected_sha256 to reject stale concurrent edits; content is the complete replacement, not a patch.
-         */
-        put: operations["update_agent_config_file_api_agent_config_file_put"];
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -313,6 +313,43 @@ export interface paths {
          * @description Transition the registered business Agent to a valid target lifecycle state. The URL agent_id comes from GET /api/agent-registry; valid values can still be rejected when the current transition is illegal.
          */
         post: operations["transition_agent_api_agent_registry__agent_id__lifecycle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-registry/{agent_id}/native-candidate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a Git candidate from the pinned AgentScope AgentData schema
+         * @description Create or continue one isolated Git candidate from the reviewed AgentScope AgentData fields. The URL owns agent_id; backend identity and Runtime credentials are not accepted in agent_data.
+         */
+        post: operations["create_native_candidate_api_agent_registry__agent_id__native_candidate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-registry/{agent_id}/native-candidate-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read safe native AgentData fields from an open candidate or current live Git commit */
+        get: operations["native_candidate_source_api_agent_registry__agent_id__native_candidate_source_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -499,46 +536,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/agent-releases/{release_id}/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Restore one business Agent Workspace to a release
-         * @description Restore a historical release tree as a new auditable commit. Obtain release_id from the release list; the historical release record remains unchanged.
-         */
-        post: operations["restore_agent_release_api_agent_releases__release_id__restore_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-releases/{release_id}/rollback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rollback one business Agent Workspace to a release
-         * @description Roll the owning business Agent back to the selected published or archived release. Obtain release_id from GET /api/agent-releases and review current run impact before executing.
-         */
-        post: operations["rollback_agent_release_api_agent_releases__release_id__rollback_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/agent-repository": {
         parameters: {
             query?: never;
@@ -567,46 +564,6 @@ export interface paths {
         get: operations["get_current_agent_ref_api_agent_repository_current_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-repository/discard-changes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Discard confirmed uncommitted changes from the selected business Agent workspace
-         * @description Discard only the listed dirty workspace paths for the selected business Agent. Read repository status first; an empty paths list is a no-op and the operation never means an implicit whole-workspace discard.
-         */
-        post: operations["discard_agent_repository_changes_api_agent_repository_discard_changes_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-repository/snapshot": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Save the selected business Agent workspace as an Agent version
-         * @description Commit the selected business Agent's current dirty workspace as a version snapshot. The operation records operator and note for audit and has no effect when the workspace has no changes.
-         */
-        post: operations["snapshot_agent_repository_api_agent_repository_snapshot_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -861,23 +818,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/agents": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List configured AgentScope subagents */
-        get: operations["list_agents_api_agents_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/asset-registry/feedback/{feedback_case_id}": {
         parameters: {
             query?: never;
@@ -947,26 +887,6 @@ export interface paths {
          * @description Create a derived copy of the URL asset for another registered business Agent. Obtain asset_id from the asset list; tests and private workspace configuration are outside this inheritance contract.
          */
         post: operations["inherit_asset_api_assets__asset_id__inherit_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/config": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Inspect AgentScope Harness mapping
-         * @description Returns path, mount, scope, load, and git-policy metadata without exposing sensitive file contents.
-         */
-        get: operations["config_mapping_api_config_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1670,23 +1590,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/langfuse/traces/{trace_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Fetch one Langfuse trace by OTel trace_id */
-        get: operations["get_langfuse_trace_api_langfuse_traces__trace_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/pending-correlations": {
         parameters: {
             query?: never;
@@ -1724,6 +1627,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runtime/agent-schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the pinned AgentScope AgentData form schema */
+        get: operations["native_agent_schema_api_runtime_agent_schema_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runtime/agents/{governance_agent_id}/current": {
         parameters: {
             query?: never;
@@ -1735,23 +1655,6 @@ export interface paths {
         get: operations["current_runtime_version_api_runtime_agents__governance_agent_id__current_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/runtime/agents/{governance_agent_id}/provision": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Provision the exact current governed version before Session admission */
-        post: operations["provision_runtime_version_api_runtime_agents__governance_agent_id__provision_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1813,7 +1716,11 @@ export interface paths {
         delete: operations["delete_session_api_runtime_sessions__session_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Rename one version-pinned AgentScope Session
+         * @description Rename the owned AgentScope session. Only name is accepted; Runtime settings, permissions, credentials, and workspace fields remain governed by the published session binding.
+         */
+        patch: operations["rename_session_api_runtime_sessions__session_id__patch"];
         trace?: never;
     };
     "/api/runtime/sessions/{session_id}/interrupt": {
@@ -1874,7 +1781,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Raw-byte proxy of AgentScope AgentEvent SSE */
+        /**
+         * Readiness comment followed by raw AgentScope AgentEvent SSE
+         * @description Immediately emits one minimal SSE comment so browser fetch observes readiness; every subsequent upstream chunk is forwarded in order without modification.
+         */
         get: operations["stream_api_runtime_sessions__session_id__stream_get"];
         put?: never;
         post?: never;
@@ -1884,15 +1794,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/skills": {
+    "/api/runtime/sessions/{session_id}/workspace/mcp": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List configured AgentScope skills */
-        get: operations["list_skills_api_skills_get"];
+        /** Connect and list native Workspace MCP status without configuration secrets */
+        get: operations["workspace_mcps_api_runtime_sessions__session_id__workspace_mcp_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runtime/sessions/{session_id}/workspace/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List native skills loaded in one Session Workspace */
+        get: operations["workspace_skills_api_runtime_sessions__session_id__workspace_skills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runtime/sessions/{session_id}/workspace/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a safe projection of native Workspace status */
+        get: operations["workspace_status_api_runtime_sessions__session_id__workspace_status_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1994,6 +1938,135 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentCandidateFileResponse */
+        AgentCandidateFileResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Base Commit Sha */
+            base_commit_sha: string;
+            /** Candidate Commit Sha */
+            candidate_commit_sha: string;
+            /** Change Set Id */
+            change_set_id: string;
+            /** Change Set Status */
+            change_set_status: string;
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /**
+             * Content Type
+             * @default application/json
+             */
+            content_type: string;
+            /** Exists */
+            exists: boolean;
+            /** Path */
+            path: string;
+            /**
+             * Published
+             * @default false
+             */
+            published: boolean;
+            /** Sha256 */
+            sha256?: string | null;
+            /**
+             * Size Bytes
+             * @default 0
+             */
+            size_bytes: number;
+        };
+        /**
+         * AgentCandidateFilesWriteRequest
+         * @description Commit one or more controlled files to one isolated unpublished Agent candidate.
+         */
+        AgentCandidateFilesWriteRequest: {
+            /**
+             * Expected Candidate Commit Sha
+             * @description Exact candidate commit reviewed by the caller for continuation, approval, or publication.
+             * @example bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+             */
+            expected_candidate_commit_sha: string;
+            /**
+             * Files
+             * @description Non-empty list of reviewed candidate file replacements.
+             * @example [
+             *       {
+             *         "content": "# Agent\n",
+             *         "path": "AGENT.md"
+             *       }
+             *     ]
+             */
+            files: components["schemas"]["AgentCandidateTextFileWrite"][];
+            /**
+             * Note
+             * @description Optional operator note written to the governance audit trail.
+             * @example 已核对候选差异与测试证据。
+             */
+            note?: string | null;
+            /**
+             * Operator
+             * @description Operator identity recorded in the governance audit trail.
+             * @default runtime
+             * @example platform-operator
+             */
+            operator: string;
+        };
+        /** AgentCandidateFilesWriteResponse */
+        AgentCandidateFilesWriteResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Base Commit Sha */
+            base_commit_sha: string;
+            /** Candidate Commit Sha */
+            candidate_commit_sha: string;
+            /** Change Set Id */
+            change_set_id: string;
+            /** Change Set Status */
+            change_set_status: string;
+            /** Changed Paths */
+            changed_paths?: string[];
+            /**
+             * Published
+             * @default false
+             */
+            published: boolean;
+        };
+        /**
+         * AgentCandidateTextFileWrite
+         * @description One UTF-8 candidate file replacement with optional per-file optimistic concurrency.
+         */
+        AgentCandidateTextFileWrite: {
+            /**
+             * Content
+             * @description New UTF-8 candidate file content.
+             * @example {
+             *       "mcp_config": {"type": "http_mcp", "url": "${SEC_OPS_MCP_URL}"},
+             *       "credential_refs": []
+             *     }
+             */
+            content: string;
+            /**
+             * Expected Sha256
+             * @description Current file sha256 returned by candidate GET; rejects stale edits.
+             * @example 7f83b1657ff1fc53b92dc18148a1d65dfa13514e
+             */
+            expected_sha256?: string | null;
+            /**
+             * Mode
+             * @description Regular-file mode; only 0644 and 0755 are accepted.
+             * @default 420
+             * @example 420
+             */
+            mode: number;
+            /**
+             * Path
+             * @description Controlled workspace-relative path inside the isolated candidate.
+             * @example AGENT.md
+             */
+            path: string;
+        };
         /**
          * AgentChangeSetActionRequest
          * @description Operator decision recorded against one Agent change set.
@@ -2012,6 +2085,75 @@ export interface components {
              * @example platform-operator
              */
             operator: string;
+        };
+        /** AgentChangeSetApprovalEvidenceResponse */
+        AgentChangeSetApprovalEvidenceResponse: {
+            /** Candidate Commit Sha */
+            candidate_commit_sha: string;
+            /** Diff Digest */
+            diff_digest: string;
+            /** Review Digest */
+            review_digest: string;
+            /** Reviewed File Count */
+            reviewed_file_count: number;
+            /** Suite Digest */
+            suite_digest: string;
+            /** Test Run Id */
+            test_run_id: string;
+        };
+        /**
+         * AgentChangeSetApproveRequest
+         * @description Approve the exact candidate, complete Diff, test run, suite, and per-file review evidence inspected by the operator.
+         */
+        AgentChangeSetApproveRequest: {
+            /**
+             * Candidate Commit Sha
+             * @description Exact immutable candidate Git commit being approved.
+             * @example bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+             */
+            candidate_commit_sha: string;
+            /**
+             * Diff Digest
+             * @description SHA-256 of the complete candidate Diff summary.
+             * @example dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+             */
+            diff_digest: string;
+            /**
+             * Note
+             * @description Optional operator note written to the governance audit trail.
+             * @example 已核对候选差异与测试证据。
+             */
+            note?: string | null;
+            /**
+             * Operator
+             * @description Operator identity recorded in the governance audit trail.
+             * @default runtime
+             * @example platform-operator
+             */
+            operator: string;
+            /**
+             * Reviewed Files
+             * @description Every changed file and the digest of its complete Diff explicitly reviewed by the operator.
+             * @example [
+             *       {
+             *         "detail_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+             *         "path": "AGENT.md"
+             *       }
+             *     ]
+             */
+            reviewed_files: components["schemas"]["AgentChangeSetReviewedFileRequest"][];
+            /**
+             * Suite Digest
+             * @description SHA-256 identity of the exact candidate test suite.
+             * @example eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+             */
+            suite_digest: string;
+            /**
+             * Test Run Id
+             * @description Exact platform candidate test-run identifier reviewed for approval.
+             * @example atr-20260729-tested-candidate
+             */
+            test_run_id: string;
         };
         /**
          * AgentChangeSetCreateRequest
@@ -2061,10 +2203,52 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * AgentChangeSetPublicationEvidenceResponse
+         * @description 公开发布恢复所需的不可变证据，不暴露内部操作人与备注。
+         */
+        AgentChangeSetPublicationEvidenceResponse: {
+            /** Candidate Commit Sha */
+            candidate_commit_sha: string;
+            /** Diff Digest */
+            diff_digest: string;
+            /** Force */
+            force: boolean;
+            /** Suite Digest */
+            suite_digest?: string | null;
+            /** Tag Name */
+            tag_name: string;
+            /** Test Run Id */
+            test_run_id?: string | null;
+        };
+        /**
          * AgentChangeSetPublishRequest
          * @description Publish an approved Agent change set, with an explicit forced-publication escape hatch.
          */
         AgentChangeSetPublishRequest: {
+            /**
+             * Expected Candidate Commit Sha
+             * @description Exact candidate commit reviewed by the caller for continuation, approval, or publication.
+             * @example bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+             */
+            expected_candidate_commit_sha: string;
+            /**
+             * Expected Diff Digest
+             * @description SHA-256 of the complete reviewed candidate Diff.
+             * @example dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+             */
+            expected_diff_digest: string;
+            /**
+             * Expected Suite Digest
+             * @description SHA-256 identity of the reviewed candidate test suite.
+             * @example eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+             */
+            expected_suite_digest?: string | null;
+            /**
+             * Expected Test Run Id
+             * @description Exact candidate test run reviewed for normal publication.
+             * @example atr-20260729-tested-candidate
+             */
+            expected_test_run_id?: string | null;
             /**
              * Force
              * @description Whether to use the audited forced-publication path.
@@ -2105,12 +2289,15 @@ export interface components {
              * @default security-operations-expert
              */
             agent_id: string;
+            approval_evidence?: components["schemas"]["AgentChangeSetApprovalEvidenceResponse"] | null;
             /** Base Commit Sha */
             base_commit_sha: string;
             /** Branch Name */
             branch_name: string;
             /** Candidate Commit Sha */
             candidate_commit_sha?: string | null;
+            /** Candidate Evidence Epoch */
+            candidate_evidence_epoch?: string | null;
             /** Change Set Id */
             change_set_id: string;
             /** Created At */
@@ -2119,6 +2306,8 @@ export interface components {
             diff_summary?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
+            /** Evidence Not Before */
+            evidence_not_before?: string | null;
             /** Execution Job Id */
             execution_job_id?: string | null;
             /** Latest Release Id */
@@ -2129,11 +2318,24 @@ export interface components {
             } | null;
             /** Latest Test Run Id */
             latest_test_run_id?: string | null;
+            /** Legacy Evidence Migration */
+            legacy_evidence_migration?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Legacy Publication Identity */
+            legacy_publication_identity?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Legacy Publication Quarantine */
+            legacy_publication_quarantine?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
             /** Note */
             note?: string | null;
             /** Publication Blocker */
             publication_blocker?: string | null;
             publication_error?: components["schemas"]["AgentPublicationErrorResponse"] | null;
+            publication_evidence?: components["schemas"]["AgentChangeSetPublicationEvidenceResponse"] | null;
             /** Publication Provenance Blocker */
             publication_provenance_blocker?: string | null;
             /**
@@ -2170,87 +2372,23 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** AgentConfigFileResponse */
-        AgentConfigFileResponse: {
-            /** Agent Id */
-            agent_id: string;
-            /** Container Path */
-            container_path: string;
-            /**
-             * Content
-             * @default
-             */
-            content: string;
-            /**
-             * Content Type
-             * @default application/json
-             */
-            content_type: string;
-            /** Exists */
-            exists: boolean;
-            /** Path */
-            path: string;
-            /** Sha256 */
-            sha256?: string | null;
-            /**
-             * Size Bytes
-             * @default 0
-             */
-            size_bytes: number;
-        };
         /**
-         * AgentConfigFileUpdateRequest
-         * @description Complete replacement of one editable Agent configuration file with optimistic concurrency.
+         * AgentChangeSetReviewedFileRequest
+         * @description SHA-256 identity of one complete file Diff explicitly reviewed for candidate approval.
          */
-        AgentConfigFileUpdateRequest: {
+        AgentChangeSetReviewedFileRequest: {
             /**
-             * Content
-             * @description New UTF-8 file content.
-             * @example {
-             *       "mcp_config": {"type": "http_mcp", "url": "${SEC_OPS_MCP_URL}"},
-             *       "credential_refs": []
-             *     }
+             * Detail Sha256
+             * @description SHA-256 of the canonical complete file-Diff response.
+             * @example cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
              */
-            content: string;
+            detail_sha256: string;
             /**
-             * Expected Sha256
-             * @description Current file sha256 returned by GET; rejects stale edits when mismatched.
-             * @example 7f83b1657ff1fc53b92dc18148a1d65dfa13514e
+             * Path
+             * @description Controlled workspace-relative path inside the isolated candidate.
+             * @example AGENT.md
              */
-            expected_sha256?: string | null;
-        };
-        /** AgentConfigFileUpdateResponse */
-        AgentConfigFileUpdateResponse: {
-            /** Agent Id */
-            agent_id: string;
-            /** Container Path */
-            container_path: string;
-            /**
-             * Content
-             * @default
-             */
-            content: string;
-            /**
-             * Content Type
-             * @default application/json
-             */
-            content_type: string;
-            /**
-             * Existing Sessions Unchanged
-             * @default true
-             */
-            existing_sessions_unchanged: boolean;
-            /** Exists */
-            exists: boolean;
-            /** Path */
             path: string;
-            /** Sha256 */
-            sha256?: string | null;
-            /**
-             * Size Bytes
-             * @default 0
-             */
-            size_bytes: number;
         };
         /** AgentDeleteResponse */
         AgentDeleteResponse: {
@@ -2404,21 +2542,6 @@ export interface components {
             reason: string;
         } & {
             [key: string]: unknown;
-        };
-        /** AgentInfo */
-        AgentInfo: {
-            /** Description */
-            description?: string | null;
-            /** Model */
-            model?: string | null;
-            /** Name */
-            name: string;
-            /** Path */
-            path: string;
-            /** Skills */
-            skills?: string[];
-            /** Tools */
-            tools?: string[];
         };
         /** AgentJobResponse */
         AgentJobResponse: {
@@ -2597,6 +2720,8 @@ export interface components {
              * @default false
              */
             force_published: boolean;
+            /** Harness Digest */
+            harness_digest?: string | null;
             /** Note */
             note?: string | null;
             /** Operator */
@@ -2607,6 +2732,8 @@ export interface components {
             release_id: string;
             /** Rollback Of Release Id */
             rollback_of_release_id?: string | null;
+            /** Runtime Agent Id */
+            runtime_agent_id?: string | null;
             /**
              * Schema Version
              * @default agent-release/v1
@@ -2623,94 +2750,10 @@ export interface components {
             tag_name: string;
             /** Updated At */
             updated_at: string;
+            /** Workspace Id */
+            workspace_id?: string | null;
         } & {
             [key: string]: unknown;
-        };
-        /**
-         * AgentReleaseRestoreRequest
-         * @description Restore a published Agent release into a new candidate workspace state.
-         */
-        AgentReleaseRestoreRequest: {
-            /**
-             * Note
-             * @description Optional operator note written to the governance audit trail.
-             * @example 已核对候选差异与测试证据。
-             */
-            note?: string | null;
-            /**
-             * Operator
-             * @description Operator identity recorded in the governance audit trail.
-             * @default runtime
-             * @example platform-operator
-             */
-            operator: string;
-        };
-        /** AgentReleaseRestoreResponse */
-        AgentReleaseRestoreResponse: {
-            release: components["schemas"]["AgentReleaseResponse"];
-            /** Restore Result */
-            restore_result?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /**
-             * Schema Version
-             * @default agent-release-restore/v1
-             */
-            schema_version: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * AgentReleaseRollbackRequest
-         * @description Rollback the active Agent release to the selected release.
-         */
-        AgentReleaseRollbackRequest: {
-            /**
-             * Note
-             * @description Optional operator note written to the governance audit trail.
-             * @example 已核对候选差异与测试证据。
-             */
-            note?: string | null;
-            /**
-             * Operator
-             * @description Operator identity recorded in the governance audit trail.
-             * @default runtime
-             * @example platform-operator
-             */
-            operator: string;
-        };
-        /**
-         * AgentRepositoryDiscardChangesRequest
-         * @description Discard selected uncommitted paths in the business Agent repository.
-         */
-        AgentRepositoryDiscardChangesRequest: {
-            /**
-             * Paths
-             * @description Repository-relative Harness paths whose uncommitted changes should be discarded.
-             * @example [
-             *       "mcp/soc-readonly.json"
-             *     ]
-             */
-            paths?: string[];
-        };
-        /**
-         * AgentRepositorySnapshotRequest
-         * @description Create a Git snapshot of the current business Agent repository state.
-         */
-        AgentRepositorySnapshotRequest: {
-            /**
-             * Note
-             * @description Optional operator note written to the governance audit trail.
-             * @example 已核对候选差异与测试证据。
-             */
-            note?: string | null;
-            /**
-             * Operator
-             * @description Operator identity recorded in the governance audit trail.
-             * @default runtime
-             * @example platform-operator
-             */
-            operator: string;
         };
         /** AgentRepositoryStatusResponse */
         AgentRepositoryStatusResponse: {
@@ -2838,14 +2881,13 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
-        /** AgentRunTraceResponse */
+        /**
+         * AgentRunTraceResponse
+         * @description 公开 Trace 状态只暴露受管身份和链接，不返回 Langfuse 原始 payload。
+         */
         AgentRunTraceResponse: {
             /** Run Id */
             run_id: string;
-            /** Trace */
-            trace?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
             /** Trace Id */
             trace_id: string | null;
             /**
@@ -3544,64 +3586,6 @@ export interface components {
              * @example 停止后续聊需要统一释放 session fence。
              */
             summary: string;
-        };
-        /** ConfigMappingItem */
-        ConfigMappingItem: {
-            /** Container Path */
-            container_path: string;
-            /**
-             * Display Group
-             * @default hidden_debug
-             * @enum {string}
-             */
-            display_group: "harness" | "runtime" | "versioning" | "hidden_debug";
-            /** Exists */
-            exists: boolean;
-            /** Git Policy */
-            git_policy: string;
-            /** Host Mount */
-            host_mount?: string | null;
-            /** Kind */
-            kind: string;
-            /**
-             * Load Semantics
-             * @default not_applicable
-             * @enum {string}
-             */
-            load_semantics: "runtime_loaded" | "runtime_materialized" | "governance_only" | "not_applicable";
-            /** Loaded By Default */
-            loaded_by_default: boolean;
-            /** Notes */
-            notes?: string | null;
-            /**
-             * Safe To Edit
-             * @default false
-             */
-            safe_to_edit: boolean;
-            /** Scope */
-            scope: string;
-        };
-        /** ConfigMappingResponse */
-        ConfigMappingResponse: {
-            /**
-             * Agent Id
-             * @default security-operations-expert
-             */
-            agent_id: string;
-            /** Mappings */
-            mappings: components["schemas"]["ConfigMappingItem"][];
-            /**
-             * Runtime
-             * @default agentscope
-             * @constant
-             */
-            runtime: "agentscope";
-            /** Runtime Contract */
-            runtime_contract: string;
-            /** Runtime Url */
-            runtime_url: string;
-            /** Workspace */
-            workspace: string;
         };
         /**
          * ConfirmationScope
@@ -4532,6 +4516,242 @@ export interface components {
         };
         /** @description Recursive JSON value accepted inside caller-provided metadata objects. */
         JsonValue: unknown;
+        /**
+         * NativeAgentCandidateRequest
+         * @description Agent-owned AgentScope fields plus backend-owned optimistic concurrency.
+         */
+        NativeAgentCandidateRequest: {
+            /**
+             * @description Reviewed AgentScope fields to write into the isolated Git candidate.
+             * @example {
+             *       "name": "SOC evidence reviewer"
+             *     }
+             */
+            agent_data: components["schemas"]["NativeAgentDataInput"];
+            /**
+             * Change Set Id
+             * @description Existing open candidate identifier to update; requires expected_candidate_commit_sha.
+             * @example chg-20260729-001
+             */
+            change_set_id?: string | null;
+            /**
+             * Expected Candidate Commit Sha
+             * @description Current candidate commit used as a continuation CAS; requires change_set_id.
+             * @example bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+             */
+            expected_candidate_commit_sha?: string | null;
+            /**
+             * Expected Current Commit Sha
+             * @description Required to start a candidate for an existing Agent; omitted for a draft or candidate continuation.
+             * @example a1b2c3d4e5f6
+             */
+            expected_current_commit_sha?: string | null;
+            /**
+             * Reason
+             * @description Optional audited reason for creating or revising this candidate.
+             * @example Create a reviewed candidate for platform tests.
+             */
+            reason?: string | null;
+        };
+        /** NativeAgentCandidateResponse */
+        NativeAgentCandidateResponse: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "created" | "candidate_committed" | "unchanged";
+            agent: components["schemas"]["AgentSummaryResponse"];
+            /** Base Commit Sha */
+            base_commit_sha: string;
+            /** Candidate Commit Sha */
+            candidate_commit_sha: string;
+            /** Change Set Id */
+            change_set_id: string;
+            /** Change Set Status */
+            change_set_status: string;
+            /** Changed Paths */
+            changed_paths?: string[];
+            /**
+             * Published
+             * @default false
+             * @constant
+             */
+            published: false;
+        };
+        /**
+         * NativeAgentCandidateSourceResponse
+         * @description Safe form source projected from an open candidate or the current live Git commit.
+         */
+        NativeAgentCandidateSourceResponse: {
+            agent_data: components["schemas"]["NativeAgentDataInput"];
+            /** Change Set Id */
+            change_set_id?: string | null;
+            /** Current Commit Sha */
+            current_commit_sha: string;
+        };
+        /**
+         * NativeAgentDataInput
+         * @description Reviewed user-editable subset of AgentScope AgentData.
+         */
+        NativeAgentDataInput: {
+            /**
+             * @description AgentScope context-window and compression settings.
+             * @example {}
+             */
+            context_config: components["schemas"]["NativeContextConfig"];
+            /**
+             * @description AgentScope invitation settings for the candidate.
+             * @example {
+             *       "invitable": false
+             *     }
+             */
+            invite_config?: components["schemas"]["NativeInviteConfig"];
+            /**
+             * Name
+             * @description Human-readable Agent name committed to the candidate Harness.
+             * @example SOC evidence reviewer
+             */
+            name: string;
+            /**
+             * @description AgentScope ReAct-loop settings for the candidate.
+             * @example {}
+             */
+            react_config: components["schemas"]["NativeReactConfig"];
+            /**
+             * System Prompt
+             * @description Agent-owned system prompt committed to the candidate Harness.
+             * @default You're a helpful assistant.
+             * @example Review governed evidence.
+             */
+            system_prompt: string;
+        };
+        /**
+         * NativeContextConfig
+         * @description AgentScope context-window and compression behavior stored in the candidate Harness.
+         */
+        NativeContextConfig: {
+            /**
+             * Compression Fallback To Truncation
+             * @description Whether context compression may fall back to truncation.
+             * @default true
+             * @example true
+             */
+            compression_fallback_to_truncation: boolean;
+            /**
+             * Compression Prompt
+             * @description Optional prompt used by AgentScope when compressing context.
+             * @example Summarize retained evidence.
+             */
+            compression_prompt?: string | null;
+            /**
+             * Compression Tool Enabled
+             * @description Whether AgentScope may use its compression tool.
+             * @default false
+             * @example false
+             */
+            compression_tool_enabled: boolean;
+            /**
+             * Context Buffer Ratio
+             * @description Fraction of the context window retained as a safety buffer.
+             * @default 0.2
+             * @example 0.2
+             */
+            context_buffer_ratio: number;
+            /**
+             * Max Image Num
+             * @description Maximum number of images retained in context.
+             * @default 5
+             * @example 5
+             */
+            max_image_num: number;
+            /**
+             * Reserve Ratio
+             * @description Fraction of context reserved before compression.
+             * @default 0.1
+             * @example 0.1
+             */
+            reserve_ratio: number;
+            /**
+             * Summary Template
+             * @description Optional template used for compressed context summaries.
+             * @example Retain evidence and uncertainty.
+             */
+            summary_template?: string | null;
+            /**
+             * Tool Result Limit
+             * @description Maximum retained tool-result size in AgentScope context.
+             * @default 50000
+             * @example 50000
+             */
+            tool_result_limit: number;
+            /**
+             * Trigger Ratio
+             * @description Context usage ratio that triggers compression.
+             * @default 0.8
+             * @example 0.8
+             */
+            trigger_ratio: number;
+        };
+        /**
+         * NativeInviteConfig
+         * @description AgentScope invitation behavior stored in the candidate Harness.
+         */
+        NativeInviteConfig: {
+            /**
+             * Invitable
+             * @description Whether other Agents may invite this Agent.
+             * @default false
+             * @example false
+             */
+            invitable: boolean;
+            /**
+             * Invite Description
+             * @description Description shown when the Agent is invitable.
+             * @example Invite for evidence review.
+             */
+            invite_description?: string | null;
+        };
+        /**
+         * NativeReactConfig
+         * @description AgentScope ReAct-loop behavior stored in the candidate Harness.
+         */
+        NativeReactConfig: {
+            /**
+             * Interruption Message
+             * @description Assistant message emitted after an interrupted ReAct loop.
+             * @default I notice the interruption. How can I help you?
+             * @example The run was interrupted.
+             */
+            interruption_message: string;
+            /**
+             * Interruption Raise Cancelled Error
+             * @description Whether interruption is surfaced as a cancellation error.
+             * @default false
+             * @example false
+             */
+            interruption_raise_cancelled_error: boolean;
+            /**
+             * Max Iters
+             * @description Maximum ReAct iterations for one run.
+             * @default 50
+             * @example 50
+             */
+            max_iters: number;
+            /**
+             * Stop On Reject
+             * @description Whether a rejected tool confirmation stops the ReAct loop.
+             * @default false
+             * @example false
+             */
+            stop_on_reject: boolean;
+            /**
+             * Structured Output Grace Iters
+             * @description Additional iterations allowed to complete structured output.
+             * @default 5
+             * @example 5
+             */
+            structured_output_grace_iters: number;
+        };
         /** NormalizedFeedbackResponse */
         NormalizedFeedbackResponse: {
             /** Created At */
@@ -5011,8 +5231,18 @@ export interface components {
             status: "ok";
         };
         /**
+         * RuntimeNativeAgentSchemaResponse
+         * @description 仅承载通过安全投影校验的 AgentScope JSON Schema。
+         */
+        RuntimeNativeAgentSchemaResponse: {
+            /** Schema */
+            schema: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+        };
+        /**
          * RuntimePendingActionResponse
-         * @description 供授权调用方恢复 HITL UI 的最小未决 action 投影。
+         * @description 未决 action 的无正文投影；原始 ToolCall 只从 AgentScope 获取。
          */
         RuntimePendingActionResponse: {
             /** Action Id */
@@ -5035,10 +5265,19 @@ export interface components {
              * @constant
              */
             status: "pending";
-            /** Tool Call */
-            tool_call: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Tool Call Name */
+            tool_call_name: string;
+            /** Tool Call Sha256 */
+            tool_call_sha256: string;
+            /**
+             * Tool Call State
+             * @enum {string}
+             */
+            tool_call_state: "pending" | "asking" | "allowed" | "submitted" | "finished";
+            /** Tool Call Utf8 Length */
+            tool_call_utf8_length: number;
         };
         /** RuntimeReadinessResponse */
         RuntimeReadinessResponse: {
@@ -5097,14 +5336,62 @@ export interface components {
              */
             name?: string | null;
         };
-        /** SkillInfo */
-        SkillInfo: {
+        /**
+         * RuntimeSessionRenameRequest
+         * @description Rename one owned AgentScope Session without changing its immutable Runtime binding.
+         */
+        RuntimeSessionRenameRequest: {
+            /**
+             * Name
+             * @description New human-readable name for the existing owned Session.
+             * @example SOC console follow-up
+             */
+            name: string;
+        };
+        /** RuntimeSessionRenameResponse */
+        RuntimeSessionRenameResponse: {
+            /** Name */
+            name: string;
+            /** Session Id */
+            session_id: string;
+        };
+        /** RuntimeWorkspaceMcpResponse */
+        RuntimeWorkspaceMcpResponse: {
+            /** Error */
+            error?: string | null;
+            /** Is Healthy */
+            is_healthy: boolean;
+            /** Is Stateful */
+            is_stateful: boolean;
+            /** Name */
+            name: string;
+            /** Tools */
+            tools?: components["schemas"]["RuntimeWorkspaceToolResponse"][];
+        };
+        /** RuntimeWorkspaceSkillResponse */
+        RuntimeWorkspaceSkillResponse: {
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+        };
+        /** RuntimeWorkspaceStatusResponse */
+        RuntimeWorkspaceStatusResponse: {
+            /** At Workspace Root */
+            at_workspace_root: boolean;
+            /** Available */
+            available: boolean;
+            /** Git Dirty */
+            git_dirty: boolean;
+            /** Git Repository */
+            git_repository: boolean;
+        };
+        /** RuntimeWorkspaceToolResponse */
+        RuntimeWorkspaceToolResponse: {
             /** Description */
             description?: string | null;
             /** Name */
             name: string;
-            /** Path */
-            path: string;
         };
         /**
          * SocEventIngestRequest
@@ -5328,24 +5615,28 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "created" | "overwritten" | "unchanged";
-            /**
-             * Activation Mode
-             * @default next_turn
-             * @constant
-             */
-            activation_mode: "next_turn";
+            action: "created" | "candidate_committed" | "unchanged";
             agent: components["schemas"]["AgentSummaryResponse"];
-            /** Current Commit Sha */
-            current_commit_sha: string;
+            /** Base Commit Sha */
+            base_commit_sha: string;
+            /** Candidate Commit Sha */
+            candidate_commit_sha: string;
+            /** Change Set Id */
+            change_set_id: string;
+            /** Change Set Status */
+            change_set_status: string;
+            /** Changed Paths */
+            changed_paths?: string[];
             /** Import Record Id */
             import_record_id: string;
             /** Package Sha256 */
             package_sha256: string;
-            /** Previous Commit Sha */
-            previous_commit_sha?: string | null;
-            /** Rollback Target Commit Sha */
-            rollback_target_commit_sha?: string | null;
+            /**
+             * Published
+             * @default false
+             * @constant
+             */
+            published: false;
             /** Test File Count */
             test_file_count: number;
             /**
@@ -5386,25 +5677,29 @@ export interface components {
         WorkspaceRestoreResponse: {
             /**
              * Action
-             * @default restored
+             * @default candidate_committed
              * @constant
              */
-            action: "restored";
-            /**
-             * Activation Mode
-             * @default next_turn
-             * @constant
-             */
-            activation_mode: "next_turn";
+            action: "candidate_committed";
             agent: components["schemas"]["AgentSummaryResponse"];
-            /** Current Commit Sha */
-            current_commit_sha: string;
-            /** Previous Commit Sha */
-            previous_commit_sha: string;
+            /** Base Commit Sha */
+            base_commit_sha: string;
+            /** Candidate Commit Sha */
+            candidate_commit_sha: string;
+            /** Change Set Id */
+            change_set_id: string;
+            /** Change Set Status */
+            change_set_status: string;
+            /** Changed Paths */
+            changed_paths?: string[];
+            /**
+             * Published
+             * @default false
+             * @constant
+             */
+            published: false;
             /** Restored Tree Commit Sha */
             restored_tree_commit_sha: string;
-            /** Rollback Target Commit Sha */
-            rollback_target_commit_sha: string;
         };
     };
     responses: never;
@@ -5670,7 +5965,7 @@ export interface operations {
         /** @description 批准 Agent 待发布变更进入发布 payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgentChangeSetActionRequest"];
+                "application/json": components["schemas"]["AgentChangeSetApproveRequest"];
             };
         };
         responses: {
@@ -5877,6 +6172,141 @@ export interface operations {
             };
             /** @description Requested resource was not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_agent_candidate_file_api_agent_change_sets__change_set_id__files_get: {
+        parameters: {
+            query: {
+                /**
+                 * @description Editable Harness path: agent.yaml, AGENT.md, or mcp/<name>.json.
+                 * @example mcp/soc-readonly.json
+                 */
+                path: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCandidateFileResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_agent_candidate_files_api_agent_change_sets__change_set_id__files_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Agent change set identifier addressed by this operation.
+                 * @example chg-20260729-001
+                 */
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Commit one or more files to an isolated unpublished Agent candidate payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentCandidateFilesWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCandidateFilesWriteResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6194,109 +6624,6 @@ export interface operations {
             };
         };
     };
-    read_agent_config_file_api_agent_config_file_get: {
-        parameters: {
-            query: {
-                /**
-                 * @description Business agent id from /api/agent-registry.
-                 * @example security-operations-expert
-                 */
-                agent_id?: string;
-                /**
-                 * @description Editable Harness path: agent.yaml, AGENT.md, or mcp/<name>.json.
-                 * @example mcp/soc-readonly.json
-                 */
-                path: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentConfigFileResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_agent_config_file_api_agent_config_file_put: {
-        parameters: {
-            query: {
-                /**
-                 * @description Business agent id from /api/agent-registry.
-                 * @example security-operations-expert
-                 */
-                agent_id?: string;
-                /**
-                 * @description Editable Harness path: agent.yaml, AGENT.md, or mcp/<name>.json.
-                 * @example mcp/soc-readonly.json
-                 */
-                path: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Update an editable business-agent project config file payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentConfigFileUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentConfigFileUpdateResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_agent_jobs_api_agent_jobs_get: {
         parameters: {
             query?: {
@@ -6572,6 +6899,135 @@ export interface operations {
             };
             /** @description Request conflicts with the current resource state. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_native_candidate_api_agent_registry__agent_id__native_candidate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Create a Git candidate from the pinned AgentScope AgentData schema payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeAgentCandidateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeAgentCandidateResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    native_candidate_source_api_agent_registry__agent_id__native_candidate_source_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Registered business Agent identifier addressed by this operation.
+                 * @example security-operations-expert
+                 */
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeAgentCandidateSourceResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7309,158 +7765,6 @@ export interface operations {
             };
         };
     };
-    restore_agent_release_api_agent_releases__release_id__restore_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description Agent release identifier addressed by this operation.
-                 * @example rel-20260729-001
-                 */
-                release_id: string;
-            };
-            cookie?: never;
-        };
-        /** @description Restore one business Agent Workspace to a release payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentReleaseRestoreRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentReleaseRestoreResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rollback_agent_release_api_agent_releases__release_id__rollback_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description Agent release identifier addressed by this operation.
-                 * @example rel-20260729-001
-                 */
-                release_id: string;
-            };
-            cookie?: never;
-        };
-        /** @description Rollback one business Agent Workspace to a release payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentReleaseRollbackRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentReleaseResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_agent_repository_status_api_agent_repository_get: {
         parameters: {
             query?: {
@@ -7519,104 +7823,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentGitRefResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    discard_agent_repository_changes_api_agent_repository_discard_changes_post: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Registered business Agent selector or ownership filter for this operation.
-                 * @example security-operations-expert
-                 */
-                agent_id?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Discard confirmed uncommitted changes from the selected business Agent workspace payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentRepositoryDiscardChangesRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentRepositoryStatusResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    snapshot_agent_repository_api_agent_repository_snapshot_post: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Registered business Agent selector or ownership filter for this operation.
-                 * @example security-operations-expert
-                 */
-                agent_id?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Save the selected business Agent workspace as an Agent version payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentRepositorySnapshotRequest"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -8568,50 +8774,6 @@ export interface operations {
             };
         };
     };
-    list_agents_api_agents_get: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Business agent id from /api/agent-registry.
-                 * @example security-operations-expert
-                 */
-                agent_id?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentInfo"][];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     feedback_asset_provenance_api_asset_registry_feedback__feedback_case_id__get: {
         parameters: {
             query?: never;
@@ -8887,55 +9049,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    config_mapping_api_config_get: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Business agent id from /api/agent-registry.
-                 * @example security-operations-expert
-                 */
-                agent_id?: string;
-                /**
-                 * @description Include host mount paths for operator diagnostics.
-                 * @example false
-                 */
-                include_host_mounts?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConfigMappingResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
             /** @description Request validation or semantic validation failed. */
@@ -11960,52 +12073,6 @@ export interface operations {
             };
         };
     };
-    get_langfuse_trace_api_langfuse_traces__trace_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description Langfuse trace identifier addressed by this debug operation.
-                 * @example trace-20260729-001
-                 */
-                trace_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_pending_correlations_api_pending_correlations_get: {
         parameters: {
             query?: {
@@ -12104,6 +12171,53 @@ export interface operations {
             };
         };
     };
+    native_agent_schema_api_runtime_agent_schema_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeNativeAgentSchemaResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
     current_runtime_version_api_runtime_agents__governance_agent_id__current_get: {
         parameters: {
             query?: never;
@@ -12162,86 +12276,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    provision_runtime_version_api_runtime_agents__governance_agent_id__provision_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description Registered business Agent whose current published Runtime version is addressed.
-                 * @example security-operations-expert
-                 */
-                governance_agent_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RuntimeCurrentVersionResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description AgentScope Runtime returned an invalid or failed response. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description AgentScope Runtime is temporarily unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
         };
@@ -12507,6 +12541,97 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    rename_session_api_runtime_sessions__session_id__patch: {
+        parameters: {
+            query: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
+                agent_id: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description AgentScope session identifier addressed by this operation.
+                 * @example session-20260909-001
+                 */
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Rename one version-pinned AgentScope Session payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeSessionRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeSessionRenameResponse"];
+                };
             };
             /** @description Invalid or missing Bearer API key. */
             401: {
@@ -12861,7 +12986,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Byte-for-byte proxy of the AgentScope AgentEvent stream. */
+            /** @description AgentGov readiness comment followed by a byte-for-byte proxy of the AgentScope AgentEvent stream. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12926,17 +13051,23 @@ export interface operations {
             };
         };
     };
-    list_skills_api_skills_get: {
+    workspace_mcps_api_runtime_sessions__session_id__workspace_mcp_get: {
         parameters: {
-            query?: {
+            query: {
                 /**
-                 * @description Business agent id from /api/agent-registry.
+                 * @description Registered business Agent selector or ownership filter for this operation.
                  * @example security-operations-expert
                  */
-                agent_id?: string;
+                agent_id: string;
             };
             header?: never;
-            path?: never;
+            path: {
+                /**
+                 * @description AgentScope session identifier addressed by this operation.
+                 * @example session-20260909-001
+                 */
+                session_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -12947,7 +13078,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SkillInfo"][];
+                    "application/json": components["schemas"]["RuntimeWorkspaceMcpResponse"][];
                 };
             };
             /** @description Invalid or missing Bearer API key. */
@@ -12959,6 +13090,24 @@ export interface operations {
                     "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
             /** @description Request validation or semantic validation failed. */
             422: {
                 headers: {
@@ -12966,6 +13115,196 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    workspace_skills_api_runtime_sessions__session_id__workspace_skills_get: {
+        parameters: {
+            query: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
+                agent_id: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description AgentScope session identifier addressed by this operation.
+                 * @example session-20260909-001
+                 */
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeWorkspaceSkillResponse"][];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    workspace_status_api_runtime_sessions__session_id__workspace_status_get: {
+        parameters: {
+            query: {
+                /**
+                 * @description Registered business Agent selector or ownership filter for this operation.
+                 * @example security-operations-expert
+                 */
+                agent_id: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description AgentScope session identifier addressed by this operation.
+                 * @example session-20260909-001
+                 */
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeWorkspaceStatusResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description AgentScope Runtime returned an invalid or failed response. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description AgentScope Runtime is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
         };

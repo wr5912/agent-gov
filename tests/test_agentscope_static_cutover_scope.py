@@ -9,7 +9,9 @@ from scripts.check_agentscope_cutover import check_static_cutover
 @pytest.mark.parametrize(
     "relative_path",
     (
+        "agentgov_agentscope_contract.py",
         "agentgov_harness_digest.py",
+        "agentgov_subagent_manifest_policy.py",
         "Makefile",
         "requirements-api.txt",
     ),

@@ -7,7 +7,7 @@ from app.runtime.agent_profiles import AgentRuntimeProfile, build_business_agent
 from app.runtime.errors import BusinessRuleViolation, NotFoundError
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.settings import AppSettings
-from app.runtime.state_machines import AGENT_RUNNABLE_LIFECYCLE_STATES
+from app.runtime.state_machines import is_agent_lifecycle_runnable
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
 
@@ -35,6 +35,6 @@ def resolve_business_profile(
     if agent.category != "business":
         raise BusinessRuleViolation(f"Agent is not a runnable business agent: {normalized}")
     # AGV-020 criterion 3：archived/deprecated/draft 等非活跃 Agent 不参与新运行（仍可审计）。
-    if agent.status not in AGENT_RUNNABLE_LIFECYCLE_STATES:
+    if not is_agent_lifecycle_runnable(agent.status):
         raise BusinessRuleViolation(f"Agent {normalized} is {agent.status}; not available for new runs")
     return build_business_agent_profile(settings, agent_id=agent.agent_id, workspace_dir=Path(agent.workspace_dir))

@@ -3,10 +3,8 @@ from __future__ import annotations
 import base64
 
 import pytest
-import requests
 from agentscope_runtime import observability
 from agentscope_runtime.otel_config import runtime_otel_config
-from opentelemetry import trace
 
 
 def _enabled_env() -> dict[str, str]:
@@ -121,68 +119,9 @@ def test_invalid_enabled_flag_fails_closed() -> None:
         runtime_otel_config(_enabled_env() | {"LANGFUSE_ENABLED": "typo"})
 
 
-def test_disabled_exporter_does_not_initialize_a_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.test")
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer test-token")
-
-    def unexpected_provider_access():
-        pytest.fail("disabled telemetry must not initialize or acquire a provider")
-
-    monkeypatch.setattr(trace, "get_tracer_provider", unexpected_provider_access)
+def test_disabled_exporter_returns_without_initializing_runtime(process_environment) -> None:
+    process_environment.set("LANGFUSE_ENABLED", "false")
+    process_environment.set("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.test")
+    process_environment.set("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer test-token")
 
     assert observability.configure_otel_from_env() is None
-
-
-@pytest.mark.parametrize(
-    ("resource_attributes", "service_name", "expected_environment", "expected_service"),
-    [
-        ("", "", "local", "agent-gov-agentscope-runtime"),
-        ("deployment.environment.name=staging", "custom-runtime", "staging", "custom-runtime"),
-    ],
-)
-def test_runtime_exports_with_derived_auth_and_resource_defaults(
-    monkeypatch: pytest.MonkeyPatch,
-    resource_attributes: str,
-    service_name: str,
-    expected_environment: str,
-    expected_service: str,
-) -> None:
-    for key, value in _enabled_env().items():
-        monkeypatch.setenv(key, value)
-    for key in ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS"):
-        monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", resource_attributes)
-    monkeypatch.setenv("OTEL_SERVICE_NAME", service_name)
-    monkeypatch.setattr(observability, "_managed_runtime", None)
-    providers = [trace.ProxyTracerProvider()]
-    monkeypatch.setattr(trace, "get_tracer_provider", lambda: providers[-1])
-    monkeypatch.setattr(trace, "set_tracer_provider", providers.append)
-    exported: list[tuple[str, str, str]] = []
-
-    def post(session, url, **kwargs):
-        del kwargs
-        exported.append((url, session.headers["authorization"], session.headers["x-langfuse-ingestion-version"]))
-        response = requests.Response()
-        response.status_code = 200
-        return response
-
-    monkeypatch.setattr(requests.Session, "post", post)
-    runtime = observability.configure_otel_from_env()
-    assert runtime is not None
-    try:
-        assert observability.configure_otel_from_env() is runtime
-        assert runtime.provider.resource.attributes["deployment.environment.name"] == expected_environment
-        assert runtime.provider.resource.attributes["service.name"] == expected_service
-        with runtime.provider.get_tracer(__name__).start_as_current_span("agentgov.run"):
-            pass
-        assert runtime.provider.force_flush()
-        assert exported == [
-            (
-                "http://langfuse.test/api/public/otel/v1/traces",
-                f"Basic {base64.b64encode(b'test-public:test-secret').decode()}",
-                "4",
-            ),
-        ]
-    finally:
-        runtime.shutdown()

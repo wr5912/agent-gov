@@ -3,32 +3,45 @@ from __future__ import annotations
 import logging
 import os
 import re
-import shutil
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import BinaryIO
 
-from sqlalchemy.orm import Session
+import yaml
+from pydantic import TypeAdapter, ValidationError
 
 from app.agent_testing.service import AgentTestingService
 from app.runtime.agent_admission import AgentAdmissionError, AgentRunsActiveError
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
-from app.runtime.agent_governance_schemas import AgentSummaryResponse
 from app.runtime.agent_governance_schemas import agent_summary_response as _summary
-from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
+from app.runtime.agent_paths import InvalidAgentId, validate_agent_id
 from app.runtime.agent_workspace_package_schemas import (
+    NativeAgentCandidateResponse,
+    NativeAgentCandidateSourceResponse,
+    NativeAgentDataInput,
     WorkspaceImportResponse,
     WorkspaceRestoreRequest,
     WorkspaceRestoreResponse,
 )
-from app.runtime.business_agent_workspace import WorkspaceProvisionPlan
+from app.runtime.json_types import JsonObject
 from app.runtime.settings import AppSettings
+from app.runtime.state_machines import is_agent_lifecycle_runnable
 from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
-from app.runtime_gateway.store import RuntimeRunStore
 from app.services import agent_workspace_manifest_identity as manifest_identity
 from app.services import agent_workspace_package_codec as package_codec
+from app.services.agent_candidate_creation import (
+    AgentCandidateCreationError,
+    AgentCandidateCreationService,
+    CandidateStageReceipt,
+    OpenCandidateSource,
+)
+from app.services.agent_native_candidate_mapping import (
+    NativeCandidateMappingError,
+    native_agent_data_entries,
+    native_agent_data_from_harness,
+)
 from app.services.agent_version_maintenance import AgentVersionMaintenanceCoordinator
 from app.services.agent_workspace_git_operations import (
     GitCommandError as _GitCommandError,
@@ -37,25 +50,10 @@ from app.services.agent_workspace_git_operations import (
     SnapshotState as _SnapshotState,
 )
 from app.services.agent_workspace_git_operations import (
-    cleanup_imported_versioning as _cleanup_imported_versioning,
-)
-from app.services.agent_workspace_git_operations import (
     configure_workspace_git_storage as _configure_raw_git_storage,
 )
 from app.services.agent_workspace_git_operations import (
-    git_text as _git_text,
-)
-from app.services.agent_workspace_git_operations import (
-    has_staged_changes as _has_staged_changes,
-)
-from app.services.agent_workspace_git_operations import (
-    replace_tree_from_entries as _replace_tree_from_entries,
-)
-from app.services.agent_workspace_git_operations import (
     restore_dirty_state_after_failure as _restore_dirty_state_after_failure,
-)
-from app.services.agent_workspace_git_operations import (
-    restore_tree_as_commit as _restore_tree_as_commit,
 )
 from app.services.agent_workspace_git_operations import (
     run_git as _git,
@@ -63,7 +61,6 @@ from app.services.agent_workspace_git_operations import (
 from app.services.agent_workspace_git_operations import (
     snapshot_live_workspace as _snapshot_live_workspace,
 )
-from app.services.business_agent_provisioning import provision_business_agent
 
 _FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 WorkspacePackageError = package_codec.WorkspacePackageError
@@ -88,16 +85,16 @@ class AgentWorkspacePackageService:
         store_for: Callable[[str], GitAgentVersionStore],
         version_maintenance: AgentVersionMaintenanceCoordinator,
         has_open_change_sets: Callable[[str], bool],
-        run_store: RuntimeRunStore,
         agent_testing: AgentTestingService,
+        candidate_creation: AgentCandidateCreationService,
     ) -> None:
         self._settings = settings
         self._registry = registry_store
         self._store_for = store_for
         self._version_maintenance = version_maintenance
         self._has_open_change_sets = has_open_change_sets
-        self._run_store = run_store
         self._agent_testing = agent_testing
+        self._candidate_creation = candidate_creation
 
     def export_workspace(self, agent_id: str) -> WorkspaceExportArtifact:
         try:
@@ -154,29 +151,26 @@ class AgentWorkspacePackageService:
             if existing is None:
                 clean_name = _required_new_agent_name(name, expected_current_commit_sha)
                 expected_commit = None
-                commit_message = None
             else:
                 clean_name = None
                 expected_commit = _required_overwrite_commit(expected_current_commit_sha, agent_id=safe_agent_id)
-                commit_message = _commit_message(reason, default="Import workspace package")
             package = self._read_package(package_file, filename=filename)
             manifest_identity.validate_workspace_manifest_identity(
                 package.entries,
                 expected_agent_id=safe_agent_id,
                 import_action=import_action,
             )
-            if existing is None:
-                return self._create_from_package(
-                    agent_id=safe_agent_id,
-                    name=clean_name,
-                    package=package,
-                )
-            return self._overwrite_from_package(
-                record=existing,
+            receipt = self._candidate_creation.stage_entries(
+                agent_id=safe_agent_id,
+                name=clean_name,
+                entries=package.entries,
                 expected_current_commit_sha=expected_commit,
-                package=package,
-                commit_message=commit_message,
+                replace_tree=True,
+                operator="api:workspace-import",
+                title=("Create draft Agent from workspace package" if existing is None else "Import workspace package candidate"),
+                note=_commit_message(reason, default="Import workspace package candidate"),
             )
+            return self._record_candidate_import(receipt=receipt, package=package, audit_action=import_action)
         except AgentAdmissionError as exc:
             error = _workspace_admission_error(exc)
             self._record_import_failure(
@@ -194,6 +188,15 @@ class AgentWorkspacePackageService:
                 error=exc,
             )
             raise
+        except AgentCandidateCreationError as exc:
+            error = WorkspacePackageError(exc.status_code, exc.error_code, exc.detail)
+            self._record_import_failure(
+                agent_id=safe_agent_id,
+                action=import_action,
+                package=package,
+                error=error,
+            )
+            raise error from exc
         except (AgentGitError, package_codec.WorkspaceGitReadError, _GitCommandError) as exc:
             error = WorkspacePackageError(409, "WORKSPACE_GIT_OPERATION_FAILED", "Git workspace operation failed")
             self._record_import_failure(
@@ -214,202 +217,306 @@ class AgentWorkspacePackageService:
             safe_agent_id, record = self._require_agent(agent_id)
             expected = _full_commit(request.expected_current_commit_sha, field="expected_current_commit_sha")
             target = _full_commit(request.target_commit_sha, field="target_commit_sha")
-            self._require_no_open_change_set(safe_agent_id)
-            self._require_no_active_run(safe_agent_id)
-            lease = self._version_maintenance.lease(
-                agent_id=safe_agent_id,
-                kind="workspace_restore",
-                owner_id="api:workspace-restore",
-            )
-            lease.__enter__()
-            snapshot: _SnapshotState | None = None
-            applied = False
+            store = self._store_for(safe_agent_id)
             try:
-                store = self._store_for(safe_agent_id)
-                store.ensure_bootstrap()
-                self._require_no_open_change_set(safe_agent_id)
-                with store.mutation_guard():
-                    _configure_raw_git_storage(store.repository_dir)
-                    snapshot = _snapshot_live_workspace(store, expected_head=expected)
-                    try:
-                        lease.assert_active()
-                        replacement = _restore_tree_as_commit(
-                            store,
-                            base_commit=snapshot.current_head,
-                            target_commit=target,
-                            message=request.reason or f"Restore workspace tree from {target[:12]}",
-                            before_activate=lease.assert_active,
-                            invalidate_sessions=lambda db: self._invalidate_sessions_for_activation(db, safe_agent_id),
-                            activation_guard=lease.run_activation_guard,
-                        )
-                        applied = True
-                    except Exception:
-                        _restore_dirty_state_after_failure(store, snapshot)
-                        raise
-                lease.close(validate_claim=not applied)
-            finally:
-                lease.close(validate_claim=False)
-            return WorkspaceRestoreResponse(
-                agent=_summary(record),
-                previous_commit_sha=replacement.previous_commit_sha,
-                current_commit_sha=replacement.current_commit_sha,
-                restored_tree_commit_sha=target,
-                rollback_target_commit_sha=replacement.previous_commit_sha,
+                entries = package_codec.read_commit_entries(store.repository_dir, target, run_git=_git)
+            except WorkspacePackageError as exc:
+                raise WorkspacePackageError(
+                    exc.status_code,
+                    "WORKSPACE_RESTORE_TARGET_INVALID",
+                    f"Restore target is not a valid workspace tree: {exc}",
+                ) from exc
+            receipt = self._candidate_creation.stage_entries(
+                agent_id=safe_agent_id,
+                name=record.name,
+                entries=entries,
+                expected_current_commit_sha=expected,
+                replace_tree=True,
+                operator="api:workspace-restore",
+                title=f"Restore workspace tree from {target[:12]}",
+                note=request.reason or f"Restore workspace tree from {target[:12]}",
             )
-        except AgentAdmissionError as exc:
-            raise _workspace_admission_error(exc) from exc
+            return WorkspaceRestoreResponse(
+                agent=_summary(record, agent_version_id=receipt.base_commit_sha),
+                change_set_id=str(receipt.change_set["change_set_id"]),
+                change_set_status=str(receipt.change_set["change_set_status"]),
+                base_commit_sha=receipt.base_commit_sha,
+                candidate_commit_sha=receipt.candidate_commit_sha,
+                changed_paths=list(receipt.changed_paths),
+                restored_tree_commit_sha=target,
+            )
+        except AgentCandidateCreationError as exc:
+            raise WorkspacePackageError(exc.status_code, exc.error_code, exc.detail) from exc
         except (AgentGitError, package_codec.WorkspaceGitReadError, _GitCommandError) as exc:
             raise WorkspacePackageError(409, "WORKSPACE_GIT_OPERATION_FAILED", "Git workspace operation failed") from exc
 
-    def _create_from_package(
+    def native_candidate(
         self,
         *,
         agent_id: str,
-        name: str,
-        package: package_codec.ValidatedWorkspacePackage,
-    ) -> WorkspaceImportResponse:
-        if shutil.which("git") is None:
-            raise WorkspacePackageError(503, "WORKSPACE_GIT_UNAVAILABLE", "git executable is not available")
-        layout = business_agent_layout(self._settings.data_dir, agent_id)
-        if layout.workspace.exists() or layout.workspace.is_symlink():
+        agent_data: NativeAgentDataInput,
+        schema: JsonObject,
+        expected_current_commit_sha: str | None,
+        reason: str | None,
+        change_set_id: str | None = None,
+        expected_candidate_commit_sha: str | None = None,
+    ) -> NativeAgentCandidateResponse:
+        safe_agent_id = _safe_agent_id(agent_id)
+        record = self._registry.get_agent(safe_agent_id)
+        try:
+            expected, continuation = self._native_candidate_base(
+                agent_id=safe_agent_id,
+                record=record,
+                expected_current_commit_sha=expected_current_commit_sha,
+                change_set_id=change_set_id,
+                expected_candidate_commit_sha=expected_candidate_commit_sha,
+            )
+            base_manifest = self._candidate_base_manifest(
+                agent_id=safe_agent_id,
+                expected_current_commit_sha=expected,
+                continuation=continuation,
+            )
+            entries = native_agent_data_entries(
+                agent_id=safe_agent_id,
+                agent_data=agent_data,
+                schema=schema,
+                base_manifest=base_manifest,
+            )
+        except AgentCandidateCreationError as exc:
+            raise WorkspacePackageError(exc.status_code, exc.error_code, exc.detail) from exc
+        except NativeCandidateMappingError as exc:
+            raise WorkspacePackageError(422, "NATIVE_AGENT_DATA_INVALID", str(exc)) from exc
+        name = agent_data.name.strip()
+        try:
+            receipt = self._candidate_creation.stage_entries(
+                agent_id=safe_agent_id,
+                name=name,
+                entries=entries,
+                expected_current_commit_sha=expected,
+                replace_tree=record is None,
+                operator="api:native-agent-candidate",
+                title=("Create draft Agent from AgentScope form" if record is None else "Update Agent from AgentScope form"),
+                note=_commit_message(reason, default="Update AgentScope native AgentData candidate"),
+                change_set_id=continuation.change_set_id if continuation is not None else None,
+                expected_candidate_commit_sha=(continuation.candidate_commit_sha if continuation is not None else None),
+            )
+        except AgentCandidateCreationError as exc:
+            raise WorkspacePackageError(exc.status_code, exc.error_code, exc.detail) from exc
+        return NativeAgentCandidateResponse(
+            action=receipt.action,
+            agent=_summary(receipt.agent, agent_version_id=receipt.base_commit_sha),
+            change_set_id=str(receipt.change_set["change_set_id"]),
+            change_set_status=str(receipt.change_set["change_set_status"]),
+            base_commit_sha=receipt.base_commit_sha,
+            candidate_commit_sha=receipt.candidate_commit_sha,
+            changed_paths=list(receipt.changed_paths),
+        )
+
+    def native_candidate_source(
+        self,
+        *,
+        agent_id: str,
+        schema: JsonObject,
+    ) -> NativeAgentCandidateSourceResponse:
+        safe_agent_id, record = self._require_agent(agent_id)
+        try:
+            candidate = self._candidate_creation.open_candidate_source(agent_id=safe_agent_id)
+        except AgentCandidateCreationError as exc:
+            raise WorkspacePackageError(exc.status_code, exc.error_code, exc.detail) from exc
+        if candidate is not None:
+            agent_data = self._native_agent_data_from_candidate(
+                agent_id=safe_agent_id,
+                candidate=candidate,
+                schema=schema,
+            )
+            return NativeAgentCandidateSourceResponse(
+                agent_data=agent_data,
+                change_set_id=candidate.change_set_id,
+                current_commit_sha=candidate.candidate_commit_sha,
+            )
+        if not is_agent_lifecycle_runnable(record.status):
             raise WorkspacePackageError(
                 409,
-                "WORKSPACE_IMPORT_RESIDUE",
-                f"Workspace path already exists for unregistered Agent {agent_id}; clean or restore it before import",
+                "NATIVE_AGENT_SOURCE_UNPUBLISHED",
+                "Native form source is available only for a published runnable Agent",
             )
-        plan = WorkspaceProvisionPlan(entries=package.entries)
-        current_commits: list[str] = []
-
-        def finalize_workspace(_: Path) -> None:
-            store = self._new_store(agent_id)
-            _git(store.repository_dir, ["init"])
-            _git(store.repository_dir, ["config", "user.name", store.git_user_name])
-            _git(store.repository_dir, ["config", "user.email", store.git_user_email])
-            _configure_raw_git_storage(store.repository_dir)
-            _git(store.repository_dir, ["add", "-A", "-f", "--", "."])
-            if _has_staged_changes(store.repository_dir):
-                _git(store.repository_dir, ["commit", "-m", "Initialize complete imported workspace package"])
-            else:
-                _git(store.repository_dir, ["commit", "--allow-empty", "-m", "Initialize empty imported workspace package"])
-            current = _git_text(store.repository_dir, ["rev-parse", "HEAD"]).strip()
-            if not current:
-                raise _GitCommandError("Imported workspace has no Git commit")
-            current_commits.append(current)
-
-        record = provision_business_agent(
-            store=self._registry,
-            agent_id=agent_id,
-            name=name,
-            workspace_dir=layout.workspace,
-            plan=plan,
-            finalize_workspace=finalize_workspace,
-            rollback_workspace_finalization=lambda _: _cleanup_imported_versioning(layout.workspace, layout.version_base),
-        )
-        current = current_commits[0] if current_commits else None
-        if current is None:
-            raise WorkspacePackageError(409, "WORKSPACE_IMPORT_VERSION_INIT_FAILED", "Imported workspace has no Git commit")
-        return self._record_import(
-            action="created",
-            agent=_summary(record),
-            previous_commit_sha=None,
-            current_commit_sha=current,
-            package_sha256=package.package_sha256,
-            tree_sha256=package.tree_sha256,
-            rollback_target_commit_sha=None,
-        )
-
-    def _overwrite_from_package(
-        self,
-        *,
-        record: AgentRegistryRecord,
-        expected_current_commit_sha: str,
-        package: package_codec.ValidatedWorkspacePackage,
-        commit_message: str,
-    ) -> WorkspaceImportResponse:
-        self._require_no_open_change_set(record.agent_id)
-        self._require_no_active_run(record.agent_id)
-        lease = self._version_maintenance.lease(
-            agent_id=record.agent_id,
-            kind="workspace_import",
-            owner_id="api:workspace-import",
-        )
-        lease.__enter__()
-        snapshot: _SnapshotState | None = None
-        applied = False
+        store = self._store_for(safe_agent_id)
         try:
-            store = self._store_for(record.agent_id)
-            store.ensure_bootstrap()
-            self._require_no_open_change_set(record.agent_id)
-            with store.mutation_guard():
-                _configure_raw_git_storage(store.repository_dir)
-                snapshot = _snapshot_live_workspace(store, expected_head=expected_current_commit_sha)
-                try:
-                    lease.assert_active()
-                    replacement = _replace_tree_from_entries(
-                        store,
-                        base_commit=snapshot.current_head,
-                        entries=package.entries,
-                        message=commit_message,
-                        before_activate=lease.assert_active,
-                        invalidate_sessions=lambda db: self._invalidate_sessions_for_activation(db, record.agent_id),
-                        activation_guard=lease.run_activation_guard,
-                    )
-                    applied = replacement.action == "overwritten"
-                except Exception:
-                    _restore_dirty_state_after_failure(store, snapshot)
-                    raise
-            try:
-                lease.close(validate_claim=not applied)
-            except Exception:
-                if snapshot is not None and not applied:
-                    with store.mutation_guard():
-                        _restore_dirty_state_after_failure(store, snapshot)
-                raise
-        finally:
-            lease.close(validate_claim=False)
-        return self._record_import(
-            action="unchanged" if replacement.action == "unchanged" else "overwritten",
-            agent=_summary(record),
-            previous_commit_sha=replacement.previous_commit_sha,
-            current_commit_sha=replacement.current_commit_sha,
-            package_sha256=package.package_sha256,
-            tree_sha256=package.tree_sha256,
-            rollback_target_commit_sha=(replacement.previous_commit_sha if replacement.action != "unchanged" else None),
+            current_commit_sha, dirty = store.inspect_clean_head()
+            if dirty:
+                raise WorkspacePackageError(
+                    409,
+                    "NATIVE_AGENT_SOURCE_DIRTY",
+                    "Live Agent Workspace must be clean before reading the native form source",
+                )
+            manifest = self._read_manifest(safe_agent_id, current_commit_sha)
+            system_prompt = store.read_text_at_ref(current_commit_sha, "AGENT.md")
+            if system_prompt is None:
+                raise WorkspacePackageError(409, "NATIVE_AGENT_SOURCE_INVALID", "Current AGENT.md is missing")
+            agent_data = native_agent_data_from_harness(
+                agent_id=safe_agent_id,
+                manifest=manifest,
+                system_prompt=system_prompt,
+                schema=schema,
+            )
+        except NativeCandidateMappingError as exc:
+            raise WorkspacePackageError(409, "NATIVE_AGENT_SOURCE_INVALID", str(exc)) from exc
+        except AgentGitError as exc:
+            raise WorkspacePackageError(409, "NATIVE_AGENT_SOURCE_INVALID", "Current Agent Git tree is unavailable") from exc
+        return NativeAgentCandidateSourceResponse(
+            agent_data=agent_data,
+            change_set_id=None,
+            current_commit_sha=current_commit_sha,
         )
 
-    def _record_import(
+    def _native_candidate_base(
         self,
         *,
-        action: Literal["created", "overwritten", "unchanged"],
-        agent: AgentSummaryResponse,
-        previous_commit_sha: str | None,
-        current_commit_sha: str,
-        package_sha256: str,
-        tree_sha256: str,
-        rollback_target_commit_sha: str | None,
+        agent_id: str,
+        record: AgentRegistryRecord | None,
+        expected_current_commit_sha: str | None,
+        change_set_id: str | None,
+        expected_candidate_commit_sha: str | None,
+    ) -> tuple[str | None, OpenCandidateSource | None]:
+        if (change_set_id is None) != (expected_candidate_commit_sha is None):
+            raise AgentCandidateCreationError(
+                422,
+                "CANDIDATE_CONTINUATION_INCOMPLETE",
+                "change_set_id and expected_candidate_commit_sha must be provided together",
+            )
+        if change_set_id is not None and expected_candidate_commit_sha is not None:
+            if expected_current_commit_sha is not None:
+                raise AgentCandidateCreationError(
+                    422,
+                    "CANDIDATE_BASE_AMBIGUOUS",
+                    "Candidate continuation must not carry expected_current_commit_sha",
+                )
+            expected_candidate = _full_commit(
+                expected_candidate_commit_sha,
+                field="expected_candidate_commit_sha",
+            )
+            candidate = self._candidate_creation.open_candidate_source(
+                agent_id=agent_id,
+                change_set_id=change_set_id,
+            )
+            if candidate is None:
+                raise AgentCandidateCreationError(404, "CANDIDATE_CHANGE_SET_NOT_FOUND", "Agent change set not found")
+            if candidate.candidate_commit_sha != expected_candidate:
+                raise AgentCandidateCreationError(
+                    409,
+                    "CANDIDATE_COMMIT_CONFLICT",
+                    "Candidate commit changed; reload before writing",
+                )
+            return None, candidate
+        if record is None:
+            if expected_current_commit_sha is not None:
+                raise AgentCandidateCreationError(
+                    422,
+                    "CANDIDATE_BASE_UNEXPECTED",
+                    "A new draft Agent must not carry expected_current_commit_sha",
+                )
+            return None, None
+        if self._has_open_change_sets(agent_id):
+            raise AgentCandidateCreationError(
+                409,
+                "CANDIDATE_CONTINUATION_REQUIRED",
+                "Agent has an unfinished candidate; reload it and continue the same change set",
+            )
+        return _required_overwrite_commit(expected_current_commit_sha, agent_id=agent_id), None
+
+    def _candidate_base_manifest(
+        self,
+        *,
+        agent_id: str,
+        expected_current_commit_sha: str | None,
+        continuation: OpenCandidateSource | None,
+    ) -> JsonObject | None:
+        if continuation is not None:
+            return self._parse_manifest(
+                continuation.manifest_text,
+                error_code="CANDIDATE_SOURCE_INVALID",
+                detail="Candidate agent.yaml is unavailable or invalid",
+            )
+        if expected_current_commit_sha is not None:
+            return self._read_manifest(agent_id, expected_current_commit_sha)
+        return None
+
+    def _native_agent_data_from_candidate(
+        self,
+        *,
+        agent_id: str,
+        candidate: OpenCandidateSource,
+        schema: JsonObject,
+    ) -> NativeAgentDataInput:
+        manifest = self._parse_manifest(
+            candidate.manifest_text,
+            error_code="NATIVE_AGENT_SOURCE_INVALID",
+            detail="Candidate agent.yaml is unavailable or invalid",
+        )
+        try:
+            return native_agent_data_from_harness(
+                agent_id=agent_id,
+                manifest=manifest,
+                system_prompt=candidate.system_prompt,
+                schema=schema,
+            )
+        except NativeCandidateMappingError as exc:
+            raise WorkspacePackageError(409, "NATIVE_AGENT_SOURCE_INVALID", str(exc)) from exc
+
+    def _record_candidate_import(
+        self,
+        *,
+        receipt: CandidateStageReceipt,
+        package: package_codec.ValidatedWorkspacePackage,
+        audit_action: str,
     ) -> WorkspaceImportResponse:
         import_id, suite = self._agent_testing.record_import(
-            agent_id=agent.agent_id,
-            action=action,
-            package_sha256=package_sha256,
-            tree_sha256=tree_sha256,
-            commit_sha=current_commit_sha,
+            agent_id=receipt.agent.agent_id,
+            action=audit_action,
+            package_sha256=package.package_sha256,
+            tree_sha256=package.tree_sha256,
+            commit_sha=receipt.candidate_commit_sha,
         )
         warnings = [item for item in suite.diagnostics if item.level == "warning"]
         status = "invalid" if any(item.level == "error" for item in suite.diagnostics) else "warning" if warnings else "ready"
         return WorkspaceImportResponse(
-            action=action,
-            agent=agent,
-            previous_commit_sha=previous_commit_sha,
-            current_commit_sha=current_commit_sha,
-            package_sha256=package_sha256,
-            tree_sha256=tree_sha256,
-            rollback_target_commit_sha=rollback_target_commit_sha,
+            action=receipt.action,
+            agent=_summary(receipt.agent, agent_version_id=receipt.base_commit_sha),
+            change_set_id=str(receipt.change_set["change_set_id"]),
+            change_set_status=str(receipt.change_set["change_set_status"]),
+            base_commit_sha=receipt.base_commit_sha,
+            candidate_commit_sha=receipt.candidate_commit_sha,
+            changed_paths=list(receipt.changed_paths),
+            package_sha256=package.package_sha256,
+            tree_sha256=package.tree_sha256,
             import_record_id=import_id,
             test_suite_status=status,
             test_file_count=suite.test_file_count,
             test_suite_warnings=warnings,
         )
+
+    def _read_manifest(self, agent_id: str, commit_sha: str) -> JsonObject:
+        try:
+            source = self._store_for(agent_id).read_text_at_ref(commit_sha, "agent.yaml")
+            if source is None:
+                raise WorkspacePackageError(409, "CANDIDATE_BASE_INVALID", "Current agent.yaml is missing")
+        except AgentGitError as exc:
+            raise WorkspacePackageError(409, "CANDIDATE_BASE_INVALID", "Current agent.yaml is unavailable or invalid") from exc
+        return self._parse_manifest(
+            source,
+            error_code="CANDIDATE_BASE_INVALID",
+            detail="Current agent.yaml is unavailable or invalid",
+        )
+
+    @staticmethod
+    def _parse_manifest(source: str, *, error_code: str, detail: str) -> JsonObject:
+        try:
+            parsed = TypeAdapter(JsonObject).validate_python(yaml.safe_load(source))
+        except (UnicodeError, ValidationError, yaml.YAMLError) as exc:
+            raise WorkspacePackageError(409, error_code, detail) from exc
+        if not isinstance(parsed, dict):
+            raise WorkspacePackageError(409, error_code, detail)
+        return parsed
 
     def _record_import_failure(
         self,
@@ -478,17 +585,6 @@ class AgentWorkspacePackageService:
         os.close(descriptor)
         return Path(raw_path)
 
-    def _new_store(self, agent_id: str) -> GitAgentVersionStore:
-        layout = business_agent_layout(self._settings.data_dir, agent_id)
-        return GitAgentVersionStore(
-            repository_dir=layout.workspace,
-            worktrees_dir=layout.version_base / "worktrees",
-            releases_dir=layout.version_base / "releases",
-            repository_name=f"{agent_id}-config",
-            git_user_name=self._settings.agent_git_user_name,
-            git_user_email=self._settings.agent_git_user_email,
-        )
-
     def _require_agent(self, agent_id: str) -> tuple[str, AgentRegistryRecord]:
         safe_agent_id = _safe_agent_id(agent_id)
         record = self._registry.get_agent(safe_agent_id)
@@ -502,19 +598,6 @@ class AgentWorkspacePackageService:
                 409,
                 "WORKSPACE_CHANGE_SET_ACTIVE",
                 f"Business Agent {agent_id} has an unfinished change set",
-            )
-
-    def _invalidate_sessions_for_activation(self, db: Session, agent_id: str) -> None:
-        # 已存在 Session 固定在创建时的不可变 Agent 版本；发布新 Harness 不改写历史绑定。
-        del db, agent_id
-
-    def _require_no_active_run(self, agent_id: str) -> None:
-        active = self._run_store.active_run_for_agent(agent_id)
-        if active is not None:
-            raise WorkspacePackageError(
-                409,
-                "WORKSPACE_SESSION_INVALIDATION_CONFLICT",
-                f"Business Agent {agent_id} has active run {active.run_id}",
             )
 
 

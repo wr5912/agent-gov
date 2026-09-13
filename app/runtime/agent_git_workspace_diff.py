@@ -39,7 +39,6 @@ def parse_workspace_changes(
                 "unstaged": worktree_status not in {" ", "?", "!"},
                 "untracked": untracked,
                 "ignored": ignored,
-                "discardable": True,
             }
         )
     return changes

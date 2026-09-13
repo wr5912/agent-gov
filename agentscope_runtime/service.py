@@ -4,20 +4,25 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-import httpx
+from agentgov_agentscope_contract import RUNTIME_TEMPLATE_RESTART_REQUIRED, RuntimeTemplateRestartRequired
 from agentscope.app import create_app as agentscope_create_app
 from agentscope.middleware import MiddlewareBase, TracingMiddleware
 from agentscope.workspace import WorkspaceBase
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware import Middleware
+from fastapi.responses import JSONResponse
 
 from .access_middleware import FixedRuntimeUserMiddleware
 from .credential_storage import ProvisionedAsyncSQLAlchemyStorage
 from .harness_evidence_middleware import GovernedHarnessEvidenceMiddleware
 from .mcp_resource_middleware import MCPResourceMiddleware
-from .observability import OTelRuntimeLifecycleMiddleware, configure_otel_from_env
+from .observability import configure_otel_from_env
 from .policy_middleware import AgentGovPolicyMiddleware
-from .receipt_middleware import AgentGovReceiptMiddleware
+from .receipt_middleware import (
+    AgentGovReceiptDispatcher,
+    AgentGovReceiptLifespanMiddleware,
+    AgentGovReceiptMiddleware,
+)
 from .run_trace import AgentGovRunTraceRegistry
 from .session_workspace_release import SessionWorkspaceReleaseMiddleware
 from .settings import RUNTIME_USER_ID, RuntimeSettings
@@ -36,11 +41,36 @@ AgentMiddlewareFactory = Callable[
 ]
 
 
+async def _template_restart_response(_request: Request, _error: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={
+            "error_code": RUNTIME_TEMPLATE_RESTART_REQUIRED,
+            "detail": str(RuntimeTemplateRestartRequired()),
+        },
+    )
+
+
+def _configure_runtime_app(
+    app: FastAPI,
+    settings: RuntimeSettings,
+    trace_registry: AgentGovRunTraceRegistry,
+    receipt_dispatcher: AgentGovReceiptDispatcher,
+    boot_coordinator: RuntimeBootCoordinator,
+) -> FastAPI:
+    """在公共 FastAPI 实例上装配 AgentGov 依赖引用和稳定错误边界。"""
+    app.state.agentgov_runtime_settings = settings
+    app.state.agentgov_trace_registry = trace_registry
+    app.state.agentgov_receipt_dispatcher = receipt_dispatcher
+    app.state.agentgov_boot_coordinator = boot_coordinator
+    app.add_exception_handler(RuntimeTemplateRestartRequired, _template_restart_response)
+    return app
+
+
 def _agent_middleware_factory(
     settings: RuntimeSettings,
     trace_registry: AgentGovRunTraceRegistry,
-    *,
-    transport: httpx.AsyncBaseTransport | None = None,
+    receipt_dispatcher: AgentGovReceiptDispatcher,
 ) -> AgentMiddlewareFactory:
     async def factory(
         user_id: str,
@@ -55,11 +85,13 @@ def _agent_middleware_factory(
         return [
             AgentGovTraceContextMiddleware(
                 settings,
-                transport=transport,
                 trace_registry=trace_registry,
             ),
             TracingMiddleware(),
-            AgentGovReceiptMiddleware(settings, transport=transport),
+            AgentGovReceiptMiddleware(
+                settings,
+                receipt_dispatcher=receipt_dispatcher,
+            ),
             GovernedHarnessEvidenceMiddleware(settings.business_agents_root),
             MCPResourceMiddleware(
                 workspace.default_mcps,
@@ -76,8 +108,6 @@ def _agent_middleware_factory(
 
 def create_runtime_app(
     settings: RuntimeSettings | None = None,
-    *,
-    control_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     """Build the internal AgentScope service without private framework hooks."""
 
@@ -86,19 +116,16 @@ def create_runtime_app(
     resolved.validate_source_mounts()
     otel_runtime = configure_otel_from_env()
     trace_registry = AgentGovRunTraceRegistry()
-    message_bus = AgentGovInMemoryMessageBus(
+    receipt_dispatcher = AgentGovReceiptDispatcher(
         resolved,
-        transport=control_transport,
+        trace_registry=trace_registry,
     )
-    boot_coordinator = RuntimeBootCoordinator(
-        resolved,
-        transport=control_transport,
-    )
+    message_bus = AgentGovInMemoryMessageBus(resolved)
+    boot_coordinator = RuntimeBootCoordinator(resolved)
 
     storage = ProvisionedAsyncSQLAlchemyStorage(
         resolved,
-        receipt_transport=control_transport,
-        trace_registry=trace_registry,
+        receipt_dispatcher=receipt_dispatcher,
         message_bus=message_bus,
     )
     subagent_templates = discover_subagent_templates(resolved.candidates_root)
@@ -118,11 +145,13 @@ def create_runtime_app(
             SessionWorkspaceReleaseMiddleware,
             workspace_manager=workspace_manager,
         ),
+        Middleware(
+            AgentGovReceiptLifespanMiddleware,
+            dispatcher=receipt_dispatcher,
+            trace_registry=trace_registry,
+            provider_shutdown=(otel_runtime.shutdown if otel_runtime is not None else None),
+        ),
     ]
-    if otel_runtime is not None:
-        http_middlewares.append(
-            Middleware(OTelRuntimeLifecycleMiddleware, runtime=otel_runtime),
-        )
     # AgentScope adds supplied middleware by prepending it; append auth last so
     # signature/body checks remain the outermost HTTP boundary.
     http_middlewares.append(
@@ -147,12 +176,9 @@ def create_runtime_app(
         extra_agent_middlewares=_agent_middleware_factory(
             resolved,
             trace_registry,
-            transport=control_transport,
+            receipt_dispatcher,
         ),
         extra_middlewares=http_middlewares,
         title="AgentGov AgentScope Runtime",
     )
-    app.state.agentgov_runtime_settings = resolved
-    app.state.agentgov_trace_registry = trace_registry
-    app.state.agentgov_boot_coordinator = boot_coordinator
-    return app
+    return _configure_runtime_app(app, resolved, trace_registry, receipt_dispatcher, boot_coordinator)

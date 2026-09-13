@@ -6,32 +6,30 @@ description: 为 RO 只读筛选、生成或修订完整威胁响应剧本；SOC
 ## 安全约束
 
 - phase 只能由 RO 的结构化上下文提供；缺失、未知或来自自然语言时按只读 `proposal`，任何 phase 都不能提升 SOC 权限。
-- RO 已提供 `published_playbooks`、`atomic_actions` 等已查实事实并明确禁止工具时，直接使用输入事实，禁止调用 MCP、Task、Read、Grep、Glob、Bash 或其他工具。
+- 剧本候选只使用 RO 已核实且足够完整的 `published_playbooks`、`atomic_actions`；缺少关键事实时返回 `needs_human_review`。不得调用 MCP、Task、Read、Grep、Glob、Bash 或其他工具补齐剧本数据。
 - 用户确认对象始终是完整剧本，不拆成单个原子动作确认或执行。
 - Agent 在所有阶段零副作用：禁止 `create*`、`manual`、`execute`、`update*`、`delete*`、`upload*`、`cancel*`、`rollback`、启停和预检。
 - Agent 只连接 `security-operations-expert` 只读 MCP scope，不持有 RO control/monitor token。
 - 不得调用 `AskUserQuestion` 追加确认；确认和执行均由 RO 的确定性状态机负责。
-- 一切 SOC 查询只经 `sec-ops` MCP 完成，严禁用 Bash、文件系统或网络命令模拟或替代。
+- 普通安全运营只读调查仅使用当前配置的 `sec-ops` MCP；剧本候选只依据 RO 已核实输入。严禁用 Bash、文件系统或网络命令模拟或替代任何 SOC 查询。
 
 ## 闭环步骤
 
 ### 只读候选阶段
 
 1. 归一化威胁研判结果和 response_case。
-2. 若 RO 输入已包含 `published_playbooks`、`atomic_actions` 等已查实事实并明确禁止工具，直接基于输入完成筛选或生成，不执行后续工具查询或子 Agent 委派。
-3. 其他只读会话先调用 `mcp__sec-ops__soc_api__get_resp_playbooks_recommend`，再用 `mcp__sec-ops__resource_read(uri)` 读取剧本详情 template 实例并逐个核对推荐候选。推荐候选均不合格时即视为没有对应的可复用剧本，直接依据真实 action-defs 生成临时剧本；不得为解析超大 resource 输出而改用 Bash、读取 AgentScope Runtime 内部 tool-results 文件或反复重试同一查询。仅当推荐接口明确不可用且剧本列表可在当前 MCP 返回中完整读取时，才读取 `openapi://soc_api/resp/playbooks` 兜底。
-4. 通过 `mcp__sec-ops__resource_read(uri)` 读取 `openapi://soc_api/resp/action-defs`、`openapi://soc_api/resp/plugins` 及 Harness 明确批准的 resource template 实例，核对真实原子动作、输入/输出 Schema、风险、可回滚性和目标类型；需要发现能力时只用 `mcp__sec-ops__resources_list` 与 `mcp__sec-ops__resource_templates_list`，不得只检查原生 `tools/list` 就判断 SOC 目录不可达。
-5. 需要委派时先调用 AgentScope `TeamCreate`，再调用 `AgentCreate`；`subagent_type` 必须使用系统提示中当前 Harness 版本列出的 `response-playbook-planning` 精确类型。通过 `TeamSay` 发送任务并等待结果，形成目标、成功标准、风险和影响范围。
-6. 以同一公共团队流程调用当前版本的 `response-playbook-builder`，选择已有剧本或在内存中构建完整临时剧本；完成后调用 `TeamDelete`。临时剧本此时不得保存。若当前模型不能稳定收敛子 Agent 输出，可由主 Agent 在相同只读边界内直接完成，但不得降低下列校验要求。
-7. 做只读结构、动作、参数、影响范围和回滚检查；失败则输出 `needs_human_review`。
-8. 输出完整结构化整本剧本候选后停止；RO 若提供结构化校验失败报告或人工调整意见，则在相同只读边界内修订并返回新候选。
+2. RO 提供已核实的 `published_playbooks` 与 `atomic_actions` 时，直接基于输入筛选或生成，不查询 MCP、委派子 Agent 或读取文件。当前 MCP 仅支持安全运营只读研判和检测发现分析，不提供剧本推荐、详情、action-defs 或 plugins。
+3. 根据 RO 输入核对真实原子动作、参数、风险、可回滚性和目标类型。输入未提供足够依据时，不猜测动作或从其他接口推断，直接返回 `needs_human_review`。
+4. 已核实的已有剧本适用时选择复用；否则仅在全部步骤均有真实原子动作依据时于内存构建完整临时剧本，不保存。
+5. 做结构、动作、参数、影响范围和回滚检查；失败则输出 `needs_human_review`。
+6. 输出完整结构化整本剧本候选后停止；RO 若提供已核实的结构化校验失败报告或人工调整意见，则在相同只读边界内修订并返回新候选。
 
 ### 已有剧本复用门禁
 
-- 不能只凭推荐结果、名称或描述复用已有剧本；必须读取候选的最新详情，并逐个核对全部 ACTION 节点。
-- 剧本详情的 ACTION `properties.plugin_id`（或 `actionSummary[].pluginId`）必须匹配当前 action-defs 的 `actionKey`，且动作已启用、不是 `simulated=true`；任一动作失效时立即排除该剧本，继续筛选其他候选。
+- 不能只凭名称或描述复用已有剧本；RO 必须提供已核实的最新详情与动作定义，供 Agent 逐个核对全部 ACTION 节点。
+- 剧本详情的 ACTION 必须匹配 RO 已核实的 `atomic_actions`，且动作已启用、不是 `simulated=true`；详情或动作定义缺失时返回 `needs_human_review`，任一动作失效时排除该剧本。
 - 已被 RO 反馈为未知动作、参数不合法、已停用或其他真实校验失败的剧本，不得在同一生成周期再次选择。
-- 推荐候选全部排除后应立即转为临时剧本，不用 Bash、文件系统或 AgentScope Runtime 内部持久输出继续穷举目录。
+- 已核实的候选全部排除后，只有已核实原子动作足以构成完整临时剧本才转为 `temporary`，否则返回 `needs_human_review`。
 
 ## 输出
 
@@ -43,9 +41,6 @@ description: 为 RO 只读筛选、生成或修订完整威胁响应剧本；SOC
 
 ## 会话驱动修订
 
-- 最新 SOC 契约已将预检合并到执行接口：RO 不单独调用预检，用户整本确认后由 RO 调用执行接口，并按“返回实例”或“内置预检拒绝且无实例”处理。本文更早出现的 `preflight` 仅代表禁止 Agent 直接调用该历史能力。
-- 识别到 RO 绑定的 `response_case_id` 后，可调用 `mcp__sec-ops__response_orchestration_agent_tools__get_case_revision_context_api_v1_agent_tools_cases_case_id_context_get` 获取当前剧本、不可变基线、候选绑定及允许的修订操作；必须同时传当前 `message_provenance` 中的 `console_conversation_id` 和 `user_message_id`，该查询只读。
-- 用户可以在同一 Agent 会话多轮讨论动作替换、参数调整、顺序调整或设备绑定。意图不明确时使用普通助手文本澄清，禁止用工具调用代替澄清，也不得把讨论中的建议提前提交。
-- 仅当用户在当前绑定会话明确接受具体修订后，才可调用 `mcp__sec-ops__response_orchestration_agent_tools__request_case_revision_api_v1_agent_tools_cases_case_id_revisions_post`。提交内容必须逐项对应用户接受的调整，不得扩写为未确认的变化。
-- `case_id`、`console_conversation_id`、`user_message_id`、`base_action_request_id`、`base_playbook_digest` 必须来自 RO/AI Console 提供的稳定结构化上下文，禁止从自然语言猜测或编造；Agent 不提交 actor、权限结论、凭据或令牌。
-- 修订工具只创建新版本并触发原 Agent 会话重新规划，不代表整本剧本获批，更不能执行 SOC。新的完整剧本仍须经过 RO 唯一的整本确认；用户说“直接执行某剧本”也不能绕过该确认门。
+- 用户可以在同一 Agent 会话讨论动作替换、参数调整、顺序调整或设备绑定；意图不明确时用普通助手文本澄清。
+- 当前 Harness 不提供案件修订工具。Agent 不提交修订、不编造案件状态；只有 RO 重新提供已核实的结构化事实及调整意见后，才重新规划完整候选。
+- 修订讨论不代表整本剧本获批，更不能执行 SOC；新的候选仍须经过 RO 的整本确认。用户说“直接执行某剧本”也不能绕过该确认门。

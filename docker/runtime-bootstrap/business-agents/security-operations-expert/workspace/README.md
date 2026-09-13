@@ -5,7 +5,7 @@
 
 ## 核心边界
 
-- Agent 读取安全运营事实，完成分析、剧本筛选、生成和修订。
+- Agent 使用当前 8 个只读 SOC tools 和检测发现分析 template 完成安全运营研判。剧本筛选、生成和修订仅依据 RO 已核实的 `published_playbooks`、`atomic_actions`；材料不足时返回 `needs_human_review`，不猜测缺失能力。
 - Agent 不直接执行 SOC 副作用工具；确认、保存、执行和监控边界以当前 Workspace 配置为准。
 - 平台只按注册表和路由确定运行归属，不根据 Agent ID 注入专用工具或授权逻辑。
 
@@ -30,7 +30,7 @@
 Agent 开发者负责维护 `tests/`。从 Workspace 根目录执行：
 
 ```bash
-python -m pytest -q -p agentgov_testkit.pytest_plugin tests
+python -I -m pytest -q -p agentgov_testkit.pytest_plugin --noconftest --import-mode=importlib -c /dev/null tests
 ```
 
 AgentGov 系统源码的 `make test` 不收集本目录。平台在测试待发布 Agent 版本时，会检出精确

@@ -67,6 +67,7 @@ class _TestSession:
     agent_id: str
     commit_sha: str
     change_set_id: str | None
+    test_run_id: str | None
     checkout: Path
     created_at: str
 
@@ -334,15 +335,36 @@ class AgentTestingService:
             source="release_check",
         )
 
-    def create_session(self, *, agent_id: str, commit_sha: str | None, change_set_id: str | None) -> JsonObject:
+    def create_session(
+        self,
+        *,
+        agent_id: str,
+        commit_sha: str | None,
+        change_set_id: str | None,
+        test_run_id: str | None = None,
+        test_run_attestation: str | None = None,
+    ) -> JsonObject:
         safe_agent_id = self._require_agent(agent_id)
         store = self._store_for(safe_agent_id)
         resolved = self._resolve_commit(store, commit_sha)
         self._validate_change_set_binding(safe_agent_id, resolved, change_set_id)
+        if bool(test_run_id) != bool(test_run_attestation):
+            raise AgentTestingError(403, "AGENT_TEST_RUN_ATTESTATION_INVALID", "Agent test run attestation is incomplete.")
+        if test_run_id and test_run_attestation:
+            try:
+                self.runner.require_attestation(
+                    test_run_id=test_run_id,
+                    token=test_run_attestation,
+                    agent_id=safe_agent_id,
+                    commit_sha=resolved,
+                    change_set_id=change_set_id,
+                )
+            except PermissionError as exc:
+                raise AgentTestingError(403, "AGENT_TEST_RUN_ATTESTATION_INVALID", str(exc)) from exc
         session_id = f"ats-{uuid.uuid4()}"
         checkout = self._sessions_dir / session_id / "workspace"
         self.runner.checkout(store=store, commit_sha=resolved, destination=checkout)
-        session = _TestSession(session_id, safe_agent_id, resolved, change_set_id, checkout, utc_now())
+        session = _TestSession(session_id, safe_agent_id, resolved, change_set_id, test_run_id, checkout, utc_now())
         with self._sessions_lock:
             self._sessions[session_id] = session
         return self._session_payload(session)
@@ -360,13 +382,27 @@ class AgentTestingService:
                 "tested_commit_sha": session.commit_sha,
             },
         )
-        return await self._run_candidate(
+        result = await self._run_candidate(
             request,
             worktree_path=session.checkout,
             candidate_commit_sha=session.commit_sha,
             change_set_id=session.change_set_id or test_session_id,
             agent_id=session.agent_id,
         )
+        if session.test_run_id:
+            self.store.record_attested_invocation(
+                session.test_run_id,
+                {
+                    "test_run_id": session.test_run_id,
+                    "run_id": result.run_id,
+                    "session_id": result.session_id,
+                    "agent_version_id": result.agent_version_id,
+                    "langfuse_trace_id": result.trace_id,
+                    "langfuse_trace_url": result.trace_url,
+                    "errors": list(result.errors),
+                },
+            )
+        return result
 
     def delete_session(self, test_session_id: str) -> None:
         with self._sessions_lock:

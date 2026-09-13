@@ -11,38 +11,52 @@ _OPERATOR = "platform-operator"
 
 
 _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract] = {
-    ("/api/agent-config-file", "put"): RequestExampleContract(
+    ("/api/agent-registry/{agent_id}/native-candidate", "post"): RequestExampleContract(
         media_type="application/json",
-        operation_description="Replace the selected editable UTF-8 config file. Read the file first and pass its sha256 as expected_sha256 to reject stale concurrent edits; content is the complete replacement, not a patch.",
+        operation_description=(
+            "Create or continue one isolated Git candidate from the reviewed AgentScope AgentData fields. "
+            "The URL owns agent_id; backend identity and Runtime credentials are not accepted in agent_data."
+        ),
         examples={
-            "replace_mcp_config": _example(
-                "Replace the current editable config",
+            "create_draft_candidate": _example(
+                "Create an unpublished Agent candidate",
                 {
-                    "content": '{\n  "mcp_config": {"type": "http_mcp", "url": "${SEC_OPS_MCP_URL}"},\n  "credential_refs": []\n}\n',
-                    "expected_sha256": "sha256-from-get-agent-config-file",
+                    "agent_data": {
+                        "name": "SOC evidence reviewer",
+                        "system_prompt": "Review the supplied evidence and state uncertainty.",
+                        "context_config": {},
+                        "react_config": {},
+                        "invite_config": {"invitable": False},
+                    },
+                    "reason": "Create a reviewed candidate for platform tests.",
                 },
             )
         },
     ),
-    ("/api/agent-repository/discard-changes", "post"): RequestExampleContract(
+    ("/api/agent-change-sets/{change_set_id}/files", "put"): RequestExampleContract(
         media_type="application/json",
-        operation_description="Discard only the listed dirty workspace paths for the selected business Agent. Read repository status first; an empty paths list is a no-op and the operation never means an implicit whole-workspace discard.",
+        operation_description="Commit one or more reviewed UTF-8 files to the isolated candidate worktree. Pass the candidate commit and per-file hashes returned by GET to reject stale concurrent edits; this operation never changes the active release.",
         examples={
-            "discard_one_file": _example(
-                "Discard one confirmed workspace file",
-                {"paths": ["mcp/soc-readonly.json"]},
-            )
-        },
-    ),
-    ("/api/agent-repository/snapshot", "post"): RequestExampleContract(
-        media_type="application/json",
-        operation_description="Commit the selected business Agent's current dirty workspace as a version snapshot. The operation records operator and note for audit and has no effect when the workspace has no changes.",
-        examples={
-            "manual_snapshot": _example(
-                "Save a reviewed workspace snapshot",
+            "update_candidate_files": _example(
+                "Commit two files to one unpublished candidate",
                 {
+                    "expected_candidate_commit_sha": "0123456789abcdef0123456789abcdef01234567",
+                    "files": [
+                        {
+                            "path": "AGENT.md",
+                            "content": "# 安全运营专家\n",
+                            "expected_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                            "mode": 420,
+                        },
+                        {
+                            "path": "mcp/soc-readonly.json",
+                            "content": '{"mcp_config":{"type":"http_mcp","url":"${SEC_OPS_MCP_URL}"}}\n',
+                            "expected_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                            "mode": 420,
+                        },
+                    ],
                     "operator": _OPERATOR,
-                    "note": "保存已复核的 MCP 配置调整。",
+                    "note": "保存为候选版本，等待测试与审批。",
                 },
             )
         },
@@ -76,6 +90,13 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                 {
                     "operator": _OPERATOR,
                     "note": "Diff 与测试证据均已复核。",
+                    "candidate_commit_sha": "b" * 40,
+                    "diff_digest": "d" * 64,
+                    "test_run_id": "atr-20260729-tested-candidate",
+                    "suite_digest": "e" * 64,
+                    "reviewed_files": [
+                        {"path": "AGENT.md", "detail_sha256": "c" * 64},
+                    ],
                 },
             )
         },
@@ -116,6 +137,10 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                     "operator": _OPERATOR,
                     "tag_name": "release-candidate-2026-07-29",
                     "note": "发布已批准且测试通过的候选。",
+                    "expected_candidate_commit_sha": "b" * 40,
+                    "expected_diff_digest": "d" * 64,
+                    "expected_test_run_id": "atr-20260729-tested-candidate",
+                    "expected_suite_digest": "e" * 64,
                 },
             ),
             "force_publish": _example(
@@ -124,6 +149,8 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                     "operator": _OPERATOR,
                     "force": True,
                     "force_reason": "紧急修复已完成人工复核，接受当前已记录的非反馈测试阻塞项。",
+                    "expected_candidate_commit_sha": "b" * 40,
+                    "expected_diff_digest": "d" * 64,
                 },
                 description="Never use force for feedback-linked candidates or incomplete provenance.",
             ),
@@ -141,32 +168,6 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                 {
                     "operator": _OPERATOR,
                     "note": "存储故障已恢复，重试清理隔离 worktree。",
-                },
-            )
-        },
-    ),
-    ("/api/agent-releases/{release_id}/restore", "post"): RequestExampleContract(
-        media_type="application/json",
-        operation_description="Restore a historical release tree as a new auditable commit. Obtain release_id from the release list; the historical release record remains unchanged.",
-        examples={
-            "restore_release_tree": _example(
-                "Restore a reviewed historical release",
-                {
-                    "operator": _OPERATOR,
-                    "note": "恢复该版本的 workspace tree 形成新提交。",
-                },
-            )
-        },
-    ),
-    ("/api/agent-releases/{release_id}/rollback", "post"): RequestExampleContract(
-        media_type="application/json",
-        operation_description="Roll the owning business Agent back to the selected published or archived release. Obtain release_id from GET /api/agent-releases and review current run impact before executing.",
-        examples={
-            "rollback_release": _example(
-                "Rollback to a reviewed release",
-                {
-                    "operator": _OPERATOR,
-                    "note": "当前版本出现回归，回滚到最近稳定版本。",
                 },
             )
         },

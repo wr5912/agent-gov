@@ -87,44 +87,6 @@ class ChatResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
-class AgentInfo(BaseModel):
-    name: str
-    path: str
-    description: Optional[str] = None
-    model: Optional[str] = None
-    tools: list[str] = Field(default_factory=list)
-    skills: list[str] = Field(default_factory=list)
-
-
-class SkillInfo(BaseModel):
-    name: str
-    path: str
-    description: Optional[str] = None
-
-
-class ConfigMappingItem(BaseModel):
-    scope: str
-    kind: str
-    container_path: str
-    host_mount: Optional[str] = None
-    exists: bool
-    loaded_by_default: bool
-    load_semantics: Literal["runtime_loaded", "runtime_materialized", "governance_only", "not_applicable"] = "not_applicable"
-    display_group: Literal["harness", "runtime", "versioning", "hidden_debug"] = "hidden_debug"
-    safe_to_edit: bool = False
-    git_policy: str
-    notes: Optional[str] = None
-
-
-class ConfigMappingResponse(BaseModel):
-    agent_id: str = "security-operations-expert"
-    runtime: Literal["agentscope"] = "agentscope"
-    runtime_url: str
-    workspace: str
-    runtime_contract: str
-    mappings: list[ConfigMappingItem]
-
-
 class RuntimeRootResponse(BaseModel):
     name: str
     health: str

@@ -11,6 +11,7 @@ from app.runtime.json_types import JsonObject
 
 from .contracts import (
     AgentRunResponse,
+    RunStatus,
     RuntimeTraceActionExpectation,
     RuntimeTraceExpectations,
     RuntimeTraceTeamChildExpectation,
@@ -74,6 +75,8 @@ def trace_has_complete_governed_run(
         return False
     if not _root_invoke_exists(observations, expectations.root_session_id):
         return False
+    if expectations.interrupted_before_reply:
+        return True
     if not _attributes_present_anywhere(observations, ("gen_ai.request.model", "gen_ai.provider.name")):
         return False
     names = {str(value.get("name")) for value in observations}
@@ -88,6 +91,10 @@ def _run_and_expectations_match(
     if trace.get("fetch_status") == "failed" or not run.trace_id or not run.terminal_reason:
         return False
     if trace.get("id", trace.get("trace_id")) != run.trace_id:
+        return False
+    if expectations.interrupted_before_reply and (
+        run.status not in {RunStatus.CANCELLED, RunStatus.INTERRUPTED} or run.terminal_reason != "interrupted" or bool(run.reply_ids)
+    ):
         return False
     return (
         expectations.control_integrity_complete
@@ -134,6 +141,8 @@ def _stages_match(observations: list[JsonObject], expectations: RuntimeTraceExpe
     if any(_direct_session_id(stage) not in allowed_sessions for stage in stages):
         return False
     root_stages = [stage for stage in stages if _direct_session_id(stage) == expectations.root_session_id]
+    if expectations.interrupted_before_reply:
+        return len(root_stages) == 1 and _attribute(root_stages[0], "agentgov.run.stage") == "initial"
     raw_reply_ids = [_attribute(stage, "agentscope.agent.reply_id") for stage in root_stages]
     if any(not _valid_reply_id(value) for value in raw_reply_ids):
         return False

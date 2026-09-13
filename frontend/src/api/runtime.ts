@@ -4,6 +4,7 @@ export { connectAgentScopeSessionStream } from "./agentScopeStream";
 export type {
   AgentScopeStreamConnection,
   AgentScopeStreamHandlers,
+  AgentScopeStreamOptions,
   SubagentHitlProjection,
   SubagentHitlResolution,
 } from "./agentScopeStream";
@@ -11,11 +12,11 @@ export { defaultRuntimeConfig, shouldMigrateStoredApiBase } from "./request";
 export * from "./agentTesting";
 export * from "./feedback";
 import type {
-  AgentInfo,
   AgentPresentation,
   AgentSummary,
   AgentDeleteResponse,
   AgentChangeSet,
+  AgentChangeSetApproveRequest,
   AgentChangeSetActionRequest,
   AgentChangeSetCreateRequest,
   AgentChangeSetEvent,
@@ -23,33 +24,26 @@ import type {
   AgentGitDiff,
   AgentGitFileDiff,
   AgentGitRef,
-  AgentConfigFileResponse,
-  AgentConfigFileUpdateRequest,
-  AgentConfigFileUpdateResponse,
   AgentRelease,
-  AgentReleaseRollbackRequest,
-  AgentReleaseRestoreRequest,
-  AgentReleaseRestoreResponse,
-  AgentRepositoryDiscardChangesRequest,
-  AgentRepositorySnapshotRequest,
   AgentRepositoryStatus,
   AgentScopeChatInput,
   AgentScopeChatReceipt,
   AgentScopeChatResponse,
   AgentScopeMessagesResponse,
-  AgentScopeSessionView,
   AgentScopeStatusResponse,
-  ConfigMappingResponse,
+  GovernedRuntimeSessionView,
+  NativeAgentCandidateRequest,
+  NativeAgentCandidateResponse,
+  NativeAgentCandidateSource,
   RuntimeClientConfig,
-  RuntimeCurrentVersion,
   RuntimeHealth,
+  RuntimeNativeAgentSchema,
+  RuntimeWorkspaceMcp,
+  RuntimeWorkspaceSkill,
+  RuntimeWorkspaceStatus,
   SessionInfo,
-  SkillInfo,
   WorkspaceImportResponse,
-  WorkspaceRestoreRequest,
-  WorkspaceRestoreResponse,
 } from "../types/runtime";
-import { isRecord } from "../utils/records";
 
 export function getHealth(config: RuntimeClientConfig) {
   return requestJson<RuntimeHealth>(config, "/health");
@@ -81,24 +75,12 @@ export async function getSessions(
   signal?: AbortSignal,
 ): Promise<SessionInfo[]> {
   const query = new URLSearchParams({ governance_agent_id: governanceAgentId });
-  const list = await requestJson<{ sessions: AgentScopeSessionView[]; total: number }>(
+  const list = await requestJson<{ sessions: GovernedRuntimeSessionView[]; total: number }>(
     config,
     `/api/runtime/sessions/?${query.toString()}`,
     { headers: runtimeHeaders(config), signal },
   );
-  return (list.sessions || []).map((session) => sessionViewToSessionInfo(session, governanceAgentId));
-}
-
-export function provisionRuntimeAgent(
-  config: RuntimeClientConfig,
-  governanceAgentId: string,
-  signal?: AbortSignal,
-) {
-  return requestJson<RuntimeCurrentVersion>(
-    config,
-    `/api/runtime/agents/${encodeURIComponent(governanceAgentId)}/provision`,
-    { method: "POST", headers: runtimeHeaders(config), signal },
-  );
+  return list.sessions.map((session) => sessionViewToSessionInfo(session, governanceAgentId));
 }
 
 export async function getRuntimeSessionMessages(
@@ -216,24 +198,105 @@ export async function interruptRuntimeSession(
   );
 }
 
-function sessionViewToSessionInfo(view: AgentScopeSessionView, businessAgentId?: string): SessionInfo {
+function runtimeSessionResourcePath(
+  sessionId: string,
+  runtimeAgentId: string,
+  suffix = "",
+) {
+  const query = new URLSearchParams({ agent_id: runtimeAgentId });
+  return `/api/runtime/sessions/${encodeURIComponent(sessionId)}${suffix}?${query.toString()}`;
+}
+
+export async function renameRuntimeSession(
+  config: RuntimeClientConfig,
+  runtimeAgentId: string,
+  sessionId: string,
+  name: string,
+  signal?: AbortSignal,
+) {
+  await fetchRuntime(
+    config,
+    runtimeSessionResourcePath(sessionId, runtimeAgentId),
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+      signal,
+    },
+  );
+}
+
+export async function deleteRuntimeSession(
+  config: RuntimeClientConfig,
+  runtimeAgentId: string,
+  sessionId: string,
+  signal?: AbortSignal,
+) {
+  await fetchRuntime(
+    config,
+    runtimeSessionResourcePath(sessionId, runtimeAgentId),
+    { method: "DELETE", signal },
+  );
+}
+
+export function getRuntimeWorkspaceStatus(
+  config: RuntimeClientConfig,
+  runtimeAgentId: string,
+  sessionId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson<RuntimeWorkspaceStatus>(
+    config,
+    runtimeSessionResourcePath(sessionId, runtimeAgentId, "/workspace/status"),
+    { signal },
+  );
+}
+
+export function getRuntimeWorkspaceMcps(
+  config: RuntimeClientConfig,
+  runtimeAgentId: string,
+  sessionId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson<RuntimeWorkspaceMcp[]>(
+    config,
+    runtimeSessionResourcePath(sessionId, runtimeAgentId, "/workspace/mcp"),
+    // AgentScope 投影该资源时可能建立真实 MCP 连接；一次用户刷新只能触发一次上游操作。
+    { signal, retry: false },
+  );
+}
+
+export function getRuntimeWorkspaceSkills(
+  config: RuntimeClientConfig,
+  runtimeAgentId: string,
+  sessionId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson<RuntimeWorkspaceSkill[]>(
+    config,
+    runtimeSessionResourcePath(sessionId, runtimeAgentId, "/workspace/skills"),
+    { signal },
+  );
+}
+
+function sessionViewToSessionInfo(view: GovernedRuntimeSessionView, businessAgentId?: string): SessionInfo {
   const session = view.session;
-  const config = isRecord(session.config) ? session.config : {};
-  const sessionId = stringValue(session.id) || stringValue(session.session_id);
-  if (!sessionId) throw new Error("Runtime session 缺少 id。");
-  const createdAt = stringValue(session.created_at) || new Date().toISOString();
+  const sessionId = session.id?.trim();
+  const createdAt = session.created_at?.trim();
+  const updatedAt = session.updated_at?.trim();
+  if (!sessionId || !createdAt || !updatedAt) {
+    throw new Error("Runtime SessionRecord 缺少 id、created_at 或 updated_at。");
+  }
   return {
     session_id: sessionId,
-    agent_id: stringValue(session.agent_id) || null,
+    agent_id: session.agent_id,
     business_agent_id: businessAgentId || null,
     created_at: createdAt,
-    updated_at: stringValue(session.updated_at) || createdAt,
-    title: stringValue(config.name) || stringValue(session.name),
-    turns: numberValue(session.turns),
-    metadata: isRecord(session.metadata) ? session.metadata : {},
-    is_running: view.is_running,
+    updated_at: updatedAt,
+    title: session.config.name,
+    is_running: view.status === "running",
     status: view.status,
-    active_run_id: stringValue(session.active_run_id) || null,
+    active_run_id: view.active_run_id?.trim() || null,
   };
 }
 
@@ -291,19 +354,6 @@ async function decodeRuntimeJson<T>(response: Response): Promise<T> {
   } catch {
     throw new ApiRequestError("decode", "Runtime 返回了无效 JSON。");
   }
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function numberValue(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-export function getAgents(config: RuntimeClientConfig, agentId?: string) {
-  const query = agentId ? `?${new URLSearchParams({ agent_id: agentId }).toString()}` : "";
-  return requestJson<AgentInfo[]>(config, `/api/agents${query}`);
 }
 
 // 业务 Agent（治理对象，/api/agent-registry），用于顶栏全局 Agent 切换器与 scoping。
@@ -381,20 +431,41 @@ export function importBusinessAgentWorkspace(
   );
 }
 
-export function restoreBusinessAgentWorkspace(
+export function getRuntimeNativeAgentSchema(
+  config: RuntimeClientConfig,
+  signal?: AbortSignal,
+) {
+  return requestJson<RuntimeNativeAgentSchema>(config, "/api/runtime/agent-schema", { signal });
+}
+
+export function createNativeAgentCandidate(
   config: RuntimeClientConfig,
   agentId: string,
-  payload: WorkspaceRestoreRequest,
+  payload: NativeAgentCandidateRequest,
+  signal?: AbortSignal,
 ) {
-  return requestJson<WorkspaceRestoreResponse>(
+  return requestJson<NativeAgentCandidateResponse>(
     config,
-    `/api/agent-registry/${encodeURIComponent(agentId)}/workspace/restore`,
+    `/api/agent-registry/${encodeURIComponent(agentId)}/native-candidate`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal,
       timeoutMs: 120_000,
     },
+  );
+}
+
+export function getNativeAgentCandidateSource(
+  config: RuntimeClientConfig,
+  agentId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson<NativeAgentCandidateSource>(
+    config,
+    `/api/agent-registry/${encodeURIComponent(agentId)}/native-candidate-source`,
+    { signal },
   );
 }
 
@@ -412,62 +483,13 @@ export function deleteBusinessAgent(config: RuntimeClientConfig, agentId: string
   });
 }
 
-export function getSkills(config: RuntimeClientConfig, agentId?: string) {
-  const query = agentId ? `?${new URLSearchParams({ agent_id: agentId }).toString()}` : "";
-  return requestJson<SkillInfo[]>(config, `/api/skills${query}`);
-}
-
 export const runtimeApi = {
   health: getHealth,
   sessions: getSessions,
-  agents: getAgents,
-  skills: getSkills,
 };
-
-export function getConfigMapping(config: RuntimeClientConfig, agentId?: string) {
-  const params = new URLSearchParams();
-  if (agentId) params.set("agent_id", agentId);
-  const query = params.toString();
-  return requestJson<ConfigMappingResponse>(config, `/api/config${query ? `?${query}` : ""}`);
-}
-
-export function getAgentConfigFile(config: RuntimeClientConfig, agentId: string, path: string) {
-  const params = new URLSearchParams({ agent_id: agentId, path });
-  return requestJson<AgentConfigFileResponse>(config, `/api/agent-config-file?${params.toString()}`);
-}
-
-export function updateAgentConfigFile(
-  config: RuntimeClientConfig,
-  agentId: string,
-  path: string,
-  payload: AgentConfigFileUpdateRequest,
-) {
-  const params = new URLSearchParams({ agent_id: agentId, path });
-  return requestJson<AgentConfigFileUpdateResponse>(config, `/api/agent-config-file?${params.toString()}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-}
 
 export function getAgentRepositoryStatus(config: RuntimeClientConfig) {
   return requestJson<AgentRepositoryStatus>(config, "/api/agent-repository");
-}
-
-export function discardAgentRepositoryChanges(config: RuntimeClientConfig, payload: AgentRepositoryDiscardChangesRequest) {
-  return requestJson<AgentRepositoryStatus>(config, "/api/agent-repository/discard-changes", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-}
-
-export function snapshotAgentRepository(config: RuntimeClientConfig, payload: AgentRepositorySnapshotRequest = { operator: "ui" }) {
-  return requestJson<AgentGitRef>(config, "/api/agent-repository/snapshot", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
 }
 
 export function getCurrentAgentRef(config: RuntimeClientConfig, agentId?: string) {
@@ -504,7 +526,7 @@ export function diffAgentChangeSetFile(config: RuntimeClientConfig, changeSetId:
   return requestJson<AgentGitFileDiff>(config, `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/file-diff?${params.toString()}`);
 }
 
-export function approveAgentChangeSet(config: RuntimeClientConfig, changeSetId: string, payload: AgentChangeSetActionRequest = { operator: "ui" }) {
+export function approveAgentChangeSet(config: RuntimeClientConfig, changeSetId: string, payload: AgentChangeSetApproveRequest) {
   return requestJson<AgentChangeSet>(
     config,
     `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/approve`,
@@ -540,7 +562,7 @@ export function retryAgentChangeSetWorktreeCleanup(config: RuntimeClientConfig, 
   );
 }
 
-export function publishAgentChangeSet(config: RuntimeClientConfig, changeSetId: string, payload: AgentChangeSetPublishRequest = { operator: "ui", force: false }) {
+export function publishAgentChangeSet(config: RuntimeClientConfig, changeSetId: string, payload: AgentChangeSetPublishRequest) {
   return requestJson<AgentRelease>(
     config,
     `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/publish`,
@@ -554,28 +576,4 @@ export function publishAgentChangeSet(config: RuntimeClientConfig, changeSetId: 
 
 export function getAgentReleases(config: RuntimeClientConfig) {
   return requestJson<AgentRelease[]>(config, "/api/agent-releases");
-}
-
-export function rollbackAgentRelease(config: RuntimeClientConfig, releaseId: string, payload: AgentReleaseRollbackRequest = { operator: "ui" }) {
-  return requestJson<AgentRelease>(
-    config,
-    `/api/agent-releases/${encodeURIComponent(releaseId)}/rollback`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
-}
-
-export function restoreAgentRelease(config: RuntimeClientConfig, releaseId: string, payload: AgentReleaseRestoreRequest = { operator: "ui" }) {
-  return requestJson<AgentReleaseRestoreResponse>(
-    config,
-    `/api/agent-releases/${encodeURIComponent(releaseId)}/restore`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
 }

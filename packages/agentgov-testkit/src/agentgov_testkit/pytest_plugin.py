@@ -129,13 +129,25 @@ def _create_session(
         "change_set_id": os.getenv("AGENTGOV_CHANGE_SET_ID") or None,
     }
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    try:
-        response = httpx.post(
-            f"{api_base}/api/agent-test-sessions",
-            json=body,
-            headers=headers,
-            timeout=30.0,
+    test_run_id = (os.getenv("AGENTGOV_TEST_RUN_ID") or "").strip()
+    attestation = (os.getenv("AGENTGOV_TEST_RUN_ATTESTATION") or "").strip()
+    if bool(test_run_id) != bool(attestation):
+        raise AgentGovTestkitError("AgentGov test run attestation environment is incomplete")
+    if test_run_id:
+        headers.update(
+            {
+                "X-AgentGov-Test-Run-Id": test_run_id,
+                "X-AgentGov-Test-Run-Attestation": attestation,
+            }
         )
+    try:
+        with httpx.Client(trust_env=False) as client:
+            response = client.post(
+                f"{api_base}/api/agent-test-sessions",
+                json=body,
+                headers=headers,
+                timeout=30.0,
+            )
         response.raise_for_status()
         payload = response.json()
         session_id = payload.get("test_session_id")

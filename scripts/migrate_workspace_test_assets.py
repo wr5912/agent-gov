@@ -20,9 +20,9 @@ if str(REPO_ROOT) not in sys.path:
 from app.agent_testing.legacy_generated_tests import classify_legacy_generated_test  # noqa: E402
 
 if __package__:
-    from .bootstrap_runtime_volume import DEFAULT_BOOTSTRAP_DIR, DEFAULT_ENV_FILE, resolve_runtime_root
+    from .bootstrap_runtime_volume import DEFAULT_BOOTSTRAP_DIR, DEFAULT_ENV_FILE, require_authorized_runtime_root, resolve_runtime_root
 else:
-    from bootstrap_runtime_volume import DEFAULT_BOOTSTRAP_DIR, DEFAULT_ENV_FILE, resolve_runtime_root
+    from bootstrap_runtime_volume import DEFAULT_BOOTSTRAP_DIR, DEFAULT_ENV_FILE, require_authorized_runtime_root, resolve_runtime_root
 
 BUILTIN_TEST_AGENT_ID = "security-operations-expert"
 
@@ -332,6 +332,7 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="Apply changes; default is a read-only scan.")
     args = parser.parse_args()
     runtime_root = resolve_runtime_root(args.runtime_root, args.env_file)
+    require_authorized_runtime_root(runtime_root, "container")
     results = migrate_workspace_test_assets(
         runtime_root=runtime_root,
         bootstrap_dir=args.bootstrap_dir.resolve(),

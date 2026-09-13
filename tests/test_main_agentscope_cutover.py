@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,14 +10,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.agent_testing.service import AgentTestingService, _TestSession  # noqa: E402
-
 from app_test_utils import load_test_app  # noqa: E402
 
 
-def test_main_exposes_only_agentscope_runtime_surfaces(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("AGENTGOV_RUNTIME_SHARED_SECRET", "test-runtime-shared-secret")
-    module = load_test_app(monkeypatch, tmp_path)
+def test_main_exposes_only_agentscope_runtime_surfaces(process_environment, tmp_path) -> None:
+    process_environment.set("AGENTGOV_RUNTIME_SHARED_SECRET", "test-runtime-shared-secret")
+    module = load_test_app(process_environment, tmp_path)
     paths = {route.path for route in module.app.routes}
 
     assert {
@@ -37,6 +33,12 @@ def test_main_exposes_only_agentscope_runtime_surfaces(monkeypatch, tmp_path) ->
         "/v1/chat/completions",
         "/v1/responses",
         "/v1/conversations",
+        "/api/langfuse/traces/{trace_id}",
+        "/api/agents",
+        "/api/skills",
+        "/api/config",
+        "/api/agent-config-file",
+        "/api/runtime/agents/{governance_agent_id}/provision",
     }.isdisjoint(paths)
     assert module.runtime_execution.client is module.runtime_client
     with TestClient(module.app) as client:
@@ -53,71 +55,51 @@ def test_api_main_does_not_load_runtime_provider_or_mcp_secrets() -> None:
     assert "runtime_env = MappingProxyType({})" in source
 
 
-def test_candidate_test_session_cleanup_releases_runtime_before_local_checkout(tmp_path) -> None:
-    store = Mock()
-    store.reconcile_interrupted_runs.return_value = []
-    release_candidate = AsyncMock()
-    service = AgentTestingService(
-        store=store,
-        store_for=lambda _agent_id: Mock(),
-        agent_exists=lambda _agent_id: True,
-        get_change_set=lambda _change_set_id: None,
-        run_candidate=AsyncMock(),
-        release_candidate=release_candidate,
-        artifacts_dir=tmp_path / "artifacts",
-        api_base_url="http://agent-gov.test",
-        api_key=None,
-        run_timeout_seconds=10,
-    )
-    service.runner.remove_checkout = Mock()
-    session = _TestSession(
-        test_session_id="ats-test",
-        agent_id="agent-a",
-        commit_sha="a" * 40,
-        change_set_id=None,
-        checkout=tmp_path / "checkout",
-        created_at="2026-09-09T00:00:00+00:00",
-    )
-    service._sessions[session.test_session_id] = session
+def test_api_startup_reconciles_publication_evidence_before_serving_requests(
+    process_environment,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    process_environment.set("AGENTGOV_RUNTIME_SHARED_SECRET", "test-runtime-shared-secret")
+    module = load_test_app(process_environment, tmp_path)
+    calls: list[object] = []
 
-    asyncio.run(service.delete_session_async(session.test_session_id))
+    class EmptyReport:
+        @staticmethod
+        def to_payload() -> dict[str, int]:
+            return {}
 
-    release_candidate.assert_awaited_once_with("agent-test-ats-test")
-    service.runner.remove_checkout.assert_called_once()
-    assert session.test_session_id not in service._sessions
-    service.close()
+    def reconcile(service):
+        calls.append(service)
+        return EmptyReport()
+
+    monkeypatch.setattr(module, "reconcile_legacy_publication_evidence", reconcile)
+    with TestClient(module.app) as client:
+        assert calls == [module.agent_governance]
+        assert client.get("/health/live").status_code == 200
 
 
-def test_candidate_cleanup_removes_local_checkout_when_runtime_release_fails(tmp_path) -> None:
-    store = Mock()
-    store.reconcile_interrupted_runs.return_value = []
-    release_candidate = AsyncMock(side_effect=RuntimeError("runtime unavailable"))
-    service = AgentTestingService(
-        store=store,
-        store_for=lambda _agent_id: Mock(),
-        agent_exists=lambda _agent_id: True,
-        get_change_set=lambda _change_set_id: None,
-        run_candidate=AsyncMock(),
-        release_candidate=release_candidate,
-        artifacts_dir=tmp_path / "artifacts",
-        api_base_url="http://agent-gov.test",
-        api_key=None,
-        run_timeout_seconds=10,
-    )
-    service.runner.remove_checkout = Mock()
-    session = _TestSession(
-        test_session_id="ats-failed",
-        agent_id="agent-a",
-        commit_sha="b" * 40,
-        change_set_id=None,
-        checkout=tmp_path / "checkout",
-        created_at="2026-09-09T00:00:00+00:00",
-    )
-    service._sessions[session.test_session_id] = session
+@pytest.mark.parametrize(
+    ("method", "path"),
+    (
+        ("GET", "/api/agents"),
+        ("GET", "/api/skills"),
+        ("GET", "/api/config"),
+        ("GET", "/api/agent-config-file"),
+        ("PUT", "/api/agent-config-file"),
+        ("POST", "/api/runtime/agents/retired/provision"),
+    ),
+)
+def test_removed_runtime_management_tracks_are_not_routable(
+    process_environment,
+    tmp_path,
+    method: str,
+    path: str,
+) -> None:
+    process_environment.set("AGENTGOV_RUNTIME_SHARED_SECRET", "test-runtime-shared-secret")
+    module = load_test_app(process_environment, tmp_path)
 
-    with pytest.raises(RuntimeError, match="runtime unavailable"):
-        asyncio.run(service.delete_session_async(session.test_session_id))
+    with TestClient(module.app) as client:
+        response = client.request(method, path)
 
-    service.runner.remove_checkout.assert_called_once()
-    assert session.test_session_id not in service._sessions
-    service.close()
+    assert response.status_code == 404

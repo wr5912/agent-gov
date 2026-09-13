@@ -6,7 +6,7 @@ import copy
 import json
 import sys
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -27,11 +27,11 @@ from app.sse_contracts import RUNTIME_STREAM_PATH, runtime_sse_contract
 from scripts.export_openapi import build_openapi_schema
 
 OpenApiObject = dict[str, object]
+_DIRECT_HTTP = build_opener(ProxyHandler({}))
 
 REQUIRED_RUNTIME_OPERATIONS = frozenset(
     {
         ("/api/runtime/agents/{governance_agent_id}/current", "get"),
-        ("/api/runtime/agents/{governance_agent_id}/provision", "post"),
         (RUNTIME_SESSIONS_PATH, "post"),
         (RUNTIME_SESSIONS_PATH, "get"),
         ("/api/runtime/sessions/{session_id}/messages", "get"),
@@ -234,7 +234,7 @@ def _load_schema(args: argparse.Namespace) -> OpenApiObject:
         return _load_json(args.input)
     if args.base_url:
         url = args.base_url.rstrip("/") + "/openapi.json"
-        with urlopen(url, timeout=args.timeout) as response:
+        with _DIRECT_HTTP.open(url, timeout=args.timeout) as response:
             value = json.load(response)
         if not isinstance(value, dict):
             raise ValueError(f"{url} did not return a JSON object")

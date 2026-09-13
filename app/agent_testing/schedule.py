@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from app.runtime.agent_paths import InvalidAgentId, validate_agent_id
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db_base import begin_sqlite_write_transaction, utc_now
-from app.runtime.state_machines import AGENT_RUNNABLE_LIFECYCLE_STATES, validate_transition
+from app.runtime.state_machines import is_agent_lifecycle_runnable, validate_transition
 
 from .models import AgentTestScheduleEventModel, AgentTestScheduleModel
 from .service import AgentTestingError, AgentTestingService
@@ -334,7 +334,7 @@ class AgentTestScheduleService:
             )
             return
         lifecycle = self._agent_status(agent_id)
-        if lifecycle not in AGENT_RUNNABLE_LIFECYCLE_STATES:
+        if not is_agent_lifecycle_runnable(lifecycle):
             terminal = lifecycle == "archived"
             if terminal:
                 self.store.disable_schedule_for_agent(agent_id)

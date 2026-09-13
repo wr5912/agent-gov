@@ -25,7 +25,7 @@
 | 对象 | 权威所有者 | 说明 |
 | --- | --- | --- |
 | `tests/README.md` | Workspace 开发者 | 说明测试范围、依赖和人工复核边界；缺失只告警 |
-| `tests/conftest.py` | Workspace 开发者 | 可选，本 Agent 的本地 fixture |
+| `tests/conftest.py` | 禁止 | 平台固定 plugin 提供真实 `agent` fixture；禁止 Workspace 覆盖执行边界 |
 | `tests/test_*.py` | Workspace 开发者 | 可执行测试资产；首版只接受 `tests/` 下扁平文件 |
 | `agentgov_testkit` | AgentGov 平台 | 小型、版本化 Python 库和 pytest plugin |
 | `AgentTestSuiteSummary` | 平台派生 | 从指定 commit 扫描文件、诊断和 `suite_digest`，不单独存内容 |
@@ -62,14 +62,15 @@ workspace/
 ├── mcp/
 └── tests/
     ├── README.md
-    ├── conftest.py       # 可选
+    ├── conftest.py       # 禁止；平台运行会 fail closed
     └── test_*.py
 ```
 
 规则：
 
 1. `tests/test_*.py` 必须是可解析 Python 文件，首版不递归发现子目录。
-2. 每个测试文件、fixture 和辅助资产都随 Workspace Git 提交。
+2. 每个测试文件和辅助资产都随 Workspace Git 提交；不得提供 `conftest.py`、`pytest_plugins`、pytest hook、
+   test double、mock API、符号链接，或修改 `agent`、`agent.run` 与真实 invocation result。
 3. 包导入缺少 `tests/` 或 `tests/README.md` 时成功但返回结构化 warning；没有测试文件时不能满足普通发布条件。
 4. 导入目标由 URL 中的 `agent_id` 指定，但包根目录 `agent.yaml.agent.id` 必须有效且与其逐字
    一致；缺失、无效、格式错误或来源 ID 不一致均在目标 Workspace、注册表、Git 和会话状态
@@ -133,11 +134,16 @@ DELETE /api/agent-test-sessions/{test_session_id}
 均使用该 SHA，不把“当前版本”解释延迟到执行时。待发布变更测试入口从变更记录读取 `agent_id` 和
 待发布 commit，不接受客户端重复提交身份字段。
 
-平台唯一执行命令为：
+平台唯一执行命令为（生产记录中的首项是当前受控 Python 绝对路径）：
 
 ```bash
-python -m pytest -q -p agentgov_testkit.pytest_plugin tests
+python -I -m pytest -q -p agentgov_testkit.pytest_plugin --noconftest --import-mode=importlib -c /dev/null tests
 ```
+
+Runner 同时设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`，清除外部 `PYTHON*` / `PYTEST*` 控制变量，并在
+checkout 后、pytest 启动前重新检查 suite 与 `suite_digest`。子进程报告的 invocation 列表不受信任；
+平台为运行中测试签发短期内部绑定，真实调用完成后由 API 服务端按精确 `test_run_id` 写入
+`run_id/session_id/agent_version_id/trace_id/errors`，终态报告只投影这份服务端证明。
 
 客户端不能提交命令、工作目录、测试结果、通过状态或任意安装步骤。平台不在 API 容器内执行
 `pip install`，也不因上传或确认待发布变更而自动运行代码。测试运行只有两类合法来源：用户显式调用运行
@@ -216,7 +222,8 @@ running --服务关闭/重启--> interrupted
    `normalized_text = "".join(result.text.split())` 做最小空白规范化，再对每个预期业务结果分别断言；这只消除格式差异，不得将多个可选结果宽松化为通过。
    原始反馈、已确认整理和优化方案中每个独立可观察的修复结果必须分别有正向断言；`test_intent` 和 `assertion_rationale` 不能代替测试代码中的断言。
    已给出全部判断事实的自包含用例，输入必须明确「仅依据已给定事实、不调用工具或读文件」，并断言 `result.raw["agent_activity"]["tool_calls"] == []`；避免本地和平台复跑因未声明 MCP、文件或网络状态发生漂移。
-   后端拒绝仅检查非空、恒等比较、嵌套死分支、辅助函数、`any(...)`
+   后端要求且只允许一次 `result = agent.run(...)`，并拒绝 mock/patch/test double、动态执行、fixture/plugin/hook、
+   `agent.run` 替换、result 重赋值或 `result.text/result.raw/result.errors` 及嵌套内容修改。后端也拒绝仅检查非空、恒等比较、嵌套死分支、辅助函数、`any(...)`
    和 `A or B` 候选关键词等可误通过写法，也不能只断言相反结果未出现而遗漏目标结果。原始反馈已经给出判断事实时，测试输入必须内嵌这些事实；
    除非上下文给出可运行的固定资源引用，不得把测试改写为依赖未声明 MCP、数据库或网络数据的查询。
 2. **确认待发布变更**：校验事项、业务 Agent、归因、优化方案、执行记录和待发布变更仍属于同一链路；
@@ -261,7 +268,7 @@ running --服务关闭/重启--> interrupted
 export AGENTGOV_API_BASE=http://agent-gov.example
 export AGENTGOV_AGENT_ID=customer-support
 export AGENTGOV_API_KEY=...
-python -m pytest -q -p agentgov_testkit.pytest_plugin tests
+python -I -m pytest -q -p agentgov_testkit.pytest_plugin --noconftest --import-mode=importlib -c /dev/null tests
 ```
 
 省略 commit 时，创建测试会话或运行会固定当时的当前版本。本地预检不绑定待发布变更；平台发布检查

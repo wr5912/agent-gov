@@ -1,295 +1,209 @@
-# 业务 Agent Workspace 包与运行卷初始化工程契约
+# 业务 Agent 候选创建、Workspace 包与发布工程契约
 
-> 文档状态：当前产品工程契约。公开字段以 OpenAPI 为单一真相源。
->
-> 本文取代旧“通用模板 + 声明 seed + 运行态 seed catalog + 直接创建 API”设计。旧设计只在
-> [归档](./archive/design/业务Agent工作区资产闭环产品工程方案.md) 中保留审计价值。
+> 文档状态：当前产品工程契约。文件路径为兼容既有链接保留；“热加载”不再表示修改活动
+> Workspace 或下一轮对话自动生效。公开字段以当前 OpenAPI 为单一真相源。
 
-## 1. 裁决
+## 1. 核心裁决
 
-| 裁决 | 事实依据 | 删除的旧设计 | 验收 |
-| --- | --- | --- | --- |
-| 普通新 Agent 只通过 Workspace 包创建 | Agent 的可运行前提是完整 AgentScope Harness；仅填 name/ID 无法证明指令、权限、Skill、MCP 和 Subagent 完整 | `POST /api/agent-registry`、`GET /api/agent-registry/templates`、`template_id`、`source_seed_id` | OpenAPI 不含旧路由/字段；新 ID 导入成功后进入注册表 |
-| 只保留一个内置业务 Agent | 仓库只需提供一个可运行、可导出、可修改的起点 | `templates/business-agent/general` 和多个普通业务 Agent 出生副本 | 初始化源中的业务 Agent 集合严格等于声明的内置集合 |
-| 内置、默认、受保护分开表达 | 三者分别回答“是否随版本提供”“兼容入口默认选谁”“是否可在线删除” | `origin=seed/user` 及由来源推导全部行为 | API 分别返回 `builtin`、`default`、`protected` |
-| 初始化源不参与持续同步 | 运行态 Workspace 及其 per-Agent Git 才是当前行为事实 | 运行态 `data/seed-catalog`、删除标记、逐文件回灌 | 已存在 Workspace 整体跳过；重启不复活已删普通 Agent |
-| Workspace 文件由包所有者明确维护，平台不改写 | 平台改写会让上传包、tree digest 和 Git commit 不一致；静默忽略来源 ID 又会把错误身份激活到目标 Agent | 身份文本渲染、endpoint renderer、权限覆盖、ID 忽略告警 | 包内 `agent.yaml.agent.id` 与目标 ID 完全一致时，普通文件字节与 executable bit 保持不变 |
-| 导入同步完成，下一 turn 生效 | 单个 Workspace 有明确资源上限；无需持久化第二套 operation 状态机 | 异步导入 job、导入历史表、多阶段激活状态 | 一次请求完整成功或完整失败；成功回执绑定 Git commit |
+业务 Agent 是 AgentGov 的稳定治理身份；AgentScope 原生 Agent 是某个已发布 Git commit 的不可变
+运行实例。原生 schema 表单和完整 Workspace 包只是两种输入方式，二者都必须进入同一个 Git 候选
+命令、测试/审批门禁和发布激活 saga，不能产生两套生命周期。
 
-当前唯一内置、默认且受保护的业务 Agent 是 `security-operations-expert`。这些是三个独立属性，
-不是未来必须绑定在一起的单一类型。`main-agent` 是普通历史示例，不再享有默认、内置、保护或
-模板语义。
+| 动作 | 产生的事实 | 不会发生的事情 |
+| --- | --- | --- |
+| 原生 schema 表单创建/配置 | `draft` 治理身份、隔离 change set、候选 commit | 不写活动 Workspace，不创建可运行 Session |
+| Workspace 包创建/覆盖导入 | 同一种 `draft`/change set/候选 commit 及导入审计 | 不推进活动 HEAD，不让已有 Session 换版本 |
+| 历史树恢复 | 从指定历史 commit 形成新的候选 commit | 不 `hard reset`，不直接回退生产 |
+| 候选文件编辑 | 在一个 change set 内批量校验并形成一个 commit | 不调用旧 live config API，不逐文件暗中激活 |
+| 测试、审批、发布 | 精确 commit 测试；必要人工审批；原生 Agent 创建与探测；Git 发布和 Runtime 绑定 | 不要求用户再点击“启用 Runtime” |
 
-## 2. 对象与路径
+发布成功只影响之后创建的新 Session；已有 Session 始终保留其创建时绑定的
+`agent_version_id + harness_digest + runtime_agent_id`。因此项目不再使用“保存后下一 turn 生效”语义。
+
+## 2. 事实所有权与路径
 
 ```text
 仓库运行卷初始化源
 docker/runtime-bootstrap/
 ├── governor-workspace/
-└── business-agents/
-    └── security-operations-expert/
-        └── workspace/
+└── business-agents/security-operations-expert/workspace/
 
-宿主机运行卷
+宿主机持久化根
 ${HOST_RUNTIME_VOLUME_ROOT}/
 ├── governor-workspace/
 └── data/business-agents/<agent_id>/
-    ├── workspace/       # 已发布 AgentScope Harness 与 per-Agent Git 仓库
-    └── version/         # worktree/release 等版本治理状态，不属于 Workspace 包
+    ├── workspace/       # 当前已发布 Git tree；不是在线编辑区
+    └── version/
+        ├── worktrees/   # 隔离候选
+        └── releases/    # 发布归档
 ```
 
-`docker/runtime-bootstrap/` 是初始化源，不是模板 catalog、可在线编辑副本或普通 Agent 注册表。
-运行态不存在 `data/seed-catalog/`。普通业务 Agent 的来源只在其导入回执和 Git 历史中审计，注册表
-不持久化 `origin`。
+`docker/runtime-bootstrap/` 只负责空卷初始化，不是在线模板 catalog。运行态 Workspace、per-Agent Git、
+AgentScope 数据库和 AgentGov SQLite 均属于持久化数据；部署、迁移或回退前必须单独盘点和备份。
 
-## 3. Workspace 包
+## 3. 两种候选输入
 
-媒体类型为 `.tar.gz`，解压后必须恰好包含一个 `workspace/` 顶层目录：
+### 3.1 AgentScope 原生 schema 表单
+
+前端先读取：
 
 ```text
-workspace/
-  agent.yaml
-  AGENT.md
-  mcp/
-    <name>.json
-  skills/
-    <name>/SKILL.md
-  subagents/
-    <name>/agent.yaml
-    <name>/AGENT.md
-  tests/
-    README.md
-    test_*.py
-  ...其他普通文件
+GET /api/runtime/agent-schema
 ```
 
-包内普通文件由包所有者负责，平台逐字节保留：
+该响应来自固定 AgentScope `GET /agent/schema/v2`，AgentGov 只允许当前评审过的原生字段：
 
-- 允许文本、二进制、executable bit、`.env`、真实 endpoint、本机路径和 MCP header；
-- 不改写 `agent.yaml`、`AGENT.md`、MCP、Skill 或 Subagent；
-- `agent.yaml.agent.id` 是导入身份确认字段，必须有效且与 URL 中的目标 `agent_id` 逐字一致；
-- 包内 profile、name、status 或说明文字不成为平台注册表身份事实；
-- 空目录不进入 Git，不承诺导出后保留；
-- AgentScope session/message、AgentGov run、feedback、平台测试运行、Langfuse、数据库和 Runtime 可写状态不进入包。
+- `name`
+- `system_prompt`
+- `context_config`
+- `react_config`
+- `invite_config`
 
-`tests/` 与其他 Workspace 文件一样按字节导入、导出和版本化。导入缺少 `tests/` 或
-`tests/README.md` 不拒绝包，但成功回执中的 `test_suite.diagnostics` 会给出 warning；没有
-`tests/test_*.py` 的版本不能通过发布测试门禁。测试文件的详细契约见
-[业务 Agent Workspace 原生 pytest 测试资产实现方案](./engineering/业务AgentWorkspace原生pytest测试资产实现方案.md)。
-
-平台最终身份由目标路由 `agent_id` 和注册表持有，但导入前必须用 `agent.yaml.agent.id` 明确证明
-包所有者选择的来源身份与目标一致。导出 `security-operations-expert` 后，可将该包作为新 Agent 的
-人工修改起点；调用方必须先把包内 `agent.id` 明确改为新目标 ID，再重新打包和导入。这不是“模板
-实例化”，平台也不会代替调用方改写身份。
-
-### 3.1 导入身份裁决
-
-本期要解决的问题是：旧实现允许包内来源 ID 与请求目标 ID 不一致，并把冲突降级为 warning，导致
-操作者可能在未察觉时把一个 Agent 的行为资产激活到另一个 Agent。
-
-本期统一执行以下规则：
-
-- 新建和覆盖导入都必须在包根目录提供 UTF-8、安全且结构明确的 `agent.yaml`；
-- `agent.yaml` 顶层必须是对象，且只允许一个对象类型的 `agent` 和一个字符串类型的 `agent.id`；
-- `agent.id` 必须符合 Agent ID 字符规则，不允许首尾空白，并与 URL 中的目标 `agent_id` 大小写、
-  字符和长度完全一致；
-- 缺失、格式错误、ID 无效或 ID 不一致，都必须在 Workspace、注册表、Git 和会话状态发生变化前拒绝；
-- 平台不 trim、不纠正、不推断也不改写包内 ID。
-
-本期不采用“继续导入并告警”，因为告警不能阻止错误资产激活；也不采用“平台自动改写 ID”，因为这会
-掩盖包的真实来源并破坏按字节交换契约。后续若要支持显式克隆，应设计独立动作、来源审计和目标路径
-检查，不能重新放宽当前导入接口。
-
-## 4. 公开 API
-
-### 4.1 查询
+提交入口：
 
 ```text
-GET /api/agent-registry
+POST /api/agent-registry/{agent_id}/native-candidate
 ```
 
-每个 Agent 返回稳定身份、生命周期、`workspace_dir`、`requires_web_hitl` 以及三个独立派生字段：
+Provider credential、治理 ID、发布状态、版本字段、MCP secret、Workspace 路径等后端所属字段不可注入。
+字段到 Git 的映射集中在一个边界：`system_prompt` 写入 `AGENT.md`，其余受支持字段写入
+`agent.yaml`；未知字段和 schema 漂移必须 fail closed，不能静默丢弃。
 
-```json
-{
-  "agent_id": "security-operations-expert",
-  "name": "security-operations-expert",
-  "status": "active",
-  "builtin": true,
-  "default": true,
-  "protected": true
-}
-```
-
-不返回 `origin`，也不提供模板列表。
-
-### 4.2 创建或覆盖
+### 3.2 完整 Workspace 包
 
 ```text
 POST /api/agent-registry/{agent_id}/workspace/import
 Content-Type: multipart/form-data
 ```
 
-| 字段 | 规则 |
-| --- | --- |
-| `package` | 必填 `.tar.gz` |
-| `name` | 目标 Agent 不存在时必填；存在时不得借此改名 |
-| `expected_current_commit_sha` | 覆盖已有 Agent 时必填；用于确认目标仍处于操作者看到的当前提交版本 |
-| `reason` | 可选提交说明，不进入 Workspace |
+`.tar.gz` 解压后必须恰好包含一个 `workspace/` 顶层目录。包可包含：
 
-身份和并发错误必须返回稳定 `error_code`、明确 `detail`、失败字段、导入动作、预期目标和可执行的
-`remediation`。其中：
+```text
+workspace/
+  agent.yaml
+  AGENT.md
+  mcp/<name>.json
+  skills/<name>/SKILL.md
+  subagents/<name>/agent.yaml
+  subagents/<name>/AGENT.md
+  tests/README.md
+  tests/test_*.py
+  ...其他受策略允许的普通文件
+```
 
-- 缺少 `agent.yaml` / `agent.id`、YAML 无效或 ID 字符无效返回 `422`；
-- 包内来源 ID 与 URL 目标 ID 不一致返回 `409`，并同时返回 `actual_agent_id` 和
-  `expected_agent_id`；
-- 已有目标未携带 `expected_current_commit_sha` 返回 `422`；携带的版本已经过期返回 `409`；
-- 错误详情不得回显无效 ID 中可能携带的路径或其他恶意原文。
+包所有者负责普通文件内容；平台保留字节与 executable bit，不改写身份、endpoint 或凭据引用。
+`agent.yaml.agent.id` 必须与 URL 的 `agent_id` 逐字一致。路径逃逸、绝对路径、NUL、非 UTF-8 名称、
+重复项、`.git`、symlink/hardlink/device/FIFO/socket、资源上限和无效 YAML/JSON 均在产生候选前拒绝。
 
-来源 ID 不一致的错误示例：
+运行态 Session/Message、AgentGov run/feedback、Langfuse 数据、数据库和 Runtime 可写状态不得进入包。
+敏感 live Workspace 可以按字节导入/导出，但回流源码仓库初始化源前必须在仓库外形成候选并通过
+`make runtime-bootstrap-scan`；项目仓库、日志和回执不得暴露 secret。
+
+## 4. 候选回执与编辑
+
+两种输入都返回候选回执，关键字段为：
 
 ```json
 {
-  "error_code": "WORKSPACE_MANIFEST_AGENT_ID_MISMATCH",
-  "detail": "导入被拒绝：包内来源 Agent ID “source-agent”与请求目标 Agent ID “target-agent”不一致；系统不会改写包内身份。请确认导入目标，并将 agent.yaml.agent.id 改为与 URL 中的 agent_id 完全一致后重新打包。",
-  "field": "agent.yaml.agent.id",
-  "import_action": "overwrite",
-  "expected_agent_id": "target-agent",
-  "actual_agent_id": "source-agent",
-  "remediation": "确认导入目标，使 agent.yaml.agent.id 与 URL 中的 agent_id 完全一致后重新打包。"
+  "agent": {"agent_id": "customer-support", "status": "draft"},
+  "change_set_id": "change-set-id",
+  "change_set_status": "pending_approval",
+  "base_commit_sha": "40-character-base-sha",
+  "candidate_commit_sha": "40-character-candidate-sha",
+  "changed_paths": ["AGENT.md", "agent.yaml"],
+  "published": false
 }
 ```
 
-成功响应中的 `action` 只有 `created`、`overwritten`、`unchanged`。新建响应示例：
+包导入还返回 package/tree digest、导入审计 ID 和测试资产诊断。`published=false` 是固定事实，响应中
+不存在 `activation_mode`、`current_commit_sha`、`rollback_target_commit_sha` 等旧直接激活字段。
 
-```json
-{
-  "action": "created",
-  "agent": {
-    "agent_id": "customer-support",
-    "name": "Customer Support",
-    "status": "active",
-    "builtin": false,
-    "default": false,
-    "protected": false
-  },
-  "previous_commit_sha": null,
-  "current_commit_sha": "40-character-sha",
-  "package_sha256": "sha256",
-  "tree_sha256": "sha256",
-  "rollback_target_commit_sha": null,
-  "activation_mode": "next_turn",
-  "import_record_id": "awi-...",
-  "test_suite_status": "ready",
-  "test_file_count": 2,
-  "test_suite_warnings": []
-}
+候选文件 API：
+
+```text
+GET /api/agent-change-sets/{change_set_id}/files?path=<relative-path>
+PUT /api/agent-change-sets/{change_set_id}/files
 ```
 
-相同 tree 重试返回 `unchanged`，不制造空 commit。每次成功导入返回操作唯一的
-`import_record_id`、测试套件状态、测试文件数和结构化 warning；完整测试清单通过
-`GET /api/agent-registry/{agent_id}/test-suite?commit_sha=<sha>` 按精确提交查询。平台持久化同步
-导入审计记录和 warning，但不建立异步 operation 状态机，也不复制测试内容。失败导入同样写入审计，
-并保留原始结构化错误响应。
+PUT 使用 `expected_candidate_commit_sha` 做 CAS，并在一个命令内校验全部文件后只创建一个 commit。
+旧 `/api/agent-config-file` 已删除；活动 Workspace 没有在线文件写入口。
 
-### 4.3 导出与恢复
+新 Agent 创建先持久化不可运行的 `draft` 身份和空 Git 基线，再建立候选。这样 change set 有稳定基线，
+而半成品不会进入正常 Session/run 准入。若候选阶段失败，安全 draft 可由相同 CAS 命令重试或显式清理；
+不得伪装成 active。
+
+## 5. 测试、审批和发布激活
+
+标准流程：
+
+1. 对 `candidate_commit_sha` 检查 `tests/` 并创建
+   `POST /api/agent-change-sets/{change_set_id}/test-runs`。
+2. 等待该精确 `agent_id + change_set_id + commit_sha` 的平台测试结果为 `passed`。
+3. `agent.yaml`、`mcp/`、`subagents/` 等敏感路径必须经
+   `POST /api/agent-change-sets/{change_set_id}/approve` 明确审批。
+   设置中的候选治理展示完整文件 Diff；全部 Diff 和精确测试证据加载后，点击一次“确认审批”即表示
+   用户已审阅全部文件，无需逐项勾选。请求仍绑定完整文件审阅指纹、候选 commit、Diff 和测试证据；
+   审批成功不自动发布。
+4. 调用 `POST /api/agent-change-sets/{change_set_id}/publish`。同一命令负责：校验候选与维护租约、
+   从精确 commit 物化只读 Harness、创建/定位原生 Agent、创建可恢复探测 Session、验证模板和运行就绪、
+   持久化版本绑定、推进 Git 活动指针并完成发布记录。
+5. 通过 `GET /api/runtime/agents/{agent_id}/current` 核对发布 commit、digest、原生 Agent ID 和
+   `provisioned=true`。客户端不能另走 provision 旁路。
+
+Runtime 调用和 Git/SQLite 不是虚假分布式事务。发布使用持久 locator、唯一版本约束、响应丢失后的
+原生资源查找和按所有权补偿来实现幂等恢复。Git 切换前失败保留旧活动版本，新 Agent 仍为 draft；
+不确定结果必须重试同一个发布命令。陌生或已有引用的 Runtime 资源不能当作本次孤儿删除。
+
+若新版本包含 Runtime 启动时才可注册的 subagent template，发布必须明确进入受控维护流程；完成在途
+运行处理、Runtime 重启、readiness、旧会话恢复和候选探测前，不得标记发布可用。
+Runtime 对此返回 HTTP 409 和稳定 `error_code: RUNTIME_TEMPLATE_RESTART_REQUIRED`，不依赖
+异常文本匹配。控制面将准备资源记为 `awaiting_restart`，清理探测 Session，但保留精确不可变快照和
+Runtime Agent 定位信息；变更集维持 `publishing` 并保留原发布意图、审批证据及发布占用记录。
+受控重启后重试同一发布命令，重新探测已有资源并完成激活。尚未完成绑定的准备阶段，其他错误仍按
+所有权补偿，清理失败保留定位信息等待重试，活动 Git 与版本绑定不得提前切换。
+已完成绑定的 `ready` / `active` 资源可能对应已成功切换、但发布记录尚待收尾的 Git 版本；重试只读
+核对原生 Agent 身份，断网、查询失败或身份歧义不得触发资源补偿。`active` 资源明确禁止进入发布前
+失败清理；业务 Agent 的显式删除仍走独立删除流程。
+
+## 6. 导出、恢复和删除
 
 ```text
 POST /api/agent-registry/{agent_id}/workspace/export
 POST /api/agent-registry/{agent_id}/workspace/restore
+DELETE /api/agent-registry/{agent_id}
 ```
 
-导出返回当前 Git tree 的 `.tar.gz` 和 commit/package/tree digest headers。恢复使用
-`target_commit_sha` 与 `expected_current_commit_sha`，把历史 tree 写成新 commit，不 hard reset 历史。
+导出只读取当前已发布 Git tree。恢复读取目标历史 commit，但产物仍是新 change set，活动 HEAD 和已有
+Session 保持不变。删除先停止新准入、处理引用和 Runtime 资源，再 tombstone 治理身份并在事务外清理
+文件；持久 locator 支持重入。受保护的内置 Agent 不可在线删除。
 
-### 4.4 生命周期与删除
+## 7. UI 契约
 
-普通 Agent 可通过生命周期 API 管理，也可在线删除。删除清理该 Agent 的完整运行态根目录并写注册表
-tombstone，响应只返回 `workspace_removed` 与 `cleanup_complete` 等实际结果；不再清理 catalog 或返回
-`seed_removed`。受保护业务 Agent 删除返回业务规则错误。
+- “创建 Agent”提供原生 schema 表单与 Workspace 包两个输入页签，结果区使用同一候选回执组件。
+- 成功文案固定为“候选已保存，尚未发布”，显示 change set、基准/候选 commit、changed paths、测试资产
+  状态，并给出“运行测试 → 人工审批 → 发布”的下一步。
+- 覆盖导入和历史恢复不得确认“下一 turn 生效”；发布前活动版本和已有 Session 不变。
+- Playground 运行设置只显示当前 Session 的真实 Workspace status、MCP 连接/工具和 skill 投影。
+  MCP 连接成功只证明可连接和可列举工具，不证明本次业务回复实际调用成功。
+- `/api/agents`、`/api/skills` 的目录扫描，`/api/config` 的路径推断和 live 配置编辑器不再出现在 UI。
 
-## 5. 运行卷初始化
+## 8. 机器与真实验收
 
-API 启动协调器读取 `docker/runtime-bootstrap/`：
+- OpenAPI、生成类型、前端和在线路由中不存在旧直接激活字段、live config API、运行目录 scanner 或
+  独立 provision；对旧 URL 的真实请求返回 404。
+- 表单和包导入对新/既有 Agent 都产生同一种 candidate receipt；活动 HEAD、活动 Workspace 与已有
+  Session 在发布前不变。
+- 覆盖竞争、过期 CAS、候选响应丢失、并发写、Git/SQLite/Runtime 部分失败均有可重入或补偿证据。
+- 平台测试必须精确绑定候选 commit；敏感路径没有审批时发布失败；发布成功的 release/current/Session
+  四元组一致。
+- 真实 Compose 验收从当前工作树重建镜像并 force-recreate；浏览器完成 Agent 选择、Session 创建、
+  重命名、发送、SSE、终态、历史恢复、资源状态与删除，不以页面打开或 HTTP 200 代替。
+- 正式验收不使用 mock 数据、mock API、请求拦截或伪造 Runtime；单元/组件回归中的受控测试数据不得
+  被记作真实业务验收证据。
 
-1. 初始化必需运行目录和 governor Workspace；
-2. 校验 `business-agents/` 的实际 ID 集合严格等于 `BUILTIN_BUSINESS_AGENT_IDS`；
-3. 只在整个内置业务 Agent Workspace 不存在时复制；
-4. 已存在 Workspace 整体跳过，不逐文件补缺、不覆盖、不产生隐式 commit；
-5. 发现运行态所有合法 Workspace，并幂等同步到注册表；
-6. 初始化各 Agent 的 Git 版本源，写入运行协调 receipt。
+相关入口：
 
-初始化源缺失、为空、含 symlink、内置集合多出或缺少任一 ID 时启动失败。`RUNTIME_BOOTSTRAP_HOST_DIR`
-是 Compose 宿主机挂载入口，容器内路径为 `/app/docker/runtime-bootstrap`，必须只读。
-
-普通 Agent 不放进初始化源。需要一个新的普通 Agent 时，导出已有 Agent 或在仓库外制作完整 Workspace
-包，再走 import API。只有产品明确决定新增内置 Agent 时，才同时修改声明集合、初始化源、准入扫描、
-文档和空卷验收。
-
-## 6. Git、并发与热加载
-
-新建复用 registry reservation、no-follow 文件发布、Git 初始化、finalize 和失败补偿 saga。覆盖与恢复：
-
-1. 获取该 Agent 的维护栅栏；
-2. 拒绝活跃 run 与未终结 change set；
-3. dirty Workspace 先形成包含普通文件的快照；
-4. 在临时 worktree 形成候选 commit；
-5. 确认 `expected_current_commit_sha` 仍等于目标当前提交版本后激活；
-6. 保留已有 AgentScope session 的不可变版本绑定，新 session 绑定激活后的 commit；
-7. 失败时补偿 Git、session mapping、注册表与自有文件。
-
-当前 run 的 Harness digest/commit、AgentScope session 绑定和 intent 在同一 admission 写屏障内固定。
-导入成功后不重启 API；已有 session 继续指向创建时的不可变 Agent 版本，新 session 使用新 commit。
-
-## 7. 输入保护与仓库边界
-
-首版保护直接针对文件系统越界和资源耗尽：
-
-- `/api/*` API Key；压缩包最大 64 MiB；解压总量最大 256 MiB；单成员最大 64 MiB；
-- 最多 10,000 个成员；路径最大 4 KiB、深度最大 32；tar 元数据单记录最大 64 KiB；
-- 拒绝绝对路径、`..`、NUL、非 UTF-8、重复项、文件/目录前缀冲突和任何 `.git` 成员；
-- 拒绝 symlink、hardlink、device、FIFO、socket；
-- `agent.yaml`、`subagents/*/agent.yaml` 如存在，必须是 YAML object；`mcp/*.json` 如存在，必须是 JSON object；
-- import 请求本身不执行上传包中的代码、测试、安装脚本或网络请求；只有用户后续显式发起平台测试时，
-  才在固定 commit 的隔离 checkout 中执行固定 pytest 命令。
-
-运行态 Workspace 和导出包是敏感运行数据，可按字节保留真实配置。回流仓库初始化源前必须在仓库外
-形成候选，并通过 `make runtime-bootstrap-scan`；真实密钥、凭据型 header、数据库凭据和本机私有
-路径硬阻断。非秘密 endpoint 与宽权限只提示复核，不静默改写。
-
-## 8. UI 契约
-
-设置页以一张业务 Agent 表作为唯一管理入口，不再并列展示 Workspace 清单和 Agent 管理清单：
-
-- 表格一行对应一个注册业务 Agent，固定展示 Agent 身份、Workspace/测试状态、生命周期和操作；
-- 生命周期保留行内选择器，归档终态继续禁止回转；
-- “操作”使用对象级菜单，只包含导出 Workspace、覆盖导入和删除 Agent；受保护 Agent 的删除项
-  必须禁用并显示原因；
-- 页面级“导入 Agent”与行内“覆盖导入”复用同一个右侧抽屉。创建模式填写 Agent ID、name
-  并选择包，覆盖模式锁定目标 Agent 的 ID 和名称，只选择包；
-- 成功后抽屉保持打开，回执显示 action、previous/current commit、package/tree digest、测试状态、
-  测试文件数和 warning；覆盖后在同一抽屉提供“恢复导入前版本”；
-- 列表分别显示内置、默认、受保护状态；不显示来源选择器、通用模板、seed 提示或直接创建表单。
-
-菜单必须支持 `Escape` 关闭、外部点击关闭和键盘方向键导航，并使用脱离滚动容器的浮层定位，避免
-在表格底部或移动端被裁切。导入失败只在抽屉内显示结构化错误代码和可执行动作；关闭抽屉或切换
-覆盖目标后清除旧文件、回执和失败状态。
-
-## 9. 验收
-
-- OpenAPI、前端类型和 UI 中不存在旧直接创建、模板 catalog、`origin`、`template_id`、
-  `source_seed_id`、`seed_removed`。
-- 空运行卷只得到 governor 和 `security-operations-expert`；已有运行卷中的普通 Agent 保持原样。
-- 导出内置 Agent 后，先由包所有者把 `agent.yaml.agent.id` 设置为新目标 ID，再导入；平台不改写
-  普通文件，字节和 executable bit 一致，registry ID 为目标 ID。
-- 新建和覆盖导入都要求 `agent.yaml.agent.id` 有效且与 URL `agent_id` 逐字一致；缺失、无效、
-  格式错误或不一致均在目标 Workspace、注册表、Git 和会话状态变更前拒绝，同时保留失败审计；
-  缺少测试目录仍只告警。
-- 所有业务 Agent Workspace 可携带 `tests/`，平台可按精确 commit 检查 suite 并运行固定 pytest 命令。
-- 新建、覆盖、unchanged、恢复都绑定实际 Git commit；下一 turn 使用应用后的 commit。
-- 设置页只渲染一份业务 Agent 行，Workspace 测试状态和生命周期属于同一行；创建与覆盖导入模式
-  不得混用目标身份或遗留上一次选择的文件、回执和错误。
-- active turn、开放 change set、HEAD 竞争、恶意 tar、超限输入和部分失败明确失败且不暴露半成品。
-- 删除普通 Agent 后重启不复活；重建同 ID 不继承旧 Workspace；受保护 Agent 不可删除。
-- `make runtime-bootstrap-scan`、专项 pytest、前端浏览器验收、`make main-flow-test`、
-  `make codex-guard` 和真实 Compose 空卷/已有卷验收通过。
+- [AgentScope API 最大复用与单轨整改计划](./engineering/AgentScope_API最大复用与单轨整改计划.md)
+- [AgentGov 集成指南](./AgentGov集成指南.md)
+- [业务 Agent Workspace 原生 pytest 测试资产实现方案](./engineering/业务AgentWorkspace原生pytest测试资产实现方案.md)
+- [AgentGov AgentScope Runtime 替换实施基线与验收](./engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md)

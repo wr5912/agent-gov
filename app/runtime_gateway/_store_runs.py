@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -12,12 +11,31 @@ from app.runtime.agent_admission import AgentMaintenanceActiveError, claim_runti
 from app.runtime.errors import RuntimeUnavailableError
 from app.runtime.runtime_db_base import begin_sqlite_write_transaction, utc_now
 
+from ._store_continuations import require_continuation_run, validate_new_continuation
+from ._store_operations import (
+    RuntimeChatReplayResponse,
+    add_continuation_operation,
+    add_initial_operation,
+    find_initial_operation,
+    governed_run_metadata,
+    initial_request_fingerprint,
+    operation_replay_response,
+    resolve_continuation_identity,
+    validate_continuation_operation,
+    validate_initial_operation,
+)
+from ._store_pending_actions import store_pending_actions
+from ._store_receipt_validation import (
+    resolve_receipt_run,
+    validate_duplicate_receipt,
+    validate_tool_result_receipt,
+)
+from ._store_run_recovery import apply_runtime_interrupted_receipt
 from ._store_support import (
     RuntimeInputRejected,
     RuntimeObjectNotFound,
     RuntimeStateConflict,
     _append_json_id,
-    _canonical_json,
     _error_payload,
     _finish_run,
     _new_trace_id,
@@ -35,14 +53,16 @@ from .contracts import (
     ConfirmationScope,
     RunStatus,
     RuntimeReceipt,
-    confirmation_reply_id,
     is_confirmation_input,
     validate_no_permission_rules,
 )
-from .hitl import HITLValidationError, validate_pending_actions
+from .hitl import (
+    HITLValidationError,
+    validate_runtime_receipt_fingerprints,
+)
 from .models import (
     AgentRunModel,
-    RuntimePendingActionModel,
+    RuntimeChatOperationModel,
     RuntimeReceiptModel,
     RuntimeSessionBindingModel,
 )
@@ -52,14 +72,8 @@ from .models import (
 class RuntimeRunAdmission:
     run: AgentRunResponse
     should_trigger_upstream: bool
+    operation_key: str | None
     replay_response: RuntimeChatReplayResponse | None = None
-
-
-@dataclass(frozen=True)
-class RuntimeChatReplayResponse:
-    status_code: int
-    body: bytes
-    content_type: str
 
 
 class RuntimeRunStoreMixin:
@@ -107,30 +121,44 @@ class RuntimeRunStoreMixin:
 
         with self.Session.begin() as db:
             begin_sqlite_write_transaction(db.connection())
-            binding = db.get(RuntimeSessionBindingModel, session_id)
-            if binding is None or binding.runtime_agent_id != runtime_agent_id:
-                raise RuntimeObjectNotFound(f"Runtime session not found: {session_id}")
-            try:
-                claim_runtime_admission(db, agent_id=binding.agent_id)
-            except AgentMaintenanceActiveError as exc:
-                raise RuntimeUnavailableError(
-                    "Agent version maintenance is in progress; retry after restore completes.",
-                ) from exc
+            binding = _require_admission_binding(
+                db,
+                session_id=session_id,
+                runtime_agent_id=runtime_agent_id,
+            )
+            governed_metadata = governed_run_metadata(metadata)
             if is_confirmation_input(input_value):
-                run = self._resume_run(
+                return self._resume_run(
                     db,
                     binding=binding,
                     input_value=input_value,
+                    metadata=governed_metadata,
+                    alert_id=alert_id,
+                    case_id=case_id,
+                    client_operation_id=client_operation_id,
                     confirmation_scope=confirmation_scope,
                     expected_run_id=expected_run_id,
                 )
-                return RuntimeRunAdmission(_run_response(run), True)
-            input_fingerprint = _input_fingerprint(input_value)
-            existing = _operation_run(db, client_operation_id)
-            if existing is not None:
+            input_fingerprint = initial_request_fingerprint(
+                input_value=input_value,
+                metadata=governed_metadata,
+                session_id=session_id,
+                runtime_agent_id=runtime_agent_id,
+                alert_id=alert_id,
+                case_id=case_id,
+            )
+            existing_operation = find_initial_operation(db, client_operation_id)
+            if existing_operation is not None:
+                existing = _require_run(db, existing_operation.run_id)
+                validate_initial_operation(
+                    existing_operation,
+                    client_operation_id=client_operation_id or "",
+                    request_fingerprint=input_fingerprint,
+                    session_id=session_id,
+                    runtime_agent_id=runtime_agent_id,
+                )
                 if (
-                    existing.session_id != session_id
-                    or existing.runtime_agent_id != runtime_agent_id
+                    existing.client_operation_id != client_operation_id
                     or existing.input_fingerprint != input_fingerprint
                     or existing.alert_id != alert_id
                     or existing.case_id != case_id
@@ -139,7 +167,13 @@ class RuntimeRunStoreMixin:
                 return RuntimeRunAdmission(
                     _run_response(existing),
                     False,
-                    _chat_replay_response(existing),
+                    existing_operation.operation_key,
+                    operation_replay_response(existing_operation),
+                )
+            existing_run = _operation_run(db, client_operation_id)
+            if existing_run is not None:
+                raise RuntimeStateConflict(
+                    "client_operation_id run exists without its durable operation ledger",
                 )
             return self._create_initial_run(
                 db,
@@ -148,7 +182,7 @@ class RuntimeRunStoreMixin:
                 client_operation_id=client_operation_id,
                 alert_id=alert_id,
                 case_id=case_id,
-                metadata=metadata,
+                metadata=governed_metadata,
             )
 
     def _create_initial_run(
@@ -168,8 +202,6 @@ class RuntimeRunStoreMixin:
                 raise RuntimeStateConflict(f"Session already has active run {active.run_id}")
             binding.active_run_id = None
         now = utc_now()
-        governed_metadata = dict(metadata)
-        governed_metadata.pop("client_operation_id", None)
         run = AgentRunModel(
             run_id=f"run-{uuid.uuid4()}",
             session_id=binding.session_id,
@@ -183,15 +215,25 @@ class RuntimeRunStoreMixin:
             trace_id=_new_trace_id(),
             alert_id=alert_id,
             case_id=case_id,
-            metadata_json=governed_metadata,
+            metadata_json=metadata,
             created_at=now,
             updated_at=now,
         )
         db.add(run)
         db.flush()
+        operation_key = add_initial_operation(
+            db,
+            run=run,
+            client_operation_id=client_operation_id,
+            request_fingerprint=input_fingerprint,
+        )
         binding.active_run_id = run.run_id
         binding.updated_at = now
-        return RuntimeRunAdmission(_run_response(run), True)
+        return RuntimeRunAdmission(
+            _run_response(run),
+            True,
+            operation_key,
+        )
 
     def _resume_run(
         self,
@@ -199,79 +241,81 @@ class RuntimeRunStoreMixin:
         *,
         binding: RuntimeSessionBindingModel,
         input_value: Any,
+        metadata: dict[str, object],
+        alert_id: str | None,
+        case_id: str | None,
+        client_operation_id: str | None,
         confirmation_scope: ConfirmationScope,
         expected_run_id: str | None,
-    ) -> AgentRunModel:
-        run = db.get(AgentRunModel, binding.active_run_id) if binding.active_run_id else None
-        if run is None or RunStatus(run.status) not in {RunStatus.WAITING_HUMAN, RunStatus.WAITING_EXTERNAL}:
-            raise RuntimeStateConflict("Session is not waiting for an external decision")
-        if not expected_run_id or expected_run_id != run.run_id:
-            raise RuntimeStateConflict("Decision expected_run_id does not match the active run")
-        if (run.metadata_json or {}).get("recovery_required") is True:
-            raise RuntimeStateConflict("Run recovery must complete before any HITL continuation")
-        event_type = input_value.get("type")
-        expected_status = RunStatus.WAITING_HUMAN if event_type == "USER_CONFIRM_RESULT" else RunStatus.WAITING_EXTERNAL
-        if RunStatus(run.status) != expected_status:
-            raise RuntimeStateConflict("Decision type does not match the pending action kind")
-        reply_id = confirmation_reply_id(input_value)
-        expected_kind = "human" if event_type == "USER_CONFIRM_RESULT" else "external"
-        pending = db.scalar(
-            select(RuntimePendingActionModel.action_id)
-            .where(
-                RuntimePendingActionModel.run_id == run.run_id,
-                RuntimePendingActionModel.reply_id == reply_id,
-                RuntimePendingActionModel.kind == expected_kind,
-                RuntimePendingActionModel.status == "pending",
-            )
-            .limit(1),
+    ) -> RuntimeRunAdmission:
+        run, operation_id = require_continuation_run(
+            db,
+            binding=binding,
+            client_operation_id=client_operation_id,
+            expected_run_id=expected_run_id,
         )
-        if not reply_id or pending is None:
-            raise RuntimeStateConflict("Decision does not match the active reply")
-        try:
-            validate_pending_actions(
-                db,
+        identity = resolve_continuation_identity(
+            db,
+            run=run,
+            input_value=input_value,
+            metadata=metadata,
+            session_id=binding.session_id,
+            runtime_agent_id=binding.runtime_agent_id,
+            alert_id=alert_id,
+            case_id=case_id,
+            client_operation_id=operation_id,
+            confirmation_scope=confirmation_scope,
+        )
+        existing_operation = db.get(
+            RuntimeChatOperationModel,
+            identity.operation_key,
+        )
+        if existing_operation is not None:
+            validate_continuation_operation(
+                existing_operation,
                 run=run,
-                reply_id=reply_id,
-                input_value=input_value,
+                client_operation_id=operation_id,
                 confirmation_scope=confirmation_scope,
+                identity=identity,
             )
-        except HITLValidationError as exc:
-            raise RuntimeStateConflict(str(exc)) from exc
+            return RuntimeRunAdmission(
+                _run_response(run),
+                False,
+                existing_operation.operation_key,
+                operation_replay_response(existing_operation),
+            )
+        validate_new_continuation(
+            db,
+            binding=binding,
+            run=run,
+            input_value=input_value,
+            confirmation_scope=confirmation_scope,
+        )
         _transition(run, RunStatus.RUNNING)
         run.started_at = run.started_at or utc_now()
         run.updated_at = utc_now()
-        return run
+        add_continuation_operation(
+            db,
+            run=run,
+            client_operation_id=operation_id,
+            confirmation_scope=confirmation_scope,
+            identity=identity,
+        )
+        return RuntimeRunAdmission(
+            _run_response(run),
+            True,
+            identity.operation_key,
+        )
 
     def mark_trigger_started(
         self,
         run_id: str,
-        *,
-        response_status: int | None = None,
-        response_body: bytes | None = None,
-        response_content_type: str | None = None,
     ) -> AgentRunResponse:
-        response_parts = (response_status, response_body, response_content_type)
-        if any(value is None for value in response_parts) and any(value is not None for value in response_parts):
-            raise ValueError("Trigger replay response must be stored atomically")
         with self.Session.begin() as db:
             begin_sqlite_write_transaction(db.connection())
             run = _require_run(db, run_id)
             if RunStatus(run.status) == RunStatus.QUEUED:
                 _transition(run, RunStatus.RUNNING)
-            if response_status is not None and response_body is not None and response_content_type is not None:
-                existing_response = (
-                    run.trigger_response_status,
-                    run.trigger_response_body,
-                    run.trigger_response_content_type,
-                )
-                requested_response = (response_status, response_body, response_content_type)
-                if any(value is not None for value in existing_response) and existing_response != requested_response:
-                    raise RuntimeStateConflict("Trigger replay response is immutable")
-                (
-                    run.trigger_response_status,
-                    run.trigger_response_body,
-                    run.trigger_response_content_type,
-                ) = requested_response
             run.started_at = run.started_at or utc_now()
             run.updated_at = utc_now()
             return _run_response(run)
@@ -317,62 +361,30 @@ class RuntimeRunStoreMixin:
             run.updated_at = utc_now()
             return _run_response(run)
 
-    def mark_cancel_requested(self, run_id: str) -> AgentRunResponse:
-        with self.Session.begin() as db:
-            begin_sqlite_write_transaction(db.connection())
-            run = _require_run(db, run_id)
-            binding = db.get(RuntimeSessionBindingModel, run.session_id)
-            if binding is None or binding.active_run_id != run.run_id or RunStatus(run.status) not in ACTIVE_RUN_STATUSES:
-                raise RuntimeStateConflict("Only the Session's exact active run can be cancelled")
-            metadata = dict(run.metadata_json or {})
-            metadata["cancellation_requested"] = True
-            run.metadata_json = metadata
-            run.updated_at = utc_now()
-            return _run_response(run)
-
-    def mark_cancellation_uncertain(
-        self,
-        run_id: str,
-        *,
-        error: dict[str, object],
-    ) -> AgentRunResponse:
-        """任一 Team interrupt 结果不确定时保留全部 fences 等待 reconcile。"""
-
-        with self.Session.begin() as db:
-            begin_sqlite_write_transaction(db.connection())
-            run = _require_run(db, run_id)
-            if RunStatus(run.status) in TERMINAL_RUN_STATUSES:
-                return _run_response(run)
-            metadata = dict(run.metadata_json or {})
-            metadata.update(
-                {
-                    "cancellation_requested": True,
-                    "cancellation_uncertain": True,
-                    "recovery_required": True,
-                },
-            )
-            run.metadata_json = metadata
-            run.error_json = _error_payload(error)
-            run.trace_status = "incomplete"
-            run.updated_at = utc_now()
-            return _run_response(run)
-
     def apply_receipt(self, receipt: RuntimeReceipt) -> AgentRunResponse:
+        try:
+            receipt = validate_runtime_receipt_fingerprints(receipt)
+        except HITLValidationError as exc:
+            raise RuntimeStateConflict(str(exc)) from exc
         with self.Session.begin() as db:
             begin_sqlite_write_transaction(db.connection())
             duplicate = db.get(RuntimeReceiptModel, receipt.receipt_id)
             if duplicate is None:
                 duplicate = db.scalar(select(RuntimeReceiptModel).where(RuntimeReceiptModel.event_id == receipt.event_id))
             if duplicate is not None:
-                return _run_response(_require_run(db, duplicate.run_id))
-            binding = db.get(RuntimeSessionBindingModel, receipt.session_id)
-            if binding is None or not binding.active_run_id:
-                raise RuntimeObjectNotFound(f"No active run for session {receipt.session_id}")
-            run = _require_run(db, binding.active_run_id)
-            if receipt.run_id and receipt.run_id != run.run_id:
-                raise RuntimeStateConflict("Receipt run_id does not own this session fence")
-            if binding.root_session_id != run.session_id:
-                raise RuntimeStateConflict("Receipt Session is not bound to the run root")
+                duplicate_run = _require_run(db, duplicate.run_id)
+                validate_duplicate_receipt(
+                    duplicate,
+                    receipt,
+                    duplicate_run,
+                )
+                return _run_response(duplicate_run)
+            run, binding, interruption_already_recorded = resolve_receipt_run(
+                db,
+                receipt,
+            )
+            if interruption_already_recorded:
+                return _run_response(run)
             db.add(
                 RuntimeReceiptModel(
                     receipt_id=receipt.receipt_id,
@@ -384,15 +396,23 @@ class RuntimeRunStoreMixin:
                     payload_json=dict(receipt.payload),
                 )
             )
-            if binding.session_id == run.session_id:
+            if receipt.type == "RUN_INTERRUPTED":
+                apply_runtime_interrupted_receipt(
+                    run=run,
+                    binding=binding,
+                    receipt=receipt,
+                )
+            elif binding is not None and binding.session_id == run.session_id:
                 self._apply_event(db, run=run, receipt=receipt)
-            else:
+            elif binding is not None:
                 self._apply_child_event(
                     db,
                     run=run,
                     binding=binding,
                     receipt=receipt,
                 )
+            else:  # pragma: no cover - resolve_receipt_run 已保证普通回执绑定存在
+                raise RuntimeStateConflict("Receipt Session binding disappeared")
             return _run_response(run)
 
     def _apply_child_event(
@@ -405,10 +425,7 @@ class RuntimeRunStoreMixin:
     ) -> None:
         """记录 worker 生命周期，但绝不把 worker reply 当作顶层 reply。"""
 
-        if receipt.trace_id and run.trace_id != receipt.trace_id:
-            raise RuntimeStateConflict("A run cannot be rebound to another trace")
-        if RunStatus(run.status) in TERMINAL_RUN_STATUSES:
-            raise RuntimeStateConflict("Terminal run cannot accept new lifecycle events")
+        _validate_active_receipt_run(run, receipt)
         current = RunStatus(run.status)
         if receipt.type == "REPLY_START":
             if current in {
@@ -418,7 +435,7 @@ class RuntimeRunStoreMixin:
                 _transition(run, RunStatus.RUNNING)
             run.started_at = run.started_at or utc_now()
         elif receipt.type == "REQUIRE_USER_CONFIRM":
-            self._store_pending_actions(
+            store_pending_actions(
                 db,
                 run=run,
                 receipt=receipt,
@@ -427,7 +444,7 @@ class RuntimeRunStoreMixin:
             )
             _transition(run, RunStatus.WAITING_HUMAN)
         elif receipt.type == "REQUIRE_EXTERNAL_EXECUTION":
-            self._store_pending_actions(
+            store_pending_actions(
                 db,
                 run=run,
                 receipt=receipt,
@@ -440,7 +457,7 @@ class RuntimeRunStoreMixin:
             if not receipt.reply_id or not isinstance(reason, str) or not reason:
                 raise RuntimeStateConflict("Worker REPLY_END is missing reply_id or finished_reason")
         elif receipt.type == "TOOL_RESULT_END":
-            _validate_tool_result_receipt(receipt)
+            validate_tool_result_receipt(receipt)
         elif receipt.type == "SESSION_PERSISTED":
             _validated_reply_ids(receipt.payload.get("reply_ids"))
             if receipt.reply_id is not None:
@@ -456,7 +473,8 @@ class RuntimeRunStoreMixin:
                     "pending_child_session_ids_json",
                     binding.session_id,
                 )
-            self._maybe_finish_persistence_batch(db, run)
+            if not _recovery_blocks_terminal(run):
+                self._maybe_finish_persistence_batch(db, run)
         elif receipt.type == "PERSISTENCE_FAILED":
             # Worker 的 canonical state 未闭合时继续保留 pending fence；API
             # restart reconciliation 会中断该 run，不能猜测 worker 已静止。
@@ -464,15 +482,11 @@ class RuntimeRunStoreMixin:
         run.updated_at = utc_now()
 
     def _apply_event(self, db: Session, *, run: AgentRunModel, receipt: RuntimeReceipt) -> None:
-        if receipt.trace_id:
-            if run.trace_id != receipt.trace_id:
-                raise RuntimeStateConflict("A run cannot be rebound to another trace")
+        _validate_active_receipt_run(run, receipt)
         if receipt.trace_url:
             run.trace_url = receipt.trace_url
         event_type = receipt.type
         current = RunStatus(run.status)
-        if current in TERMINAL_RUN_STATUSES:
-            raise RuntimeStateConflict("Terminal run cannot accept new lifecycle events")
         if receipt.reply_id and event_type in {
             "REPLY_START",
             "REQUIRE_USER_CONFIRM",
@@ -490,10 +504,10 @@ class RuntimeRunStoreMixin:
                 _transition(run, RunStatus.RUNNING)
             run.started_at = run.started_at or utc_now()
         elif event_type == "REQUIRE_USER_CONFIRM":
-            self._store_pending_actions(db, run=run, receipt=receipt, kind="human")
+            store_pending_actions(db, run=run, receipt=receipt, kind="human")
             _transition(run, RunStatus.WAITING_HUMAN)
         elif event_type == "REQUIRE_EXTERNAL_EXECUTION":
-            self._store_pending_actions(db, run=run, receipt=receipt, kind="external")
+            store_pending_actions(db, run=run, receipt=receipt, kind="external")
             _transition(run, RunStatus.WAITING_EXTERNAL)
         elif event_type == "REPLY_END":
             reason = receipt.payload.get("finished_reason")
@@ -501,7 +515,7 @@ class RuntimeRunStoreMixin:
                 raise RuntimeStateConflict("REPLY_END is missing reply_id or finished_reason")
             _transition(run, RunStatus.FINALIZING)
         elif event_type == "TOOL_RESULT_END":
-            _validate_tool_result_receipt(receipt)
+            validate_tool_result_receipt(receipt)
         elif event_type == "MESSAGE_PERSISTED":
             self._apply_message_persisted(db, run=run, receipt=receipt, current=current)
         elif event_type == "SESSION_PERSISTED":
@@ -524,6 +538,8 @@ class RuntimeRunStoreMixin:
         if not receipt.reply_id or not isinstance(reason, str) or not reason:
             raise RuntimeStateConflict("Persistence confirmation is missing reply_id or finished_reason")
         if receipt.payload.get("message_persisted") is not True:
+            if _recovery_blocks_terminal(run):
+                return
             run.trace_status = "incomplete"
             run.terminal_reason = "observation_incomplete"
             _transition(run, RunStatus.INTERRUPTED)
@@ -543,7 +559,8 @@ class RuntimeRunStoreMixin:
         if reply_end is not None and (reply_end.payload_json or {}).get("finished_reason") != reason:
             raise RuntimeStateConflict("Persisted Message does not match the observed REPLY_END")
         _append_json_id(run, "persisted_reply_ids_json", receipt.reply_id)
-        self._maybe_finish_persistence_batch(db, run)
+        if not _recovery_blocks_terminal(run):
+            self._maybe_finish_persistence_batch(db, run)
 
     def _apply_session_persisted(
         self,
@@ -569,7 +586,8 @@ class RuntimeRunStoreMixin:
             _transition(run, RunStatus.FINALIZING)
         elif current != RunStatus.FINALIZING:
             raise RuntimeStateConflict("Session persistence requires a running or finalizing run")
-        self._maybe_finish_persistence_batch(db, run)
+        if not _recovery_blocks_terminal(run):
+            self._maybe_finish_persistence_batch(db, run)
 
     @staticmethod
     def _apply_persistence_failed(
@@ -581,6 +599,8 @@ class RuntimeRunStoreMixin:
     ) -> None:
         if current not in {RunStatus.RUNNING, RunStatus.FINALIZING}:
             raise RuntimeStateConflict("Persistence failure cannot close the current run state")
+        if _recovery_blocks_terminal(run):
+            return
         run.trace_status = "incomplete"
         run.terminal_reason = "observation_incomplete"
         run.error_json = _error_payload(receipt.payload.get("error") or "AgentScope message was not readable after REPLY_END")
@@ -668,90 +688,33 @@ class RuntimeRunStoreMixin:
         _transition(run, terminal)
         _finish_run(db, run)
 
-    def mark_trace_observed(self, run_id: str, *, trace_url: str | None = None) -> AgentRunResponse:
-        """Langfuse 已能读取该 trace 时，将派生观测状态标为完整。"""
 
-        with self.Session.begin() as db:
-            begin_sqlite_write_transaction(db.connection())
-            run = _require_run(db, run_id)
-            if RunStatus(run.status) not in TERMINAL_RUN_STATUSES:
-                raise RuntimeStateConflict("Only a terminal run can have a complete trace")
-            run.trace_status = "complete"
-            if trace_url:
-                run.trace_url = trace_url
-            run.updated_at = utc_now()
-            return _run_response(run)
-
-    def mark_trace_incomplete(self, run_id: str) -> AgentRunResponse:
-        """Trace 在有界等待后仍与 durable facts 不完整。"""
-
-        with self.Session.begin() as db:
-            begin_sqlite_write_transaction(db.connection())
-            run = _require_run(db, run_id)
-            if RunStatus(run.status) not in TERMINAL_RUN_STATUSES:
-                raise RuntimeStateConflict("Only a terminal run can have an incomplete trace")
-            if run.trace_status == "pending":
-                run.trace_status = "incomplete"
-                run.updated_at = utc_now()
-            return _run_response(run)
-
-    def _store_pending_actions(
-        self,
-        db: Session,
-        *,
-        run: AgentRunModel,
-        receipt: RuntimeReceipt,
-        kind: str,
-        session_id: str | None = None,
-    ) -> None:
-        reply_id = receipt.reply_id
-        tool_calls = receipt.payload.get("tool_calls")
-        if not reply_id or not isinstance(tool_calls, list) or not tool_calls:
-            raise RuntimeStateConflict("HITL receipt is missing reply_id or tool_calls")
-        mixed = db.scalar(
-            select(RuntimePendingActionModel.action_id)
-            .where(
-                RuntimePendingActionModel.run_id == run.run_id,
-                RuntimePendingActionModel.status == "pending",
-                RuntimePendingActionModel.kind != kind,
-            )
-            .limit(1),
-        )
-        if mixed is not None:
-            raise RuntimeStateConflict("Mixed human/external pending actions are not supported")
-        for tool_call in tool_calls:
-            if not isinstance(tool_call, dict):
-                raise RuntimeStateConflict("HITL tool_call must be an object")
-            tool_id = tool_call.get("id")
-            tool_name = tool_call.get("name")
-            if not isinstance(tool_id, str) or not tool_id or not isinstance(tool_name, str) or not tool_name:
-                raise RuntimeStateConflict("HITL tool_call must include stable id and name")
-            action_id = f"{run.run_id}:{reply_id}:{tool_id}"
-            existing = db.get(RuntimePendingActionModel, action_id)
-            if existing is not None:
-                if _canonical_json(existing.tool_call_json) != _canonical_json(tool_call):
-                    raise RuntimeStateConflict("Pending tool call changed under the same identity")
-                continue
-            db.add(
-                RuntimePendingActionModel(
-                    action_id=action_id,
-                    session_id=session_id or run.session_id,
-                    run_id=run.run_id,
-                    reply_id=reply_id,
-                    tool_call_id=tool_id,
-                    kind=kind,
-                    tool_call_name=tool_name,
-                    tool_call_json=tool_call,
-                )
-            )
-
-
-def _input_fingerprint(input_value: Any) -> str:
+def _require_admission_binding(
+    db: Session,
+    *,
+    session_id: str,
+    runtime_agent_id: str,
+) -> RuntimeSessionBindingModel:
+    binding = db.get(RuntimeSessionBindingModel, session_id)
+    if binding is None or binding.runtime_agent_id != runtime_agent_id:
+        raise RuntimeObjectNotFound(f"Runtime session not found: {session_id}")
     try:
-        canonical = _canonical_json(input_value)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeInputRejected("Runtime chat input must be canonical JSON") from exc
-    return hashlib.sha256(canonical.encode()).hexdigest()
+        claim_runtime_admission(db, agent_id=binding.agent_id)
+    except AgentMaintenanceActiveError as exc:
+        raise RuntimeUnavailableError(
+            "Agent version maintenance or publish activation is in progress; retry after it completes.",
+        ) from exc
+    return binding
+
+
+def _validate_active_receipt_run(
+    run: AgentRunModel,
+    receipt: RuntimeReceipt,
+) -> None:
+    if run.trace_id != receipt.trace_id:
+        raise RuntimeStateConflict("A run cannot be rebound to another trace")
+    if RunStatus(run.status) in TERMINAL_RUN_STATUSES:
+        raise RuntimeStateConflict("Terminal run cannot accept new lifecycle events")
 
 
 def _validate_run_input(input_value: Any) -> None:
@@ -761,13 +724,9 @@ def _validate_run_input(input_value: Any) -> None:
         raise RuntimeInputRejected(str(exc)) from exc
 
 
-def _validate_tool_result_receipt(receipt: RuntimeReceipt) -> None:
-    tool_call_id = receipt.payload.get("tool_call_id")
-    state = receipt.payload.get("state")
-    if not receipt.reply_id or not isinstance(tool_call_id, str) or not tool_call_id:
-        raise RuntimeStateConflict("TOOL_RESULT_END is missing reply_id or tool_call_id")
-    if state not in {"success", "error", "interrupted", "denied", "running"}:
-        raise RuntimeStateConflict("TOOL_RESULT_END has an invalid state")
+def _recovery_blocks_terminal(run: AgentRunModel) -> bool:
+    metadata = run.metadata_json or {}
+    return metadata.get("recovery_required") is True or metadata.get("cancellation_requested") is True
 
 
 def _operation_run(
@@ -786,13 +745,3 @@ def _operation_run(
     if len(rows) > 1:
         raise RuntimeStateConflict("client_operation_id has multiple AgentGov runs")
     return rows[0] if rows else None
-
-
-def _chat_replay_response(run: AgentRunModel) -> RuntimeChatReplayResponse | None:
-    if run.trigger_response_status is None or run.trigger_response_body is None or not run.trigger_response_content_type:
-        return None
-    return RuntimeChatReplayResponse(
-        status_code=run.trigger_response_status,
-        body=run.trigger_response_body,
-        content_type=run.trigger_response_content_type,
-    )

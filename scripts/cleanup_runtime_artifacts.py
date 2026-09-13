@@ -5,7 +5,13 @@ import argparse
 import json
 from pathlib import Path
 
-from bootstrap_runtime_volume import DEFAULT_BOOTSTRAP_DIR, DEFAULT_ENV_FILE, resolve_runtime_root
+from bootstrap_runtime_volume import (
+    DEFAULT_BOOTSTRAP_DIR,
+    DEFAULT_ENV_FILE,
+    require_authorized_runtime_root,
+    resolve_runtime_root,
+    resolve_runtime_volume_mode,
+)
 from runtime_cleanup import cleanup_runtime_artifacts
 
 
@@ -27,6 +33,9 @@ def main() -> int:
 
     clean_runtime = args.runtime_artifacts or not args.bootstrap_artifacts
     runtime_root = resolve_runtime_root(args.runtime_root, args.env_file, args.runtime_volume_mode) if clean_runtime else None
+    if runtime_root is not None:
+        mode = resolve_runtime_volume_mode(args.env_file, runtime_root, args.runtime_volume_mode)
+        require_authorized_runtime_root(runtime_root, mode)
     result = cleanup_runtime_artifacts(
         runtime_root=runtime_root,
         bootstrap_dir=args.bootstrap_dir.resolve() if args.bootstrap_artifacts else None,

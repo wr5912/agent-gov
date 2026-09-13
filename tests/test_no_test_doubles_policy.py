@@ -18,6 +18,8 @@ from scripts.check_no_test_doubles import (
     scan_shell,
     validate_formal_target_allowlist,
 )
+from scripts.container_acceptance_environment import acceptance_allowlisted_targets
+from scripts.no_test_doubles_contract import CANONICAL_FORMAL_DISPATCHES, DEPLOYED_FORMAL_TARGETS
 
 
 def _rules(source: str) -> set[str]:
@@ -450,6 +452,87 @@ def test_policy_fails_closed_for_shell_reached_from_make_closure(tmp_path: Path)
 def test_policy_rejects_formal_target_allowlist_drift() -> None:
     with pytest.raises(ValueError, match="missing=.*unexpected=rogue-live"):
         validate_formal_target_allowlist(("rogue-live",))
+
+
+def test_policy_keeps_deployed_smoke_outside_isolated_runner_allowlist() -> None:
+    isolated_targets = acceptance_allowlisted_targets()
+
+    assert frozenset({"ui-playground-deployed-smoke"}) == DEPLOYED_FORMAL_TARGETS
+    assert isolated_targets.isdisjoint(DEPLOYED_FORMAL_TARGETS)
+    validate_formal_target_allowlist(tuple(sorted(isolated_targets | DEPLOYED_FORMAL_TARGETS)))
+    with pytest.raises(ValueError, match="missing=ui-playground-deployed-smoke"):
+        validate_formal_target_allowlist(tuple(sorted(isolated_targets)))
+
+
+def test_policy_audits_exact_deployed_selected_env_dispatch() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    inspection = inspect_make_targets(repo_root / "Makefile", ("ui-playground-deployed-smoke",), repo_root=repo_root)
+
+    assert CANONICAL_FORMAL_DISPATCHES["ui-playground-deployed-smoke"] == (
+        '@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation ui-playground-deployed-smoke'
+    )
+    assert inspection.findings == ()
+    assert inspection.targets == ("ui-playground-deployed-smoke",)
+    assert inspection.files == ((repo_root / "scripts/run_selected_env_operation.py").resolve(),)
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "@$(SELECTED_ENV_RUNNER) --operation ui-playground-deployed-smoke",
+        '@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation check',
+        (
+            '@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" '
+            "--operation ui-playground-deployed-smoke\n\t@echo bypass"
+        ),
+    ],
+)
+def test_policy_rejects_deployed_dispatch_bypass(tmp_path: Path, replacement: str) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    canonical = "ui-playground-deployed-smoke:\n\t" + CANONICAL_FORMAL_DISPATCHES["ui-playground-deployed-smoke"]
+    source = (repo_root / "Makefile").read_text(encoding="utf-8")
+    assert source.count(canonical) == 1
+    makefile = tmp_path / "Makefile"
+    makefile.write_text(source.replace(canonical, "ui-playground-deployed-smoke:\n\t" + replacement, 1), encoding="utf-8")
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "run_selected_env_operation.py").write_bytes((repo_root / "scripts/run_selected_env_operation.py").read_bytes())
+
+    findings = scan_make_targets(makefile, ("ui-playground-deployed-smoke",), repo_root=tmp_path)
+
+    assert "public formal Make target does not use the canonical acceptance dispatch" in {item.rule for item in findings}
+
+
+def test_policy_rejects_deployed_smoke_hidden_prerequisite(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    source = (repo_root / "Makefile").read_text(encoding="utf-8")
+    canonical = "ui-playground-deployed-smoke:\n\t" + CANONICAL_FORMAL_DISPATCHES["ui-playground-deployed-smoke"]
+    assert source.count(canonical) == 1
+    makefile = tmp_path / "Makefile"
+    makefile.write_text(source.replace(canonical, canonical.replace(":\n", ": hidden-step\n", 1), 1), encoding="utf-8")
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "run_selected_env_operation.py").write_bytes((repo_root / "scripts/run_selected_env_operation.py").read_bytes())
+
+    findings = scan_make_targets(makefile, ("ui-playground-deployed-smoke",), repo_root=tmp_path)
+
+    assert "public formal Make prerequisites do not match the audited action manifest" in {item.rule for item in findings}
+
+
+def test_policy_rejects_overridable_deployed_python_binding(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    source = (repo_root / "Makefile").read_text(encoding="utf-8")
+    canonical = "override ACCEPTANCE_PYTHON := $(abspath .venv/bin/python)"
+    assert source.count(canonical) == 1
+    makefile = tmp_path / "Makefile"
+    makefile.write_text(source.replace(canonical, "ACCEPTANCE_PYTHON ?= /bin/true", 1), encoding="utf-8")
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "run_selected_env_operation.py").write_bytes((repo_root / "scripts/run_selected_env_operation.py").read_bytes())
+
+    findings = scan_make_targets(makefile, ("ui-playground-deployed-smoke",), repo_root=tmp_path)
+
+    assert "formal Make binding ACCEPTANCE_PYTHON does not match the canonical command contract" in {item.rule for item in findings}
 
 
 @pytest.mark.parametrize(

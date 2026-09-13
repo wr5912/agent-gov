@@ -144,6 +144,7 @@
           "tests/test_logging_config.py",
           "tests/test_main_agentscope_cutover.py",
           "tests/test_runtime*.py",
+          "tests/test_selected_env_deployed_browser.py",
           "tests/test_settings.py"
         ],
         "classification": {
@@ -244,6 +245,7 @@
           "tests/test_business_agent*.py",
           "tests/test_container_acceptance*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
+          "tests/test_selected_env_deployed_browser.py",
           "tests/test_execution_content_guards.py",
           "tests/test_feedback*.py",
           "tests/test_generated_agent_tests.py",
@@ -676,12 +678,15 @@
       "scripts/run_agentgov_testkit_live.py",
       "scripts/run_agentscope_live_acceptance.py",
       "scripts/run_container_acceptance.py",
+      "scripts/run_selected_env_operation.py",
       "scripts/run_main_flow_live_targets.py",
       "scripts/validate_live_acceptance_scenarios.py",
       "scripts/verify_container_acceptance_context.py",
+      "scripts/verify_deployed_browser_context.py",
       "scripts/verify_agent_candidate_lifecycle.mjs",
       "scripts/verify_improvement_ui_real_container.mjs",
-      "scripts/verify_playground_cancel.mjs"
+      "scripts/verify_playground_cancel.mjs",
+      "scripts/verify_playground_deployed.mjs"
     ],
     "formal_live_targets": [
       "smoke",
@@ -707,6 +712,7 @@
       "ui-playground-cancel-smoke",
       "_ui-playground-cancel-smoke",
       "ui-playground-technical-smoke",
+      "ui-playground-deployed-smoke",
       "ui-agent-candidate-technical-smoke",
       "_ui-agent-candidate-technical-smoke",
       "langfuse-smoke",
@@ -757,6 +763,7 @@
             "tests/test_container_acceptance_cleanup.py",
             "tests/test_container_acceptance_ports.py",
             "tests/test_container_acceptance_startup.py",
+            "tests/test_selected_env_deployed_browser.py",
             "tests/test_runtime_published_harness_preparation.py",
             "tests/test_runtime_offline_gateway.py",
             "tests/test_runtime_technical_integration_seed.py",

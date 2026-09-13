@@ -276,15 +276,34 @@ make test
 make typecheck
 ```
 
-所有 Compose 验收都由 `scripts/run_container_acceptance.py` 在锁内执行。runner 只从所选
+上述隔离 Compose 验收由 `scripts/run_container_acceptance.py` 在锁内执行。runner 只从所选
 `COMPOSE_ENV_FILE` 读取模型、MCP、Langfuse 凭据和非宿主配置；每轮生成只用于该隔离栈的
 一次性 API 密钥并同步前端，不修改所选文件中的正式身份。另建临时 Runtime 根、唯一 Compose project/
 容器前缀和随机回环端口，覆盖全部 `HOST_*_MOUNT` 与 Langfuse 数据挂载。随后使用当前工作树
 构建并 `--force-recreate`，结束时无论成功失败都执行 `down --volumes`，成功停止隔离容器后才删除
 临时目录。若临时卷由容器用户写入，runner 使用已构建的 API 镜像、单一临时挂载和无网络维护
 容器回收目录权限；不会更改正式卷权限。清理失败会报错并保留临时目录，不宣告验收成功。因此公开
-验收不会重建既有项目，也不会读写 `${HOME}/volume-agent-gov`。`make smoke` 和浏览器验收只访问
+隔离验收不会重建既有项目，也不会读写 `${HOME}/volume-agent-gov`。`make smoke` 和浏览器验收只访问
 AgentGov 的公开端口，不暴露 Runtime 管理面。
+
+现场验证既有部署的 Playground 使用独立公开入口：
+
+```bash
+REQUIRE_LIVE_RUNTIME=1 make ui-playground-deployed-smoke COMPOSE_ENV_FILE=docker/.env
+```
+
+此命令会重建所选配置对应的**既有部署**（默认 UI 为 `http://localhost:50401`），不是上述隔离栈。
+执行前安排维护窗口，期间停止向该部署发起新操作；在途检查是只读前置检查，不是 API 入站闸，
+不能保证并发新请求自动排空。重建服务会短暂中断访问。
+它在同一部署锁内冻结当前工作树和所选 env，检查无在途任务，构建镜像并强制重建服务，再用真实
+Chromium、Firefox 各执行一次双轮对话及刷新恢复。使用已发布的 `security-operations-expert`，
+通过 UI 发送“你好”并追问第一条消息内容；两轮都必须核对精确 AgentGov run 的成功终态、原生事件
+和同一 Session/版本绑定。源码、配置、镜像及容器身份在验收前后复验，不能用版本标签或健康检查
+代替对话通过。入口保留私有身份、运行卷、已有 Session 和本次新建的验收 Session，不执行
+`down --volumes`，不发布或原地改写业务 Harness，不使用替身。常规部署初始化、不可变快照物化及
+运行时写入仍按既有契约执行。报告只记录标识、长度、摘要和检查结果，保存在
+仓库外的私有目录；不保存对话正文、截图或 HAR。失败时检查报告中的阶段，不绕过门禁启动内部脚本。
+此入口只证明现场双轮对话与刷新恢复，不替代 50-run、并发、HITL、业务 MCP 或完整候选发布门。
 
 OpenAPI 离线导出始终使用独立临时环境，不沿用容器或宿主机的运行卷。
 

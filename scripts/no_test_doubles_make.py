@@ -15,6 +15,7 @@ from scripts.no_test_doubles_contract import (
     CANONICAL_FORMAL_MAKE_BINDINGS,
     CANONICAL_FORMAL_PREREQUISITES,
     CANONICAL_PRIVATE_RECIPE_SHA256,
+    DEPLOYED_FORMAL_TARGETS,
     DYNAMIC_MAKE_RULES,
     INTERPRETER_INVOCATION,
     LOCAL_SOURCE_REFERENCE,
@@ -601,7 +602,13 @@ def _formal_target_action_findings(
             )
         )
     recipe_text = "\n".join(recipe for selected_target in target_inspection.targets for _line, recipe in parsed.rules[selected_target].recipes)
-    required_marker = "REQUIRE_CONTAINER_ACCEPTANCE" if target.startswith("_") else "CONTAINER_ACCEPTANCE"
+    required_marker = (
+        "run_selected_env_operation.py --env-file"
+        if target in DEPLOYED_FORMAL_TARGETS
+        else "REQUIRE_CONTAINER_ACCEPTANCE"
+        if target.startswith("_")
+        else "CONTAINER_ACCEPTANCE"
+    )
     if required_marker not in recipe_text:
         findings.add(
             Finding(

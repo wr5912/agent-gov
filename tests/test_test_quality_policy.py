@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 from scripts.container_acceptance_environment import acceptance_allowlisted_targets
+from scripts.no_test_doubles_contract import DEPLOYED_FORMAL_TARGETS
 from scripts.run_mutation_lane import mutation_score
 from scripts.test_quality.collection import CollectionResult, collect_pytest_nodeids, collect_pytest_nodes, nodeid_digest
 from scripts.test_quality.coverage import CoverageSnapshot, compare_coverage_snapshots, evaluate_coverage
@@ -58,11 +59,11 @@ def test_quality_policy_requires_explicit_collection_selectors() -> None:
         QualityPolicy.model_validate(raw)
 
 
-def test_repository_formal_live_targets_exactly_match_runner_allowlist() -> None:
+def test_repository_formal_live_targets_exactly_match_runner_and_deployed_allowlists() -> None:
     declared = _policy().test_evidence.formal_live_targets
 
     assert len(declared) == len(set(declared))
-    assert frozenset(declared) == acceptance_allowlisted_targets()
+    assert frozenset(declared) == acceptance_allowlisted_targets() | DEPLOYED_FORMAL_TARGETS
 
 
 def test_quality_policy_rejects_coverage_regression() -> None:

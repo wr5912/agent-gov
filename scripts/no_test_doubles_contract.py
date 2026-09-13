@@ -144,6 +144,7 @@ AUDITED_MAKE_SHELL_LINES: Final = frozenset(
         "export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)",
     }
 )
+DEPLOYED_FORMAL_TARGETS: Final = frozenset({"ui-playground-deployed-smoke"})
 CANONICAL_FORMAL_MAKE_BINDINGS: Final = {
     "ACCEPTANCE_PYTHON": "override ACCEPTANCE_PYTHON := $(abspath .venv/bin/python)",
     "COMPOSE": "COMPOSE ?= docker compose --env-file $(COMPOSE_ENV_FILE) -f docker/docker-compose.yml",
@@ -162,6 +163,9 @@ CANONICAL_FORMAL_MAKE_BINDINGS: Final = {
     "VENV": "VENV ?= .venv",
 }
 CANONICAL_FORMAL_DISPATCHES: Final = {
+    "ui-playground-deployed-smoke": (
+        '@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation ui-playground-deployed-smoke'
+    ),
     "smoke": "$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _smoke",
     "ui-smoke": "$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _ui-smoke",
     "container-core-smoke": "$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _container-core-smoke",
@@ -189,6 +193,7 @@ CANONICAL_FORMAL_DISPATCHES: Final = {
     "langfuse-smoke": "$(CONTAINER_ACCEPTANCE) --profile langfuse -- $(MAKE) --no-print-directory _langfuse-smoke",
 }
 CANONICAL_FORMAL_PREREQUISITES: Final = {
+    "ui-playground-deployed-smoke": frozenset(),
     "smoke": frozenset(),
     "ui-smoke": frozenset(),
     "container-core-smoke": frozenset(),
@@ -229,6 +234,7 @@ _VERIFY_CONTEXT = "scripts/verify_container_acceptance_context.py"
 _RUNNER = "scripts/run_container_acceptance.py"
 _VALIDATE_SCENARIOS = "scripts/validate_live_acceptance_scenarios.py"
 REQUIRED_FORMAL_TARGET_FILES: Final = {
+    "ui-playground-deployed-smoke": frozenset({"scripts/run_selected_env_operation.py"}),
     "smoke": frozenset({_RUNNER, _VERIFY_CONTEXT, "scripts/diagnose_runtime_health.py"}),
     "_smoke": frozenset({_VERIFY_CONTEXT, "scripts/diagnose_runtime_health.py"}),
     "ui-smoke": frozenset({_RUNNER, _VERIFY_CONTEXT}),

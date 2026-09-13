@@ -31,6 +31,7 @@ OPERATIONS = (
     "runtime-validate",
     "ui-build",
     "ui-logs",
+    "ui-playground-deployed-smoke",
     "ui-recreate",
     "ui-stop",
     "ui-up",
@@ -39,6 +40,7 @@ OPERATIONS = (
 START_OPERATIONS = frozenset(
     {
         "all-up",
+        "ui-playground-deployed-smoke",
         "langfuse-up",
         "runtime-bootstrap",
         "runtime-prepare-harnesses",
@@ -51,6 +53,7 @@ START_OPERATIONS = frozenset(
 DOCKER_BIND_OPERATIONS = frozenset(
     {
         "all-up",
+        "ui-playground-deployed-smoke",
         "langfuse-up",
         "runtime-prepare-harnesses",
         "runtime-recreate",
@@ -79,7 +82,7 @@ HOST_MUTATING_OPERATIONS = frozenset(
     }
 )
 MUTATING_OPERATIONS = DOCKER_MUTATING_OPERATIONS | HOST_MUTATING_OPERATIONS
-BUILD_OPERATIONS = frozenset({"build", "ui-build"})
+BUILD_OPERATIONS = frozenset({"build", "ui-build", "ui-playground-deployed-smoke"})
 SOURCE_FREEZE_OPERATIONS = frozenset(OPERATIONS)
 PREFLIGHT_OPERATIONS = frozenset(
     {

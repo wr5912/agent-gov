@@ -173,6 +173,7 @@ Session 或正式端到端验收已通过；恢复该业务版本需另走受治
 | 文档与静态治理 | `make codex-guard`、文档契约测试 | 索引、契约引用、旧入口与生成物检查，不证明真实运行 |
 | 行为与故障回归 | 相关目标测试、`make main-flow-test`、`make typecheck`；提交/发版前串行 `make test` | 后端、前端、状态机、权限与恢复逻辑；它们是自动化回归，不代替真实部署验收；覆盖率以 [quality_policy.json](../../tests/quality_policy.json) 为准 |
 | 容器 | `make container-core-smoke`、`make container-openapi-check` | 当前工作树 rebuild、force-recreate 后的独立 Compose 验收 |
+| 现场部署 | `REQUIRE_LIVE_RUNTIME=1 make ui-playground-deployed-smoke COMPOSE_ENV_FILE=docker/.env` | 冻结当前源码及所选配置，重建既有部署；真实 Chromium、Firefox 各一次两轮对话、精确 run 成功终态及刷新恢复。保留运行卷与验收 Session，报告只存元数据；不替代下列完整浏览器或候选门 |
 | 观测 | `REQUIRE_LIVE_RUNTIME=1 REAL_ACCEPTANCE_AGENT_ID=security-operations-expert REAL_SCENARIO_FILE=/outside/reviewed.json make langfuse-smoke` | 从外部复核成功场景触发当次真实 run，并在私有验收进程读取严格投影后的语义 Trace；需要有效 provider 与 OTLP 配置 |
 | 浏览器 | 对应公共 UI smoke 入口和完整旅程证据 | 正式入口强制 Chromium 与 Firefox 各 3 次，核对原生事件、暂停/续跑、取消、历史、反馈与 Trace 的实际交互；`ui-playground-technical-smoke` 使用真实 Chromium、Firefox、API 与 provider 形成取消和重试技术证据，不验证业务工具效果或替代正式门禁 |
 | 真实模型候选门 | `REQUIRE_LIVE_RUNTIME=1 REAL_ACCEPTANCE_AGENT_ID=security-operations-expert REAL_SCENARIO_FILE=/outside/reviewed.json make container-release-candidate` | 当前树重建的隔离容器、已发布 Agent、复核场景、50 run/并发 10、双浏览器各 3 次取消和反馈链；仍不自动证明重启演练或正式发布签字 |

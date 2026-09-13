@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from scripts.no_test_doubles_contract import (
+    DEPLOYED_FORMAL_TARGETS,
     DOUBLE_CLASS_PREFIXES,
     DOUBLE_FUNCTION_PREFIXES,
     DYNAMIC_PYTHON_NAMES,
@@ -367,12 +368,12 @@ def load_formal_acceptance_scope(
 
 
 def validate_formal_target_allowlist(make_targets: tuple[str, ...]) -> None:
-    """质量策略和公共 runner allowlist 必须双向完全一致。"""
+    """质量策略必须精确覆盖隔离 runner 与单一正式部署入口。"""
 
     from scripts.container_acceptance_environment import acceptance_allowlisted_targets
 
     declared = frozenset(make_targets)
-    expected = acceptance_allowlisted_targets()
+    expected = acceptance_allowlisted_targets() | DEPLOYED_FORMAL_TARGETS
     if declared == expected and len(make_targets) == len(declared):
         return
     missing = ", ".join(sorted(expected - declared)) or "none"

@@ -16,6 +16,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts import selected_env_deployed_browser as deployed_browser
 from scripts import selected_env_image_inventory as image_inventory
 from scripts import selected_env_operation_cli, selected_env_reexec
 from scripts import selected_env_operation_contract as operation_contract
@@ -626,6 +627,7 @@ def run_operation(
     no_build: bool = False,
     force_recreate: bool = False,
 ) -> int:
+    deployed_browser.require_operation_opt_in(operation, os.environ)
     if "~" in env_file.parts:
         raise SelectedEnvError("所选 Compose env 路径不得依赖 shell HOME 展开")
     source = env_file if env_file.is_absolute() else REPO_ROOT / env_file
@@ -667,7 +669,7 @@ def run_operation(
             no_build=no_build,
             force_recreate=force_recreate,
         )
-        return _run(command, stage_env)
+        return deployed_browser.run_frozen_command(operation, directory, source_root, stage_env, command)
 
 
 def _run_frozen_stage(
@@ -722,6 +724,8 @@ def _execute_frozen_lifecycle(
     no_build: bool,
     force_recreate: bool,
 ) -> int:
+    if operation == deployed_browser.OPERATION:
+        return deployed_browser.run_deployed_browser(snapshot, source_root, source_base, child_env, version, digest)
     with _daemon_mutation_lock(operation, child_env) as locked_identity:
         daemon_identity, probe_image, prepared_ids = _prepare_daemon_boundary(
             operation,

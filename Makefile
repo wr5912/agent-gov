@@ -98,6 +98,10 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/agentscope_live_acceptance_report.py \
 	scripts/agentscope_mcp_live_acceptance.py \
 	scripts/run_selected_env_operation.py \
+	scripts/selected_env_browser_toolchain.py \
+	scripts/selected_env_deployed_context.py \
+	scripts/selected_env_deployed_browser.py \
+	scripts/verify_deployed_browser_context.py \
 	scripts/agentscope_live_acceptance_scenarios.py \
 	scripts/runtime_technical_integration_seed.py \
 	scripts/agentscope_atomic_cutover.py \
@@ -264,6 +268,10 @@ _ui-feedback-smoke:
 ui-playground-cancel-smoke: live-acceptance-preflight
 	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory \
 		_ui-playground-cancel-smoke AGENT_GOV_FORMAL_BROWSER_ACCEPTANCE=1 BROWSER=both
+
+.PHONY: ui-playground-deployed-smoke
+ui-playground-deployed-smoke:
+	@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation ui-playground-deployed-smoke
 
 ui-playground-technical-smoke: browser-technical-live-preflight
 	@REAL_SCENARIO_FILE="$${BROWSER_TECHNICAL_SCENARIO_FILE}" \

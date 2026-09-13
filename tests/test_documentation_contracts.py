@@ -229,6 +229,25 @@ def test_container_acceptance_docs_require_fresh_current_worktree_and_public_tar
     assert "完整业务验收仍受阻" not in runtime_acceptance
 
 
+def test_deployed_playground_docs_distinguish_live_volume_and_limited_evidence():
+    documents = (
+        _read_repo_text("README.md"),
+        _read_repo_text("docs/engineering/测试资产组合治理.md"),
+        _read_repo_text("docs/engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md"),
+    )
+
+    for document in documents:
+        assert "REQUIRE_LIVE_RUNTIME=1 make ui-playground-deployed-smoke" in document
+        assert "既有部署" in document or "既有项目" in document
+        assert "刷新恢复" in document
+        assert "验收 Session" in document
+        assert "不替代" in document
+    assert "不保存对话正文、截图或 HAR" in documents[0]
+    assert "不得\n将它加入隔离 runner 白名单" in documents[1]
+    for document in documents[:2]:
+        assert "维护窗口" in document and "API 入站" in document
+
+
 def test_deployment_docs_keep_atomic_cutover_retired_without_helper_bypass():
     readme = _read_repo_text("README.md")
     baseline = _read_repo_text("docs/engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md")

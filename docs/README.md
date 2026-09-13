@@ -116,6 +116,7 @@
 ## 评审与复盘
 
 - 代码与文档评审报告：`docs/code_review_reports/`
+  - [898c2d5 及当前更改第一性原理对抗审查报告](./code_review_reports/898c2d5及当前更改第一性原理对抗审查报告.md)：`docs/code_review_reports/898c2d5及当前更改第一性原理对抗审查报告.md`，区分提交与当前缺陷，记录只读取证、门禁与验收边界；第 10 节补充文档权威、时效、阶段依赖和重复契约审查
   - [代码与文档评审报告第二轮](./code_review_reports/代码与文档评审报告第二轮.md)：`docs/code_review_reports/代码与文档评审报告第二轮.md`
   - [项目第一性原理对抗审查报告第三轮](./code_review_reports/项目第一性原理对抗审查报告第三轮.md)：`docs/code_review_reports/项目第一性原理对抗审查报告第三轮.md`
 - 设计评审报告：`docs/design_review_report/`

@@ -1,0 +1,873 @@
+{
+  "source": {
+    "distribution": "agentscope",
+    "version": "2.0.8",
+    "factory": "agentscope.app.create_app",
+    "openapi_snapshot": "config/agentscope_openapi.json"
+  },
+  "active_enable_conditions": [
+    "runtime-core"
+  ],
+  "operations": [
+    {
+      "method": "GET",
+      "path": "/agent/",
+      "operation_id": "list_agents_agent__get",
+      "family": "agent",
+      "decision": "internal",
+      "owner": "agentgov-release",
+      "enable_condition": "runtime-core",
+      "test_id": "internal:GET:/agent/"
+    },
+    {
+      "method": "POST",
+      "path": "/agent/",
+      "operation_id": "create_agent_agent__post",
+      "family": "agent",
+      "decision": "internal",
+      "owner": "agentgov-release",
+      "enable_condition": "runtime-core",
+      "test_id": "internal:POST:/agent/"
+    },
+    {
+      "method": "GET",
+      "path": "/agent/schema",
+      "operation_id": "get_agent_schema_agent_schema_get",
+      "family": "agent",
+      "decision": "deprecated",
+      "owner": "agentscope-upstream",
+      "enable_condition": "never",
+      "test_id": "deprecated:GET:/agent/schema"
+    },
+    {
+      "method": "GET",
+      "path": "/agent/schema/v2",
+      "operation_id": "get_agent_schema_v2_agent_schema_v2_get",
+      "family": "agent",
+      "decision": "owner-facing",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:GET:/agent/schema/v2"
+    },
+    {
+      "method": "DELETE",
+      "path": "/agent/{agent_id}",
+      "operation_id": "delete_agent_agent__agent_id__delete",
+      "family": "agent",
+      "decision": "internal",
+      "owner": "agentgov-release",
+      "enable_condition": "runtime-core",
+      "test_id": "internal:DELETE:/agent/{agent_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/agent/{agent_id}",
+      "operation_id": "update_agent_agent__agent_id__patch",
+      "family": "agent",
+      "decision": "disabled",
+      "owner": "agentgov-release",
+      "enable_condition": "never",
+      "test_id": "disabled:PATCH:/agent/{agent_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/channels/",
+      "operation_id": "list_channels_channels__get",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:GET:/channels/"
+    },
+    {
+      "method": "POST",
+      "path": "/channels/",
+      "operation_id": "create_channel_channels__post",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:POST:/channels/"
+    },
+    {
+      "method": "POST",
+      "path": "/channels/bindings",
+      "operation_id": "start_credential_binding_channels_bindings_post",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:POST:/channels/bindings"
+    },
+    {
+      "method": "GET",
+      "path": "/channels/bindings/{binding_id}",
+      "operation_id": "poll_credential_binding_channels_bindings__binding_id__get",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:GET:/channels/bindings/{binding_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/channels/bindings/{binding_id}/cancel",
+      "operation_id": "cancel_credential_binding_channels_bindings__binding_id__cancel_post",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:POST:/channels/bindings/{binding_id}/cancel"
+    },
+    {
+      "method": "GET",
+      "path": "/channels/types",
+      "operation_id": "list_channel_types_channels_types_get",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:GET:/channels/types"
+    },
+    {
+      "method": "DELETE",
+      "path": "/channels/{channel_id}",
+      "operation_id": "delete_channel_channels__channel_id__delete",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:DELETE:/channels/{channel_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/channels/{channel_id}",
+      "operation_id": "get_channel_channels__channel_id__get",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:GET:/channels/{channel_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/channels/{channel_id}",
+      "operation_id": "update_channel_channels__channel_id__patch",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:PATCH:/channels/{channel_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/channels/{channel_id}/chat_ids",
+      "operation_id": "list_chat_ids_channels__channel_id__chat_ids_get",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:GET:/channels/{channel_id}/chat_ids"
+    },
+    {
+      "method": "POST",
+      "path": "/channels/{channel_id}/disable",
+      "operation_id": "disable_channel_channels__channel_id__disable_post",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:POST:/channels/{channel_id}/disable"
+    },
+    {
+      "method": "POST",
+      "path": "/channels/{channel_id}/enable",
+      "operation_id": "enable_channel_channels__channel_id__enable_post",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:POST:/channels/{channel_id}/enable"
+    },
+    {
+      "method": "GET",
+      "path": "/channels/{channel_id}/sessions",
+      "operation_id": "list_channel_sessions_channels__channel_id__sessions_get",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:GET:/channels/{channel_id}/sessions"
+    },
+    {
+      "method": "GET",
+      "path": "/channels/{channel_id}/status",
+      "operation_id": "channel_status_channels__channel_id__status_get",
+      "family": "channels",
+      "decision": "disabled",
+      "owner": "agentgov-channel-governance",
+      "enable_condition": "channel-governance",
+      "test_id": "disabled:GET:/channels/{channel_id}/status"
+    },
+    {
+      "method": "POST",
+      "path": "/chat/",
+      "operation_id": "chat_chat__post",
+      "family": "chat",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:POST:/chat/"
+    },
+    {
+      "method": "GET",
+      "path": "/credential/",
+      "operation_id": "list_credentials_credential__get",
+      "family": "credentials",
+      "decision": "internal",
+      "owner": "agentgov-runtime-credential-operator",
+      "enable_condition": "runtime-credential-operator",
+      "test_id": "internal:GET:/credential/"
+    },
+    {
+      "method": "POST",
+      "path": "/credential/",
+      "operation_id": "create_credential_credential__post",
+      "family": "credentials",
+      "decision": "internal",
+      "owner": "agentgov-runtime-credential-operator",
+      "enable_condition": "runtime-credential-operator",
+      "test_id": "internal:POST:/credential/"
+    },
+    {
+      "method": "GET",
+      "path": "/credential/schemas",
+      "operation_id": "list_credential_schemas_credential_schemas_get",
+      "family": "credentials",
+      "decision": "internal",
+      "owner": "agentgov-runtime-credential-operator",
+      "enable_condition": "runtime-credential-operator",
+      "test_id": "internal:GET:/credential/schemas"
+    },
+    {
+      "method": "DELETE",
+      "path": "/credential/{credential_id}",
+      "operation_id": "delete_credential_credential__credential_id__delete",
+      "family": "credentials",
+      "decision": "internal",
+      "owner": "agentgov-runtime-credential-operator",
+      "enable_condition": "runtime-credential-operator",
+      "test_id": "internal:DELETE:/credential/{credential_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/credential/{credential_id}",
+      "operation_id": "update_credential_credential__credential_id__patch",
+      "family": "credentials",
+      "decision": "internal",
+      "owner": "agentgov-runtime-credential-operator",
+      "enable_condition": "runtime-credential-operator",
+      "test_id": "internal:PATCH:/credential/{credential_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/embedding-model/",
+      "operation_id": "list_embedding_models_embedding_model__get",
+      "family": "models",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-model-discovery",
+      "test_id": "owner-facing:GET:/embedding-model/"
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "operation_id": "get_health_health_get",
+      "family": "health",
+      "decision": "internal",
+      "owner": "agentgov-runtime-platform",
+      "enable_condition": "runtime-core",
+      "test_id": "internal:GET:/health"
+    },
+    {
+      "method": "GET",
+      "path": "/hub/mcp",
+      "operation_id": "list_mcp_hubs_hub_mcp_get",
+      "family": "hub",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-hub-catalog",
+      "test_id": "owner-facing:GET:/hub/mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/hub/mcp/{hub_id}/cards",
+      "operation_id": "list_mcp_cards_hub_mcp__hub_id__cards_get",
+      "family": "hub",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-hub-catalog",
+      "test_id": "owner-facing:GET:/hub/mcp/{hub_id}/cards"
+    },
+    {
+      "method": "GET",
+      "path": "/hub/mcp/{hub_id}/cards/{card_id}",
+      "operation_id": "get_mcp_card_hub_mcp__hub_id__cards__card_id__get",
+      "family": "hub",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-hub-catalog",
+      "test_id": "owner-facing:GET:/hub/mcp/{hub_id}/cards/{card_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/hub/mcp/{hub_id}/cards/{card_id}/install",
+      "operation_id": "install_mcp_hub_mcp__hub_id__cards__card_id__install_post",
+      "family": "hub",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:POST:/hub/mcp/{hub_id}/cards/{card_id}/install"
+    },
+    {
+      "method": "GET",
+      "path": "/hub/skill",
+      "operation_id": "list_skill_hubs_hub_skill_get",
+      "family": "hub",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-hub-catalog",
+      "test_id": "owner-facing:GET:/hub/skill"
+    },
+    {
+      "method": "GET",
+      "path": "/hub/skill/{hub_id}/cards",
+      "operation_id": "list_skill_cards_hub_skill__hub_id__cards_get",
+      "family": "hub",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-hub-catalog",
+      "test_id": "owner-facing:GET:/hub/skill/{hub_id}/cards"
+    },
+    {
+      "method": "GET",
+      "path": "/hub/skill/{hub_id}/cards/{card_id}",
+      "operation_id": "get_skill_card_hub_skill__hub_id__cards__card_id__get",
+      "family": "hub",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-hub-catalog",
+      "test_id": "owner-facing:GET:/hub/skill/{hub_id}/cards/{card_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/hub/skill/{hub_id}/cards/{card_id}/install",
+      "operation_id": "install_skill_hub_skill__hub_id__cards__card_id__install_post",
+      "family": "hub",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:POST:/hub/skill/{hub_id}/cards/{card_id}/install"
+    },
+    {
+      "method": "GET",
+      "path": "/knowledge_bases/",
+      "operation_id": "list_knowledge_bases_knowledge_bases__get",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:GET:/knowledge_bases/"
+    },
+    {
+      "method": "POST",
+      "path": "/knowledge_bases/",
+      "operation_id": "create_knowledge_base_knowledge_bases__post",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:POST:/knowledge_bases/"
+    },
+    {
+      "method": "GET",
+      "path": "/knowledge_bases/chunkers",
+      "operation_id": "list_chunkers_knowledge_bases_chunkers_get",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:GET:/knowledge_bases/chunkers"
+    },
+    {
+      "method": "GET",
+      "path": "/knowledge_bases/embedding_models",
+      "operation_id": "list_kb_embedding_models_knowledge_bases_embedding_models_get",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:GET:/knowledge_bases/embedding_models"
+    },
+    {
+      "method": "GET",
+      "path": "/knowledge_bases/middleware/parameters_schema",
+      "operation_id": "get_kb_middleware_parameters_schema_knowledge_bases_middleware_parameters_schema_get",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:GET:/knowledge_bases/middleware/parameters_schema"
+    },
+    {
+      "method": "GET",
+      "path": "/knowledge_bases/supported_content_types",
+      "operation_id": "list_supported_content_types_knowledge_bases_supported_content_types_get",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:GET:/knowledge_bases/supported_content_types"
+    },
+    {
+      "method": "DELETE",
+      "path": "/knowledge_bases/{knowledge_base_id}",
+      "operation_id": "delete_knowledge_base_knowledge_bases__knowledge_base_id__delete",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:DELETE:/knowledge_bases/{knowledge_base_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/knowledge_bases/{knowledge_base_id}",
+      "operation_id": "update_knowledge_base_knowledge_bases__knowledge_base_id__patch",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:PATCH:/knowledge_bases/{knowledge_base_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/knowledge_bases/{knowledge_base_id}/documents",
+      "operation_id": "list_knowledge_documents_knowledge_bases__knowledge_base_id__documents_get",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:GET:/knowledge_bases/{knowledge_base_id}/documents"
+    },
+    {
+      "method": "POST",
+      "path": "/knowledge_bases/{knowledge_base_id}/documents",
+      "operation_id": "upload_knowledge_document_knowledge_bases__knowledge_base_id__documents_post",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:POST:/knowledge_bases/{knowledge_base_id}/documents"
+    },
+    {
+      "method": "GET",
+      "path": "/knowledge_bases/{knowledge_base_id}/documents/status",
+      "operation_id": "list_knowledge_document_status_knowledge_bases__knowledge_base_id__documents_status_get",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:GET:/knowledge_bases/{knowledge_base_id}/documents/status"
+    },
+    {
+      "method": "DELETE",
+      "path": "/knowledge_bases/{knowledge_base_id}/documents/{document_id}",
+      "operation_id": "delete_knowledge_document_knowledge_bases__knowledge_base_id__documents__document_id__delete",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:DELETE:/knowledge_bases/{knowledge_base_id}/documents/{document_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/knowledge_bases/{knowledge_base_id}/documents/{document_id}",
+      "operation_id": "read_knowledge_document_knowledge_bases__knowledge_base_id__documents__document_id__get",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:GET:/knowledge_bases/{knowledge_base_id}/documents/{document_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/knowledge_bases/{knowledge_base_id}/documents/{document_id}/chunks",
+      "operation_id": "list_document_chunks_knowledge_bases__knowledge_base_id__documents__document_id__chunks_get",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:GET:/knowledge_bases/{knowledge_base_id}/documents/{document_id}/chunks"
+    },
+    {
+      "method": "POST",
+      "path": "/knowledge_bases/{knowledge_base_id}/documents/{document_id}/download_token",
+      "operation_id": "create_document_download_token_knowledge_bases__knowledge_base_id__documents__document_id__download_token_post",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:POST:/knowledge_bases/{knowledge_base_id}/documents/{document_id}/download_token"
+    },
+    {
+      "method": "POST",
+      "path": "/knowledge_bases/{knowledge_base_id}/search",
+      "operation_id": "search_knowledge_base_knowledge_bases__knowledge_base_id__search_post",
+      "family": "knowledge",
+      "decision": "disabled",
+      "owner": "agentgov-knowledge-governance",
+      "enable_condition": "knowledge-manager-governance",
+      "test_id": "disabled:POST:/knowledge_bases/{knowledge_base_id}/search"
+    },
+    {
+      "method": "GET",
+      "path": "/mcp",
+      "operation_id": "list_mcps_mcp_get",
+      "family": "mcp-library",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-library-catalog",
+      "test_id": "owner-facing:GET:/mcp"
+    },
+    {
+      "method": "DELETE",
+      "path": "/mcp/{mcp_id}",
+      "operation_id": "delete_mcp_mcp__mcp_id__delete",
+      "family": "mcp-library",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:DELETE:/mcp/{mcp_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/mcp/{mcp_id}",
+      "operation_id": "update_mcp_mcp__mcp_id__patch",
+      "family": "mcp-library",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:PATCH:/mcp/{mcp_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/model/",
+      "operation_id": "list_models_model__get",
+      "family": "models",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-model-discovery",
+      "test_id": "owner-facing:GET:/model/"
+    },
+    {
+      "method": "GET",
+      "path": "/schedule/",
+      "operation_id": "list_schedules_schedule__get",
+      "family": "schedule",
+      "decision": "disabled",
+      "owner": "agentgov-schedule-governance",
+      "enable_condition": "scheduler-governance",
+      "test_id": "disabled:GET:/schedule/"
+    },
+    {
+      "method": "POST",
+      "path": "/schedule/",
+      "operation_id": "create_schedule_schedule__post",
+      "family": "schedule",
+      "decision": "disabled",
+      "owner": "agentgov-schedule-governance",
+      "enable_condition": "scheduler-governance",
+      "test_id": "disabled:POST:/schedule/"
+    },
+    {
+      "method": "DELETE",
+      "path": "/schedule/{schedule_id}",
+      "operation_id": "delete_schedule_schedule__schedule_id__delete",
+      "family": "schedule",
+      "decision": "disabled",
+      "owner": "agentgov-schedule-governance",
+      "enable_condition": "scheduler-governance",
+      "test_id": "disabled:DELETE:/schedule/{schedule_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/schedule/{schedule_id}",
+      "operation_id": "update_schedule_schedule__schedule_id__patch",
+      "family": "schedule",
+      "decision": "disabled",
+      "owner": "agentgov-schedule-governance",
+      "enable_condition": "scheduler-governance",
+      "test_id": "disabled:PATCH:/schedule/{schedule_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/schedule/{schedule_id}/sessions",
+      "operation_id": "list_schedule_sessions_schedule__schedule_id__sessions_get",
+      "family": "schedule",
+      "decision": "disabled",
+      "owner": "agentgov-schedule-governance",
+      "enable_condition": "scheduler-governance",
+      "test_id": "disabled:GET:/schedule/{schedule_id}/sessions"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/",
+      "operation_id": "list_sessions_sessions__get",
+      "family": "session",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:GET:/sessions/"
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/",
+      "operation_id": "create_session_sessions__post",
+      "family": "session",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:POST:/sessions/"
+    },
+    {
+      "method": "DELETE",
+      "path": "/sessions/{session_id}",
+      "operation_id": "delete_session_sessions__session_id__delete",
+      "family": "session",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:DELETE:/sessions/{session_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/sessions/{session_id}",
+      "operation_id": "update_session_sessions__session_id__patch",
+      "family": "session",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:PATCH:/sessions/{session_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/{session_id}/interrupt",
+      "operation_id": "interrupt_session_sessions__session_id__interrupt_post",
+      "family": "session",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:POST:/sessions/{session_id}/interrupt"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/{session_id}/messages",
+      "operation_id": "list_messages_sessions__session_id__messages_get",
+      "family": "session",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:GET:/sessions/{session_id}/messages"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/{session_id}/status",
+      "operation_id": "get_session_status_sessions__session_id__status_get",
+      "family": "session",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:GET:/sessions/{session_id}/status"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/{session_id}/stream",
+      "operation_id": "stream_session_events_sessions__session_id__stream_get",
+      "family": "session",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:GET:/sessions/{session_id}/stream"
+    },
+    {
+      "method": "GET",
+      "path": "/skill",
+      "operation_id": "list_skills_skill_get",
+      "family": "skill-library",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-library-catalog",
+      "test_id": "owner-facing:GET:/skill"
+    },
+    {
+      "method": "DELETE",
+      "path": "/skill/{skill_id}",
+      "operation_id": "delete_skill_skill__skill_id__delete",
+      "family": "skill-library",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:DELETE:/skill/{skill_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/skill/{skill_id}",
+      "operation_id": "get_skill_skill__skill_id__get",
+      "family": "skill-library",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-library-catalog",
+      "test_id": "owner-facing:GET:/skill/{skill_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/tts-model/",
+      "operation_id": "list_tts_models_tts_model__get",
+      "family": "models",
+      "decision": "owner-facing",
+      "owner": "agentgov-runtime-catalog",
+      "enable_condition": "runtime-model-discovery",
+      "test_id": "owner-facing:GET:/tts-model/"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/directories",
+      "operation_id": "list_workspace_directory_workspace_directories_get",
+      "family": "workspace",
+      "decision": "disabled",
+      "owner": "agentgov-workspace-security",
+      "enable_condition": "workspace-file-sandbox",
+      "test_id": "disabled:GET:/workspace/directories"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/files",
+      "operation_id": "read_workspace_file_workspace_files_get",
+      "family": "workspace",
+      "decision": "disabled",
+      "owner": "agentgov-workspace-security",
+      "enable_condition": "workspace-file-sandbox",
+      "test_id": "disabled:GET:/workspace/files"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/files/download-token",
+      "operation_id": "create_download_token_workspace_files_download_token_post",
+      "family": "workspace",
+      "decision": "disabled",
+      "owner": "agentgov-workspace-security",
+      "enable_condition": "workspace-file-sandbox",
+      "test_id": "disabled:POST:/workspace/files/download-token"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/mcp",
+      "operation_id": "list_mcps_workspace_mcp_get",
+      "family": "workspace",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:GET:/workspace/mcp"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/mcp",
+      "operation_id": "add_mcp_workspace_mcp_post",
+      "family": "workspace",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:POST:/workspace/mcp"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/mcp/from-library",
+      "operation_id": "add_mcps_from_library_workspace_mcp_from_library_post",
+      "family": "workspace",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:POST:/workspace/mcp/from-library"
+    },
+    {
+      "method": "DELETE",
+      "path": "/workspace/mcp/{mcp_name}",
+      "operation_id": "remove_mcp_workspace_mcp__mcp_name__delete",
+      "family": "workspace",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:DELETE:/workspace/mcp/{mcp_name}"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/skill",
+      "operation_id": "list_skills_workspace_skill_get",
+      "family": "workspace",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:GET:/workspace/skill"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/skill",
+      "operation_id": "add_skill_workspace_skill_post",
+      "family": "workspace",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:POST:/workspace/skill"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/skill/from-library",
+      "operation_id": "add_skills_from_library_workspace_skill_from_library_post",
+      "family": "workspace",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:POST:/workspace/skill/from-library"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace/skill/upload",
+      "operation_id": "upload_skill_workspace_skill_upload_post",
+      "family": "workspace",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:POST:/workspace/skill/upload"
+    },
+    {
+      "method": "DELETE",
+      "path": "/workspace/skill/{skill_name}",
+      "operation_id": "remove_skill_workspace_skill__skill_name__delete",
+      "family": "workspace",
+      "decision": "candidate-only",
+      "owner": "agentgov-candidate-governance",
+      "enable_condition": "candidate-workspace-isolation",
+      "test_id": "candidate-only:DELETE:/workspace/skill/{skill_name}"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace/status",
+      "operation_id": "get_workspace_status_workspace_status_get",
+      "family": "workspace",
+      "decision": "owner-facing",
+      "owner": "agentgov-session-gateway",
+      "enable_condition": "runtime-core",
+      "test_id": "owner-facing:GET:/workspace/status"
+    }
+  ]
+}

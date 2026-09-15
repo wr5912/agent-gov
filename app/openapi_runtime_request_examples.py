@@ -20,7 +20,7 @@ RUNTIME_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                 "Create a session for the published business Agent",
                 {
                     "agent_id": _RUNTIME_AGENT_ID,
-                    "name": "SOC console investigation",
+                    "name": "文档助手会话",
                 },
             )
         },
@@ -34,7 +34,7 @@ RUNTIME_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
         examples={
             "rename_session": example(
                 "Rename one existing session",
-                {"name": "SOC console follow-up"},
+                {"name": "文档助手后续问答"},
             )
         },
     ),
@@ -51,21 +51,17 @@ RUNTIME_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                 {
                     "agent_id": _RUNTIME_AGENT_ID,
                     "session_id": "session-id-from-create",
-                    "client_operation_id": "soc-console-turn-20260909-001",
                     "input": {
+                        "id": "user-input-20260913-001",
                         "name": "user",
                         "role": "user",
                         "content": [
                             {
                                 "type": "text",
-                                "text": "请核查当前告警并给出处置建议",
+                                "text": "请阅读项目说明并总结部署步骤",
                             }
                         ],
                     },
-                    "confirmation_scope": "once",
-                    "alert_id": "alert-20260909-001",
-                    "case_id": "case-20260909-001",
-                    "metadata": {"source": "soc-console"},
                 },
             ),
             "resume_user_confirmation": example(
@@ -73,9 +69,8 @@ RUNTIME_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                 {
                     "agent_id": _RUNTIME_AGENT_ID,
                     "session_id": "session-id-from-create",
-                    "client_operation_id": "soc-console-turn-20260909-001",
-                    "expected_run_id": "run-id-from-initial-turn",
                     "input": {
+                        "id": "confirmation-20260913-001",
                         "type": "USER_CONFIRM_RESULT",
                         "reply_id": "reply-id-from-require-user-confirm",
                         "confirm_results": [
@@ -90,12 +85,10 @@ RUNTIME_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                             }
                         ],
                     },
-                    "confirmation_scope": "once",
-                    "metadata": {"source": "soc-console"},
                 },
                 description=(
-                    "The browser must not submit permission rules. Use confirmation_scope=run only after an "
-                    "explicit user choice; AgentGov derives any run-scoped rule from the persisted tool call."
+                    "仅在用户明确选择本次运行允许时发送 X-AgentGov-Confirmation-Scope: run 请求头；"
+                    "单次允许/拒绝不需要该头，不能提交自定义权限规则。同一次动作重试必须复用 input.id。"
                 ),
             ),
         },

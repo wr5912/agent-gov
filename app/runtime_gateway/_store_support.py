@@ -6,6 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from agentgov_agentscope_contract import RUNTIME_TEMPLATE_RESTART_REQUIRED
 from agentgov_harness_digest import harness_content_digest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,6 +27,7 @@ from .models import (
 
 class RuntimeStoreError(RuntimeError):
     status_code = 409
+    error_code: str | None = None
 
 
 class RuntimeObjectNotFound(RuntimeStoreError):
@@ -34,6 +36,12 @@ class RuntimeObjectNotFound(RuntimeStoreError):
 
 class RuntimeStateConflict(RuntimeStoreError):
     status_code = 409
+
+
+class RuntimeTemplateRestartRequired(RuntimeStateConflict):
+    """已物化精确模板，调用方可在闲置维护后重试原候选。"""
+
+    error_code = RUNTIME_TEMPLATE_RESTART_REQUIRED
 
 
 class RuntimeRestartRequired(RuntimeStoreError):
@@ -127,7 +135,6 @@ def _run_response(row: AgentRunModel) -> AgentRunResponse:
     return AgentRunResponse(
         run_id=row.run_id,
         session_id=row.session_id,
-        client_operation_id=row.client_operation_id,
         agent_id=row.agent_id,
         agent_version_id=row.agent_version_id,
         runtime_agent_id=row.runtime_agent_id,
@@ -144,8 +151,7 @@ def _run_response(row: AgentRunModel) -> AgentRunResponse:
         trace_status=row.trace_status,
         terminal_reason=row.terminal_reason,
         error=dict(row.error_json) if row.error_json else None,
-        alert_id=row.alert_id,
-        case_id=row.case_id,
+        entities=row.entities_json or {},
         metadata=dict(row.metadata_json or {}),
         created_at=row.created_at,
         started_at=row.started_at,

@@ -1,5 +1,24 @@
-import { mkdir } from "node:fs/promises";
-import path from "node:path";
+class RealUiAcceptanceError extends Error {
+  constructor(code, status) {
+    super(code);
+    this.code = code;
+    if (Number.isInteger(status) && status >= 400 && status <= 599) this.httpStatus = status;
+  }
+}
+
+export function safeAcceptanceFailure(error) {
+  const knownFailure = error instanceof RealUiAcceptanceError;
+  return {
+    status: "failed",
+    code: knownFailure && typeof error.code === "string" && /^[A-Z][A-Z0-9_]{3,79}$/.test(error.code)
+      ? error.code : "REAL_UI_ACCEPTANCE_FAILED",
+    ...(knownFailure && Number.isInteger(error.httpStatus) ? { http_status: error.httpStatus } : {}),
+  };
+}
+
+export function acceptanceError(code, status) {
+  return new RealUiAcceptanceError(code, status);
+}
 
 function responseRecord(response) {
   const request = response.request();
@@ -18,10 +37,10 @@ function isExpectedHttpError(item, expectedHttpErrors) {
 export function isExpectedRequestCancellation(item) {
   if (item.method !== "GET" || !/ERR_ABORTED|NS_BINDING_ABORTED/.test(item.error)) return false;
   try {
-    const url = new URL(item.url);
+    const url = new URL(item.path, "http://localhost");
     if (url.pathname.endsWith("/presentation")) return true;
     if (/^\/api\/runtime\/sessions\/[^/]+\/(messages|status)$/.test(url.pathname)) return true;
-    return url.pathname === "/api/agent-runs" && url.searchParams.has("session_id");
+    return url.pathname === "/api/agent-runs" && item.hasSessionId === true;
   } catch {
     return false;
   }
@@ -34,17 +53,27 @@ export function attachDiagnostics(page, apiBase, uiBase = "") {
   if (uiBase) firstPartyOrigins.add(new URL(uiBase).origin);
   page.on("console", (message) => {
     if (message.type() === "error") {
-      state.consoleErrors.push({ text: message.text(), url: message.location().url || "" });
+      const resourceFailure = /Failed to load resource: the server responded with a status of \d+/.test(message.text());
+      let path = "";
+      try { path = new URL(message.location().url).pathname; } catch { /* 无来源的错误仍应失败。 */ }
+      state.consoleErrors.push({ code: resourceFailure ? "HTTP_RESOURCE_FAILED" : "BROWSER_CONSOLE_ERROR", path });
     }
   });
-  page.on("pageerror", (error) => state.pageErrors.push(error.message));
+  page.on("pageerror", () => state.pageErrors.push({ code: "BROWSER_PAGE_ERROR" }));
   page.on("requestfailed", (request) => {
-    state.requestFailures.push({ method: request.method(), url: request.url(), error: request.failure()?.errorText || "unknown" });
+    const url = new URL(request.url());
+    const rawError = request.failure()?.errorText || "";
+    const error = rawError.includes("ERR_ABORTED") ? "ERR_ABORTED" : rawError.includes("NS_BINDING_ABORTED") ? "NS_BINDING_ABORTED" : "REQUEST_FAILED";
+    state.requestFailures.push({ method: request.method(), path: url.pathname, hasSessionId: url.searchParams.has("session_id"), error });
   });
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (url.origin === apiOrigin) {
-      state.requests.push({ method: request.method(), path: url.pathname, postData: request.postData() || "" });
+      let testDatasetCreate = false;
+      if (request.method() === "POST" && url.pathname === "/api/assets") {
+        try { testDatasetCreate = request.postDataJSON()?.asset_type === "test_dataset"; } catch { /* 畸形输入由真实后端拒绝。 */ }
+      }
+      state.requests.push({ method: request.method(), path: url.pathname, testDatasetCreate });
     }
   });
   page.on("response", (response) => {
@@ -75,13 +104,7 @@ export function unexpectedDiagnostics(state, expectedHttpErrors = []) {
     .map(({ remaining, ...expected }) => ({ ...expected, missing: remaining }));
   const ignoredHttpPaths = new Set(consumedExpected.map((item) => item.path));
   const unexpectedConsole = state.consoleErrors.filter((message) => {
-    if (!/Failed to load resource: the server responded with a status of \d+/.test(message.text)) return true;
-    if (!message.url) return true;
-    try {
-      return !ignoredHttpPaths.has(new URL(message.url).pathname);
-    } catch {
-      return true;
-    }
+    return message.code !== "HTTP_RESOURCE_FAILED" || !ignoredHttpPaths.has(message.path);
   });
   return {
     consoleErrors: unexpectedConsole,
@@ -128,7 +151,7 @@ export async function auditLayout(page) {
         return rect ? {
           element,
           rect,
-          label: element.getAttribute("data-testid") || element.getAttribute("aria-label") || element.textContent?.trim().slice(0, 40) || element.tagName,
+          label: element.tagName,
         } : null;
       })
       .filter(Boolean);
@@ -151,15 +174,12 @@ export async function auditLayout(page) {
   });
 }
 
-export async function screenshotAndAudit(page, screenshotDir, name) {
-  await mkdir(screenshotDir, { recursive: true });
-  const screenshotPath = path.join(screenshotDir, `${name}.png`);
-  await page.screenshot({ path: screenshotPath, fullPage: true });
+export async function auditState(page, name) {
   const layout = await auditLayout(page);
   if (layout.horizontalOverflow > 1 || layout.overlaps.length) {
-    throw new Error(`layout audit failed for ${name}: ${JSON.stringify(layout)}`);
+    throw acceptanceError("BROWSER_LAYOUT_INVALID");
   }
-  return { name, screenshot: screenshotPath, ...layout };
+  return { name, ...layout };
 }
 
 export function assertNoForbiddenUiRequests(requests) {
@@ -168,9 +188,9 @@ export function assertNoForbiddenUiRequests(requests) {
     if (request.method === "PUT" && /\/execution$/.test(request.path)) return true;
     if (/\/improvements\/[^/]+\/lifecycle$/.test(request.path)) return true;
     if (request.method === "POST" && request.path === "/api/assets") {
-      try { return JSON.parse(request.postData || "{}").asset_type === "test_dataset"; } catch { return false; }
+      return request.testDatasetCreate === true;
     }
     return false;
   });
-  if (forbidden.length) throw new Error(`forbidden stale UI requests observed: ${JSON.stringify(forbidden)}`);
+  if (forbidden.length) throw acceptanceError("FORBIDDEN_UI_REQUEST_OBSERVED");
 }

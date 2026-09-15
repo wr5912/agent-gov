@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
 
 import pytest
-from app.agent_testing.runner import FIXED_PYTEST_COMMAND, AgentTestRunner
+from app.agent_testing.runner import FIXED_PYTEST_COMMAND
 from app.agent_testing.store import AgentTestingStore
 from app.agent_testing.suite import inspect_agent_test_suite
-from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.agent_paths import business_agent_layout
 from app.runtime.errors import ConflictError
 from app.runtime.improvement_db import AttributionModel, ExecutionRecordModel, ImprovementItemModel, OptimizationPlanModel
@@ -22,18 +22,18 @@ from app.runtime.response_schemas.agent_governance_response_schemas import (
 from app.runtime.runtime_db import (
     AgentChangeSetModel,
     AgentReleaseModel,
-    AgentReleaseSourceClaimModel,
     AgentReleaseTagClaimModel,
     utc_now,
 )
 from app.runtime.schemas import FeedbackSignalCreateRequest
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
-from app.services.agent_candidate_approval import inspect_candidate_review
+from app.services.agent_candidate_approval import CandidateApprovalFailure, inspect_candidate_review
 from app.services.agent_change_set_provisioner import ChangeSetSource
 from app.services.agent_governance import AgentGovernanceError, AgentGovernanceService
 from app.services.agent_governance_projections import candidate_diff_digest
 from app.services.agent_publication_evidence_migration import reconcile_legacy_publication_evidence
+from app.services.agent_publication_provenance import validate_publication_provenance
 from sqlalchemy import text
 
 from agent_release_test_utils import install_release_activation_boundary
@@ -54,8 +54,6 @@ def _governance(tmp_path):
     governance = AgentGovernanceService(
         feedback_store=store,
         agent_version_store=agent_store,
-        runtime_mode=settings.runtime_volume_mode,
-        runtime_env={"SEC_OPS_MCP_URL": "http://localhost:58001/mcp"},
     )
     testing_store = AgentTestingStore(store.Session)
 
@@ -87,7 +85,6 @@ def _candidate_change_set(
     *,
     content: str = "# Test Agent\n\n发布候选变更。\n",
     agent_id: str | None = None,
-    record_passed_test: bool = True,
 ):
     if agent_id and agent_id != DEFAULT_BUSINESS_AGENT_ID:
         workspace = business_agent_layout(governance.feedback_store.data_dir, agent_id).workspace
@@ -106,24 +103,12 @@ def _candidate_change_set(
         execution_job_id="job-publish-test",
         operator="tester",
     )
-    if record_passed_test:
-        _record_passed_test_run(
-            governance,
-            agent_id=str(committed["agent_id"]),
-            commit_sha=candidate_commit,
-            change_set_id=str(committed["change_set_id"]),
-        )
-        refreshed = governance.get_change_set(str(committed["change_set_id"]))
-        assert refreshed is not None
-        return refreshed
     return committed
 
 
 def _feedback_candidate_change_set(
     governance: AgentGovernanceService,
     agent_store: GitAgentVersionStore,
-    *,
-    record_passed_test: bool = True,
 ) -> tuple[dict, str]:
     change_set_id = "agc-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     bound_at = "2026-07-10T00:00:00+00:00"
@@ -182,72 +167,10 @@ def _feedback_candidate_change_set(
         candidate_commit_sha=candidate,
         execution_job_id="exec-publish",
     )
-    if record_passed_test:
-        _record_passed_test_run(
-            governance,
-            agent_id=str(committed["agent_id"]),
-            commit_sha=candidate,
-            change_set_id=change_set_id,
-        )
-        refreshed = governance.get_change_set(change_set_id)
-        assert refreshed is not None
-        return refreshed, bound_at
     return committed, bound_at
 
 
-def _record_passed_test_run(
-    governance: AgentGovernanceService,
-    *,
-    agent_id: str,
-    commit_sha: str,
-    change_set_id: str,
-) -> dict:
-    testing_store = AgentTestingStore(governance.feedback_store.Session)
-    change_set = governance.get_change_set(change_set_id)
-    assert change_set is not None
-    suite = inspect_agent_test_suite(
-        Path(str(change_set["worktree_path"])),
-        agent_id=agent_id,
-        commit_sha=commit_sha,
-    )
-    assert suite.runnable and suite.suite_digest
-    run = testing_store.create_run(
-        agent_id=agent_id,
-        commit_sha=commit_sha,
-        change_set_id=change_set_id,
-        source="release_check",
-        command=FIXED_PYTEST_COMMAND,
-        suite=suite.model_dump(mode="json"),
-        suite_digest=suite.suite_digest,
-    )
-    runner = AgentTestRunner(
-        store=testing_store,
-        store_for=governance._store_for,
-        artifacts_dir=governance.feedback_store.data_dir / ".publish-test-runs",
-        api_base_url="http://127.0.0.1:1",
-        api_key=None,
-        timeout_seconds=30,
-    )
-    try:
-        runner.enqueue(str(run["test_run_id"]))
-        deadline = time.monotonic() + 30
-        persisted = testing_store.get_run(str(run["test_run_id"]))
-        while persisted and persisted["status"] in {"queued", "running"} and time.monotonic() < deadline:
-            time.sleep(0.05)
-            persisted = testing_store.get_run(str(run["test_run_id"]))
-        assert persisted is not None and persisted["status"] == "passed", persisted
-        return persisted
-    finally:
-        runner.close()
-
-
-def _record_completed_test_run(
-    governance: AgentGovernanceService,
-    change_set: dict,
-    *,
-    status: str,
-    outcome: str,
-) -> dict:
+def _record_failed_test_run(governance: AgentGovernanceService, change_set: dict) -> dict:
     testing_store = AgentTestingStore(governance.feedback_store.Session)
     candidate = str(change_set["candidate_commit_sha"])
     suite = inspect_agent_test_suite(
@@ -268,32 +191,61 @@ def _record_completed_test_run(
     assert testing_store.claim_run(str(run["test_run_id"])) is not None
     return testing_store.finish_run(
         str(run["test_run_id"]),
-        status=status,
-        report={"exit_code": 0 if status == "passed" else 1},
-        items=[{"nodeid": "tests/test_agent.py::test_agent", "outcome": outcome}],
+        status="failed",
+        report={"exit_code": 1},
+        items=[{"nodeid": "tests/test_agent.py::test_agent", "outcome": "failed"}],
         stdout="",
         stderr="",
     )
 
 
-def _approval_kwargs(governance: AgentGovernanceService, change_set: dict) -> dict:
-    current = governance.get_change_set(str(change_set["change_set_id"]))
-    assert current is not None
-    candidate = str(current["candidate_commit_sha"])
-    diff = governance.change_set_diff(current, candidate)
-    run = current.get("latest_test_run")
-    assert diff is not None and isinstance(run, dict)
-    review = inspect_candidate_review(
-        diff,
-        lambda path: governance.change_set_file_diff(current, candidate, path),
+def _record_attested_passed_test_run(governance: AgentGovernanceService, change_set: dict) -> dict:
+    testing_store = AgentTestingStore(governance.feedback_store.Session)
+    candidate = str(change_set["candidate_commit_sha"])
+    change_set_id = str(change_set["change_set_id"])
+    agent_id = str(change_set["agent_id"])
+    suite = inspect_agent_test_suite(
+        Path(str(change_set["worktree_path"])),
+        agent_id=agent_id,
+        commit_sha=candidate,
     )
-    return {
-        "candidate_commit_sha": candidate,
-        "diff_digest": candidate_diff_digest(diff),
-        "test_run_id": run["test_run_id"],
-        "suite_digest": run["suite_digest"],
-        "reviewed_files": [item.to_payload() for item in review.files],
+    assert suite.runnable and suite.suite_digest
+    run = testing_store.create_run(
+        agent_id=agent_id,
+        commit_sha=candidate,
+        change_set_id=change_set_id,
+        source="release_check",
+        command=FIXED_PYTEST_COMMAND,
+        suite=suite.model_dump(mode="json"),
+        suite_digest=suite.suite_digest,
+    )
+    test_run_id = str(run["test_run_id"])
+    assert testing_store.claim_run(test_run_id) is not None
+    testing_store.record_attested_invocation(
+        test_run_id,
+        {
+            "test_run_id": test_run_id,
+            "run_id": "run-git-mode-review",
+            "session_id": "session-git-mode-review",
+            "agent_version_id": candidate,
+            "errors": [],
+        },
+    )
+    nodeid = "tests/test_agent.py::test_harness_contains_required_sources"
+    item = {
+        "nodeid": nodeid,
+        "outcome": "passed",
+        "phase": "call",
+        "phase_outcomes": {"setup": "passed", "call": "passed", "teardown": "passed"},
     }
+    return testing_store.finish_run(
+        test_run_id,
+        status="passed",
+        report={"exit_code": 0, "collected_nodeids": [nodeid], "items": [item]},
+        items=[item],
+        stdout="1 passed",
+        stderr="",
+    )
 
 
 def _missing_approval_kwargs(governance: AgentGovernanceService, change_set: dict) -> dict:
@@ -311,6 +263,12 @@ def _missing_approval_kwargs(governance: AgentGovernanceService, change_set: dic
         "suite_digest": "0" * 64,
         "reviewed_files": [item.to_payload() for item in review.files],
     }
+
+
+def _publish_manual_force(governance: AgentGovernanceService, change_set_id: str, **kwargs: object) -> dict:
+    """宿主测试只验证 Git/事务生命周期，不能冒充真实 Runtime 发布测试。"""
+    kwargs.setdefault("note", "宿主测试仅验证手工候选的 Git 与事务行为；未执行真实 Runtime 验收")
+    return governance.publish_change_set(change_set_id, force=True, **kwargs)
 
 
 def _install_published_event_rejection(governance: AgentGovernanceService) -> None:
@@ -370,6 +328,81 @@ def test_stable_change_set_intent_is_idempotent_and_candidate_can_advance_before
         )
 
 
+def test_new_candidate_clears_stale_approval_test_and_publication_error(tmp_path):
+    governance, agent_store = _governance(tmp_path)
+    change_set = governance.create_change_set(title="revise failed publication", operator="tester")
+    change_set_id = str(change_set["change_set_id"])
+    worktree = Path(str(change_set["worktree_path"]))
+    worktree.joinpath("AGENT.md").write_text("first sensitive candidate\n", encoding="utf-8")
+    first_candidate = agent_store.commit_worktree(worktree, message="first sensitive candidate")
+    committed = governance.mark_candidate_committed(
+        change_set_id,
+        candidate_commit_sha=first_candidate,
+        execution_job_id="exec-revise-failed-publication",
+    )
+    assert committed["status"] == "pending_approval"
+
+    # 仅预置本用例所需的历史持久态；不把宿主测试伪装成真实 Runtime 验收。
+    old_test = {"test_run_id": "atr-old", "status": "passed"}
+    old_approval = {
+        "candidate_commit_sha": first_candidate,
+        "diff_digest": committed["diff_summary"]["digest"],
+        "test_run_id": "atr-old",
+        "suite_digest": "a" * 64,
+    }
+    old_error = {"detail": "previous publication failed", "updated_at": utc_now()}
+    with governance.feedback_store.Session.begin() as db:
+        row = db.get(AgentChangeSetModel, change_set_id)
+        assert row is not None
+        row.status = "approved"
+        row.payload_json = {
+            **dict(row.payload_json or {}),
+            "latest_test_run_id": "atr-old",
+            "latest_test_run": old_test,
+            "approval_note": "old approval",
+            "approval_evidence": old_approval,
+            "publication_error": old_error,
+        }
+
+    previous = governance.get_change_set(change_set_id)
+    assert previous is not None
+    assert previous["status"] == "approved"
+    assert previous["approval_note"] == "old approval"
+    assert previous["approval_evidence"] == old_approval
+    assert previous["publication_error"] == old_error
+    with governance.feedback_store.Session() as db:
+        row = db.get(AgentChangeSetModel, change_set_id)
+        assert row is not None
+        previous_payload = dict(row.payload_json or {})
+    assert previous_payload["latest_test_run_id"] == "atr-old"
+    assert previous_payload["latest_test_run"] == old_test
+
+    worktree.joinpath("AGENT.md").write_text("revised sensitive candidate\n", encoding="utf-8")
+    revised_candidate = agent_store.commit_worktree(worktree, message="revise sensitive candidate")
+    revised = governance.mark_candidate_committed(
+        change_set_id,
+        candidate_commit_sha=revised_candidate,
+        execution_job_id="exec-revise-failed-publication",
+    )
+
+    assert revised["candidate_commit_sha"] == revised_candidate
+    assert revised["status"] == "pending_approval"
+    assert revised["latest_test_run_id"] is None
+    assert revised["latest_test_run"] is None
+    assert revised["approval_note"] is None
+    assert revised["approval_evidence"] is None
+    assert revised["publication_error"] is None
+    with governance.feedback_store.Session() as db:
+        row = db.get(AgentChangeSetModel, change_set_id)
+        assert row is not None
+        payload = dict(row.payload_json or {})
+    assert payload["latest_test_run_id"] is None
+    assert payload["latest_test_run"] is None
+    assert payload["approval_note"] is None
+    assert payload["approval_evidence"] is None
+    assert payload["publication_error"] is None
+
+
 def test_publish_cleans_candidate_worktree_and_retry_remains_idempotent(tmp_path):
     governance, agent_store = _governance(tmp_path)
     candidate = _candidate_change_set(governance, agent_store)
@@ -378,8 +411,8 @@ def test_publish_cleans_candidate_worktree_and_retry_remains_idempotent(tmp_path
     branch = str(candidate["branch_name"])
     assert worktree.exists()
 
-    release = governance.publish_change_set(change_set_id, operator="tester")
-    repeated = governance.publish_change_set(change_set_id, operator="tester")
+    release = _publish_manual_force(governance, change_set_id, operator="tester")
+    repeated = _publish_manual_force(governance, change_set_id, operator="tester")
 
     assert repeated["release_id"] == release["release_id"]
     assert not worktree.exists()
@@ -400,8 +433,8 @@ def test_abandon_cleans_worktree_but_keeps_unpublished_candidate_branch_for_audi
     assert not worktree.exists()
     assert agent_store._git(["show-ref", "--verify", branch_ref], cwd=agent_store.repository_dir, check=False).strip()
     assert [event["action"] for event in governance.list_change_set_events(change_set_id)].count("abandoned") == 1
-    with pytest.raises(AgentGovernanceError, match="cannot be published from status abandoned"):
-        governance.publish_change_set(change_set_id)
+    with pytest.raises(AgentGovernanceError, match="cannot be force-published from status abandoned"):
+        _publish_manual_force(governance, change_set_id)
 
 
 def test_manual_change_set_has_no_fabricated_improvement_attribution(tmp_path):
@@ -426,14 +459,14 @@ def test_change_set_and_release_carry_agent_id_and_filter(tmp_path):
     assert governance.list_change_sets(agent_id=DEFAULT_BUSINESS_AGENT_ID)
     assert governance.list_change_sets(agent_id="biz-other") == []
     # 发布后 release 同样带 agent_id 且可按 Agent 过滤。
-    published = governance.publish_change_set(str(candidate["change_set_id"]), operator="tester")
+    published = _publish_manual_force(governance, str(candidate["change_set_id"]), operator="tester")
     assert published is not None
     assert all(rel["agent_id"] == DEFAULT_BUSINESS_AGENT_ID for rel in governance.list_releases())
     assert governance.list_releases(agent_id=DEFAULT_BUSINESS_AGENT_ID)
     assert governance.list_releases(agent_id="biz-other") == []
 
 
-def test_publish_rejects_literal_mcp_endpoint_even_after_manual_approval(tmp_path):
+def test_unapproved_literal_mcp_endpoint_is_blocked_by_ref_policy(tmp_path):
     governance, store = _governance(tmp_path)
     original_head = store.current_commit_sha()
     change_set = governance.create_change_set(title="real MCP endpoint", operator="tester")
@@ -448,29 +481,18 @@ def test_publish_rejects_literal_mcp_endpoint_even_after_manual_approval(tmp_pat
         candidate_commit_sha=candidate,
         execution_job_id="job-invalid-policy",
     )
-    _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
     assert committed["status"] == "pending_approval"
     assert "mcp/sec-ops.json" in committed["approval_reason"]
 
     with pytest.raises(AgentGovernanceError, match="manual approval"):
         governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
-    governance.approve_change_set(
-        str(committed["change_set_id"]),
-        operator="reviewer",
-        **_approval_kwargs(governance, committed),
-    )
-    with pytest.raises(AgentGovernanceError, match="Managed Agent policy rejected"):
-        governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
+    with pytest.raises(AgentGitError, match="Managed Agent policy rejected"):
+        governance._ref_policy_validator(store, str(committed["agent_id"]))(candidate)
 
     assert store.current_commit_sha() == original_head
 
 
-def test_publish_requires_manual_approval_for_valid_mcp_capability_change(tmp_path):
+def test_publish_requires_manual_approval_for_valid_mcp_capability_change_without_real_test(tmp_path):
     governance, store = _governance(tmp_path)
     change_set = governance.create_change_set(title="approved MCP capability", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
@@ -484,28 +506,20 @@ def test_publish_requires_manual_approval_for_valid_mcp_capability_change(tmp_pa
         candidate_commit_sha=candidate,
         execution_job_id="job-approved-mcp",
     )
-    _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
     assert committed["status"] == "pending_approval"
 
     with pytest.raises(AgentGovernanceError, match="manual approval"):
         governance.publish_change_set(str(committed["change_set_id"]), operator="tester", force=True, note="cannot bypass")
-    governance.approve_change_set(
-        str(committed["change_set_id"]),
-        operator="reviewer",
-        **_approval_kwargs(governance, committed),
-    )
-
-    published = governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
-
-    assert published["commit_sha"] == candidate
+    with pytest.raises(AgentGovernanceError, match="审批前必须完成"):
+        governance.approve_change_set(
+            str(committed["change_set_id"]),
+            operator="reviewer",
+            **_missing_approval_kwargs(governance, committed),
+        )
+    assert governance.get_change_set(str(committed["change_set_id"]))["status"] == "pending_approval"
 
 
-def test_prompt_only_candidate_requires_passed_test_before_approval_and_binds_evidence(tmp_path):
+def test_prompt_only_candidate_requires_real_test_before_approval(tmp_path):
     governance, store = _governance(tmp_path)
     change_set = governance.create_change_set(title="prompt-only approval", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
@@ -527,42 +541,13 @@ def test_prompt_only_candidate_requires_passed_test_before_approval_and_binds_ev
         )
     assert before_test.value.status_code == 409
 
-    passed_run = _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
     with pytest.raises(AgentGovernanceError, match="manual approval"):
         governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
-    approved = governance.approve_change_set(
-        str(committed["change_set_id"]),
-        operator="reviewer",
-        **_approval_kwargs(governance, committed),
-    )
-
-    assert approved["status"] == "approved"
-    evidence = approved["approval_evidence"]
-    assert evidence["candidate_commit_sha"] == candidate
-    assert evidence["diff_digest"] == approved["diff_summary"]["digest"]
-    assert evidence["test_run_id"] == passed_run["test_run_id"]
-    assert evidence["suite_digest"] == passed_run["suite_digest"]
-    assert evidence["reviewed_file_count"] >= 1
-    assert len(evidence["review_digest"]) == 64
-    assert len(approved["approval_evidence"]["diff_digest"]) == 64
-    approved_event = [event for event in governance.list_change_set_events(str(committed["change_set_id"])) if event["action"] == "approved"]
-    assert approved_event[0]["after"]["approval_evidence"] == approved["approval_evidence"]
-    newer_run = _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
-    assert newer_run["test_run_id"] != approved["approval_evidence"]["test_run_id"]
-    assert governance.publish_change_set(str(committed["change_set_id"]), operator="tester")["commit_sha"] == candidate
+    assert governance.get_change_set(str(committed["change_set_id"]))["approval_evidence"] is None
+    assert not any(event["action"] == "approved" for event in governance.list_change_set_events(str(committed["change_set_id"])))
 
 
-def test_approval_rejects_candidate_with_binary_or_truncated_file_diff(tmp_path):
+def test_candidate_review_rejects_binary_file_diff_before_approval(tmp_path):
     governance, store = _governance(tmp_path)
     change_set = governance.create_change_set(title="unreviewable candidate", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
@@ -574,16 +559,58 @@ def test_approval_rejects_candidate_with_binary_or_truncated_file_diff(tmp_path)
         candidate_commit_sha=candidate,
         execution_job_id="job-unreviewable",
     )
-    passed_run = _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
     diff = governance.change_set_diff(committed, candidate)
     assert diff is not None
 
-    with pytest.raises(AgentGovernanceError, match="not completely reviewable") as exc:
+    with pytest.raises(CandidateApprovalFailure, match="not completely reviewable") as exc:
+        inspect_candidate_review(
+            diff,
+            lambda path: governance.change_set_file_diff(committed, candidate, path),
+        )
+
+    assert exc.value.status_code == 409
+    assert governance.get_change_set(str(committed["change_set_id"]))["status"] == "pending_approval"
+
+
+def test_mode_only_candidate_rejects_forged_mode_review_then_approves_and_publishes(tmp_path):
+    governance, store = _governance(tmp_path)
+    base = str(store.current_commit_sha())
+    assert store._git(["ls-tree", base, "AGENT.md"], cwd=store.repository_dir).split(maxsplit=1)[0] == "100644"
+    change_set = governance.create_change_set(title="review executable prompt mode", operator="tester")
+    worktree = Path(str(change_set["worktree_path"]))
+    worktree.joinpath("AGENT.md").chmod(0o755)
+    candidate = store.commit_worktree(worktree, message="make prompt executable")
+    committed = governance.mark_candidate_committed(
+        str(change_set["change_set_id"]),
+        candidate_commit_sha=candidate,
+        execution_job_id="job-mode-only",
+    )
+    assert committed["status"] == "pending_approval"
+    diff = governance.change_set_diff(committed, candidate)
+    detail = governance.change_set_file_diff(committed, candidate, "AGENT.md")
+    assert diff is not None and detail is not None
+    assert detail["status"] == "modified"
+    assert detail["before"]["mode"] == "100644"
+    assert detail["after"]["mode"] == "100755"
+
+    forged_summary = json.loads(json.dumps(diff))
+    forged_summary["modified"][0]["after"]["mode"] = "100644"
+    assert candidate_diff_digest(forged_summary) != candidate_diff_digest(diff)
+    with pytest.raises(CandidateApprovalFailure, match="not completely reviewable"):
+        inspect_candidate_review(forged_summary, lambda _path: detail)
+
+    forged_detail = json.loads(json.dumps(detail))
+    forged_detail["after"]["mode"] = "100644"
+    with pytest.raises(CandidateApprovalFailure, match="not completely reviewable"):
+        inspect_candidate_review(diff, lambda _path: forged_detail)
+
+    passed_run = _record_attested_passed_test_run(governance, committed)
+    review = inspect_candidate_review(
+        diff,
+        lambda path: governance.change_set_file_diff(committed, candidate, path),
+    )
+    forged_digest = hashlib.sha256(json.dumps(forged_detail, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    with pytest.raises(AgentGovernanceError, match="Reviewed file evidence no longer matches") as stale:
         governance.approve_change_set(
             str(committed["change_set_id"]),
             operator="reviewer",
@@ -591,14 +618,37 @@ def test_approval_rejects_candidate_with_binary_or_truncated_file_diff(tmp_path)
             diff_digest=candidate_diff_digest(diff),
             test_run_id=str(passed_run["test_run_id"]),
             suite_digest=str(passed_run["suite_digest"]),
-            reviewed_files=[{"path": "AGENT.md", "detail_sha256": "0" * 64}],
+            reviewed_files=[{"path": "AGENT.md", "detail_sha256": forged_digest}],
         )
-
-    assert exc.value.status_code == 409
+    assert stale.value.status_code == 409
     assert governance.get_change_set(str(committed["change_set_id"]))["status"] == "pending_approval"
 
+    approved = governance.approve_change_set(
+        str(committed["change_set_id"]),
+        operator="reviewer",
+        candidate_commit_sha=candidate,
+        diff_digest=candidate_diff_digest(diff),
+        test_run_id=str(passed_run["test_run_id"]),
+        suite_digest=str(passed_run["suite_digest"]),
+        reviewed_files=[item.to_payload() for item in review.files],
+    )
+    assert approved["status"] == "approved"
+    release = governance.publish_change_set(
+        str(committed["change_set_id"]),
+        operator="publisher",
+        expected_candidate_commit_sha=candidate,
+        expected_diff_digest=candidate_diff_digest(diff),
+        expected_test_run_id=str(passed_run["test_run_id"]),
+        expected_suite_digest=str(passed_run["suite_digest"]),
+    )
 
-def test_approval_rejects_each_stale_candidate_diff_test_suite_and_file_claim(tmp_path):
+    assert release["commit_sha"] == candidate
+    assert governance.get_change_set(str(committed["change_set_id"]))["status"] == "published"
+    assert store.current_commit_sha() == candidate
+    assert store._git(["ls-tree", candidate, "AGENT.md"], cwd=store.repository_dir).split(maxsplit=1)[0] == "100755"
+
+
+def test_approval_rejects_stale_candidate_and_diff_claim_without_real_test(tmp_path):
     governance, store = _governance(tmp_path)
     change_set = governance.create_change_set(title="approval claim CAS", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
@@ -609,19 +659,10 @@ def test_approval_rejects_each_stale_candidate_diff_test_suite_and_file_claim(tm
         candidate_commit_sha=candidate,
         execution_job_id="job-review-claims",
     )
-    _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
-    valid = _approval_kwargs(governance, committed)
+    valid = _missing_approval_kwargs(governance, committed)
     mutations = (
         {"candidate_commit_sha": "f" * 40},
         {"diff_digest": "e" * 64},
-        {"test_run_id": "atr-stale"},
-        {"suite_digest": "d" * 64},
-        {"reviewed_files": [{**item, "detail_sha256": "c" * 64} for item in valid["reviewed_files"]]},
     )
     for mutation in mutations:
         with pytest.raises(AgentGovernanceError) as exc:
@@ -633,62 +674,11 @@ def test_approval_rejects_each_stale_candidate_diff_test_suite_and_file_claim(tm
         assert exc.value.status_code == 409
         assert governance.get_change_set(str(committed["change_set_id"]))["status"] == "pending_approval"
 
-    approved = governance.approve_change_set(
-        str(committed["change_set_id"]),
-        operator="reviewer",
-        **valid,
-    )
-    assert approved["status"] == "approved"
+    with pytest.raises(AgentGovernanceError, match="审批前必须完成"):
+        governance.approve_change_set(str(committed["change_set_id"]), operator="reviewer", **valid)
 
 
-def test_publish_rejects_tampered_approval_evidence(tmp_path):
-    governance, store = _governance(tmp_path)
-    change_set = governance.create_change_set(title="tampered approval evidence", operator="tester")
-    worktree = Path(str(change_set["worktree_path"]))
-    worktree.joinpath("AGENT.md").write_text("# Protected prompt\n", encoding="utf-8")
-    candidate = store.commit_worktree(worktree, message="protected prompt")
-    committed = governance.mark_candidate_committed(
-        str(change_set["change_set_id"]),
-        candidate_commit_sha=candidate,
-        execution_job_id="job-tampered-evidence",
-    )
-    _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
-    approved = governance.approve_change_set(
-        str(committed["change_set_id"]),
-        operator="reviewer",
-        **_approval_kwargs(governance, committed),
-    )
-    with governance.feedback_store.Session.begin() as db:
-        row = db.get(AgentChangeSetModel, str(committed["change_set_id"]))
-        assert row is not None
-        payload = dict(row.payload_json or {})
-        payload["approval_evidence"] = {**dict(payload["approval_evidence"]), "diff_digest": "0" * 64}
-        row.payload_json = payload
-
-    with pytest.raises(AgentGovernanceError, match="approval evidence no longer matches") as exc:
-        governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
-    assert exc.value.status_code == 409
-
-    with governance.feedback_store.Session.begin() as db:
-        row = db.get(AgentChangeSetModel, str(committed["change_set_id"]))
-        assert row is not None
-        payload = dict(row.payload_json or {})
-        payload["approval_evidence"] = {
-            **dict(approved["approval_evidence"]),
-            "test_run_id": "agtr-does-not-exist",
-        }
-        row.payload_json = payload
-    with pytest.raises(AgentGovernanceError, match="commit_sha 完全匹配") as wrong_run:
-        governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
-    assert wrong_run.value.status_code == 409
-
-
-def test_publish_rejects_candidate_missing_required_agentscope_prompt(tmp_path):
+def test_missing_required_agentscope_prompt_is_blocked_by_ref_policy(tmp_path):
     governance, store = _governance(tmp_path)
     original_head = store.current_commit_sha()
     change_set = governance.create_change_set(title="missing AgentScope prompt", operator="tester")
@@ -707,20 +697,11 @@ def test_publish_rejects_candidate_missing_required_agentscope_prompt(tmp_path):
         candidate_commit_sha=candidate,
         execution_job_id="job-invalid-agentscope-policy",
     )
-    _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
-    governance.approve_change_set(
-        str(committed["change_set_id"]),
-        operator="reviewer",
-        **_approval_kwargs(governance, committed),
-    )
-
-    with pytest.raises(AgentGovernanceError, match="Managed Agent policy rejected"):
+    assert committed["status"] == "pending_approval"
+    with pytest.raises(AgentGovernanceError, match="manual approval"):
         governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
+    with pytest.raises(AgentGitError, match="Managed Agent policy rejected"):
+        governance._ref_policy_validator(store, str(committed["agent_id"]))(candidate)
 
     assert store.current_commit_sha() == original_head
 
@@ -741,27 +722,17 @@ def test_skill_only_candidate_requires_approval_before_publish(tmp_path):
         candidate_commit_sha=candidate,
         execution_job_id="job-custom-skill-policy",
     )
-    _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
     assert committed["status"] == "pending_approval"
     assert "skills/custom-audit/SKILL.md" in committed["approval_reason"]
     with pytest.raises(AgentGovernanceError, match="manual approval"):
         governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
-    approved = governance.approve_change_set(
-        str(committed["change_set_id"]),
-        operator="reviewer",
-        **_approval_kwargs(governance, committed),
-    )
-    assert approved["approval_evidence"]["candidate_commit_sha"] == candidate
-
-    published = governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
-
-    assert published is not None
-    assert (store.repository_dir / "skills" / "custom-audit" / "SKILL.md").is_file()
+    with pytest.raises(AgentGovernanceError, match="审批前必须完成"):
+        governance.approve_change_set(
+            str(committed["change_set_id"]),
+            operator="reviewer",
+            **_missing_approval_kwargs(governance, committed),
+        )
+    assert not (store.repository_dir / "skills" / "custom-audit" / "SKILL.md").is_file()
 
 
 def test_utf8_skill_path_is_visible_and_requires_manual_approval(tmp_path):
@@ -796,7 +767,7 @@ def test_business_agent_version_chain_is_isolated_from_platform_default(tmp_path
         agent_id="biz-agent-001",
     )
     assert biz_change_set["agent_id"] == "biz-agent-001"
-    biz_release = governance.publish_change_set(str(biz_change_set["change_set_id"]), operator="tester")
+    biz_release = _publish_manual_force(governance, str(biz_change_set["change_set_id"]), operator="tester")
     assert biz_release["agent_id"] == "biz-agent-001"
 
     # 隔离性：发布普通业务 Agent 版本不改动默认 Agent 的版本链。
@@ -815,7 +786,7 @@ def test_business_agent_version_chain_is_isolated_from_platform_default(tmp_path
     # 默认 Agent 路径不受影响，仍可独立创建并发布版本。
     default_change_set = _candidate_change_set(governance, default_store, content="# Default Agent\n\n默认候选。\n")
     assert default_change_set["agent_id"] == DEFAULT_BUSINESS_AGENT_ID
-    default_release = governance.publish_change_set(str(default_change_set["change_set_id"]), operator="tester")
+    default_release = _publish_manual_force(governance, str(default_change_set["change_set_id"]), operator="tester")
     assert default_release["agent_id"] == DEFAULT_BUSINESS_AGENT_ID
     assert default_store.current_commit_sha() == default_release["commit_sha"]
     # 普通业务 Agent 链未被默认 Agent 发布污染。
@@ -844,7 +815,7 @@ def test_governance_serves_multiple_business_agents_with_isolated_closed_loops(t
         signal = store.create_signal(FeedbackSignalCreateRequest(run_id=f"run-{agent_id}", labels=["tool_data_incomplete"]))
         case = store.create_case(source_refs=[("signal", signal["signal_id"])], title=f"{agent_id} 反馈")
         change_set = _candidate_change_set(governance, default_store, content=f"# {agent_id}\n\n候选\n", agent_id=agent_id)
-        release = governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
+        release = _publish_manual_force(governance, str(change_set["change_set_id"]), operator="tester")
         records[agent_id] = {
             "signal": signal,
             "case": case,
@@ -857,16 +828,17 @@ def test_governance_serves_multiple_business_agents_with_isolated_closed_loops(t
 
     # 每个维度按 Agent 过滤只见自身记录，不被另一个 Agent 串扰。
     for agent_id in agents:
-        assert {r["agent_id"] for r in store.list_runs(agent_id=agent_id)} == {agent_id}
-        assert {s["agent_id"] for s in store.list_signals(agent_id=agent_id)} == {agent_id}
+        assert {str(r["agent_id"]) for r in store.list_runs(agent_id=agent_id)} == {agent_id}
+        assert {str(s["agent_id"]) for s in store.list_signals(agent_id=agent_id)} == {agent_id}
         assert records[agent_id]["case"]["agent_id"] == agent_id
-        assert records[agent_id]["change_set"]["latest_test_run"]["agent_id"] == agent_id
-        assert {c["agent_id"] for c in governance.list_change_sets(agent_id=agent_id)} == {agent_id}
-        assert {rel["agent_id"] for rel in governance.list_releases(agent_id=agent_id)} == {agent_id}
+        assert records[agent_id]["change_set"]["latest_test_run"] is None
+        assert records[agent_id]["release"]["force_published"] is True
+        assert {str(c["agent_id"]) for c in governance.list_change_sets(agent_id=agent_id)} == {agent_id}
+        assert {str(rel["agent_id"]) for rel in governance.list_releases(agent_id=agent_id)} == {agent_id}
 
     # 跨 Agent 隔离：alpha 的版本记录不出现在 beta 的过滤视图。
-    alpha_cs = {c["change_set_id"] for c in governance.list_change_sets(agent_id="agent-alpha")}
-    beta_cs = {c["change_set_id"] for c in governance.list_change_sets(agent_id="agent-beta")}
+    alpha_cs = {str(c["change_set_id"]) for c in governance.list_change_sets(agent_id="agent-alpha")}
+    beta_cs = {str(c["change_set_id"]) for c in governance.list_change_sets(agent_id="agent-beta")}
     assert alpha_cs and beta_cs and alpha_cs.isdisjoint(beta_cs)
     # 各 Agent 版本链落在各自 store，互不污染。
     assert governance._store_for("agent-alpha").current_commit_sha() == records["agent-alpha"]["release"]["commit_sha"]
@@ -886,7 +858,7 @@ def test_candidate_committed_change_set_can_publish_directly(tmp_path):
     governance, agent_store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, agent_store)
 
-    release = governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
+    release = _publish_manual_force(governance, str(change_set["change_set_id"]), operator="tester")
 
     assert release["commit_sha"] == change_set["candidate_commit_sha"]
     assert release["status"] == "published"
@@ -898,12 +870,7 @@ def test_direct_publish_rejects_newer_failed_exact_candidate_run_without_mutatio
     governance, agent_store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, agent_store)
     change_set_id = str(change_set["change_set_id"])
-    failed = _record_completed_test_run(
-        governance,
-        change_set,
-        status="failed",
-        outcome="failed",
-    )
+    failed = _record_failed_test_run(governance, change_set)
     events_before = governance.list_change_set_events(change_set_id)
 
     projected = governance.get_change_set(change_set_id)
@@ -929,23 +896,23 @@ def test_publish_request_rejects_stale_review_fence_before_and_after_idempotent_
     stale = {
         "expected_candidate_commit_sha": "f" * 40,
         "expected_diff_digest": "e" * 64,
-        "expected_test_run_id": "atr-stale-review",
-        "expected_suite_digest": "d" * 64,
+        "expected_test_run_id": None,
+        "expected_suite_digest": None,
     }
 
     with pytest.raises(AgentGovernanceError, match="stale") as before:
-        governance.publish_change_set(change_set_id, operator="tester", **stale)
+        _publish_manual_force(governance, change_set_id, operator="tester", **stale)
     assert before.value.status_code == 409
     assert governance.get_change_set(change_set_id)["status"] == "candidate_committed"
 
-    release = governance.publish_change_set(change_set_id, operator="tester")
+    release = _publish_manual_force(governance, change_set_id, operator="tester")
     assert release["status"] == "published"
     with pytest.raises(AgentGovernanceError, match="immutable intent") as after:
-        governance.publish_change_set(change_set_id, operator="tester", **stale)
+        _publish_manual_force(governance, change_set_id, operator="tester", **stale)
     assert after.value.status_code == 409
 
 
-def test_approval_rejects_when_newer_exact_candidate_test_failed_after_review(tmp_path):
+def test_approval_rejects_failed_exact_candidate_test(tmp_path):
     governance, store = _governance(tmp_path)
     change_set = governance.create_change_set(title="approval test CAS", operator="tester")
     worktree = Path(str(change_set["worktree_path"]))
@@ -956,16 +923,10 @@ def test_approval_rejects_when_newer_exact_candidate_test_failed_after_review(tm
         candidate_commit_sha=candidate,
         execution_job_id="job-approval-cas",
     )
-    _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
-    reviewed_claims = _approval_kwargs(governance, committed)
-    _record_completed_test_run(governance, committed, status="failed", outcome="failed")
+    failed = _record_failed_test_run(governance, committed)
+    reviewed_claims = {**_missing_approval_kwargs(governance, committed), "test_run_id": failed["test_run_id"], "suite_digest": failed["suite_digest"]}
 
-    with pytest.raises(AgentGovernanceError, match="stale or not passed") as exc:
+    with pytest.raises(AgentGovernanceError, match="审批前必须完成") as exc:
         governance.approve_change_set(
             str(committed["change_set_id"]),
             operator="reviewer",
@@ -978,47 +939,9 @@ def test_approval_rejects_when_newer_exact_candidate_test_failed_after_review(tm
     assert not any(event["action"] == "approved" for event in governance.list_change_set_events(str(committed["change_set_id"])))
 
 
-def test_approval_rejects_newer_passed_status_without_structured_items(tmp_path):
-    governance, store = _governance(tmp_path)
-    change_set = governance.create_change_set(title="approval report completeness", operator="tester")
-    worktree = Path(str(change_set["worktree_path"]))
-    worktree.joinpath("AGENT.md").write_text("# Complete report required\n", encoding="utf-8")
-    candidate = store.commit_worktree(worktree, message="approval report completeness")
-    committed = governance.mark_candidate_committed(
-        str(change_set["change_set_id"]),
-        candidate_commit_sha=candidate,
-        execution_job_id="job-approval-report",
-    )
-    _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
-    reviewed_claims = _approval_kwargs(governance, committed)
-    incomplete = _record_completed_test_run(governance, committed, status="passed", outcome="passed")
-    with governance.feedback_store.Session.begin() as db:
-        db.execute(
-            text("DELETE FROM agent_test_run_items WHERE test_run_id = :test_run_id"),
-            {"test_run_id": incomplete["test_run_id"]},
-        )
-
-    with pytest.raises(AgentGovernanceError, match="stale or not passed") as exc:
-        governance.approve_change_set(
-            str(committed["change_set_id"]),
-            operator="reviewer",
-            **reviewed_claims,
-        )
-
-    assert exc.value.status_code == 409
-    assert governance.get_change_set(str(committed["change_set_id"]))["status"] == "pending_approval"
-
-
-def test_publish_requires_passed_platform_test_for_exact_candidate_commit(tmp_path):
+def test_publish_rejects_missing_or_failed_platform_test_for_exact_candidate_commit(tmp_path):
     governance, agent_store = _governance(tmp_path)
-    change_set = _candidate_change_set(governance, agent_store, record_passed_test=False)
-    agent_id = str(change_set["agent_id"])
-    commit_sha = str(change_set["candidate_commit_sha"])
+    change_set = _candidate_change_set(governance, agent_store)
 
     projected = governance.get_change_set(str(change_set["change_set_id"]))
     assert projected is not None
@@ -1027,27 +950,17 @@ def test_publish_requires_passed_platform_test_for_exact_candidate_commit(tmp_pa
     with pytest.raises(AgentGovernanceError, match="commit_sha 完全匹配"):
         governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
 
-    _record_passed_test_run(
-        governance,
-        agent_id=agent_id,
-        commit_sha=str(change_set["base_commit_sha"]),
-        change_set_id=str(change_set["change_set_id"]),
-    )
+    failed = _record_failed_test_run(governance, change_set)
+    assert failed["status"] == "failed"
     assert governance.get_change_set(str(change_set["change_set_id"]))["latest_test_run"] is None
-
-    _record_passed_test_run(
-        governance,
-        agent_id=agent_id,
-        commit_sha=commit_sha,
-        change_set_id=str(change_set["change_set_id"]),
-    )
-    release = governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
-    assert release["commit_sha"] == commit_sha
+    with pytest.raises(AgentGovernanceError, match="当前精确候选"):
+        governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
+    assert governance.list_releases() == []
 
 
 def test_force_publish_manual_candidate_bypasses_only_test_gate_and_persists_warning_audit(tmp_path):
     governance, agent_store = _governance(tmp_path)
-    change_set = _candidate_change_set(governance, agent_store, record_passed_test=False)
+    change_set = _candidate_change_set(governance, agent_store)
     change_set_id = str(change_set["change_set_id"])
 
     reason = "紧急修复，已由值班负责人确认发布风险"
@@ -1097,31 +1010,10 @@ def test_force_publish_manual_candidate_bypasses_only_test_gate_and_persists_war
         )
 
 
-def test_force_publish_is_rejected_when_no_platform_test_blocker_exists(tmp_path):
-    governance, agent_store = _governance(tmp_path)
-    change_set = _candidate_change_set(governance, agent_store)
-
-    with pytest.raises(AgentGovernanceError, match="bypassable platform test blocker") as exc:
-        governance.publish_change_set(
-            str(change_set["change_set_id"]),
-            operator="tester",
-            note="不应绕过已经通过的测试",
-            force=True,
-        )
-
-    assert exc.value.status_code == 409
-
-
 def test_feedback_publication_cannot_force_bypass_complete_agent_test_suite(tmp_path):
     governance, agent_store = _governance(tmp_path)
-    change_set, _bound_at = _feedback_candidate_change_set(
-        governance,
-        agent_store,
-        record_passed_test=False,
-    )
+    change_set, _bound_at = _feedback_candidate_change_set(governance, agent_store)
     change_set_id = str(change_set["change_set_id"])
-    commit_sha = str(change_set["candidate_commit_sha"])
-    agent_id = str(change_set["agent_id"])
     projected = governance.get_change_set(change_set_id)
     assert projected is not None
     assert "commit_sha 完全匹配" in str(projected["publication_blocker"])
@@ -1135,15 +1027,7 @@ def test_feedback_publication_cannot_force_bypass_complete_agent_test_suite(tmp_
     assert exc.value.status_code == 409
     assert governance.get_change_set(change_set_id)["status"] == "candidate_committed"
 
-    _record_passed_test_run(
-        governance,
-        agent_id=agent_id,
-        commit_sha=commit_sha,
-        change_set_id=change_set_id,
-    )
-    release = governance.publish_change_set(change_set_id, operator="tester")
-    assert release["commit_sha"] == commit_sha
-    assert release["force_published"] is False
+    assert governance.list_releases() == []
 
 
 def test_publish_retries_after_real_archive_filesystem_failure_without_duplicate_release(tmp_path):
@@ -1154,7 +1038,7 @@ def test_publish_retries_after_real_archive_filesystem_failure_without_duplicate
     agent_store.releases_dir = Path("/proc")
 
     with pytest.raises(AgentGovernanceError, match="Agent publish failed"):
-        governance.publish_change_set(change_set_id, operator="tester")
+        _publish_manual_force(governance, change_set_id, operator="tester")
 
     pending = governance.get_change_set(change_set_id)
     assert pending["status"] == "publishing"
@@ -1170,7 +1054,7 @@ def test_publish_retries_after_real_archive_filesystem_failure_without_duplicate
         "test_run_id": intent["test_run_id"],
         "suite_digest": intent["suite_digest"],
         "tag_name": intent["tag_name"],
-        "force": False,
+        "force": True,
     }
     assert (
         agent_store._git(
@@ -1181,21 +1065,20 @@ def test_publish_retries_after_real_archive_filesystem_failure_without_duplicate
     )
 
     for _index in range(21):
-        _record_completed_test_run(governance, pending, status="passed", outcome="passed")
+        _record_failed_test_run(governance, pending)
     reopened = governance.get_change_set(change_set_id)
     assert reopened is not None
     assert reopened["publication_evidence"] == public_evidence
-    assert reopened["latest_test_run_id"] == intent["test_run_id"]
+    assert reopened["latest_test_run_id"] is None
 
     agent_store.releases_dir = writable_releases_dir
-    release = governance.publish_change_set(
+    release = _publish_manual_force(
+        governance,
         change_set_id,
         operator="retrying-operator",
         tag_name=str(public_evidence["tag_name"]),
         expected_candidate_commit_sha=str(public_evidence["candidate_commit_sha"]),
         expected_diff_digest=str(public_evidence["diff_digest"]),
-        expected_test_run_id=str(public_evidence["test_run_id"]),
-        expected_suite_digest=str(public_evidence["suite_digest"]),
     )
 
     assert release["release_id"] == intent["release_id"]
@@ -1211,7 +1094,7 @@ def test_publish_retry_fails_before_external_activation_when_tag_claim_is_missin
     writable_releases_dir = agent_store.releases_dir
     agent_store.releases_dir = Path("/proc")
     with pytest.raises(AgentGovernanceError, match="Agent publish failed"):
-        governance.publish_change_set(change_set_id, operator="tester")
+        _publish_manual_force(governance, change_set_id, operator="tester")
     pending = governance.get_change_set(change_set_id)
     assert pending is not None
     intent = pending["publication_intent"]
@@ -1226,26 +1109,25 @@ def test_publish_retry_fails_before_external_activation_when_tag_claim_is_missin
     governance.release_activator = unexpected_activation
     agent_store.releases_dir = writable_releases_dir
     with pytest.raises(AgentGovernanceError, match="not owned") as exc:
-        governance.publish_change_set(
+        _publish_manual_force(
+            governance,
             change_set_id,
             operator="retrying-operator",
             tag_name=str(intent["tag_name"]),
             expected_candidate_commit_sha=str(intent["commit_sha"]),
             expected_diff_digest=str(intent["diff_digest"]),
-            expected_test_run_id=str(intent["test_run_id"]),
-            expected_suite_digest=str(intent["suite_digest"]),
         )
     assert exc.value.status_code == 409
 
 
-def test_publishing_retry_rejects_repointed_tag_before_runtime_or_git_side_effect(tmp_path, monkeypatch):
+def test_publishing_retry_rejects_repointed_tag_before_runtime_or_git_side_effect(tmp_path):
     governance, agent_store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, agent_store)
     change_set_id = str(change_set["change_set_id"])
     writable_releases_dir = agent_store.releases_dir
     agent_store.releases_dir = Path("/proc")
     with pytest.raises(AgentGovernanceError, match="Agent publish failed"):
-        governance.publish_change_set(change_set_id, operator="tester")
+        _publish_manual_force(governance, change_set_id, operator="tester")
     pending = governance.get_change_set(change_set_id)
     assert pending is not None
     intent = pending["publication_intent"]
@@ -1254,26 +1136,24 @@ def test_publishing_retry_rejects_repointed_tag_before_runtime_or_git_side_effec
         cwd=agent_store.repository_dir,
     )
 
-    async def unexpected_activation(*_args, **_kwargs):
-        raise AssertionError("Runtime activation must not run after persisted tag identity diverges")
-
-    def unexpected_publish(*_args, **_kwargs):
-        raise AssertionError("Git publish must not run after persisted tag identity diverges")
-
-    governance.release_activator = unexpected_activation
-    monkeypatch.setattr(agent_store, "publish_commit", unexpected_publish)
+    head_before = agent_store.current_commit_sha()
+    tag_before = agent_store._git(["rev-parse", f"refs/tags/{intent['tag_name']}^{{commit}}"], cwd=agent_store.repository_dir).strip()
+    events_before = governance.list_change_set_events(change_set_id)
     agent_store.releases_dir = writable_releases_dir
     with pytest.raises(AgentGovernanceError, match="publish preflight") as exc:
-        governance.publish_change_set(
+        _publish_manual_force(
+            governance,
             change_set_id,
             operator="retrying-operator",
             tag_name=str(intent["tag_name"]),
             expected_candidate_commit_sha=str(intent["commit_sha"]),
             expected_diff_digest=str(intent["diff_digest"]),
-            expected_test_run_id=str(intent["test_run_id"]),
-            expected_suite_digest=str(intent["suite_digest"]),
         )
     assert exc.value.status_code == 409
+    assert agent_store.current_commit_sha() == head_before
+    assert agent_store._git(["rev-parse", f"refs/tags/{intent['tag_name']}^{{commit}}"], cwd=agent_store.repository_dir).strip() == tag_before
+    assert governance.list_releases() == []
+    assert governance.list_change_set_events(change_set_id) == events_before
 
 
 def test_tag_race_after_runtime_prepare_compensates_inactive_binding(tmp_path):
@@ -1299,7 +1179,7 @@ def test_tag_race_after_runtime_prepare_compensates_inactive_binding(tmp_path):
     governance.release_activation_compensator = compensate
 
     with pytest.raises(AgentGovernanceError, match="previous active version was retained") as exc:
-        governance.publish_change_set(change_set_id, operator="tester")
+        _publish_manual_force(governance, change_set_id, operator="tester")
 
     assert exc.value.status_code == 409
     assert len(compensated) == 1
@@ -1313,7 +1193,7 @@ def test_publish_real_db_finalize_failure_rolls_back_metadata_and_retry_reconcil
     change_set_id = str(change_set["change_set_id"])
     _install_published_event_rejection(governance)
     with pytest.raises(AgentGovernanceError, match="metadata is pending reconciliation"):
-        governance.publish_change_set(change_set_id, operator="tester")
+        _publish_manual_force(governance, change_set_id, operator="tester")
 
     pending = governance.get_change_set(change_set_id)
     assert pending["status"] == "publishing"
@@ -1321,94 +1201,18 @@ def test_publish_real_db_finalize_failure_rolls_back_metadata_and_retry_reconcil
     assert agent_store.current_commit_sha() == change_set["candidate_commit_sha"]
 
     _drop_published_event_rejection(governance)
-    release = governance.publish_change_set(change_set_id, operator="retrying-operator")
+    release = _publish_manual_force(governance, change_set_id, operator="retrying-operator")
     events = governance.list_change_set_events(change_set_id)
 
     assert release["release_id"] == pending["publication_intent"]["release_id"]
     assert len(governance.list_releases()) == 1
     assert [event["action"] for event in events].count("publication_started") == 1
-    assert [event["action"] for event in events].count("published") == 1
+    assert [event["action"] for event in events].count("force_published") == 1
 
 
-def test_publish_retry_does_not_overwrite_revised_source_after_git_side_effect(tmp_path):
+def test_improvement_publication_provenance_validator_rejects_unconfirmed_sources(tmp_path):
     governance, agent_store = _governance(tmp_path)
     change_set, _bound_at = _feedback_candidate_change_set(governance, agent_store)
-    writable_releases_dir = agent_store.releases_dir
-    agent_store.releases_dir = Path("/proc")
-    with pytest.raises(AgentGovernanceError, match="Agent publish failed"):
-        governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
-    agent_store.releases_dir = writable_releases_dir
-    assert agent_store.current_commit_sha() == change_set["candidate_commit_sha"]
-
-    with governance.feedback_store.Session.begin() as db:
-        improvement = db.get(ImprovementItemModel, "imp-publish")
-        assert improvement is not None
-        improvement.updated_at = "2026-07-10T00:05:00+00:00"
-
-    with pytest.raises(ConflictError, match="发生变化"):
-        governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
-
-    projected = governance.get_change_set(str(change_set["change_set_id"]))
-    assert projected["status"] == "publishing"
-    assert projected["publication_intent"]["source_improvement_updated_at"] == _bound_at
-    assert projected["publication_error"]["detail"]
-    assert governance.list_releases() == []
-
-
-def test_source_claim_blocks_second_publication_before_git_side_effect(tmp_path):
-    governance, agent_store = _governance(tmp_path)
-    first, _bound_at = _feedback_candidate_change_set(governance, agent_store)
-    source_improvement_id = "imp-publish"
-    first_release = governance.publish_change_set(str(first["change_set_id"]), operator="tester")
-    published_head = agent_store.current_commit_sha()
-
-    second = _candidate_change_set(governance, agent_store, content="# second source publication\n")
-    rebound_at = "2026-07-10T01:00:00+00:00"
-    with governance.feedback_store.Session.begin() as db:
-        second_row = db.get(AgentChangeSetModel, str(second["change_set_id"]))
-        execution = db.query(ExecutionRecordModel).filter_by(improvement_id=source_improvement_id).one()
-        improvement = db.get(ImprovementItemModel, source_improvement_id)
-        attribution = db.get(AttributionModel, "attr-publish")
-        plan = db.get(OptimizationPlanModel, "opt-publish")
-        assert second_row is not None and improvement is not None and attribution is not None and plan is not None
-        improvement.improvement_stage = "regression"
-        improvement.improvement_status = "active"
-        improvement.updated_at = rebound_at
-        attribution.status = "confirmed"
-        attribution.updated_at = rebound_at
-        plan.status = "confirmed"
-        plan.updated_at = rebound_at
-        second_payload = dict(second_row.payload_json or {})
-        second_payload.update(
-            {
-                "source_improvement_id": source_improvement_id,
-                "source_attribution_id": "attr-publish",
-            }
-        )
-        second_row.payload_json = second_payload
-        second_row.execution_job_id = execution.execution_id
-        execution.change_set_id = str(second["change_set_id"])
-        execution.status = "confirmed"
-        execution.applied_agent_version_id = str(second["candidate_commit_sha"])
-        execution.source_optimization_plan_id = "opt-publish"
-        execution.source_optimization_plan_updated_at = rebound_at
-        execution.source_attribution_id = "attr-publish"
-        execution.source_attribution_updated_at = rebound_at
-
-    with pytest.raises(AgentGovernanceError, match="持有发布预留，不能重复发布"):
-        governance.publish_change_set(str(second["change_set_id"]), operator="tester")
-
-    assert agent_store.current_commit_sha() == published_head
-    assert governance.get_change_set(str(second["change_set_id"]))["status"] == "candidate_committed"
-    with governance.feedback_store.Session() as db:
-        claim = db.get(AgentReleaseSourceClaimModel, (DEFAULT_BUSINESS_AGENT_ID, source_improvement_id))
-        assert claim is not None and claim.change_set_id == first["change_set_id"]
-    assert first_release["source_improvement_id"] == source_improvement_id
-
-
-def test_improvement_publication_rejects_unconfirmed_or_revised_provenance_even_with_force(tmp_path):
-    governance, agent_store = _governance(tmp_path)
-    change_set, bound_at = _feedback_candidate_change_set(governance, agent_store)
     change_set_id = str(change_set["change_set_id"])
     candidate = str(change_set["candidate_commit_sha"])
 
@@ -1418,8 +1222,8 @@ def test_improvement_publication_rejects_unconfirmed_or_revised_provenance_even_
     projected = governance.get_change_set(change_set_id)
     assert projected["publication_provenance_blocker"] == "改进执行尚未确认或执行来源不完整，请先确认执行结果"
     assert projected["publication_blocker"] == projected["publication_provenance_blocker"]
-    with pytest.raises(ConflictError, match="执行尚未确认"):
-        governance.publish_change_set(change_set_id, operator="tester")
+    with governance.feedback_store.Session() as db, pytest.raises(ConflictError, match="执行尚未确认"):
+        validate_publication_provenance(db, change_set_id)
 
     with governance.feedback_store.Session.begin() as db:
         db.get(ExecutionRecordModel, "exec-publish").status = "confirmed"
@@ -1428,9 +1232,8 @@ def test_improvement_publication_rejects_unconfirmed_or_revised_provenance_even_
         attribution.updated_at = "2026-07-10T00:01:00+00:00"
 
     assert governance.get_change_set(change_set_id)["source_attribution_status"] == "draft"
-    for force in (False, True):
-        with pytest.raises(ConflictError, match="归因未确认"):
-            governance.publish_change_set(change_set_id, operator="tester", force=force)
+    with governance.feedback_store.Session() as db, pytest.raises(ConflictError, match="归因未确认"):
+        validate_publication_provenance(db, change_set_id)
     assert governance.get_change_set(change_set_id)["status"] == "candidate_committed"
     assert agent_store.current_commit_sha() != candidate
 
@@ -1443,44 +1246,11 @@ def test_improvement_publication_rejects_unconfirmed_or_revised_provenance_even_
         plan.status = "draft"
         plan.updated_at = "2026-07-10T00:02:00+00:00"
 
-    with pytest.raises(ConflictError, match="优化方案未确认"):
-        governance.publish_change_set(
-            change_set_id,
-            operator="tester",
-            note="来源链已人工核验",
-            force=True,
-        )
+    with governance.feedback_store.Session() as db, pytest.raises(ConflictError, match="优化方案未确认"):
+        validate_publication_provenance(db, change_set_id)
 
-    with governance.feedback_store.Session.begin() as db:
-        execution = db.get(ExecutionRecordModel, "exec-publish")
-        plan = db.get(OptimizationPlanModel, "opt-publish")
-        plan.status = "confirmed"
-        execution.source_optimization_plan_updated_at = plan.updated_at
-
-    _install_published_event_rejection(governance)
-    with pytest.raises(AgentGovernanceError, match="metadata is pending reconciliation"):
-        governance.publish_change_set(change_set_id, operator="tester")
-
-    with governance.feedback_store.Session() as db:
-        rolled_back_item = db.get(ImprovementItemModel, "imp-publish")
-        assert (rolled_back_item.improvement_stage, rolled_back_item.improvement_status, rolled_back_item.updated_at) == (
-            "regression",
-            "active",
-            bound_at,
-        )
-    pending = governance.get_change_set(change_set_id)
-    assert pending["status"] == "publishing"
-    assert pending["publication_intent"]["source_improvement_updated_at"] == bound_at
-
-    _drop_published_event_rejection(governance)
-    release = governance.publish_change_set(change_set_id, operator="retrying-operator")
-    with governance.feedback_store.Session() as db:
-        completed_item = db.get(ImprovementItemModel, "imp-publish")
-
-    assert release["source_improvement_id"] == "imp-publish"
-    assert completed_item.improvement_stage == "release"
-    assert completed_item.improvement_status == "done"
-    assert completed_item.updated_at == release["updated_at"]
+    assert governance.get_change_set(change_set_id)["status"] == "candidate_committed"
+    assert governance.list_releases() == []
 
 
 def test_publish_retry_finalizes_older_tag_after_newer_release_advances_head(tmp_path):
@@ -1489,12 +1259,12 @@ def test_publish_retry_finalizes_older_tag_after_newer_release_advances_head(tmp
     first_id = str(first["change_set_id"])
     _install_published_event_rejection(governance)
     with pytest.raises(AgentGovernanceError, match="metadata is pending reconciliation"):
-        governance.publish_change_set(first_id, operator="tester")
+        _publish_manual_force(governance, first_id, operator="tester")
     _drop_published_event_rejection(governance)
 
     second = _candidate_change_set(governance, agent_store, content="# Test Agent\n\nv2\n")
-    second_release = governance.publish_change_set(str(second["change_set_id"]), operator="tester")
-    first_release = governance.publish_change_set(first_id, operator="reconciler")
+    second_release = _publish_manual_force(governance, str(second["change_set_id"]), operator="tester")
+    first_release = _publish_manual_force(governance, first_id, operator="reconciler")
 
     assert first_release["commit_sha"] == first["candidate_commit_sha"]
     assert agent_store.current_commit_sha() == second_release["commit_sha"]
@@ -1506,10 +1276,10 @@ def test_divergent_candidate_publish_failure_retains_intent_when_zero_side_effec
     governance, agent_store = _governance(tmp_path)
     first = _candidate_change_set(governance, agent_store, content="# Test Agent\n\nbranch-a\n")
     second = _candidate_change_set(governance, agent_store, content="# Test Agent\n\nbranch-b\n")
-    governance.publish_change_set(str(first["change_set_id"]), tag_name="release-branch-a")
+    _publish_manual_force(governance, str(first["change_set_id"]), tag_name="release-branch-a")
 
     with pytest.raises(AgentGovernanceError, match="previous active version was retained"):
-        governance.publish_change_set(str(second["change_set_id"]), tag_name="release-branch-b")
+        _publish_manual_force(governance, str(second["change_set_id"]), tag_name="release-branch-b")
 
     persisted = governance.get_change_set(str(second["change_set_id"]))
     assert persisted["status"] == "publishing"
@@ -1527,8 +1297,9 @@ def test_repeated_publish_returns_same_release_and_rejects_conflicting_tag(tmp_p
     change_set = _candidate_change_set(governance, agent_store)
     change_set_id = str(change_set["change_set_id"])
 
-    first = governance.publish_change_set(change_set_id, operator="tester")
-    repeated = governance.publish_change_set(
+    first = _publish_manual_force(governance, change_set_id, operator="tester")
+    repeated = _publish_manual_force(
+        governance,
         change_set_id,
         operator="retrying-operator",
         tag_name=str(first["tag_name"]),
@@ -1538,16 +1309,17 @@ def test_repeated_publish_returns_same_release_and_rejects_conflicting_tag(tmp_p
     assert len(governance.list_releases()) == 1
     actions = [event["action"] for event in governance.list_change_set_events(change_set_id)]
     assert actions.count("publication_started") == 1
-    assert actions.count("published") == 1
+    assert actions.count("force_published") == 1
     with pytest.raises(AgentGovernanceError, match="already published with a different tag"):
-        governance.publish_change_set(change_set_id, tag_name="agent-release-conflict")
+        _publish_manual_force(governance, change_set_id, tag_name="agent-release-conflict")
 
 
 def test_release_tag_is_owned_by_one_change_set_per_agent(tmp_path):
     governance, agent_store = _governance(tmp_path)
     shared_tag = "agent-release-shared-candidate"
     first = _candidate_change_set(governance, agent_store)
-    first_release = governance.publish_change_set(
+    first_release = _publish_manual_force(
+        governance,
         str(first["change_set_id"]),
         operator="tester",
         tag_name=shared_tag,
@@ -1563,27 +1335,21 @@ def test_release_tag_is_owned_by_one_change_set_per_agent(tmp_path):
         execution_job_id="job-same-candidate",
         operator="tester",
     )
-    _record_passed_test_run(
-        governance,
-        agent_id=str(second["agent_id"]),
-        commit_sha=str(second["candidate_commit_sha"]),
-        change_set_id=str(second["change_set_id"]),
-    )
-
     with pytest.raises(AgentGovernanceError, match="already assigned to another release"):
-        governance.publish_change_set(str(second["change_set_id"]), tag_name=shared_tag)
+        _publish_manual_force(governance, str(second["change_set_id"]), tag_name=shared_tag)
 
     persisted = governance.get_change_set(str(second["change_set_id"]))
     assert persisted["status"] == "candidate_committed"
     assert "publication_intent" not in persisted
-    assert "publication_started" not in {event["action"] for event in governance.list_change_set_events(str(second["change_set_id"]))}
+    assert "publication_started" not in {str(event["action"]) for event in governance.list_change_set_events(str(second["change_set_id"]))}
     business = _candidate_change_set(
         governance,
         agent_store,
         content="# Business Agent\n\nsame tag, isolated repository\n",
         agent_id="biz-shared-tag",
     )
-    business_release = governance.publish_change_set(
+    business_release = _publish_manual_force(
+        governance,
         str(business["change_set_id"]),
         tag_name=shared_tag,
     )
@@ -1600,7 +1366,7 @@ def test_concurrent_publish_reserves_one_intent_and_one_audit_event(tmp_path):
     def publish_after_barrier(index: int):
         ready.wait(timeout=10)
         try:
-            return governance.publish_change_set(change_set_id, operator=f"publisher-{index}")
+            return _publish_manual_force(governance, change_set_id, operator=f"publisher-{index}")
         except AgentGovernanceError as exc:
             return exc
 
@@ -1615,7 +1381,7 @@ def test_concurrent_publish_reserves_one_intent_and_one_audit_event(tmp_path):
     assert len(governance.list_releases()) == 1
     events = governance.list_change_set_events(change_set_id)
     assert [event["action"] for event in events].count("publication_started") == 1
-    assert [event["action"] for event in events].count("published") == 1
+    assert [event["action"] for event in events].count("force_published") == 1
 
 
 def test_concurrent_publish_with_different_tags_is_fenced_before_db_reservation(tmp_path):
@@ -1627,7 +1393,8 @@ def test_concurrent_publish_with_different_tags_is_fenced_before_db_reservation(
     def publish_tag_after_barrier(index: int):
         ready.wait(timeout=10)
         try:
-            return governance.publish_change_set(
+            return _publish_manual_force(
+                governance,
                 change_set_id,
                 operator=f"publisher-{index}",
                 tag_name=f"agent-release-competing-{index}",
@@ -1649,7 +1416,7 @@ def test_concurrent_publish_with_different_tags_is_fenced_before_db_reservation(
     assert len(governance.list_releases()) == 1
     events = governance.list_change_set_events(change_set_id)
     assert [event["action"] for event in events].count("publication_started") == 1
-    assert [event["action"] for event in events].count("published") == 1
+    assert [event["action"] for event in events].count("force_published") == 1
 
 
 def test_invalid_explicit_tag_is_rejected_before_intent_is_reserved(tmp_path):
@@ -1658,14 +1425,14 @@ def test_invalid_explicit_tag_is_rejected_before_intent_is_reserved(tmp_path):
     change_set_id = str(change_set["change_set_id"])
 
     with pytest.raises(AgentGovernanceError, match="Invalid release tag name"):
-        governance.publish_change_set(change_set_id, tag_name="--hostile-option")
+        _publish_manual_force(governance, change_set_id, tag_name="--hostile-option")
 
     persisted = governance.get_change_set(change_set_id)
     assert persisted["status"] == "candidate_committed"
     assert "publication_intent" not in persisted
 
 
-def test_legacy_partial_release_is_blocked_before_new_publication_side_effects(tmp_path, monkeypatch):
+def test_legacy_partial_release_is_blocked_before_new_publication_side_effects(tmp_path):
     governance, agent_store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, agent_store)
     change_set_id = str(change_set["change_set_id"])
@@ -1707,20 +1474,19 @@ def test_legacy_partial_release_is_blocked_before_new_publication_side_effects(t
             )
         )
 
-    async def unexpected_activation(*_args, **_kwargs):
-        raise AssertionError("Runtime activation must not run for an orphan release row")
-
-    def unexpected_publish(*_args, **_kwargs):
-        raise AssertionError("Git publication must not run for an orphan release row")
-
-    governance.release_activator = unexpected_activation
-    monkeypatch.setattr(agent_store, "publish_commit", unexpected_publish)
+    head_before = agent_store.current_commit_sha()
+    tag_before = agent_store._git(["rev-parse", f"refs/tags/{tag_name}^{{commit}}"], cwd=agent_store.repository_dir).strip()
+    events_before = governance.list_change_set_events(change_set_id)
     with pytest.raises(AgentGovernanceError, match="without a current immutable publication intent") as exc:
-        governance.publish_change_set(change_set_id, operator="reconciler")
+        _publish_manual_force(governance, change_set_id, operator="reconciler")
     assert exc.value.status_code == 409
     persisted = governance.get_change_set(change_set_id)
     assert persisted is not None and persisted["status"] == "candidate_committed"
     assert "publication_intent" not in persisted
+    assert agent_store.current_commit_sha() == head_before
+    assert agent_store._git(["rev-parse", f"refs/tags/{tag_name}^{{commit}}"], cwd=agent_store.repository_dir).strip() == tag_before
+    assert Path(str(archive["archive_path"])).is_file()
+    assert governance.list_change_set_events(change_set_id) == events_before
 
     migration = reconcile_legacy_publication_evidence(governance)
     assert migration.quarantined == 1
@@ -1735,23 +1501,23 @@ def test_terminal_change_set_cannot_publish(tmp_path):
     change_set = _candidate_change_set(governance, agent_store)
     governance.reject_change_set(str(change_set["change_set_id"]), operator="tester")
 
-    with pytest.raises(AgentGovernanceError, match="cannot be published from status rejected") as exc:
-        governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
+    with pytest.raises(AgentGovernanceError, match="cannot be force-published from status rejected") as exc:
+        _publish_manual_force(governance, str(change_set["change_set_id"]), operator="tester")
 
     assert exc.value.status_code == 409
 
 
 def test_high_risk_change_set_requires_approval_before_publish(tmp_path):
-    """AGV-041：标记为待审批的高风险变更不经审批不得发布；审批后可发布。"""
+    """宿主测试仅证明审批申请和发布阻断；审批放行需要真实 Runtime 测试证据。"""
     governance, agent_store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, agent_store)
     change_set_id = str(change_set["change_set_id"])
 
-    with pytest.raises(AgentGovernanceError, match="recorded approval request"):
+    with pytest.raises(AgentGovernanceError, match="审批前必须完成"):
         governance.approve_change_set(
             change_set_id,
             operator="reviewer",
-            **_approval_kwargs(governance, change_set),
+            **_missing_approval_kwargs(governance, change_set),
         )
 
     pending = governance.request_change_set_approval(
@@ -1769,14 +1535,14 @@ def test_high_risk_change_set_requires_approval_before_publish(tmp_path):
         governance.publish_change_set(change_set_id, operator="tester")
     assert exc.value.status_code == 409
 
-    governance.approve_change_set(
-        change_set_id,
-        operator="reviewer",
-        note="审批通过",
-        **_approval_kwargs(governance, pending),
-    )
-    release = governance.publish_change_set(change_set_id, operator="tester")
-    assert release["status"] == "published"
+    with pytest.raises(AgentGovernanceError, match="审批前必须完成"):
+        governance.approve_change_set(
+            change_set_id,
+            operator="reviewer",
+            note="审批通过",
+            **_missing_approval_kwargs(governance, pending),
+        )
+    assert governance.list_releases() == []
 
 
 def test_rejected_change_set_records_audit_event(tmp_path):
@@ -1851,21 +1617,11 @@ def test_legacy_approved_candidate_requires_new_test_and_file_review_after_upgra
         candidate_commit_sha=candidate,
         execution_job_id="job-legacy-approved",
     )
-    _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
-    old_claims = _approval_kwargs(governance, committed)
-    approved = governance.approve_change_set(
-        str(committed["change_set_id"]),
-        operator="legacy-reviewer",
-        **old_claims,
-    )
+    # 只构造迁移输入：旧版 approved 行不能充当新契约的真实测试或审批通过证据。
     with governance.feedback_store.Session.begin() as db:
-        row = db.get(AgentChangeSetModel, str(approved["change_set_id"]))
+        row = db.get(AgentChangeSetModel, str(committed["change_set_id"]))
         assert row is not None
+        row.status = "approved"
         payload = dict(row.payload_json or {})
         payload.pop("candidate_evidence_epoch", None)
         payload.pop("approval_evidence", None)
@@ -1874,37 +1630,23 @@ def test_legacy_approved_candidate_requires_new_test_and_file_review_after_upgra
     report = reconcile_legacy_publication_evidence(governance)
 
     assert report.reset_for_review == 1
-    migrated = governance.get_change_set(str(approved["change_set_id"]))
+    migrated = governance.get_change_set(str(committed["change_set_id"]))
     assert migrated is not None
     assert migrated["status"] == "pending_approval"
     assert migrated["latest_test_run"] is None
     assert migrated["approval_evidence"] is None
     with pytest.raises(AgentGovernanceError, match="候选审批前必须完成"):
         governance.approve_change_set(
-            str(approved["change_set_id"]),
+            str(committed["change_set_id"]),
             operator="new-reviewer",
-            **old_claims,
+            **_missing_approval_kwargs(governance, migrated),
         )
-
-    _record_passed_test_run(
-        governance,
-        agent_id=str(committed["agent_id"]),
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
-    refreshed = governance.get_change_set(str(approved["change_set_id"]))
-    assert refreshed is not None and refreshed["latest_test_run"] is not None
-    reapproved = governance.approve_change_set(
-        str(approved["change_set_id"]),
-        operator="new-reviewer",
-        **_approval_kwargs(governance, refreshed),
-    )
-    assert reapproved["status"] == "approved"
+    assert governance.list_releases() == []
 
 
 def test_legacy_publishing_without_git_side_effect_is_atomically_reset_and_claim_released(tmp_path):
     governance, store = _governance(tmp_path)
-    change_set = _candidate_change_set(governance, store, record_passed_test=False)
+    change_set = _candidate_change_set(governance, store)
     change_set_id = str(change_set["change_set_id"])
     release_id = "agr-legacy-no-side-effect"
     tag_name = "legacy-no-side-effect"
@@ -1952,7 +1694,7 @@ def test_legacy_publishing_without_git_side_effect_is_atomically_reset_and_claim
 
 def test_legacy_publishing_with_git_side_effect_is_quarantined_without_fabricated_evidence(tmp_path):
     governance, store = _governance(tmp_path)
-    change_set = _candidate_change_set(governance, store, record_passed_test=False)
+    change_set = _candidate_change_set(governance, store)
     change_set_id = str(change_set["change_set_id"])
     release_id = "agr-legacy-side-effect"
     tag_name = "legacy-side-effect"
@@ -2009,7 +1751,7 @@ def test_legacy_published_identity_is_read_only_after_release_and_git_verificati
     governance, store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, store)
     change_set_id = str(change_set["change_set_id"])
-    release = governance.publish_change_set(change_set_id, operator="publisher")
+    release = _publish_manual_force(governance, change_set_id, operator="publisher")
     published = governance.get_change_set(change_set_id)
     assert published is not None
     strict_intent = dict(published["publication_intent"])
@@ -2028,13 +1770,12 @@ def test_legacy_published_identity_is_read_only_after_release_and_git_verificati
     assert "publication_intent" not in migrated
     assert migrated["legacy_publication_identity"]["read_only"] is True
     with pytest.raises(AgentGovernanceError, match="read-only"):
-        governance.publish_change_set(
+        _publish_manual_force(
+            governance,
             change_set_id,
             operator="publisher",
             expected_candidate_commit_sha=str(strict_intent["commit_sha"]),
             expected_diff_digest=str(strict_intent["diff_digest"]),
-            expected_test_run_id=str(strict_intent["test_run_id"]),
-            expected_suite_digest=str(strict_intent["suite_digest"]),
         )
 
 
@@ -2042,7 +1783,7 @@ def test_legacy_published_identity_is_quarantined_when_tag_points_to_another_com
     governance, store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, store)
     change_set_id = str(change_set["change_set_id"])
-    governance.publish_change_set(change_set_id, operator="publisher")
+    _publish_manual_force(governance, change_set_id, operator="publisher")
     published = governance.get_change_set(change_set_id)
     assert published is not None
     strict_intent = dict(published["publication_intent"])
@@ -2070,7 +1811,7 @@ def test_published_retry_rejects_live_tag_repoint_before_cleanup_without_restart
     governance, store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, store)
     change_set_id = str(change_set["change_set_id"])
-    governance.publish_change_set(change_set_id, operator="publisher")
+    _publish_manual_force(governance, change_set_id, operator="publisher")
     published = governance.get_change_set(change_set_id)
     assert published is not None
     intent = published["publication_intent"]
@@ -2080,14 +1821,13 @@ def test_published_retry_rejects_live_tag_repoint_before_cleanup_without_restart
     )
 
     with pytest.raises(AgentGovernanceError, match="live Git/tag identity") as exc:
-        governance.publish_change_set(
+        _publish_manual_force(
+            governance,
             change_set_id,
             operator="publisher",
             tag_name=str(intent["tag_name"]),
             expected_candidate_commit_sha=str(intent["commit_sha"]),
             expected_diff_digest=str(intent["diff_digest"]),
-            expected_test_run_id=str(intent["test_run_id"]),
-            expected_suite_digest=str(intent["suite_digest"]),
         )
 
     assert exc.value.status_code == 409
@@ -2117,7 +1857,7 @@ def test_published_retry_rejects_structurally_valid_but_misbound_intent(tmp_path
     governance, store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, store)
     change_set_id = str(change_set["change_set_id"])
-    release = governance.publish_change_set(change_set_id, operator="publisher")
+    release = _publish_manual_force(governance, change_set_id, operator="publisher")
     published = governance.get_change_set(change_set_id)
     assert published is not None
     intent = dict(published["publication_intent"])
@@ -2130,13 +1870,12 @@ def test_published_retry_rejects_structurally_valid_but_misbound_intent(tmp_path
     migration = reconcile_legacy_publication_evidence(governance)
     assert migration.quarantined == 1
     with pytest.raises(AgentGovernanceError, match="quarantined") as exc:
-        governance.publish_change_set(
+        _publish_manual_force(
+            governance,
             change_set_id,
             operator="publisher",
             expected_candidate_commit_sha=str(intent["commit_sha"]),
             expected_diff_digest=str(intent["diff_digest"]),
-            expected_test_run_id=str(intent["test_run_id"]),
-            expected_suite_digest=str(intent["suite_digest"]),
         )
     assert exc.value.status_code == 409
     assert len(governance.list_releases()) == 1
@@ -2149,7 +1888,7 @@ def test_published_retry_rejects_structurally_valid_but_misbound_intent(tmp_path
         ("previous_commit_sha", "0" * 40),
         ("operator", "tampered-operator"),
         ("note", "tampered-note"),
-        ("force_published", True),
+        ("force_published", False),
         ("force_publication_blocker", "tampered blocker"),
     ),
 )
@@ -2157,7 +1896,7 @@ def test_current_published_release_payload_tamper_is_quarantined(tmp_path, field
     governance, store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, store)
     change_set_id = str(change_set["change_set_id"])
-    release = governance.publish_change_set(change_set_id, operator="publisher", note="reviewed")
+    release = _publish_manual_force(governance, change_set_id, operator="publisher", note="reviewed")
     with governance.feedback_store.Session.begin() as db:
         row = db.get(AgentReleaseModel, str(release["release_id"]))
         assert row is not None

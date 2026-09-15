@@ -17,10 +17,8 @@ from scripts import agentscope_atomic_cutover as cutover
 from scripts.agentscope_atomic_cutover_types import DockerDaemonIdentity
 from scripts.container_acceptance_identity import PinnedFileIdentity, verify_sealed_file, write_exclusive_file
 from scripts.selected_env_browser_toolchain import BROWSER_TOOLCHAIN_ENV, verify_browser_toolchain
-from scripts.selected_env_operation_contract import OperationEnvironment, SelectedEnvError, StackImageIds
+from scripts.selected_env_operation_contract import DEPLOYED_BROWSER_OPERATIONS, OperationEnvironment, SelectedEnvError, StackImageIds
 
-OPERATION = "ui-playground-deployed-smoke"
-SCOPE = "deployed_playground_two_turn_refresh"
 CONTEXT_PATH_ENV = "AGENTGOV_DEPLOYED_CONTEXT_PATH"
 CONTEXT_IDENTITY_ENV = "AGENTGOV_DEPLOYED_CONTEXT_IDENTITY"
 API_KEY_ENV = "AGENTGOV_DEPLOYED_API_KEY"
@@ -29,6 +27,7 @@ BrowserMetadata: TypeAlias = dict[str, object]
 
 @dataclass(frozen=True)
 class DeployedBrowserContext:
+    operation: str
     acceptance_id: str
     source_sha256: str
     selected_env_sha256: str
@@ -103,6 +102,8 @@ def load_context(environ: Mapping[str, str]) -> DeployedBrowserContext:
         verify_sealed_file(path, identity, mode=0o400, error_type=SelectedEnvError, label="部署浏览器回执")
         values = json.loads(path.read_bytes())
         context = DeployedBrowserContext(**values)
+        if context.operation not in DEPLOYED_BROWSER_OPERATIONS:
+            raise SelectedEnvError("部署浏览器操作未在固定入口中注册")
         if context.browser_toolchain_sha256 != hashlib.sha256(environ[BROWSER_TOOLCHAIN_ENV].encode()).hexdigest():
             raise SelectedEnvError("浏览器依赖身份脱离部署回执")
     except (KeyError, TypeError, ValueError, OSError) as exc:
@@ -128,12 +129,12 @@ def _require_owned_process(context: DeployedBrowserContext, source_root: Path, n
         parent_status = Path(f"/proc/{parent}/status").read_text()
         if f"PPid:\t{context.runner_pid}\n" not in parent_status:
             raise SelectedEnvError("部署浏览器回执不属于当前活动 runner")
-        expected_node = [os.fsencode(node), os.fsencode(source_root / "scripts/verify_playground_deployed.mjs")]
+        expected_node = [os.fsencode(node), os.fsencode(source_root / DEPLOYED_BROWSER_OPERATIONS[context.operation][1])]
         if node_command[:2] != expected_node:
             raise SelectedEnvError("部署浏览器调用入口不匹配冻结 Node/script")
         command = Path(f"/proc/{context.runner_pid}/cmdline").read_bytes().split(b"\0")
         expected_runner = os.fsencode(source_root / "scripts/run_selected_env_operation.py")
-        if expected_runner not in command or os.fsencode(OPERATION) not in command:
+        if expected_runner not in command or os.fsencode(context.operation) not in command:
             raise SelectedEnvError("部署浏览器回执所属 runner 已失效")
     except OSError as exc:
         raise SelectedEnvError("无法核验部署浏览器进程所有权") from exc
@@ -141,6 +142,7 @@ def _require_owned_process(context: DeployedBrowserContext, source_root: Path, n
 
 def verify_context(environ: dict[str, str], *, require_node_parent: bool) -> BrowserMetadata:
     from scripts import run_selected_env_operation as runner
+    from scripts import selected_env_reexec
     from scripts import selected_env_source_snapshot as source_snapshot
 
     context = load_context(environ)
@@ -169,10 +171,10 @@ def verify_context(environ: dict[str, str], *, require_node_parent: bool) -> Bro
         )
         if stack_container_ids(snapshot, source_root, environ) != tuple(context.container_ids):
             raise SelectedEnvError("浏览器验收期间部署容器被替换")
-    runner._verify_frozen_stage_postconditions(snapshot, source_root, environ, context.source_sha256)
+    selected_env_reexec.verify_stage_postconditions(snapshot, environ, context.source_sha256)
     package = toolchain["artifacts"]["playwright-package"]
     return {
-        "scope": SCOPE,
+        "scope": DEPLOYED_BROWSER_OPERATIONS[context.operation][0],
         "ui_base": context.ui_base,
         "api_base": context.api_base,
         "agent_id": "security-operations-expert",

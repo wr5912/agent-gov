@@ -152,7 +152,9 @@ def test_acceptance_context_receipt_binds_exact_toolchain(tmp_path: Path) -> Non
     selected_env = tmp_path / "selected.env"
     selected_env.write_text("AGENTSCOPE_MODEL_NAME=local\n", encoding="utf-8")
     captured = toolchain.capture_acceptance_toolchain(dict(os.environ), "container-core-smoke")
-    context_path = tmp_path / "acceptance-context.json"
+    context_root = tmp_path / "acceptance-context"
+    context_root.mkdir(mode=0o700)
+    context_path = context_root / "acceptance-context.json"
     environment = {
         **toolchain.toolchain_environment(captured),
         inputs.ACCEPTANCE_ACTIVE_ENV: "1",
@@ -182,6 +184,9 @@ def test_acceptance_context_receipt_binds_exact_toolchain(tmp_path: Path) -> Non
         snapshots=(),
         containers=(),
     )
+    with pytest.raises(inputs.AcceptanceError, match="上下文目录.*0500"):
+        inputs.verify_acceptance_context(environment)
+    context_root.chmod(0o500)
     with pytest.raises(inputs.AcceptanceError, match="封存为 0400"):
         inputs.verify_acceptance_context(environment)
     context_path.chmod(0o400)
@@ -201,6 +206,23 @@ def test_acceptance_context_receipt_binds_exact_toolchain(tmp_path: Path) -> Non
     context_path.chmod(0o400)
     with pytest.raises(inputs.AcceptanceError, match="身份已变化"):
         inputs.verify_acceptance_context(environment)
+    context_root.chmod(0o700)
+
+
+def test_context_directory_sealing_does_not_relax_snapshot_write_permissions(tmp_path: Path) -> None:
+    context_root = tmp_path / "context"
+    context_root.mkdir(mode=0o700)
+    context_path = context_root / "acceptance-context.json"
+    inputs._validate_private_directory(context_root, label="验收输入目录")
+    retained = write_exclusive_file(context_path, b"{}\n", error_type=inputs.AcceptanceError, label="回执")
+    materialization.seal_materialized_input_tree(context_root, error_type=inputs.AcceptanceError)
+    try:
+        assert inputs._context_file({inputs.ACCEPTANCE_CONTEXT_ENV: str(context_path)}) == context_path
+        verify_sealed_file(context_path, retained, mode=0o400, error_type=inputs.AcceptanceError, label="回执")
+        with pytest.raises(inputs.AcceptanceError, match="验收输入目录.*0700"):
+            inputs._validate_private_directory(context_root, label="验收输入目录")
+    finally:
+        materialization.make_materialized_tree_disposable(context_root)
 
 
 def test_acceptance_make_recipes_use_only_bound_browser_and_http_tools() -> None:
@@ -256,6 +278,57 @@ def test_compose_command_executes_the_bound_docker_copy(tmp_path: Path) -> None:
     )
 
     assert command[0] == str(tmp_path / "private-tools/docker")
+
+
+def test_materialized_docker_config_blocks_caches_without_changing_plugin_receipts(tmp_path: Path) -> None:
+    execution_root = tmp_path / "execution"
+    execution_root.mkdir(mode=0o700)
+    receipts = []
+    for name in ("docker-compose", "docker-buildx"):
+        source = capture_file_identity(name, toolchain.SYSTEM_TOOL_PATHS[name], kind="executable", error_type=ValueError, executable=True)
+        receipts.append(
+            materialization._copy_file_exact(source, toolchain.materialized_tool_path(execution_root, name), error_type=ValueError, executable=True)
+        )
+    materialization._seal_docker_plugin_directories(execution_root, error_type=acceptance.AcceptanceError)
+    docker_config = execution_root / "docker-config"
+    guard = materialization.ExecutionMutationGuard((execution_root,), error_type=acceptance.AcceptanceError)
+    try:
+        assert execution_root.stat().st_mode & 0o777 == 0o700
+        assert docker_config.stat().st_mode & 0o777 == 0o500
+        assert (docker_config / "cli-plugins").stat().st_mode & 0o777 == 0o500
+        for receipt in receipts:
+            assert capture_file_identity(receipt["name"], Path(receipt["path"]), kind="executable", error_type=ValueError, executable=True) == receipt
+        for name in (".token_seed", ".token_seed.lock"):
+            with pytest.raises(PermissionError):
+                (docker_config / name).touch()
+            assert not (docker_config / name).exists()
+        result = subprocess.run(
+            [str(toolchain.SYSTEM_TOOL_PATHS["docker"]), "--config", str(docker_config), "compose", "version", "--short"],
+            env={"HOME": str(tmp_path), "PATH": toolchain.TRUSTED_SYSTEM_PATH},
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip()
+        guard.check()
+        docker_config.chmod(0o700)
+        (docker_config / ".token_seed.lock").touch()
+        with pytest.raises(acceptance.AcceptanceError, match="执行期间.*发生变化"):
+            guard.check()
+    finally:
+        guard.close()
+        materialization.make_materialized_tree_disposable(execution_root)
+
+
+def test_materialized_docker_config_sealing_reports_incomplete_layout(tmp_path: Path) -> None:
+    (tmp_path / "docker-config").mkdir()
+
+    with pytest.raises(acceptance.AcceptanceError, match="无法收紧验收 Docker 配置目录权限") as error:
+        materialization._seal_docker_plugin_directories(tmp_path, error_type=acceptance.AcceptanceError)
+
+    assert isinstance(error.value.__cause__, FileNotFoundError)
 
 
 def test_running_child_cannot_hide_modify_then_restore_of_formal_inputs(tmp_path: Path) -> None:
@@ -426,6 +499,25 @@ def test_docker_event_monitor_rejects_project_health_and_network_mutation(event:
         monitor._reject_events()
 
 
+@pytest.mark.parametrize("action", ["exec_create", "exec_create: /bin/true", "exec_start", "exec_start: /bin/true", "exec_die", "exec_detach"])
+def test_docker_event_classification_distinguishes_exec_from_lifecycle(action: str, tmp_path: Path) -> None:
+    monitor = daemon_monitor.DockerMutationMonitor(
+        docker_path="/usr/bin/docker",
+        project_name="formal",
+        runtime_root=tmp_path / "runtime",
+        source_root=tmp_path / "source",
+        environ={},
+        run_output=acceptance._daemon_command,
+        error_type=acceptance.AcceptanceError,
+    )
+    event = {"Type": "container", "Action": action, "Actor": {"Attributes": {"com.docker.compose.project": "formal"}}}
+
+    assert monitor._relevant(event) is False
+    for kind in ("network", "volume", "daemon"):
+        assert monitor._relevant({**event, "Type": kind}) is True
+    assert monitor._relevant({**event, "Action": "exec_unknown"}) is True
+
+
 def test_docker_event_stream_and_ready_gap_share_fixed_since_boundary(tmp_path: Path, monkeypatch) -> None:
     commands: list[list[str]] = []
 
@@ -541,6 +633,7 @@ def test_docker_inventory_rejects_unreceipted_network_sidecar(tmp_path: Path) ->
         ("Init", False),
         ("ExtraHosts", []),
         ("Healthcheck", {"Test": ["CMD", "true"], "Interval": 1_000_000_000, "Timeout": 9, "Retries": 2}),
+        ("Healthcheck", {"Test": ["CMD", "false"], "Interval": 1_000_000_000, "Timeout": 2_000_000_000, "Retries": 2}),
         ("RestartPolicy", {"Name": "no", "MaximumRetryCount": 0}),
     ],
 )
@@ -607,6 +700,24 @@ def test_healthcheck_explicit_zero_and_empty_values_override_image_defaults() ->
         "start_interval": 0,
         "retries": 0,
     }
+
+
+@pytest.mark.parametrize(
+    ("compose_command", "native_command"),
+    [
+        ('pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"', 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'),
+        ('redis-cli -a "$$REDIS_AUTH" ping | grep PONG', 'redis-cli -a "$REDIS_AUTH" ping | grep PONG'),
+        ('printf "$$$$"', 'printf "$$"'),
+    ],
+)
+def test_healthcheck_unescapes_only_explicit_compose_command_once(compose_command: str, native_command: str) -> None:
+    image = {"Test": ["CMD-SHELL", 'printf "$$"']}
+    expected = compose_contract._expected_healthcheck({"test": ["CMD-SHELL", compose_command]}, image)
+
+    assert expected == compose_contract._actual_healthcheck({"Test": ["CMD-SHELL", native_command]})
+    assert expected != compose_contract._actual_healthcheck({"Test": ["CMD-SHELL", native_command + "; unexpected"]})
+    for service in (None, {"interval": "1s"}):
+        assert compose_contract._expected_healthcheck(service, image)["test"] == ("CMD-SHELL", 'printf "$$"')
 
 
 def test_healthcheck_rejects_unmodeled_fields() -> None:

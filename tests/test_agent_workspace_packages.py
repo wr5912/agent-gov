@@ -379,6 +379,8 @@ def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(pr
         (source / "export-hidden.txt").write_bytes(b"must-still-export\n")
         (source / "substituted.txt").write_bytes(b"$Format:%H$\n")
         (source / "crlf.txt").write_bytes(b"first\r\nsecond\r\n")
+        _run_git(source, "add", "-A", "-f", "--", ".")
+        _run_git(source, "commit", "-m", "Prepare exact export version")
 
         preflight = client.options(
             "/api/agent-registry/source/workspace/export",
@@ -434,7 +436,7 @@ def test_workspace_export_import_round_trip_preserves_binary_endpoint_and_env(pr
     assert "id: imported" in (target / "agent.yaml").read_text(encoding="utf-8")
 
 
-def test_workspace_export_restores_exec_tracking_when_existing_git_disabled_filemode(process_environment, tmp_path: Path) -> None:
+def test_workspace_export_preserves_published_mode_and_git_config(process_environment, tmp_path: Path) -> None:
     module = _load_app(process_environment, tmp_path)
     workspace = _seed_active_agent(module, agent_id="filemode", name="filemode")
     with TestClient(module.app) as client:
@@ -458,11 +460,13 @@ def test_workspace_export_restores_exec_tracking_when_existing_git_disabled_file
         )
 
     assert exported.status_code == 200
-    assert exported.headers["x-agent-commit-sha"] != previous
-    assert _run_git(workspace, "config", "--bool", "core.fileMode") == "true"
+    assert exported.headers["x-agent-commit-sha"] == previous
+    assert _run_git(workspace, "rev-parse", "HEAD") == previous
+    assert _run_git(workspace, "config", "--bool", "core.fileMode") == "false"
     assert imported.json()["published"] is False
     imported_script = _candidate_workspace(module, imported) / "tools" / "tracked-tool"
-    assert stat.S_IMODE(imported_script.stat().st_mode) & 0o111
+    assert not stat.S_IMODE(imported_script.stat().st_mode) & 0o111
+    assert stat.S_IMODE(script.stat().st_mode) & 0o111
 
 
 def test_workspace_export_reads_many_large_blobs_through_real_git(process_environment, tmp_path: Path) -> None:
@@ -471,6 +475,8 @@ def test_workspace_export_reads_many_large_blobs_through_real_git(process_enviro
     with TestClient(module.app) as client:
         for index in range(20):
             workspace.joinpath(f"blob-{index:02d}.bin").write_bytes(bytes([index]) * (96 * 1024 + index))
+        _run_git(workspace, "add", "-A", "-f", "--", ".")
+        _run_git(workspace, "commit", "-m", "Prepare large export version")
         exported = client.post("/api/agent-registry/batch-export/workspace/export")
         imported_package = _package_with_agent_id(exported.content, "batch-export-copy")
         imported = _import_new_agent(
@@ -505,7 +511,7 @@ def test_workspace_commit_reader_scales_to_ten_thousand_paths_with_one_real_git_
     assert len(entries) == workspace_codec.MAX_PACKAGE_MEMBERS
     assert entries[0].content == b"shared\n"
     assert entries[-1].relative_path.as_posix() == "file-09999.txt"
-    assert sum(arguments[:3] == ["git", "cat-file", "--batch"] for arguments in starts) == 1
+    assert sum(arguments[-2:] == ["cat-file", "--batch"] for arguments in starts) == 1
 
 
 def test_workspace_overwrite_requires_expected_commit_and_restore_creates_new_commit(process_environment, tmp_path: Path) -> None:

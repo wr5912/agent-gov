@@ -234,13 +234,13 @@ def _read_stable_regular_file(path: Path, *, label: str) -> tuple[bytes, os.stat
         os.close(directory_fd)
 
 
-def _validate_private_directory(path: Path, *, label: str) -> None:
+def _validate_private_directory(path: Path, *, label: str, mode: int = 0o700) -> None:
     try:
         metadata = path.lstat()
     except OSError as exc:
         raise AcceptanceError(f"{label} 不可用") from exc
-    if not stat.S_ISDIR(metadata.st_mode) or path.is_symlink() or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
-        raise AcceptanceError(f"{label} 必须是当前用户持有的 0700 真实目录")
+    if not stat.S_ISDIR(metadata.st_mode) or path.is_symlink() or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != mode:
+        raise AcceptanceError(f"{label} 必须是当前用户持有的 {mode:04o} 真实目录")
 
 
 def _write_private_snapshot(path: Path, payload: bytes) -> PinnedFileIdentity:
@@ -477,7 +477,7 @@ def _context_file(environ: dict[str, str]) -> Path:
     if not raw:
         raise AcceptanceError("缺少公共 runner 生成的验收上下文回执")
     path = _absolute_path_without_links(raw, base=REPO_ROOT)
-    _validate_private_directory(path.parent, label="验收上下文目录")
+    _validate_private_directory(path.parent, label="验收上下文目录", mode=0o500)
     return path
 
 

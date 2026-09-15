@@ -20,10 +20,13 @@ class _PytestItemResult(TypedDict):
     outcome: str
     duration_seconds: float
     phase: str
+    phase_outcomes: dict[str, str]
     detail: str | None
 
 
-_RESULTS: list[_PytestItemResult] = []
+_PHASE_ORDER = ("setup", "call", "teardown")
+_COLLECTED_NODEIDS: list[str] = []
+_PHASE_REPORTS: dict[str, dict[str, pytest.TestReport]] = {}
 
 
 @dataclass
@@ -47,8 +50,13 @@ class _AgentGovPytestContext:
 
 def pytest_configure(config: pytest.Config) -> None:
     del config
-    _RESULTS.clear()
+    _COLLECTED_NODEIDS.clear()
+    _PHASE_REPORTS.clear()
     clear_invocations()
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    _COLLECTED_NODEIDS[:] = [item.nodeid for item in session.items]
 
 
 @pytest.fixture(scope="session")
@@ -89,17 +97,31 @@ def agent(_agentgov_pytest_context: _AgentGovPytestContext) -> Iterator[AgentTes
 
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
-    if report.when != "call" and not (report.when == "setup" and report.failed):
-        return
-    _RESULTS.append(
-        {
-            "nodeid": report.nodeid,
-            "outcome": report.outcome,
-            "duration_seconds": report.duration,
-            "phase": report.when,
-            "detail": str(report.longrepr) if report.failed else None,
-        }
-    )
+    if report.when in _PHASE_ORDER:
+        _PHASE_REPORTS.setdefault(report.nodeid, {})[report.when] = report
+
+
+def _item_result(nodeid: str) -> _PytestItemResult:
+    reports = _PHASE_REPORTS.get(nodeid, {})
+    failed_phase = next((phase for phase in _PHASE_ORDER if reports.get(phase) and reports[phase].failed), None)
+    skipped_phase = next((phase for phase in _PHASE_ORDER if reports.get(phase) and reports[phase].skipped), None)
+    if failed_phase is not None:
+        outcome, phase = "failed", failed_phase
+    elif skipped_phase is not None:
+        outcome, phase = "skipped", skipped_phase
+    elif set(reports) != set(_PHASE_ORDER):
+        outcome, phase = "incomplete", next((item for item in _PHASE_ORDER if item not in reports), "setup")
+    else:
+        outcome, phase = "passed", "call"
+    decisive = reports.get(phase)
+    return {
+        "nodeid": nodeid,
+        "outcome": outcome,
+        "duration_seconds": sum(report.duration for report in reports.values()),
+        "phase": phase,
+        "phase_outcomes": {item: reports[item].outcome for item in _PHASE_ORDER if item in reports},
+        "detail": str(decisive.longrepr) if decisive is not None and decisive.failed else None,
+    }
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
@@ -108,7 +130,8 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         return
     payload = {
         "exit_code": int(exitstatus),
-        "items": _RESULTS,
+        "collected_nodeids": _COLLECTED_NODEIDS,
+        "items": [_item_result(nodeid) for nodeid in dict.fromkeys([*_COLLECTED_NODEIDS, *_PHASE_REPORTS])],
         "invocations": invocation_records(),
     }
     path = Path(raw_path)

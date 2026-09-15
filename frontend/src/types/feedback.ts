@@ -13,16 +13,17 @@ type OpenApiFeedbackSourceResponse = components["schemas"]["FeedbackSourceRespon
 type OpenApiFeedbackSourceUpdateRequest = components["schemas"]["FeedbackSourceUpdateRequest"];
 type OpenApiPendingCorrelationResolveRequest = components["schemas"]["PendingCorrelationResolveRequest"];
 type OpenApiPendingCorrelationResponse = components["schemas"]["PendingCorrelationResponse"];
-type OpenApiSocEventIngestRequest = components["schemas"]["SocEventIngestRequest"];
-type OpenApiSocEventIngestResponse = components["schemas"]["SocEventIngestResponse"];
-type OpenApiSocEventResponse = components["schemas"]["SocEventResponse"];
+type OpenApiFeedbackEventIngestRequest = components["schemas"]["FeedbackEventIngestRequest"];
+type OpenApiFeedbackEventIngestResponse = components["schemas"]["FeedbackEventIngestResponse"];
+type OpenApiFeedbackEventResponse = components["schemas"]["FeedbackEventResponse"];
 type OptionalClientDefaults<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
 
 export type FeedbackConfidence = NonNullable<OpenApiFeedbackSignalResponse["confidence"]>;
 export type FeedbackSourceType = OpenApiFeedbackSignalResponse["source_type"];
 export type FeedbackSourceKind = OpenApiFeedbackSourceRef["source_kind"];
 export type FeedbackCaseStatus = OpenApiFeedbackCaseResponse["status"];
-export type SocEventType = OpenApiSocEventResponse["event_type"];
+export type FeedbackEventType = OpenApiFeedbackEventResponse["event_type"];
+export type FeedbackEntities = NonNullable<OpenApiFeedbackEventResponse["entities"]>;
 export type PendingCorrelationStatus = OpenApiPendingCorrelationResponse["status"];
 export type JobType = OpenApiAgentJobResponse["job_type"];
 export type JobStatus = OpenApiAgentJobResponse["status"];
@@ -30,11 +31,11 @@ export type JobStatus = OpenApiAgentJobResponse["status"];
 export interface FeedbackFilters {
   run_id?: string;
   session_id?: string;
-  alert_id?: string;
-  case_id?: string;
+  entity_type?: string;
+  entity_id?: string;
   status?: JobStatus | FeedbackCaseStatus | PendingCorrelationStatus;
   source_type?: FeedbackSourceType;
-  event_type?: SocEventType;
+  event_type?: FeedbackEventType;
   feedback_case_id?: string;
   include_messages?: boolean;
   limit?: number;
@@ -65,13 +66,13 @@ export type FeedbackSignalCreateRequest = OptionalClientDefaults<
 >;
 export type FeedbackSignalRecord = OpenApiFeedbackSignalResponse & { [key: string]: unknown };
 
-export type SocEventCreateRequest = OptionalClientDefaults<
-  OpenApiSocEventIngestRequest,
+export type FeedbackEventCreateRequest = OptionalClientDefaults<
+  OpenApiFeedbackEventIngestRequest,
   "auto_captured" | "confidence" | "requires_review"
 >;
-export type SocEventRecord = OpenApiSocEventResponse;
-export type SocEventCreateResponse = Omit<OpenApiSocEventIngestResponse, "event" | "pending_correlation"> & {
-  event: SocEventRecord;
+export type FeedbackEventRecord = OpenApiFeedbackEventResponse;
+export type FeedbackEventCreateResponse = Omit<OpenApiFeedbackEventIngestResponse, "event" | "pending_correlation"> & {
+  event: FeedbackEventRecord;
   pending_correlation?: PendingCorrelationRecord | null;
 };
 
@@ -93,8 +94,6 @@ export type FeedbackCaseRecord = OpenApiFeedbackCaseResponse & {
   pending_correlation_ids: string[];
   run_ids: string[];
   session_ids: string[];
-  alert_ids: string[];
-  case_ids: string[];
   evidence_package_ids: string[];
   attribution_job_ids: string[];
 };
@@ -106,7 +105,7 @@ export interface FeedbackWorkbenchData {
   sources: FeedbackSourceRecord[];
   runs: FeedbackRunRecord[];
   signals: FeedbackSignalRecord[];
-  events: SocEventRecord[];
+  events: FeedbackEventRecord[];
   pending_correlations: PendingCorrelationRecord[];
   cases: FeedbackCaseRecord[];
 }

@@ -795,12 +795,16 @@ def test_ui_postconditions_are_scoped_to_ui_image_and_running_state(tmp_path: Pa
     assert probes == [_IMAGE_ID, _IMAGE_ID]
 
 
-def test_deploy_script_has_no_pull_fallback_and_isolates_compose_plugin() -> None:
+def test_deploy_scripts_have_no_pull_fallback_and_isolate_compose_plugins() -> None:
     source = (runner.REPO_ROOT / "scripts/deploy_agent_gov_to_host").read_text(encoding="utf-8")
+    runtime_source = (runner.REPO_ROOT / "scripts/remote_deploy_runtime.py").read_text(encoding="utf-8")
 
     assert " docker pull " not in source
-    assert 'DOCKER_CONFIG="$docker_config"' in source
     assert 'DOCKER_CONFIG="$LOCAL_DOCKER_CONFIG"' in source
     assert '"$LOCAL_DOCKER_BIN")' in source
-    assert '"$docker_boundary/docker")' in source
+    assert '"$boundary/docker" info' in source
     assert "compose=(" not in source
+    assert " docker pull " not in runtime_source
+    assert '"DOCKER_CONFIG": docker_config.as_posix()' in runtime_source
+    assert 'yield DockerBinding(command=[bound_cli.as_posix()], environment=environment)' in runtime_source
+    assert '[*binding["command"], "compose"' in runtime_source

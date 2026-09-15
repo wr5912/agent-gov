@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import runpy
 from pathlib import Path
 
@@ -73,12 +74,14 @@ def test_native_agent_data_maps_once_to_safe_harness_files(tmp_path: Path) -> No
     assert suite.test_files == ["tests/test_native_agent_harness_contract.py"]
     generated = runpy.run_path(str(tmp_path / suite.test_files[0]))
     generated["test_native_agent_harness_contract"]()
+    # 这里只验证构建出的真实调用入口，不提供假 Agent；实际调用由容器发布测试执行。
+    assert tuple(inspect.signature(generated["test_native_agent_responds"]).parameters) == ("agent",)
+    source = inspect.getsource(generated["test_native_agent_responds"])
+    assert "result = agent.run(" in source
+    assert "assert not result.errors" in source
     require_runtime_workspace_policy(
         workspace=tmp_path,
         agent_id="analyst",
-        runtime_mode="container",
-        env={},
-        runtime_root=tmp_path,
     )
 
 

@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 from scripts import agentscope_live_acceptance_scenarios as scenario_contract
 from scripts import agentscope_mcp_live_acceptance as mcp_live
@@ -16,6 +17,17 @@ SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts/run_agentscope_live
 REPO_ROOT = SCRIPT_PATH.parents[1]
 AGENT_ID = "security-operations-expert"
 BROWSER_CONTRACT = REPO_ROOT / "scripts/improvement_ui_e2e/browser_acceptance_contract.mjs"
+
+
+@pytest.mark.parametrize(
+    "path,kind", [("/api/runtime/chat/", "chat"), ("/api/agent-runs/private-run/trace", "run_trace"), ("/private-endpoint", "unclassified")]
+)
+def test_http_failure_projects_request_kind_without_private_content(path: str, kind: str) -> None:
+    request = httpx.Request("GET", "http://private-host" + path + "?private-token=value")
+    error = httpx.RemoteProtocolError("private-response", request=request)
+    summary = live.summarize_http_failure(error)
+    assert json.loads(summary) == {"error_type": "RemoteProtocolError", "method": "GET", "request_kind": kind, "http_status": None}
+    assert "private" not in summary
 
 
 def _mcp_scenario() -> dict[str, object]:
@@ -605,6 +617,18 @@ if (!rejectedSingle || !rejectedMissing) process.exit(11);
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_playground_cancellation_metadata_contract_uses_real_node() -> None:
+    result = subprocess.run(
+        ["node", "--test", "tests/playground_cancel_evidence.test.mjs"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_public_browser_and_release_candidate_targets_force_formal_matrix() -> None:

@@ -45,7 +45,6 @@ def _make_store(tmp_path: Path, *, resolve_versions: bool = False) -> FeedbackSt
             worktrees_dir=default_layout.version_base / "worktrees",
             releases_dir=default_layout.version_base / "releases",
         ),
-        runtime_mode="local-debug",
     )
     governance.agent_exists = registry.has_agent
     store.agent_version_provider = governance.current_agent_version_id

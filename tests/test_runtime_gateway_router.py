@@ -534,8 +534,13 @@ def test_native_agent_schema_route_reads_the_real_pinned_runtime_contract(tmp_pa
             {},
         ),
         (
-            {"role": "user", "content": []},
-            {"forwarded": {GOVERNED_EVIDENCE_ROOT_METADATA_KEY: "/business-agents/agent-b/workspace"}},
+            {
+                "name": "user",
+                "role": "user",
+                "content": [],
+                "metadata": {"forwarded": {GOVERNED_EVIDENCE_ROOT_METADATA_KEY: "/business-agents/agent-b/workspace"}},
+            },
+            {},
         ),
     ],
     ids=("message", "nested-content", "request-metadata"),
@@ -549,35 +554,25 @@ def test_chat_contract_rejects_cross_agent_governed_evidence(
             {
                 "agent_id": "runtime-a",
                 "session_id": "session-a",
-                "client_operation_id": "spoof-evidence",
                 "input": input_value,
-                "metadata": metadata,
             },
         )
 
 
-def test_chat_contract_requires_exact_hitl_run_and_scopes_confirmation_only() -> None:
+def test_chat_contract_uses_native_hitl_identity_and_rejects_body_scope() -> None:
     confirmation = {
         "type": "USER_CONFIRM_RESULT",
         "reply_id": "reply-a",
         "confirm_results": [],
     }
-    with pytest.raises(ValidationError, match="expected_run_id is required"):
+    parsed = RuntimeChatRequest.model_validate({"agent_id": "runtime-a", "session_id": "session-a", "input": confirmation})
+    assert parsed.raw_input == confirmation
+    with pytest.raises(ValidationError, match="extra_forbidden"):
         RuntimeChatRequest.model_validate(
             {
                 "agent_id": "runtime-a",
                 "session_id": "session-a",
-                "client_operation_id": "hitl-without-run",
-                "input": confirmation,
-            },
-        )
-    with pytest.raises(ValidationError, match="only applies to USER_CONFIRM_RESULT"):
-        RuntimeChatRequest.model_validate(
-            {
-                "agent_id": "runtime-a",
-                "session_id": "session-a",
-                "client_operation_id": "invalid-run-scope",
-                "input": {"role": "user", "content": []},
+                "input": {"name": "user", "role": "user", "content": []},
                 "confirmation_scope": "run",
             },
         )
@@ -593,8 +588,7 @@ def test_session_and_cancel_store_boundaries_are_exact_and_idempotent(tmp_path: 
         session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)
@@ -615,8 +609,7 @@ def test_old_terminal_run_cannot_cancel_new_active_run_on_same_session(tmp_path:
         session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.fail_trigger(old_run.run_id, error={"type": "test"})
@@ -624,8 +617,7 @@ def test_old_terminal_run_cannot_cancel_new_active_run_on_same_session(tmp_path:
         session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
 
@@ -653,7 +645,7 @@ def test_runtime_client_signature_covers_real_encoded_query_target(tmp_path: Pat
         assert asyncio.run(exercise()) == 200
 
 
-def test_client_operation_lookup_keeps_static_route_and_single_principal_auth(
+def test_native_input_lookup_keeps_static_route_and_single_principal_auth(
     process_environment,
     tmp_path: Path,
 ) -> None:
@@ -692,44 +684,44 @@ def test_client_operation_lookup_keeps_static_route_and_single_principal_auth(
     run = module.run_store.admit_run(
         session_id="session-public-a",
         runtime_agent_id="runtime-public-a",
-        input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        input_value={"id": "input-public-a", "name": "user", "role": "user", "content": []},
+        entities={},
         metadata={},
-        client_operation_id="operation-public-a",
     ).run
     headers = {"Authorization": f"Bearer {PUBLIC_API_KEY}"}
     params = {
         "session_id": "session-public-a",
-        "client_operation_id": "operation-public-a",
+        "agent_id": "runtime-public-a",
+        "operation_kind": "initial",
+        "input_id": "input-public-a",
     }
 
     with serve_loopback(module.app) as api_url:
         with httpx.Client(base_url=api_url, trust_env=False, timeout=5) as client:
-            assert client.get("/api/agent-runs/by-client-operation", params=params).status_code == 401
+            assert client.get("/api/agent-runs/by-input-identity", params=params).status_code == 401
             assert (
                 client.get(
-                    "/api/agent-runs/by-client-operation",
+                    "/api/agent-runs/by-input-identity",
                     params=params,
                     headers={"Authorization": "Bearer invalid-principal"},
                 ).status_code
                 == 401
             )
             resolved = client.get(
-                "/api/agent-runs/by-client-operation",
+                "/api/agent-runs/by-input-identity",
                 params=params,
                 headers=headers,
             )
             wrong_session = client.get(
-                "/api/agent-runs/by-client-operation",
-                params={**params, "session_id": "session-public-b"},
+                "/api/agent-runs/by-input-identity",
+                params={**params, "session_id": "session-public-b", "agent_id": "runtime-public-b"},
                 headers=headers,
             )
 
     assert resolved.status_code == 200
     assert resolved.json()["run_id"] == run.run_id
     assert wrong_session.status_code == 404
-    assert "by-client-operation" not in wrong_session.json()["detail"]
+    assert "by-input-identity" not in wrong_session.json()["detail"]
 
 
 def test_session_reads_reject_another_bound_runtime_agent_before_upstream(

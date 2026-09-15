@@ -149,7 +149,11 @@ def operation_environment(
 ) -> OperationEnvironment:
     child_env = selected_env_child_env(
         snapshot,
-        explicit={"AGENTGOV_SOURCE_ARTIFACT_SHA256": source.digest, "APP_VERSION": version},
+        explicit={
+            "AGENTGOV_SOURCE_ARTIFACT_SHA256": source.digest,
+            "APP_VERSION": version,
+            "AGENTGOV_RUNTIME_VERSION": version,
+        },
         compose_files=compose_files,
     )
     child_env.update(source_environment(source))

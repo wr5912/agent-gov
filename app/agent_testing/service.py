@@ -16,6 +16,7 @@ from app.runtime.errors import FeedbackStoreError
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db_base import utc_now
 from app.runtime.schemas import ChatRequest, ChatResponse
+from app.runtime_gateway.store import RuntimeTemplateRestartRequired
 
 from .runner import FIXED_PYTEST_COMMAND, AgentTestRunner
 from .schemas import AgentTestSuiteSummary
@@ -382,13 +383,18 @@ class AgentTestingService:
                 "tested_commit_sha": session.commit_sha,
             },
         )
-        result = await self._run_candidate(
-            request,
-            worktree_path=session.checkout,
-            candidate_commit_sha=session.commit_sha,
-            change_set_id=session.change_set_id or test_session_id,
-            agent_id=session.agent_id,
-        )
+        try:
+            result = await self._run_candidate(
+                request,
+                worktree_path=session.checkout,
+                candidate_commit_sha=session.commit_sha,
+                change_set_id=session.change_set_id or test_session_id,
+                agent_id=session.agent_id,
+            )
+        except RuntimeTemplateRestartRequired:
+            if session.test_run_id:
+                self.store.record_runtime_restart_required(session.test_run_id, commit_sha=session.commit_sha)
+            raise
         if session.test_run_id:
             self.store.record_attested_invocation(
                 session.test_run_id,

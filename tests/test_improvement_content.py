@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from app.runtime.errors import BusinessRuleViolation, ConflictError
+from app.runtime.errors import BusinessRuleViolation, ConflictError, NotFoundError
 from app.runtime.improvement_db import ImprovementFeedbackCaseAssignmentModel, ImprovementFeedbackModel
 from app.runtime.runtime_db import AgentChangeSetModel, make_session_factory
-from app.runtime.schemas import FeedbackSignalCreateRequest
+from app.runtime.schemas import FeedbackEventIngestRequest, FeedbackSignalCreateRequest
+from app.runtime.stores.agent_registry_store import AgentRegistryStore
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.generated_agent_tests import build_generated_agent_test
@@ -67,6 +69,52 @@ def _create_feedback_case(module, *, agent_id: str) -> dict:
     )
     assert feedback_case is not None
     return feedback_case
+
+
+def _create_store_feedback_case(data_dir: Path, *, agent_id: str) -> str:
+    registry = AgentRegistryStore(make_session_factory(data_dir / "runtime.sqlite3"))
+    registry.create_business_agent(name=agent_id, agent_id=agent_id, workspace_dir=str(data_dir / "business-agents" / agent_id / "workspace"))
+    feedback_store = FeedbackStore(data_dir=data_dir, agent_exists=registry.has_agent)
+    signal = feedback_store.create_signal(FeedbackSignalCreateRequest(session_id=f"external-{agent_id}"))
+    feedback_store.reassign_signal_agent(signal["signal_id"], agent_id=agent_id, operator="contract-test")
+    feedback_case = feedback_store.create_case(source_refs=[("signal", signal["signal_id"])])
+    assert feedback_case is not None
+    return str(feedback_case["feedback_case_id"])
+
+
+def test_feedback_retry_key_replays_one_row_and_rejects_changed_input(process_environment, tmp_path: Path) -> None:
+    """反馈 POST 响应丢失后重试仍绑定原行，不重复制造一等反馈。"""
+    module = _load_app(process_environment, tmp_path)
+    with TestClient(module.app) as client:
+        item = client.post(
+            "/api/improvements",
+            json={"agent_id": ORDINARY_TEST_AGENT_ID, "title": "反馈响应丢失"},
+        ).json()
+        path = f"/api/improvements/{item['improvement_id']}/feedbacks"
+        headers = {"Idempotency-Key": "feedback-drawer-attach-1"}
+        payload = {"summary": "同一反馈", "entities": {" document ": [" doc-1 "]}}
+        first = client.post(path, headers=headers, json=payload)
+        replay = client.post(path, headers=headers, json=payload)
+        conflict = client.post(path, headers=headers, json={**payload, "summary": "不同反馈"})
+        listed = client.get(path).json()
+        deleted = client.delete(f"/api/improvements/{item['improvement_id']}")
+
+    with pytest.raises(ConflictError, match="deleted"):
+        module.improvement_content_store.create_feedback(
+            item["improvement_id"],
+            agent_id=ORDINARY_TEST_AGENT_ID,
+            summary="同一反馈",
+            entities={"document": ["doc-1"]},
+            idempotency_key="feedback-drawer-attach-1",
+        )
+
+    assert first.status_code == replay.status_code == 201
+    assert replay.json()["feedback_id"] == first.json()["feedback_id"]
+    assert replay.json()["entities"] == {"document": ["doc-1"]}
+    assert [feedback["feedback_id"] for feedback in listed] == [first.json()["feedback_id"]]
+    assert conflict.status_code == 409
+    assert conflict.json()["error_code"] == "IDEMPOTENCY_KEY_CONFLICT"
+    assert deleted.status_code == 204
 
 
 def test_reassign_feedback_and_delete_improvement_cascade(tmp_path: Path) -> None:
@@ -178,7 +226,55 @@ def test_attach_feedback_case_accepts_same_business_agent(process_environment, t
     assert [item["feedback_case_id"] for item in attachable["feedback_cases"]] == [feedback_case["feedback_case_id"]]
     assert attached.status_code == 201
     assert attached.json()["agent_id"] == "soc-ops"
-    assert attached.json()["case_id"] == feedback_case["feedback_case_id"]
+    assert attached.json()["feedback_case_id"] == feedback_case["feedback_case_id"]
+    assert attached.json()["source_events"] == []
+
+
+def test_attached_feedback_projects_every_real_source_event_and_aggregated_entities(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path, extra_agent_ids=("soc-ops",))
+    module.feedback_store.record_run(_run_payload(run_id="run-multi-event", agent_id="soc-ops", created_at="2026-07-10T00:00:00Z"))
+    for event_id, source_system, event_type, entities in (
+        ("event-a", "operations", "recommendation.accepted", {"Alert": ["alert-a"], "Case": ["case-a"]}),
+        ("event-b", "review", "recommendation.rejected", {"Alert": ["alert-b"], "Case": ["case-a"]}),
+    ):
+        result = module.feedback_store.ingest_feedback_event(
+            FeedbackEventIngestRequest(
+                event_id=event_id,
+                source_system=source_system,
+                event_type=event_type,
+                timestamp="2026-07-10T00:00:01Z",
+                run_id="run-multi-event",
+                entities=entities,
+            )
+        )
+        assert result.correlation_status == "matched"
+    case = module.feedback_store.create_case(source_refs=[("event", "event-a"), ("event", "event-b")])
+    assert case is not None
+    assert case["event_ids"] == ["event-a", "event-b"]
+
+    with TestClient(module.app) as client:
+        improvement = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "多事件来源"}).json()
+        target = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "多事件目标"}).json()
+        route = f"/api/improvements/{improvement['improvement_id']}"
+        attached = client.post(f"{route}/attach-feedback-case", json={"feedback_case_id": case["feedback_case_id"]})
+        listed = client.get(f"{route}/feedbacks")
+        moved = client.post(
+            f"{route}/feedbacks/{attached.json()['feedback_id']}/reassign",
+            json={"target_improvement_id": target["improvement_id"]},
+        )
+    assert attached.status_code == 201 and listed.status_code == 200
+    expected_events = [
+        {"event_id": "event-a", "source_system": "operations", "event_type": "recommendation.accepted"},
+        {"event_id": "event-b", "source_system": "review", "event_type": "recommendation.rejected"},
+    ]
+    assert attached.json()["feedback_case_id"] == case["feedback_case_id"]
+    assert attached.json()["source_events"] == expected_events
+    assert attached.json()["entities"] == {"Alert": ["alert-a", "alert-b"], "Case": ["case-a"]}
+    assert listed.json()[0]["source_events"] == expected_events
+    assert listed.json()[0]["entities"] == attached.json()["entities"]
+    assert moved.status_code == 200
+    assert moved.json()["feedback_case_id"] == case["feedback_case_id"]
+    assert moved.json()["source_events"] == expected_events
 
 
 def test_generic_feedback_api_rejects_feedback_case_semantics_without_side_effects(process_environment, tmp_path: Path) -> None:
@@ -194,17 +290,17 @@ def test_generic_feedback_api_rejects_feedback_case_semantics_without_side_effec
 
         forged = client.post(
             f"/api/improvements/{source_id}/feedbacks",
-            json={"summary": "伪造挂接", "source": "feedback_inbox", "case_id": case_id},
+            json={"summary": "伪造挂接", "source": "feedback_inbox"},
         )
         disguised = client.post(
             f"/api/improvements/{source_id}/feedbacks",
-            json={"summary": "伪装来源", "source": "trace", "case_id": case_id},
+            json={"summary": "伪装来源", "source": "trace", "feedback_case_id": case_id},
         )
 
         assert forged.status_code == 422
         assert disguised.status_code == 422
         assert "attach-feedback-case" in str(forged.json())
-        assert "attach-feedback-case" in str(disguised.json())
+        assert "feedback_case_id" in str(disguised.json())
         assert client.get(f"/api/improvements/{source_id}/feedbacks").json() == []
         assert client.get(f"/api/improvements/{source_id}").json()["source_feedback_refs"] == []
         with module.runtime_db_session_factory.begin() as db:
@@ -234,6 +330,25 @@ def test_generic_feedback_api_rejects_feedback_case_semantics_without_side_effec
     assert module.improvement_store.get_improvement(target_id).source_feedback_refs == []
 
 
+def test_generic_feedback_accepts_business_entity_id_with_feedback_case_like_prefix_without_claim(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path, extra_agent_ids=("soc-ops",))
+    with TestClient(module.app) as client:
+        improvement = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "普通反馈"}).json()
+        improvement_id = improvement["improvement_id"]
+        created = client.post(
+            f"/api/improvements/{improvement_id}/feedbacks",
+            json={"summary": "业务对象标识", "source": "trace", "entities": {"Case": ["fbc-business-value"]}},
+        )
+        listed = client.get(f"/api/improvements/{improvement_id}/feedbacks")
+    assert created.status_code == 201 and listed.status_code == 200
+    assert created.json()["entities"] == {"Case": ["fbc-business-value"]}
+    assert created.json()["feedback_case_id"] is None
+    assert created.json()["source_events"] == []
+    assert listed.json()[0]["feedback_case_id"] is None
+    with module.runtime_db_session_factory() as db:
+        assert db.query(ImprovementFeedbackCaseAssignmentModel).count() == 0
+
+
 def test_generic_feedback_store_rejects_feedback_case_semantics_without_side_effects(tmp_path: Path) -> None:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     items = ImprovementStore(factory)
@@ -241,15 +356,21 @@ def test_generic_feedback_store_rejects_feedback_case_semantics_without_side_eff
     source = items.create_improvement(agent_id="soc-ops", title="来源")
     target = items.create_improvement(agent_id="soc-ops", title="目标")
 
-    for source_kind, case_id in (("feedback_inbox", "ordinary-case"), ("trace", "fbc-store-guard")):
-        with pytest.raises(BusinessRuleViolation, match="attach-feedback-case"):
-            content.create_feedback(
-                source.improvement_id,
-                agent_id="soc-ops",
-                summary="伪造挂接",
-                source=source_kind,
-                case_id=case_id,
-            )
+    with pytest.raises(BusinessRuleViolation, match="different business agent"):
+        content.create_feedback(
+            source.improvement_id,
+            agent_id="foreign-agent",
+            summary="错误归属",
+        )
+
+    with pytest.raises(BusinessRuleViolation, match="attach-feedback-case"):
+        content.create_feedback(
+            source.improvement_id,
+            agent_id="soc-ops",
+            summary="伪造挂接",
+            source="feedback_inbox",
+            entities={"Case": ["fbc-store-guard"]},
+        )
 
     with factory.begin() as db:
         assert db.query(ImprovementFeedbackModel).count() == 0
@@ -257,26 +378,35 @@ def test_generic_feedback_store_rejects_feedback_case_semantics_without_side_eff
     assert items.get_improvement(source.improvement_id).source_feedback_refs == []
     assert items.get_improvement(target.improvement_id).source_feedback_refs == []
 
+    with pytest.raises(NotFoundError, match="FeedbackCase not found"):
+        content.attach_feedback_case(
+            source.improvement_id,
+            agent_id="soc-ops",
+            feedback_case_id="fbc-store-guard",
+            summary="不存在的 Case",
+        )
+    case_id = _create_store_feedback_case(tmp_path, agent_id="soc-ops")
     attached = content.attach_feedback_case(
         source.improvement_id,
         agent_id="soc-ops",
-        feedback_case_id="fbc-store-guard",
+        feedback_case_id=case_id,
         summary="正式挂接",
     )
+    assert attached.feedback_case_id == case_id
     with pytest.raises(ConflictError, match="already assigned"):
         content.attach_feedback_case(
             target.improvement_id,
             agent_id="soc-ops",
-            feedback_case_id="fbc-store-guard",
+            feedback_case_id=case_id,
             summary="重复挂接",
         )
 
     with factory.begin() as db:
         assert db.query(ImprovementFeedbackModel).count() == 1
-        assignment = db.get(ImprovementFeedbackCaseAssignmentModel, "fbc-store-guard")
+        assignment = db.get(ImprovementFeedbackCaseAssignmentModel, case_id)
         assert assignment is not None
         assert assignment.feedback_id == attached.feedback_id
-    assert items.get_improvement(source.improvement_id).source_feedback_refs == ["fbc-store-guard"]
+    assert items.get_improvement(source.improvement_id).source_feedback_refs == [case_id]
     assert items.get_improvement(target.improvement_id).source_feedback_refs == []
 
 
@@ -329,21 +459,22 @@ def test_merge_and_split_keep_feedback_case_assignment_and_feedback_row_colocate
     content = ImprovementContentStore(factory)
     target = items.create_improvement(agent_id="soc-ops", title="target")
     source = items.create_improvement(agent_id="soc-ops", title="source")
+    case_id = _create_store_feedback_case(tmp_path, agent_id="soc-ops")
     attached = content.attach_feedback_case(
         source.improvement_id,
         agent_id="soc-ops",
-        feedback_case_id="fbc-merge-split",
+        feedback_case_id=case_id,
         summary="case",
     )
 
     merged = items.merge_improvements(target.improvement_id, source_id=source.improvement_id)
-    assert merged.source_feedback_refs == ["fbc-merge-split"]
-    assert items.improvement_id_for_feedback_case("fbc-merge-split") == target.improvement_id
+    assert merged.source_feedback_refs == [case_id]
+    assert items.improvement_id_for_feedback_case(case_id) == target.improvement_id
     assert [row.feedback_id for row in content.list_feedbacks(target.improvement_id)] == [attached.feedback_id]
     assert content.list_feedbacks(source.improvement_id) == []
 
-    split = items.split_improvement(target.improvement_id, feedback_ref="fbc-merge-split")
-    assert items.improvement_id_for_feedback_case("fbc-merge-split") == split.improvement_id
+    split = items.split_improvement(target.improvement_id, feedback_ref=case_id)
+    assert items.improvement_id_for_feedback_case(case_id) == split.improvement_id
     assert [row.feedback_id for row in content.list_feedbacks(split.improvement_id)] == [attached.feedback_id]
     assert content.list_feedbacks(target.improvement_id) == []
 
@@ -616,6 +747,14 @@ def test_content_api_lifecycle(process_environment, tmp_path: Path) -> None:
 def test_feedback_table_create_and_list(process_environment, tmp_path: Path) -> None:
     """四阶段改进治理 §8.4：来源反馈一等内容（摘要/来源/状态），1:多，未知事项 404。"""
     module = _load_app(process_environment, tmp_path)
+    module.feedback_store.record_run(
+        _run_payload(
+            run_id="run-1",
+            agent_id="soc-ops",
+            session_id="session-1",
+            agent_version_id="agent-v1",
+        )
+    )
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警误报治理"}).json()["improvement_id"]
         a = client.post(
@@ -629,22 +768,40 @@ def test_feedback_table_create_and_list(process_environment, tmp_path: Path) -> 
                 "agent_version_id": "agent-v1",
                 "scenario": "alert-triage",
                 "task_id": "task-1",
-                "alert_id": "alert-1",
-                "case_id": "case-1",
+                "entities": {"Alert": ["alert-1"], "Case": ["case-1"]},
             },
         )
         assert a.status_code == 201 and a.json()["status"] == "merged" and a.json()["run_id"] == "run-1"
         assert a.json()["agent_version_id"] == "agent-v1"
         assert a.json()["scenario"] == "alert-triage"
         assert a.json()["task_id"] == "task-1"
-        assert a.json()["alert_id"] == "alert-1"
-        assert a.json()["case_id"] == "case-1"
+        assert a.json()["entities"] == {"Alert": ["alert-1"], "Case": ["case-1"]}
+        assert a.json()["feedback_case_id"] is None
+        assert a.json()["source_events"] == []
         client.post(f"/api/improvements/{iid}/feedbacks", json={"summary": "MCP 数据像模拟", "source": "trace"})
         rows = client.get(f"/api/improvements/{iid}/feedbacks").json()
         assert {r["summary"] for r in rows} == {"这是误报", "MCP 数据像模拟"}
         assert {r["source"] for r in rows} == {"playground_run", "trace"}
         assert {r["agent_version_id"] for r in rows} == {"agent-v1", ""}
         assert client.post("/api/improvements/imp-none/feedbacks", json={"summary": "x"}).status_code == 404
+
+
+def test_feedback_api_rejects_missing_or_cross_agent_run_binding(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path, extra_agent_ids=("documentation-assistant",))
+    module.feedback_store.record_run(_run_payload(run_id="run-documentation", agent_id="documentation-assistant"))
+    with TestClient(module.app) as client:
+        improvement = client.post(
+            "/api/improvements",
+            json={"agent_id": "soc-ops", "title": "Run 归属边界"},
+        ).json()
+        path = f"/api/improvements/{improvement['improvement_id']}/feedbacks"
+        missing = client.post(path, json={"summary": "未知 Run", "run_id": "run-missing"})
+        foreign = client.post(path, json={"summary": "跨 Agent Run", "run_id": "run-documentation"})
+        listed = client.get(path)
+
+    assert missing.status_code == 404 and missing.json()["error_code"] == "NOT_FOUND"
+    assert foreign.status_code == 400 and foreign.json()["error_code"] == "BUSINESS_RULE_VIOLATION"
+    assert listed.status_code == 200 and listed.json() == []
 
 
 def test_optimization_plan_and_persisted_execution_contract(process_environment, tmp_path: Path) -> None:

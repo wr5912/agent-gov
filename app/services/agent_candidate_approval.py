@@ -7,16 +7,19 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from sqlalchemy import exists, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent_testing.models import AgentTestRunItemModel, AgentTestRunModel
+from app.agent_testing.report_validation import passed_report_errors
+from app.runtime.agent_git_read_helpers import REGULAR_GIT_FILE_MODES
 from app.runtime.json_types import JsonObject
 from app.services.agent_governance_projections import (
     candidate_diff_digest,
     matching_passed_test_run,
     require_approval_evidence,
 )
+from app.services.agent_test_receipts import recorded_report_conflicts
 
 FileDiffLoader = Callable[[str], JsonObject | None]
 CANDIDATE_EVIDENCE_EPOCH = "exact-candidate-review/v1"
@@ -77,13 +80,41 @@ class CandidateReviewEvidence:
         }
 
 
+@dataclass(frozen=True)
+class CandidateDiffFile:
+    path: str
+    status: str
+    before: Mapping[str, object] | None
+    after: Mapping[str, object] | None
+
+
 def _canonical_digest(value: object) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _changed_entries(diff: JsonObject) -> tuple[tuple[str, str], ...]:
-    entries: list[tuple[str, str]] = []
+def _reviewable_file_entry(value: object, *, path: str) -> Mapping[str, object]:
+    if not isinstance(value, dict):
+        raise CandidateApprovalFailure(409, "Candidate diff contains an invalid file entry")
+    digest = value.get("sha256")
+    mode = value.get("mode")
+    size = value.get("size")
+    if (
+        value.get("path") != path
+        or value.get("type") != "file"
+        or not isinstance(mode, str)
+        or mode not in REGULAR_GIT_FILE_MODES
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or type(size) is not int
+        or size < 0
+    ):
+        raise CandidateApprovalFailure(409, "Candidate diff contains an invalid file entry")
+    return value
+
+
+def _changed_entries(diff: JsonObject) -> tuple[CandidateDiffFile, ...]:
+    entries: list[CandidateDiffFile] = []
     seen: set[str] = set()
     for bucket, status in (("added", "added"), ("modified", "modified"), ("deleted", "deleted")):
         values = diff.get(bucket)
@@ -94,10 +125,16 @@ def _changed_entries(diff: JsonObject) -> tuple[tuple[str, str], ...]:
             if not isinstance(path, str) or not path or path in seen:
                 raise CandidateApprovalFailure(409, "Candidate diff contains an invalid or duplicate path")
             seen.add(path)
-            entries.append((path, status))
+            before = _reviewable_file_entry(value.get("before"), path=path) if status == "modified" else None
+            after = _reviewable_file_entry(value.get("after"), path=path) if status == "modified" else None
+            if status == "added":
+                after = _reviewable_file_entry(value, path=path)
+            elif status == "deleted":
+                before = _reviewable_file_entry(value, path=path)
+            entries.append(CandidateDiffFile(path=path, status=status, before=before, after=after))
     if not entries:
         raise CandidateApprovalFailure(409, "Candidate has no reviewable file changes")
-    return tuple(sorted(entries))
+    return tuple(sorted(entries, key=lambda entry: entry.path))
 
 
 def _has_changed_line(unified_diff: str) -> bool:
@@ -110,21 +147,23 @@ def inspect_candidate_review(diff: JsonObject, load_file_diff: FileDiffLoader) -
     if not from_version or not to_version:
         raise CandidateApprovalFailure(409, "Candidate diff has no exact base/candidate identity")
     files: list[ReviewedFileEvidence] = []
-    for path, status in _changed_entries(diff):
-        detail = load_file_diff(path)
+    for expected in _changed_entries(diff):
+        detail = load_file_diff(expected.path)
         if (
             not isinstance(detail, dict)
             or detail.get("from_version_id") != from_version
             or detail.get("to_version_id") != to_version
-            or detail.get("path") != path
-            or detail.get("status") != status
+            or detail.get("path") != expected.path
+            or detail.get("status") != expected.status
+            or detail.get("before") != expected.before
+            or detail.get("after") != expected.after
             or detail.get("is_text") is not True
             or detail.get("truncated") is not False
             or not isinstance(detail.get("unified_diff"), str)
             or not _has_changed_line(str(detail["unified_diff"]))
         ):
-            raise CandidateApprovalFailure(409, f"Candidate file diff is not completely reviewable: {path}")
-        files.append(ReviewedFileEvidence(path=path, detail_sha256=_canonical_digest(detail)))
+            raise CandidateApprovalFailure(409, f"Candidate file diff is not completely reviewable: {expected.path}")
+        files.append(ReviewedFileEvidence(path=expected.path, detail_sha256=_canonical_digest(detail)))
     payload = [item.to_payload() for item in files]
     return CandidateReviewEvidence(files=tuple(files), review_digest=_canonical_digest(payload))
 
@@ -181,10 +220,82 @@ def require_exact_passed_candidate_test(
     require_latest: bool,
     not_before: str | None = None,
 ) -> JsonObject:
+    row, items = _require_recorded_passed_test(
+        db,
+        agent_id=agent_id,
+        commit_sha=commit_sha,
+        change_set_id=change_set_id,
+        test_run_id=test_run_id,
+        suite_digest=suite_digest,
+        require_latest=require_latest,
+        not_before=not_before,
+    )
+    report = dict(row.report_json or {})
+    reported_items = report.get("items")
+    attested = report.get("invocations")
+    reported_nodeids = (
+        [nodeid for item in reported_items if isinstance(item, dict) and isinstance(nodeid := item.get("nodeid"), str)]
+        if isinstance(reported_items, list)
+        else []
+    )
+    if (
+        not isinstance(reported_items, list)
+        or sorted(item.nodeid for item in items) != sorted(reported_nodeids)
+        or passed_report_errors(
+            report,
+            actual_exit_code=0,
+            release_check=True,
+            attested_invocations=[item for item in attested if isinstance(item, dict)] if isinstance(attested, list) else [],
+            test_run_id=row.test_run_id,
+            commit_sha=commit_sha,
+        )
+    ):
+        raise CandidateApprovalFailure(409, "The exact candidate test report is missing or contains non-passing items")
+    return _test_receipt(row)
+
+
+def require_recorded_publication_test(
+    db: Session,
+    *,
+    agent_id: str,
+    commit_sha: str,
+    change_set_id: str,
+    test_run_id: str,
+    suite_digest: str,
+) -> JsonObject:
+    """核对已完成发布引用的原测试，不补造当时未记录的 pytest 字段。"""
+
+    if not test_run_id or not suite_digest:
+        raise CandidateApprovalFailure(409, "Published test receipt has no exact identity")
+    row, _items = _require_recorded_passed_test(
+        db,
+        agent_id=agent_id,
+        commit_sha=commit_sha,
+        change_set_id=change_set_id,
+        test_run_id=test_run_id,
+        suite_digest=suite_digest,
+        require_latest=False,
+        not_before=None,
+    )
+    return _test_receipt(row)
+
+
+def _require_recorded_passed_test(
+    db: Session,
+    *,
+    agent_id: str,
+    commit_sha: str,
+    change_set_id: str,
+    test_run_id: str | None,
+    suite_digest: str | None,
+    require_latest: bool,
+    not_before: str | None,
+) -> tuple[AgentTestRunModel, list[AgentTestRunItemModel]]:
     statement = select(AgentTestRunModel).where(
         AgentTestRunModel.agent_id == agent_id,
         AgentTestRunModel.commit_sha == commit_sha,
         AgentTestRunModel.change_set_id == change_set_id,
+        AgentTestRunModel.source == "release_check",
     )
     if not_before:
         statement = statement.where(AgentTestRunModel.created_at > not_before)
@@ -204,19 +315,15 @@ def require_exact_passed_candidate_test(
         or (suite_digest is not None and row.suite_digest != suite_digest)
     ):
         raise CandidateApprovalFailure(409, "The exact candidate test evidence is stale or not passed")
-    has_item = db.scalar(select(exists(select(AgentTestRunItemModel.test_run_item_id).where(AgentTestRunItemModel.test_run_id == row.test_run_id))))
-    has_nonpassing_item = db.scalar(
-        select(
-            exists(
-                select(AgentTestRunItemModel.test_run_item_id).where(
-                    AgentTestRunItemModel.test_run_id == row.test_run_id,
-                    AgentTestRunItemModel.outcome != "passed",
-                )
-            )
-        )
-    )
-    if not has_item or has_nonpassing_item:
+    items = list(db.scalars(select(AgentTestRunItemModel).where(AgentTestRunItemModel.test_run_id == row.test_run_id)).all())
+    if not items or any(item.outcome != "passed" for item in items):
         raise CandidateApprovalFailure(409, "The exact candidate test report is missing or contains non-passing items")
+    if recorded_report_conflicts(row.report_json, nodeids=[item.nodeid for item in items], test_run_id=row.test_run_id, commit_sha=commit_sha):
+        raise CandidateApprovalFailure(409, "The recorded test report contradicts its passed receipt")
+    return row, items
+
+
+def _test_receipt(row: AgentTestRunModel) -> JsonObject:
     return {
         "test_run_id": row.test_run_id,
         "agent_id": row.agent_id,

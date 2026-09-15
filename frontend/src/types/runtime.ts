@@ -1,5 +1,6 @@
 import type { components } from "./api";
 import type { components as AgentScopeComponents } from "./agentscope";
+import type { FeedbackEntities } from "./feedback";
 
 type OpenApiAgentSummary = components["schemas"]["AgentSummaryResponse"];
 type OpenApiAgentPresentation = components["schemas"]["AgentPresentationResponse"];
@@ -162,6 +163,8 @@ export interface RuntimeUserConfirmRequest {
   replyId: string;
   /** Present when AgentScope projected a Team worker request onto the leader stream. */
   workerSessionId?: string;
+  /** Exact AgentScope Runtime Agent owning workerSessionId; never inferred from the leader. */
+  workerRuntimeAgentId?: string;
   toolCalls: AgentScopeToolCallBlock[];
   status: "waiting" | "resolved" | "cancelled";
   decision?: RuntimeUserConfirmAction | "runtime_interrupted";
@@ -173,6 +176,8 @@ export interface RuntimeExternalExecutionRequest {
   replyId: string;
   /** Present when AgentScope projected a Team worker request onto the leader stream. */
   workerSessionId?: string;
+  /** Exact AgentScope Runtime Agent owning workerSessionId; never inferred from the leader. */
+  workerRuntimeAgentId?: string;
   toolCalls: AgentScopeToolCallBlock[];
   status: "waiting" | "resolved" | "cancelled";
   resultState?: AgentScopeToolResultState | "runtime_interrupted";
@@ -182,6 +187,8 @@ export interface RuntimeExternalExecutionRequest {
 export interface RuntimePendingAction {
   action_id: string;
   session_id: string;
+  /** Runtime Agent that owns session_id; required to read canonical worker messages. */
+  runtime_agent_id: string;
   run_id: string;
   reply_id: string;
   kind: "human" | "external";
@@ -200,7 +207,6 @@ export interface AgentRunRecord {
   agent_id: string;
   agent_version_id: string;
   runtime_agent_id?: string;
-  client_operation_id?: string | null;
   harness_digest?: string;
   status: "queued" | "running" | "waiting_human" | "waiting_external" | "finalizing" | "succeeded" | "failed" | "cancelled" | "interrupted";
   reply_ids?: string[];
@@ -209,8 +215,7 @@ export interface AgentRunRecord {
   trace_status?: "pending" | "complete" | "incomplete";
   terminal_reason?: string | null;
   error?: Record<string, unknown> | null;
-  alert_id?: string | null;
-  case_id?: string | null;
+  entities?: FeedbackEntities;
   metadata?: Record<string, unknown>;
   created_at?: string;
   started_at?: string | null;
@@ -248,10 +253,11 @@ export interface ChatMessage {
   langfuseTraceId?: string;
   langfuseTraceUrl?: string;
   langfuseTraceStatus?: LangfuseTraceStatus;
-  alertId?: string;
-  caseId?: string;
+  entities?: FeedbackEntities;
   runOutcome?: "succeeded" | "failed" | "cancelled" | "interrupted";
   partial?: boolean;
+  /** Runtime/run 执行错误与原生回复正文分别展示；AgentGov failure type 不限于 AgentScope 枚举。 */
+  executionError?: { message: string; type?: string };
   controlError?: string;
   agentActivity?: AgentActivity;
   userConfirmRequests?: RuntimeUserConfirmRequest[];

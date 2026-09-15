@@ -314,8 +314,8 @@ def _javascript_local_imports(path: Path, repo_root: Path) -> tuple[Path, ...]:
         specifier = match.group(1)
         base = path.parent / specifier
         candidates = [base]
-        if not base.suffix:
-            candidates.extend(base.with_suffix(suffix) for suffix in sorted(JAVASCRIPT_SUFFIXES))
+        if base.suffix not in JAVASCRIPT_SUFFIXES:
+            candidates.extend(Path(f"{base}{suffix}") for suffix in sorted(JAVASCRIPT_SUFFIXES))
             candidates.extend(base / f"index{suffix}" for suffix in sorted(JAVASCRIPT_SUFFIXES))
         resolved = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
         if resolved is None:

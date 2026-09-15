@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { createImprovement, generateNormalizedFeedback, addImprovementFeedback, type ImprovementItem } from "../api/improvements";
 import type { RuntimeClientConfig } from "../types/runtime";
 import { DrawerShell } from "./DrawerShell";
+import type { FeedbackEntities } from "../types/feedback";
+import { formatFeedbackEntities } from "../feedbackEntities";
+import { newId } from "../utils/ids";
 
 // 四阶段改进治理 §4 创建反馈 Drawer（两阶段）：自然语言反馈 → 整理为系统理解 → 确认保存 → 生成改进事项。
 // 注：P1 阶段「系统理解」为客户端初步整理（占位），真正的 NormalizedFeedback 后端实体在 P3 接入；
@@ -13,13 +16,38 @@ export interface FeedbackContext {
   agentVersionId?: string;
   scenario?: string;
   taskId?: string;
-  alertId?: string;
-  caseId?: string;
+  entities?: FeedbackEntities;
   agentId: string;
   agentName: string;
 }
 
 type Phase = "input" | "understanding" | "saved";
+export type FeedbackSaveProgress = "none" | "improvement_created" | "feedback_added";
+
+interface FeedbackSaveRequestKeys {
+  improvement: string;
+  feedback: string;
+}
+
+export function newFeedbackSaveRequestKeys(): FeedbackSaveRequestKeys {
+  const operationId = newId("feedback_save");
+  return {
+    improvement: `${operationId}:improvement`,
+    feedback: `${operationId}:feedback`,
+  };
+}
+
+export function pendingFeedbackSaveSteps(progress: FeedbackSaveProgress): readonly string[] {
+  if (progress === "feedback_added") return ["normalize_feedback"];
+  if (progress === "improvement_created") return ["attach_feedback", "normalize_feedback"];
+  return ["create_improvement", "attach_feedback", "normalize_feedback"];
+}
+
+export function feedbackSaveFailureMessage(error: unknown, createdId?: string): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  if (!createdId) return `反馈保存未完成：${detail}`;
+  return `反馈保存未完成：改进事项 ${createdId} 已创建，但反馈关联或系统整理尚未完成。重试将继续该事项，不会重复创建。${detail}`;
+}
 
 function firstSentence(text: string): string {
   const t = text.trim().replace(/\s+/g, " ");
@@ -46,9 +74,14 @@ export function FeedbackDrawer({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [created, setCreated] = useState<ImprovementItem | null>(null);
+  const [saveProgress, setSaveProgress] = useState<FeedbackSaveProgress>("none");
+  const [requestKeys, setRequestKeys] = useState<FeedbackSaveRequestKeys>(newFeedbackSaveRequestKeys);
 
   useEffect(() => {
-    if (open) { setPhase("input"); setWrong(""); setExpected(""); setError(undefined); setCreated(null); }
+    if (open) {
+      setPhase("input"); setWrong(""); setExpected(""); setError(undefined); setCreated(null); setSaveProgress("none");
+      setRequestKeys(newFeedbackSaveRequestKeys());
+    }
   }, [open]);
 
   if (!open || !context) return null;
@@ -64,25 +97,30 @@ export function FeedbackDrawer({
     context.taskId ? `任务：${context.taskId}` : "",
     context.runId ? `来源 Run：${context.runId}` : "",
     context.sessionId ? `来源 Session：${context.sessionId}` : "",
-    context.alertId ? `关联 Alert：${context.alertId}` : "",
-    context.caseId ? `关联 Case：${context.caseId}` : "",
+    context.entities && Object.keys(context.entities).length ? `业务对象引用：${formatFeedbackEntities(context.entities)}` : "",
   ].filter(Boolean).join("\n");
 
   const organize = () => { if (!wrong.trim()) return; setPhase("understanding"); };
 
-  const save = () => {
+  const save = async () => {
     setBusy(true); setError(undefined);
-    void createImprovement(clientConfig, {
-      agent_id: context.agentId,
-      title: problem,
-      summary,
-      source_feedback_refs: context.runId ? [context.runId] : [],
-      auto_merge: false,
-    }).then(async (item) => {
-      setCreated(item);
-      setPhase("saved");
-      try {
-        // 先落原始反馈，再由 AgentScope governor 整理成 title+problem；失败时使用确定性兜底并回填标题。
+    let item = created;
+    let progress = saveProgress;
+    try {
+      const pendingSteps = pendingFeedbackSaveSteps(progress);
+      if (!item) {
+        item = await createImprovement(clientConfig, {
+          agent_id: context.agentId,
+          title: problem,
+          summary,
+          source_feedback_refs: context.runId ? [context.runId] : [],
+          auto_merge: false,
+        }, requestKeys.improvement);
+        progress = "improvement_created";
+        setCreated(item);
+        setSaveProgress(progress);
+      }
+      if (pendingSteps.includes("attach_feedback")) {
         await addImprovementFeedback(clientConfig, item.improvement_id, {
           summary: problem,
           source: "playground_run",
@@ -92,12 +130,20 @@ export function FeedbackDrawer({
           agent_version_id: context.agentVersionId || "",
           scenario: context.scenario || "",
           task_id: context.taskId || "",
-          alert_id: context.alertId || "",
-          case_id: context.caseId || "",
-        });
+          entities: context.entities || {},
+        }, requestKeys.feedback);
+        progress = "feedback_added";
+        setSaveProgress(progress);
+      }
+      if (pendingSteps.includes("normalize_feedback")) {
         await generateNormalizedFeedback(clientConfig, item.improvement_id);
-      } catch { /* 非致命：改进事项已创建 */ }
-    }).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
+      }
+      setPhase("saved");
+    } catch (caught) {
+      setError(feedbackSaveFailureMessage(caught, item?.improvement_id));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -116,7 +162,7 @@ export function FeedbackDrawer({
         <>
           <label className="feedback-field">
             <span>这个结果哪里不对？</span>
-            <textarea data-testid="feedback-input-wrong" value={wrong} onChange={(e) => setWrong(e.target.value)} placeholder="例如：这个告警其实是误报，AI 没注意到事件时间和告警时间不一致。" />
+            <textarea data-testid="feedback-input-wrong" value={wrong} onChange={(e) => setWrong(e.target.value)} placeholder="例如：回答引用了旧版资料，没有核对当前文件内容。" />
           </label>
           <label className="feedback-field">
             <span>希望以后怎么处理？（可选）</span>
@@ -127,7 +173,7 @@ export function FeedbackDrawer({
             <span>✓ 当前 Run / Trace</span>
             <span>✓ 业务 Agent（{context.agentName}）</span>
             {context.agentVersionId ? <span>✓ Agent 版本（{context.agentVersionId}）</span> : null}
-            {context.scenario || context.alertId || context.caseId ? <span>✓ 场景上下文</span> : null}
+            {context.scenario || Object.keys(context.entities || {}).length ? <span>✓ 场景 / 业务对象引用</span> : null}
           </div>
           <div className="feedback-drawer-actions">
             <button className="secondary-button" onClick={onClose}>取消</button>
@@ -150,8 +196,8 @@ export function FeedbackDrawer({
             <div className="feedback-understanding-quote">用户原话：“{wrong.trim()}”</div>
           </div>
           <div className="feedback-drawer-actions">
-            <button className="secondary-button" data-testid="feedback-edit" onClick={() => setPhase("input")}>修改</button>
-            <button className="primary-button" data-testid="feedback-confirm-save" disabled={busy} onClick={save}>确认保存</button>
+            <button className="secondary-button" data-testid="feedback-edit" disabled={busy || Boolean(created)} onClick={() => setPhase("input")}>修改</button>
+            <button className="primary-button" data-testid="feedback-confirm-save" disabled={busy} onClick={() => void save()}>{busy ? "保存中…" : created ? "重试保存" : "确认保存"}</button>
           </div>
         </>
       ) : (

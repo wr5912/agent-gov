@@ -17,29 +17,58 @@ import type {
   JobType,
   PendingCorrelationRecord,
   PendingCorrelationResolveRequest,
-  SocEventCreateRequest,
-  SocEventCreateResponse,
-  SocEventRecord,
+  FeedbackEventCreateRequest,
+  FeedbackEventCreateResponse,
+  FeedbackEventRecord,
 } from "../types/feedback";
 import type { RuntimeClientConfig, RuntimePendingAction } from "../types/runtime";
 
-function feedbackQueryString(filters?: FeedbackFilters): string {
+export function feedbackQueryString(filters?: FeedbackFilters): string {
   const params = new URLSearchParams();
   if (!filters) return "";
-  for (const [key, value] of Object.entries(filters)) {
-    if (value === undefined || value === null || value === "") continue;
+  if (Boolean(filters.entity_type?.trim()) !== Boolean(filters.entity_id?.trim())) {
+    throw new Error("业务对象筛选必须同时提供对象类型和对象 ID。");
+  }
+  for (const [key, originalValue] of Object.entries(filters)) {
+    const value = (key === "entity_type" || key === "entity_id") && typeof originalValue === "string"
+      ? originalValue.trim()
+      : originalValue;
+    if (value === undefined || value === null || (typeof value === "string" && !value.trim())) continue;
     params.set(key, String(value));
   }
   const query = params.toString();
   return query ? `?${query}` : "";
 }
 
-export function getAgentRuns(config: RuntimeClientConfig, filters?: FeedbackFilters, signal?: AbortSignal) {
+type RunFilters = FeedbackFilters & { before_created_at?: string; before_run_id?: string };
+
+export function getAgentRuns(config: RuntimeClientConfig, filters?: RunFilters, signal?: AbortSignal) {
   return requestJson<FeedbackRunRecord[]>(
     config,
     `/api/agent-runs${feedbackQueryString(filters)}`,
     { signal },
   );
+}
+
+/** 按固定排序游标读取完整 Session 关联；正文始终从 AgentScope 读取。 */
+export async function getAllSessionAgentRuns(
+  config: RuntimeClientConfig,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<FeedbackRunRecord[]> {
+  const runs: FeedbackRunRecord[] = [];
+  let cursor: Pick<RunFilters, "before_created_at" | "before_run_id"> = {};
+  while (true) {
+    signal?.throwIfAborted();
+    const page = await getAgentRuns(config, { session_id: sessionId, limit: 500, ...cursor }, signal);
+    runs.push(...page);
+    if (page.length < 500) return runs;
+    const last = page[page.length - 1];
+    if (!last.created_at || !last.run_id || last.run_id === cursor.before_run_id) {
+      throw new Error("运行历史分页游标无效，请刷新重试。");
+    }
+    cursor = { before_created_at: last.created_at, before_run_id: last.run_id };
+  }
 }
 
 export function getAgentRun(config: RuntimeClientConfig, runId: string, signal?: AbortSignal) {
@@ -69,20 +98,38 @@ export function getAgentRunPendingActions(
   );
 }
 
-/** Resolve an ambiguous initial chat POST by its caller-created, run-scoped operation ID. */
-export function getAgentRunByClientOperation(
+/** 只用显式原生输入身份找回初始 chat；不按消息正文或最新 run 猜测。 */
+export function getAgentRunByInputIdentity(
   config: RuntimeClientConfig,
+  agentId: string,
   sessionId: string,
-  clientOperationId: string,
+  inputIds: string[],
+  signal?: AbortSignal,
+) {
+  return getAgentRunByNativeInputIdentity(config, agentId, sessionId, "initial", inputIds, signal);
+}
+
+export type RuntimeChatOperationKind = "initial" | "user_confirmation" | "external_execution";
+
+/** Resolve any native chat operation by its exact ordered input IDs. */
+export function getAgentRunByNativeInputIdentity(
+  config: RuntimeClientConfig,
+  agentId: string,
+  sessionId: string,
+  operationKind: RuntimeChatOperationKind,
+  inputIds: string[],
   signal?: AbortSignal,
 ) {
   const query = new URLSearchParams({
+    agent_id: agentId,
     session_id: sessionId,
-    client_operation_id: clientOperationId,
+    operation_kind: operationKind,
   });
+  if (!inputIds.length || inputIds.some((id) => !id.trim())) throw new Error("缺少显式原生输入 ID，不能自动找回 chat。");
+  for (const id of inputIds) query.append("input_id", id);
   return requestJson<FeedbackRunRecord>(
     config,
-    `/api/agent-runs/by-client-operation?${query.toString()}`,
+    `/api/agent-runs/by-input-identity?${query.toString()}`,
     { signal },
   );
 }
@@ -107,12 +154,12 @@ export function createFeedbackSignal(config: RuntimeClientConfig, payload: Feedb
   });
 }
 
-export function getSocEvents(config: RuntimeClientConfig, filters?: FeedbackFilters) {
-  return requestJson<SocEventRecord[]>(config, `/api/soc-events${feedbackQueryString(filters)}`);
+export function getFeedbackEvents(config: RuntimeClientConfig, filters?: FeedbackFilters) {
+  return requestJson<FeedbackEventRecord[]>(config, `/api/feedback-events${feedbackQueryString(filters)}`);
 }
 
-export function createSocEvent(config: RuntimeClientConfig, payload: SocEventCreateRequest) {
-  return requestJson<SocEventCreateResponse>(config, "/api/soc-events", {
+export function createFeedbackEvent(config: RuntimeClientConfig, payload: FeedbackEventCreateRequest) {
+  return requestJson<FeedbackEventCreateResponse>(config, "/api/feedback-events", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -231,7 +278,7 @@ export async function getFeedbackWorkbenchData(
     optionalList(getFeedbackSources(config, { limit })),
     optionalList(getAgentRuns(config, { limit })),
     optionalList(getFeedbackSignals(config, { limit })),
-    optionalList(getSocEvents(config, { limit })),
+    optionalList(getFeedbackEvents(config, { limit })),
     optionalList(getPendingCorrelations(config, { limit })),
     optionalList(getFeedbackCases(config, { limit })),
   ]);

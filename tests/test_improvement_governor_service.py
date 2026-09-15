@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from app.runtime.errors import ConflictError, RuntimeUnavailableError
-from app.runtime.improvement_db import ImprovementItemModel
+from app.runtime.improvement_db import ImprovementFeedbackModel, ImprovementItemModel
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
@@ -24,6 +24,7 @@ def _service(
     find_run_by_id=None,
     *,
     source_run: dict[str, object] | None = None,
+    corrupt_feedback_agent_id: str | None = None,
 ) -> tuple[ImprovementGovernorService, ImprovementContentStore]:
     feedback_store, _settings = _store(tmp_path)
     improvements = ImprovementStore(feedback_store.Session)
@@ -46,16 +47,19 @@ def _service(
         suggestion="增加时间校验",
         user_quote="这是误报",
     )
-    run_id = "run-1"
-    if source_run is not None:
-        persisted = feedback_store.record_run(source_run)
-        run_id = str(persisted["run_id"])
+    persisted = feedback_store.record_run(source_run or _run_payload(agent_id="soc-ops"))
+    run_id = str(persisted["run_id"])
     content.create_feedback(
         "imp-1",
+        agent_id="soc-ops",
         summary="告警时间窗口与事件时间不一致",
         raw_text="原始用户输入：请判断这条告警是否应升级处置。",
         run_id=run_id,
     )
+    if corrupt_feedback_agent_id is not None:
+        with feedback_store.Session.begin() as db:
+            feedback = db.query(ImprovementFeedbackModel).filter_by(improvement_id="imp-1").one()
+            feedback.agent_id = corrupt_feedback_agent_id
 
     def find_persisted_run(run_id: str) -> dict[str, object] | None:
         """把真实 FeedbackStore 的 keyword-only 查询适配为服务回调契约。"""
@@ -94,7 +98,7 @@ def test_automatic_improvement_rejects_incomplete_persisted_run_evidence(
 ) -> None:
     service, _content = _service(
         tmp_path,
-        source_run=_run_payload(status=status, trace_status=trace_status, trace_id=trace_id),
+        source_run=_run_payload(agent_id="soc-ops", status=status, trace_status=trace_status, trace_id=trace_id),
     )
 
     with pytest.raises(ConflictError, match="Automatic improvement"):
@@ -102,7 +106,7 @@ def test_automatic_improvement_rejects_incomplete_persisted_run_evidence(
 
 
 def test_automatic_improvement_accepts_complete_persisted_run_evidence(tmp_path: Path) -> None:
-    service, _content = _service(tmp_path, source_run=_run_payload())
+    service, _content = _service(tmp_path, source_run=_run_payload(agent_id="soc-ops"))
 
     result = asyncio.run(service.generate_attribution("imp-1"))
 
@@ -113,7 +117,7 @@ def test_automatic_improvement_accepts_complete_persisted_run_evidence(tmp_path:
 
 
 def test_optimization_plan_without_governor_is_explicit_heuristic(tmp_path: Path) -> None:
-    service, content = _service(tmp_path, source_run=_run_payload())
+    service, content = _service(tmp_path, source_run=_run_payload(agent_id="soc-ops"))
 
     result = asyncio.run(service.generate_optimization_plan("imp-1"))
 
@@ -124,7 +128,7 @@ def test_optimization_plan_without_governor_is_explicit_heuristic(tmp_path: Path
 
 
 def test_regression_without_governor_does_not_fabricate_tests(tmp_path: Path) -> None:
-    service, content = _service(tmp_path, source_run=_run_payload())
+    service, content = _service(tmp_path, source_run=_run_payload(agent_id="soc-ops"))
 
     with pytest.raises(RuntimeUnavailableError, match="治理模型运行时"):
         asyncio.run(service.generate_regression_test_design("imp-1"))
@@ -133,7 +137,7 @@ def test_regression_without_governor_does_not_fabricate_tests(tmp_path: Path) ->
 
 
 def test_execution_store_roundtrips_risk_and_rollback(tmp_path: Path) -> None:
-    _service_instance, content = _service(tmp_path, source_run=_run_payload())
+    _service_instance, content = _service(tmp_path, source_run=_run_payload(agent_id="soc-ops"))
     _seed_execution_record(
         content,
         "imp-1",
@@ -187,9 +191,9 @@ def _config_attribution(evidence_refs: list[dict], *, problem_type: str = "instr
     "run",
     [
         None,
-        {"run_id": "run-1", "status": "running", "trace_status": "pending", "trace_id": "1" * 32},
-        {"run_id": "run-1", "status": "succeeded", "trace_status": "pending", "trace_id": "1" * 32},
-        {"run_id": "run-1", "status": "succeeded", "trace_status": "complete", "trace_id": None},
+        {"run_id": "run-1", "agent_id": "soc-ops", "status": "running", "trace_status": "pending", "trace_id": "1" * 32},
+        {"run_id": "run-1", "agent_id": "soc-ops", "status": "succeeded", "trace_status": "pending", "trace_id": "1" * 32},
+        {"run_id": "run-1", "agent_id": "soc-ops", "status": "succeeded", "trace_status": "complete", "trace_id": None},
     ],
 )
 def test_automatic_improvement_rejects_missing_nonterminal_or_incomplete_run_evidence(tmp_path: Path, run) -> None:
@@ -213,6 +217,7 @@ def test_automatic_improvement_accepts_terminal_run_with_complete_trace(tmp_path
 
     source_run = {
         "run_id": "run-1",
+        "agent_id": "soc-ops",
         "status": "succeeded",
         "trace_status": "complete",
         "trace_id": "1" * 32,
@@ -220,6 +225,73 @@ def test_automatic_improvement_accepts_terminal_run_with_complete_trace(tmp_path
     svc, _ = _service(tmp_path, fake_run, find_run_by_id=lambda _run_id: source_run)
 
     assert asyncio.run(svc.generate_attribution("imp-1")).generated_by == "governor"
+
+
+def test_automatic_improvement_rejects_run_lookup_identity_mismatch(tmp_path: Path) -> None:
+    async def should_not_run(**_kwargs):
+        raise AssertionError("governor must not run when lookup returns a different run")
+
+    wrong_run = {
+        "run_id": "run-other",
+        "agent_id": "soc-ops",
+        "status": "succeeded",
+        "trace_status": "complete",
+        "trace_id": "1" * 32,
+    }
+    svc, _ = _service(tmp_path, should_not_run, find_run_by_id=lambda _run_id: wrong_run)
+
+    with pytest.raises(ConflictError, match="lookup returned a different run"):
+        asyncio.run(svc.generate_attribution("imp-1"))
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "generate_normalized_feedback",
+        "generate_attribution",
+        "generate_optimization_plan",
+        "generate_regression_test_design",
+    ],
+)
+def test_automatic_improvement_rejects_complete_run_from_different_business_agent(tmp_path: Path, method_name: str) -> None:
+    governor_calls = 0
+
+    async def should_not_run(**_kwargs):
+        nonlocal governor_calls
+        governor_calls += 1
+        raise AssertionError("governor must not run with cross-agent source evidence")
+
+    source_run = {
+        "run_id": "run-1",
+        "agent_id": "documentation-assistant",
+        "status": "succeeded",
+        "trace_status": "complete",
+        "trace_id": "1" * 32,
+    }
+    svc, _ = _service(tmp_path, should_not_run, find_run_by_id=lambda _run_id: source_run)
+
+    with pytest.raises(ConflictError, match="different business agent"):
+        asyncio.run(getattr(svc, method_name)("imp-1"))
+    assert governor_calls == 0
+
+
+def test_automatic_improvement_rejects_corrupt_feedback_owner_without_run_finder(tmp_path: Path) -> None:
+    governor_calls = 0
+
+    async def should_not_run(**_kwargs):
+        nonlocal governor_calls
+        governor_calls += 1
+        raise AssertionError("governor must not run with corrupt feedback ownership")
+
+    svc, _ = _service(
+        tmp_path,
+        should_not_run,
+        corrupt_feedback_agent_id="documentation-assistant",
+    )
+
+    with pytest.raises(ConflictError, match="feedback belongs to a different business agent"):
+        asyncio.run(svc.generate_attribution("imp-1"))
+    assert governor_calls == 0
 
 
 def test_attribution_governor_path_maps_agent_owned_fields(tmp_path: Path) -> None:
@@ -476,6 +548,7 @@ def test_regression_governor_maps_executable_test_code_and_owns_path(tmp_path: P
         fake_run,
         find_run_by_id=lambda run_id: {
             "run_id": run_id,
+            "agent_id": "soc-ops",
             "message": '数据转换前原始数据:\n{"danger_tid":"14516"}',
             "answer_summary": "误报分析",
             "status": "succeeded",
@@ -492,6 +565,48 @@ def test_regression_governor_maps_executable_test_code_and_owns_path(tmp_path: P
     assert rec.tests[0]["test_intent"] == "验证时间不一致时先核验再升级"
     assert seen["feedback_cases"][0]["source_run"]["message"].startswith("数据转换前原始数据")  # type: ignore[index]
     assert content.get_regression_test_design("imp-1").status == "draft"
+
+
+def test_regression_reuses_one_validated_run_snapshot(tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+    lookup_count = 0
+
+    async def no_action(**kwargs):
+        seen.update(kwargs["job_input"])
+        return {"tests": [], "no_action_reason": "当前只验证证据快照。"}
+
+    def changing_run_finder(run_id: str) -> dict[str, object]:
+        nonlocal lookup_count
+        lookup_count += 1
+        if lookup_count == 1:
+            return {
+                "run_id": run_id,
+                "agent_id": "soc-ops",
+                "message": "OWNED_AGENT_INPUT",
+                "answer_summary": "OWNED_AGENT_OUTPUT",
+                "status": "succeeded",
+                "trace_status": "complete",
+                "trace_id": "1" * 32,
+            }
+        return {
+            "run_id": run_id,
+            "agent_id": "documentation-assistant",
+            "message": "FOREIGN_AGENT_INPUT",
+            "answer_summary": "FOREIGN_AGENT_OUTPUT",
+            "status": "succeeded",
+            "trace_status": "complete",
+            "trace_id": "2" * 32,
+        }
+
+    svc, _ = _service(tmp_path, no_action, find_run_by_id=changing_run_finder)
+
+    asyncio.run(svc.generate_regression_test_design("imp-1"))
+
+    source_run = seen["feedback_cases"][0]["source_run"]  # type: ignore[index]
+    assert lookup_count == 1
+    assert source_run["message"] == "OWNED_AGENT_INPUT"
+    assert source_run["answer_summary"] == "OWNED_AGENT_OUTPUT"
+    assert "FOREIGN_AGENT" not in str(seen)
 
 
 def test_regression_governor_failure_does_not_fabricate_tests(tmp_path: Path) -> None:

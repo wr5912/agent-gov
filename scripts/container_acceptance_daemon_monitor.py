@@ -151,6 +151,10 @@ class DockerMutationMonitor:
 
     def _relevant(self, event: Mapping[str, object]) -> bool:
         event_type = event.get("Type", event.get("type"))
+        action = event.get("Action", event.get("status"))
+        if event_type == "container" and isinstance(action, str) and action.partition(":")[0] in {"exec_create", "exec_start", "exec_die", "exec_detach"}:
+            # 健康检查和验收内只读命令不改变容器生命周期或镜像身份。
+            return False
         if event_type in {"container", "network", "volume", "daemon"}:
             # 正式 child 不包含 Docker 变更；daemon 级拒绝也能闭合从未获得
             # project label/network attachment 的 create/mount/remove sidecar。

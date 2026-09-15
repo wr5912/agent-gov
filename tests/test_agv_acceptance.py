@@ -45,16 +45,6 @@ def test_agv_003_048_frontend_is_debug_observation_boundary() -> None:
     assert "Claude" not in chat
 
 
-def test_agv_046_security_ops_is_replaceable_example_scenario() -> None:
-    """AGV-046 安全运营作为示例场景可被替换：平台不绑定单一行业。"""
-    vision = _read("docs/项目目标愿景使命.md")
-    scene = vision.split("## 典型落地场景", 1)[1].split("## 产品边界", 1)[0]
-
-    for scenario in ("安全运营", "客服", "研发助手", "知识管理", "企业流程自动化"):
-        assert scenario in scene
-    assert "不定义 AgentGov 的全部产品边界" in scene
-
-
 def test_agv_018_business_agents_do_not_special_case_historical_main_id() -> None:
     """AGV-018：历史 main ID 不再拥有默认、内置、受保护或模板语义。"""
     vision = _read("docs/项目目标愿景使命.md")

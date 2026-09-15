@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-HARNESS_CONTENT_ROOTS = ("agent.yaml", "AGENT.md", "skills", "mcp", "subagents", "tests")
+HARNESS_CONTENT_ROOTS = ("agent.yaml", "AGENT.md", "skills", "mcp", "subagents", "tests", "references")
 HARNESS_EXCLUDED_NAMES = frozenset(
     {
         ".cache",

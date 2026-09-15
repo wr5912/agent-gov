@@ -105,7 +105,7 @@ def test_workspace_import_rejects_missing_or_invalid_http_multipart_contract(pro
     assert repeated_field.json()["error_code"] == "WORKSPACE_PACKAGE_INVALID"
 
 
-def test_workspace_package_operation_conflicts_with_active_agent_maintenance(process_environment, tmp_path: Path) -> None:
+def test_workspace_export_is_read_only_during_agent_maintenance(process_environment, tmp_path: Path) -> None:
     module = _load_app(process_environment, tmp_path)
     workspace = _seed_active_agent(module, agent_id="busy", name="busy")
     with TestClient(module.app) as client:
@@ -126,25 +126,25 @@ def test_workspace_package_operation_conflicts_with_active_agent_maintenance(pro
         ):
             reverse = client.post("/api/agent-registry/busy/workspace/export")
 
-    assert response.status_code == 409
-    assert response.json()["error_code"] == "WORKSPACE_MAINTENANCE_CONFLICT"
+    assert response.status_code == 200
     assert conflict.value.status_code == 409
-    assert reverse.status_code == 409
+    assert reverse.status_code == 200
+    assert response.headers["x-agent-commit-sha"] == reverse.headers["x-agent-commit-sha"]
     assert (workspace / ".git").is_dir()
 
 
-def test_workspace_package_rejects_real_open_change_set(process_environment, tmp_path: Path) -> None:
+def test_workspace_export_keeps_published_commit_with_open_change_set(process_environment, tmp_path: Path) -> None:
     module = _load_app(process_environment, tmp_path)
     _seed_active_agent(module, agent_id="open-set", name="open-set")
     with TestClient(module.app) as client:
-        module.agent_governance.create_change_set(agent_id="open-set", title="must block package operations")
+        change_set = module.agent_governance.create_change_set(agent_id="open-set", title="candidate does not change export")
         response = client.post("/api/agent-registry/open-set/workspace/export")
 
-    assert response.status_code == 409
-    assert response.json()["error_code"] == "WORKSPACE_CHANGE_SET_ACTIVE"
+    assert response.status_code == 200
+    assert response.headers["x-agent-commit-sha"] == change_set["base_commit_sha"]
 
 
-def test_workspace_git_bootstrap_failure_is_structured(process_environment, tmp_path: Path) -> None:
+def test_workspace_export_missing_git_is_structured_without_bootstrap(process_environment, tmp_path: Path) -> None:
     module = _load_app(process_environment, tmp_path)
     workspace = _seed_active_agent(module, agent_id="git-failure", name="git-failure")
     with TestClient(module.app) as client:
@@ -156,6 +156,27 @@ def test_workspace_git_bootstrap_failure_is_structured(process_environment, tmp_
     assert response.json()["error_code"] == "WORKSPACE_GIT_OPERATION_FAILED"
     assert response.json()["detail"] == "Git workspace operation failed"
     assert str(tmp_path) not in response.text
+
+
+def test_workspace_export_rejects_draft_and_never_initializes_missing_repository(process_environment, tmp_path: Path) -> None:
+    module = _load_app(process_environment, tmp_path)
+    workspace = _seed_active_agent(module, agent_id="unpublished-export", name="unpublished export")
+    with module.runtime_db_session_factory.begin() as db:
+        from app.runtime.agent_registry_db import AgentRegistryModel
+
+        db.get(AgentRegistryModel, "unpublished-export").status = "draft"
+    with TestClient(module.app) as client:
+        draft = client.post("/api/agent-registry/unpublished-export/workspace/export")
+        assert draft.status_code == 409
+        assert draft.json()["error_code"] == "WORKSPACE_NOT_PUBLISHED"
+        with module.runtime_db_session_factory.begin() as db:
+            db.get(AgentRegistryModel, "unpublished-export").status = "active"
+        shutil.rmtree(workspace / ".git")
+        module.agent_governance.evict_agent_store("unpublished-export")
+        missing = client.post("/api/agent-registry/unpublished-export/workspace/export")
+    assert missing.status_code == 409
+    assert missing.json()["error_code"] == "WORKSPACE_GIT_OPERATION_FAILED"
+    assert not (workspace / ".git").exists()
 
 
 def test_new_agent_import_compensates_git_and_registry_when_sqlite_finalize_fails(process_environment, tmp_path: Path) -> None:
@@ -317,23 +338,32 @@ def test_workspace_export_rejects_symlink_and_actual_oversized_tree_without_adva
     module = _load_app(process_environment, tmp_path)
     workspace = _seed_active_agent(module, agent_id="export-guard", name="export guard")
     with TestClient(module.app) as client:
-        baseline = client.get("/api/agent-repository/current?agent_id=export-guard").json()["commit_sha"]
         (workspace / "linked").symlink_to("AGENT.md")
+        _run_git(workspace, "add", "-A", "--", ".")
+        _run_git(workspace, "commit", "-m", "Invalid symlink export fixture")
+        baseline = _run_git(workspace, "rev-parse", "HEAD")
+        original_index = (workspace / ".git" / "index").read_bytes()
         symlinked = client.post("/api/agent-registry/export-guard/workspace/export")
-        after_symlink = client.get("/api/agent-repository/current?agent_id=export-guard").json()["commit_sha"]
+        after_symlink = _run_git(workspace, "rev-parse", "HEAD")
+        assert (workspace / ".git" / "index").read_bytes() == original_index
         (workspace / "linked").unlink()
         with (workspace / "oversized.bin").open("wb") as oversized_file:
             oversized_file.seek(workspace_codec.MAX_SINGLE_MEMBER_BYTES)
             oversized_file.write(b"x")
+        _run_git(workspace, "add", "-A", "--", ".")
+        _run_git(workspace, "commit", "-m", "Oversized export fixture")
+        oversized_head = _run_git(workspace, "rev-parse", "HEAD")
         oversized = client.post("/api/agent-registry/export-guard/workspace/export")
 
     assert symlinked.status_code == 422
     assert symlinked.json()["error_code"] == "WORKSPACE_EXPORT_TREE_INVALID"
     assert after_symlink == baseline
     assert oversized.status_code == 413
+    assert _run_git(workspace, "rev-parse", "HEAD") == oversized_head
+    assert not list((module.settings.data_dir / ".workspace-package-tmp").iterdir())
 
 
-def test_workspace_export_snapshots_deletion_when_only_git_metadata_remains(process_environment, tmp_path: Path) -> None:
+def test_workspace_export_preserves_published_tree_when_live_files_deleted(process_environment, tmp_path: Path) -> None:
     module = _load_app(process_environment, tmp_path)
     workspace = _seed_active_agent(module, agent_id="empty-export", name="empty export")
     with TestClient(module.app) as client:
@@ -347,14 +377,17 @@ def test_workspace_export_snapshots_deletion_when_only_git_metadata_remains(proc
                 child.unlink()
 
         exported = client.post("/api/agent-registry/empty-export/workspace/export")
-        current = client.get("/api/agent-repository/current?agent_id=empty-export").json()["commit_sha"]
+        current = _run_git(workspace, "rev-parse", "HEAD")
 
     assert exported.status_code == 200
-    assert current != baseline
-    assert _run_git(workspace, "ls-tree", "-r", "HEAD") == ""
+    assert current == baseline == exported.headers["x-agent-commit-sha"]
+    assert _run_git(workspace, "ls-tree", "-r", "HEAD") != ""
+    with tarfile.open(fileobj=io.BytesIO(exported.content), mode="r:gz") as archive:
+        assert "workspace/AGENT.md" in archive.getnames()
+    assert not (workspace / "AGENT.md").exists()
 
 
-def test_workspace_export_reports_real_invalid_attributes_path_without_advancing_head(
+def test_workspace_export_does_not_reconfigure_attributes(
     process_environment,
     tmp_path: Path,
 ) -> None:
@@ -368,13 +401,13 @@ def test_workspace_export_reports_real_invalid_attributes_path_without_advancing
         response = client.post("/api/agent-registry/raw-path/workspace/export")
         current = _run_git(workspace, "rev-parse", "HEAD")
 
-    assert response.status_code == 409
-    assert response.json()["error_code"] == "WORKSPACE_GIT_OPERATION_FAILED"
+    assert response.status_code == 200
+    assert attributes.is_dir()
     assert current == baseline
     assert _run_git(workspace, "status", "--porcelain") == ""
 
 
-def test_workspace_export_unstages_original_dirty_state_when_real_git_hook_rejects_commit(
+def test_workspace_export_preserves_staged_and_unstaged_changes_without_running_hooks(
     process_environment,
     tmp_path: Path,
 ) -> None:
@@ -385,17 +418,23 @@ def test_workspace_export_unstages_original_dirty_state_when_real_git_hook_rejec
         original_content = (workspace / "AGENT.md").read_bytes()
         changed_content = original_content + b"\n# dirty before failed export\n"
         (workspace / "AGENT.md").write_bytes(changed_content)
+        _run_git(workspace, "add", "AGENT.md")
+        staged_index = (workspace / ".git" / "index").read_bytes()
+        unstaged_content = changed_content + b"# also unstaged\n"
+        (workspace / "AGENT.md").write_bytes(unstaged_content)
+        config_before = (workspace / ".git" / "config").read_bytes()
         _write_git_hook(workspace, "pre-commit", "exit 23\n")
         response = client.post("/api/agent-registry/commit-failure/workspace/export")
-        current = client.get("/api/agent-repository/current?agent_id=commit-failure").json()["commit_sha"]
+        current = _run_git(workspace, "rev-parse", "HEAD")
 
-    assert response.status_code == 409
-    assert response.json()["error_code"] == "WORKSPACE_GIT_OPERATION_FAILED"
-    assert response.json()["detail"] == "Git workspace operation failed"
-    assert str(tmp_path) not in response.text
+    assert response.status_code == 200
     assert current == baseline
-    assert (workspace / "AGENT.md").read_bytes() == changed_content
-    assert subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=workspace, check=False).returncode == 0
+    assert (workspace / "AGENT.md").read_bytes() == unstaged_content
+    assert (workspace / ".git" / "index").read_bytes() == staged_index
+    assert (workspace / ".git" / "config").read_bytes() == config_before
+    with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:gz") as archive:
+        assert archive.extractfile("workspace/AGENT.md").read() == original_content
+    assert subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=workspace, check=False).returncode == 1
     assert subprocess.run(["git", "diff", "--quiet"], cwd=workspace, check=False).returncode == 1
 
 
@@ -516,7 +555,7 @@ def test_concurrent_workspace_import_creates_exactly_one_candidate(process_envir
     assert _run_git(workspace, "rev-parse", "HEAD") == baseline
 
 
-def test_workspace_export_cleans_artifact_and_restores_dirty_state_when_sqlite_release_is_lost(
+def test_workspace_export_does_not_acquire_sqlite_maintenance_and_cleans_artifact(
     process_environment,
     tmp_path: Path,
 ) -> None:
@@ -539,11 +578,10 @@ def test_workspace_export_cleans_artifact_and_restores_dirty_state_when_sqlite_r
             """,
         )
         response = client.post("/api/agent-registry/export-loss/workspace/export")
-        current = client.get("/api/agent-repository/current?agent_id=export-loss").json()["commit_sha"]
+        current = _run_git(workspace, "rev-parse", "HEAD")
 
     temporary_root = module.settings.data_dir / ".workspace-package-tmp"
-    assert response.status_code == 409
-    assert response.json()["error_code"] == "WORKSPACE_MAINTENANCE_CONFLICT"
+    assert response.status_code == 200
     assert current == baseline
     assert (workspace / "dirty.txt").read_bytes() == b"preserve me\n"
     assert not temporary_root.exists() or not list(temporary_root.iterdir())

@@ -27,7 +27,6 @@ def _services(tmp_path: Path):
     governance = AgentGovernanceService(
         feedback_store=feedback_store,
         agent_version_store=version_store,
-        runtime_mode="local-debug",
     )
     writer = AgentCandidateWriter(governance)
     change_set = governance.create_change_set(title="候选配置编辑", operator="tester")
@@ -96,7 +95,10 @@ def test_candidate_batch_is_one_commit_and_rejects_stale_or_unsafe_input(tmp_pat
         )
         process_spawn = client.put(
             url,
-            json={"expected_candidate_commit_sha": written.json()["candidate_commit_sha"], "files": [{"path": "mcp/process.json", "content": '{"command":"node","args":[]}'}]},
+            json={
+                "expected_candidate_commit_sha": written.json()["candidate_commit_sha"],
+                "files": [{"path": "mcp/process.json", "content": '{"command":"node","args":[]}'}],
+            },
         )
 
     assert written.status_code == 200

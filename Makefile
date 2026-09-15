@@ -23,6 +23,8 @@ COMPOSE ?= docker compose --env-file $(COMPOSE_ENV_FILE) -f docker/docker-compos
 LANGFUSE_COMPOSE = $(COMPOSE) -f docker/docker-compose.langfuse.yml
 COMPOSE_UP_FLAGS ?=
 SELECTED_ENV_RUNNER = $(PYTHON_RUN) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)"
+LOCAL_DEBUG_API_PORT ?= 0
+LOCAL_DEBUG_UI_PORT ?= 0
 # 版本唯一真相源：根 VERSION 文件。导出给 compose，让镜像 tag ${APP_VERSION} 派生（build/up 自动生效）。
 export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)
 PYTHON_TYPECHECK_TARGETS := \
@@ -94,6 +96,11 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/run_container_acceptance.py \
 	scripts/verify_container_acceptance_context.py \
 	scripts/run_agentscope_live_acceptance.py \
+	scripts/run_workspace_reclaim_acceptance.py \
+	scripts/workspace_reclaim_acceptance_sessions.py \
+	scripts/workspace_reclaim_acceptance_runtime.py \
+	scripts/workspace_reclaim_acceptance_watchdog.py \
+	scripts/workspace_reclaim_acceptance_watchdog_control.py \
 	scripts/agentscope_live_acceptance_cli.py \
 	scripts/agentscope_live_acceptance_report.py \
 	scripts/agentscope_mcp_live_acceptance.py \
@@ -134,6 +141,7 @@ setup:
 	@if ! command -v $(UV) >/dev/null 2>&1; then echo "uv is required. Install uv before running make setup." >&2; exit 1; fi
 	$(UV) venv $(VENV) --python 3.11
 	$(UV) pip install --python $(PYTHON) -r requirements.txt -e packages/agentgov-testkit
+	$(PYTHON_RUN) scripts/initialize_runtime_shared_secret.py --env-file "$(COMPOSE_ENV_FILE)"
 
 build:
 	$(SELECTED_ENV_RUNNER) --operation build
@@ -145,8 +153,8 @@ live-acceptance-preflight:
 	@case "$${REQUIRE_LIVE_RUNTIME:-}" in 1|true|yes|on) ;; *) \
 		echo "Set REQUIRE_LIVE_RUNTIME=1 to authorize real provider calls." >&2; exit 2 ;; \
 	esac
-	@test "$${REAL_ACCEPTANCE_AGENT_ID:-}" = "security-operations-expert" || { \
-		echo "REAL_ACCEPTANCE_AGENT_ID must be security-operations-expert." >&2; exit 2; \
+	@test -n "$${REAL_ACCEPTANCE_AGENT_ID:-}" || { \
+		echo "REAL_ACCEPTANCE_AGENT_ID must name the reviewed scenario set's registered business Agent." >&2; exit 2; \
 	}
 	@test -n "$${REAL_SCENARIO_FILE:-}" && test -f "$$REAL_SCENARIO_FILE" || { \
 		echo "REAL_SCENARIO_FILE must name an existing operator-reviewed file outside the repository." >&2; exit 2; \
@@ -273,6 +281,17 @@ ui-playground-cancel-smoke: live-acceptance-preflight
 ui-playground-deployed-smoke:
 	@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation ui-playground-deployed-smoke
 
+.PHONY: ui-playground-deployed-recovery-smoke
+ui-playground-deployed-recovery-smoke:
+	@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation ui-playground-deployed-recovery-smoke
+
+.PHONY: ui-self-use-governance-smoke
+ui-self-use-governance-smoke:
+	@$(ACCEPTANCE_PYTHON) scripts/run_self_use_acceptance.py --env-file "$(COMPOSE_ENV_FILE)" \
+		--workspace-package "$(SELF_USE_WORKSPACE_PACKAGE)" --docs-scenarios "$(SELF_USE_DOCS_SCENARIOS)" \
+		--soc-scenarios "$(SELF_USE_SOC_SCENARIOS)" --report "$(SELF_USE_REPORT)" \
+		--existing-docs-commit "$(SELF_USE_EXISTING_DOCS_COMMIT)"
+
 ui-playground-technical-smoke: browser-technical-live-preflight
 	@REAL_SCENARIO_FILE="$${BROWSER_TECHNICAL_SCENARIO_FILE}" \
 	REAL_ACCEPTANCE_AGENT_ID=security-operations-expert \
@@ -341,7 +360,8 @@ runtime-bootstrap:
 	$(SELECTED_ENV_RUNNER) --operation runtime-bootstrap
 
 runtime-recreate:
-	$(SELECTED_ENV_RUNNER) --operation runtime-recreate
+	@case "$(RUNTIME_RECREATE_REQUIRE_IDLE)" in ""|0|1) ;; *) echo "RUNTIME_RECREATE_REQUIRE_IDLE must be 0 or 1" >&2; exit 2;; esac
+	$(SELECTED_ENV_RUNNER) --operation runtime-recreate $(if $(filter 1,$(RUNTIME_RECREATE_REQUIRE_IDLE)),--require-idle,)
 
 .PHONY: runtime-prepare-harnesses
 runtime-prepare-harnesses:
@@ -360,6 +380,26 @@ cutover-inspect:
 runtime-clean:
 	$(SELECTED_ENV_RUNNER) --operation runtime-clean
 
+.PHONY: runtime-workspace-gc runtime-workspace-gc-apply local-debug-run agent-candidate-compare
+runtime-workspace-gc:
+	$(SELECTED_ENV_RUNNER) --operation runtime-workspace-gc
+
+runtime-workspace-gc-apply:
+	$(SELECTED_ENV_RUNNER) --operation runtime-workspace-gc-apply
+
+.PHONY: runtime-workspace-reclaim-live-smoke
+runtime-workspace-reclaim-live-smoke:
+	@$(ACCEPTANCE_PYTHON) scripts/run_workspace_reclaim_acceptance.py --env-file "$(COMPOSE_ENV_FILE)"
+
+# 人工对照使用所选真实环境；先加载当前代码和配置，不生成发布门证据。
+agent-candidate-compare:
+	@test -n "$(COMPARE_AGENT_ID)" -a -n "$(COMPARE_CHANGE_SET_ID)" -a -n "$(COMPARE_SCENARIOS)" -a -n "$(COMPARE_REPORT)" || { echo '请提供 COMPARE_AGENT_ID、COMPARE_CHANGE_SET_ID、COMPARE_SCENARIOS、COMPARE_REPORT'; exit 2; }
+	+$(MAKE) --no-print-directory build
+	+$(MAKE) --no-print-directory all-up COMPOSE_UP_FLAGS=--force-recreate
+	$(PYTHON_RUN) -m scripts.compare_agent_candidate --env-file "$(COMPOSE_ENV_FILE)" \
+		--agent-id "$(COMPARE_AGENT_ID)" --change-set-id "$(COMPARE_CHANGE_SET_ID)" \
+		--scenarios "$(COMPARE_SCENARIOS)" --report "$(COMPARE_REPORT)"
+
 runtime-migrate-workspace-tests-scan:
 	$(SELECTED_ENV_RUNNER) --operation runtime-migrate-scan
 
@@ -368,6 +408,10 @@ runtime-migrate-workspace-tests:
 
 local-debug-env:
 	cp -n docker/.env.local-debug.example docker/.env.local-debug || true
+	$(PYTHON_RUN) scripts/initialize_runtime_shared_secret.py --env-file docker/.env.local-debug
+
+local-debug-run:
+	$(PYTHON_RUN) scripts/run_local_debug.py --api-port "$(LOCAL_DEBUG_API_PORT)" --ui-port "$(LOCAL_DEBUG_UI_PORT)"
 
 local-debug-bootstrap: local-debug-env
 	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --env-file docker/.env.local-debug
@@ -421,7 +465,7 @@ _container-technical-live-smoke:
 		--env-file "$(COMPOSE_ENV_FILE)" \
 		--scenario-file "$${TECHNICAL_SCENARIO_FILE}" \
 		--technical-integration-seed \
-		--runs 1 --concurrency 1 --require-trace-complete
+		--require-trace-complete
 
 container-mcp-technical-smoke: mcp-technical-live-preflight
 	$(CONTAINER_ACCEPTANCE) --profile core -- $(MAKE) --no-print-directory _container-mcp-technical-smoke

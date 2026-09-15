@@ -14,14 +14,14 @@ from .harness_contract import agent_payload_from_workspace
 from .harness_snapshots import PublishedHarnessSnapshotStore
 from .models import RuntimeAgentVersionModel, RuntimeEphemeralResourceModel
 from .release_probe import ReleaseWorkspaceProbe
-from .store import RuntimeRunStore, RuntimeStateConflict
+from .store import RuntimeRunStore, RuntimeStateConflict, RuntimeTemplateRestartRequired
 
 
 class RuntimeActivationCleanupPending(RuntimeStateConflict):
     """发布激活失败后的持久资源补偿尚未收敛。"""
 
 
-class RuntimeActivationRestartRequired(RuntimeStateConflict):
+class RuntimeActivationRestartRequired(RuntimeTemplateRestartRequired):
     """保留精确发布资源，等待 Runtime 重启注册模板后续发。"""
 
 

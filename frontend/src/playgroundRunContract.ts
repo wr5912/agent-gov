@@ -25,8 +25,6 @@ export interface PlaygroundRunOptions {
   activeMessagesLoaded: boolean;
   selectedBusinessAgentId: string;
   runtimeAgentId: string;
-  alertId: string;
-  caseId: string;
   promptSuggestion: PromptSuggestionController;
   setInput: Dispatch<SetStateAction<string>>;
   setStreamingAssistantMessageId: Dispatch<SetStateAction<string | undefined>>;
@@ -48,6 +46,7 @@ export interface PlaygroundRunOptions {
 
 export interface RunRefs extends DetachedRunRefs {
   creatingSession: MutableRefObject<boolean>;
+  continuationSubmissions: MutableRefObject<Set<string>>;
   sessionCreationIntent: MutableRefObject<{ agentId: string; key: string } | null>;
   detachedStop: MutableRefObject<Promise<void> | null>;
   detachedStopController: MutableRefObject<AbortController | null>;

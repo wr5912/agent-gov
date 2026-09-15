@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.agent_testing.schemas import AgentTestRunResponse
+from app.runtime.feedback_entities import FeedbackEntities
 
-from .improvement_feedback_contract import FEEDBACK_CASE_ATTACH_ONLY_MESSAGE, has_feedback_case_semantics
+from .improvement_feedback_contract import FEEDBACK_CASE_ATTACH_ONLY_MESSAGE, is_feedback_case_source
 
 
 class NormalizedFeedbackUpsertRequest(BaseModel):
@@ -45,22 +46,29 @@ class AttributionUpsertRequest(BaseModel):
 
 
 class ImprovementFeedbackCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     summary: str = Field(min_length=1, description="反馈摘要。")
     source: str = Field(default="playground_run", description="通用反馈来源，例如 playground_run/trace；FeedbackCase 必须走专用挂接接口。")
     raw_text: str = Field(default="", description="反馈原文。")
-    run_id: str = Field(default="", description="关联 Run。")
+    run_id: str = Field(default="", description="关联已存在且与改进事项属于同一业务 Agent 的 Run。")
     session_id: str = Field(default="", description="关联 Session。")
     agent_version_id: str = Field(default="", description="反馈归属的 Agent 版本。")
     scenario: str = Field(default="", description="反馈归属的业务场景。")
     task_id: str = Field(default="", description="反馈归属的任务 ID。")
-    alert_id: str = Field(default="", description="反馈归属的告警 ID。")
-    case_id: str = Field(default="", description="反馈归属的业务 Case ID，不接受 FeedbackCase ID。")
+    entities: FeedbackEntities = Field(default_factory=dict, description="业务对象类型到 ID 列表的映射；不承载治理反馈 Case 来源。")
 
     @model_validator(mode="after")
     def _reject_feedback_case_semantics(self) -> ImprovementFeedbackCreateRequest:
-        if has_feedback_case_semantics(source=self.source, case_id=self.case_id):
+        if is_feedback_case_source(self.source):
             raise ValueError(FEEDBACK_CASE_ATTACH_ONLY_MESSAGE)
         return self
+
+
+class ImprovementFeedbackSourceEvent(BaseModel):
+    event_id: str
+    source_system: str
+    event_type: str
 
 
 class ImprovementFeedbackResponse(BaseModel):
@@ -76,8 +84,9 @@ class ImprovementFeedbackResponse(BaseModel):
     agent_version_id: str
     scenario: str
     task_id: str
-    alert_id: str
-    case_id: str
+    entities: FeedbackEntities = Field(default_factory=dict)
+    feedback_case_id: str | None = None
+    source_events: list[ImprovementFeedbackSourceEvent] = Field(default_factory=list)
     created_at: str
 
 

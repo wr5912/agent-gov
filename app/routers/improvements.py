@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 
 from app.runtime.errors import NotFoundError
 from app.runtime.improvement_schemas import (
@@ -50,6 +51,22 @@ def _response(record: ImprovementItemRecord) -> ImprovementItemResponse:
     )
 
 
+def _auto_merge_target_id(
+    improvement_store: ImprovementStore,
+    req: ImprovementCreateRequest,
+) -> str | None:
+    """Resolve the current similarity candidate without moving persistence rules into the router."""
+    if not req.auto_merge or not req.agent_id.strip():
+        return None
+    similar = find_similar_improvements(
+        improvement_store,
+        agent_id=req.agent_id,
+        text=f"{req.title} {req.summary}",
+        refs=req.source_feedback_refs,
+    )
+    return similar[0][0].improvement_id if similar else None
+
+
 def create_improvements_router(
     *,
     improvement_store: ImprovementStore,
@@ -77,23 +94,20 @@ def create_improvements_router(
         status_code=201,
         summary="Create an improvement item under a business agent",
     )
-    async def create_improvement(req: ImprovementCreateRequest) -> ImprovementItemResponse:
+    async def create_improvement(
+        req: ImprovementCreateRequest,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=256)] = None,
+    ) -> ImprovementItemResponse:
         # backend-owned improvement_id/stage/status 由后端生成，不接受请求覆盖（字段所有权）。
         # auto_merge：同 Agent 存在相似开放事项时，把来源反馈并入该事项而非新建（W2-b 相似度归并）。
-        if req.auto_merge and req.agent_id.strip():
-            similar = find_similar_improvements(
-                improvement_store,
-                agent_id=req.agent_id,
-                text=f"{req.title} {req.summary}",
-                refs=req.source_feedback_refs,
-            )
-            if similar:
-                return _response(improvement_store.add_source_refs(similar[0][0].improvement_id, req.source_feedback_refs))
         record = improvement_store.create_improvement(
             agent_id=req.agent_id,
             title=req.title,
             summary=req.summary,
             source_feedback_refs=req.source_feedback_refs,
+            idempotency_key=idempotency_key,
+            auto_merge=req.auto_merge,
+            auto_merge_target_id=_auto_merge_target_id(improvement_store, req),
         )
         return _response(record)
 

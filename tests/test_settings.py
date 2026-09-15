@@ -50,6 +50,16 @@ def test_settings_exposes_only_control_plane_credentials() -> None:
     assert settings.runtime_shared_secret == "runtime-secret-with-safe-length"
     assert not hasattr(settings, "anthropic_api_key")
     assert not hasattr(settings, "model_provider_api_key")
+    assert settings.runtime_shared_secret not in repr(settings)
+
+
+@pytest.mark.parametrize("value", [None, "", " " * 32, "replace-with-at-least-32-random-characters", "local-dev-insecure-change-me-32"])
+def test_settings_requires_explicit_private_runtime_identity_without_leaking_other_secrets(process_environment, value) -> None:
+    process_environment.remove("AGENTGOV_RUNTIME_SHARED_SECRET")
+    arguments = {} if value is None else {"AGENTGOV_RUNTIME_SHARED_SECRET": value}
+    with pytest.raises(ValueError, match="AGENTGOV_RUNTIME_SHARED_SECRET") as error:
+        AppSettings(_env_file=None, API_KEY="must-not-leak-from-validation", **arguments)
+    assert "must-not-leak-from-validation" not in str(error.value)
 
 
 def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_path, process_environment) -> None:
@@ -59,7 +69,7 @@ def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_pa
     docker_dir = tmp_path / "docker"
     docker_dir.mkdir()
     (docker_dir / ".env").write_text(
-        "API_PORT=58080\nGOVERNOR_WORKSPACE_DIR=/governor-workspace\nDATA_DIR=/data\n",
+        "API_PORT=58080\nGOVERNOR_WORKSPACE_DIR=/governor-workspace\nDATA_DIR=/data\nAGENTGOV_RUNTIME_SHARED_SECRET=test-runtime-shared-secret\n",
         encoding="utf-8",
     )
     (docker_dir / ".env.local-debug").write_text("API_PORT=9090\n", encoding="utf-8")
@@ -81,7 +91,7 @@ def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, proces
     docker_dir.mkdir()
     (docker_dir / ".env").write_text("API_PORT=58080\n", encoding="utf-8")
     (docker_dir / ".env.local-debug").write_text(
-        "RUNTIME_VOLUME_MODE=local-debug\nAPI_PORT=8080\nDATA_DIR=/tmp/test-agentgov/data\n",
+        "RUNTIME_VOLUME_MODE=local-debug\nAPI_PORT=8080\nDATA_DIR=/tmp/test-agentgov/data\nAGENTGOV_RUNTIME_SHARED_SECRET=test-runtime-shared-secret\n",
         encoding="utf-8",
     )
 
@@ -105,7 +115,7 @@ def test_explicit_env_file_name_selects_its_runtime_mode(tmp_path, process_envir
         encoding="utf-8",
     )
 
-    settings = AppSettings(_env_file=env_file)
+    settings = AppSettings(_env_file=env_file, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret")
 
     assert settings.runtime_volume_mode == "local-debug"
     assert settings.settings_env_file == env_file
@@ -150,34 +160,37 @@ def test_agentscope_model_parameters_require_a_json_object() -> None:
     settings = AppSettings(
         _env_file=None,
         AGENTSCOPE_MODEL_PARAMETERS_JSON='{"temperature":0.2,"stream":true}',
+        AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret",
     )
     assert settings.agentscope_model_parameters == {"temperature": 0.2, "stream": True}
 
     with pytest.raises(ValueError, match="AGENTSCOPE_MODEL_PARAMETERS_JSON"):
-        AppSettings(_env_file=None, AGENTSCOPE_MODEL_PARAMETERS_JSON="[]")
+        AppSettings(_env_file=None, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret", AGENTSCOPE_MODEL_PARAMETERS_JSON="[]")
     with pytest.raises(ValueError):
-        AppSettings(_env_file=None, AGENTSCOPE_MODEL_PARAMETERS_JSON="{")
+        AppSettings(_env_file=None, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret", AGENTSCOPE_MODEL_PARAMETERS_JSON="{")
 
 
 def test_api_mode_is_closed_for_unknown_or_incomplete_acceptance_identity() -> None:
     with pytest.raises(ValueError, match="AGENTGOV_API_MODE"):
-        AppSettings(_env_file=None, AGENTGOV_API_MODE="unknown")
+        AppSettings(_env_file=None, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret", AGENTGOV_API_MODE="unknown")
     with pytest.raises(ValueError, match="one-time acceptance identity"):
-        AppSettings(_env_file=None, AGENTGOV_API_MODE="acceptance")
+        AppSettings(_env_file=None, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret", AGENTGOV_API_MODE="acceptance")
 
     settings = AppSettings(
         _env_file=None,
         AGENTGOV_API_MODE="acceptance",
         AGENTGOV_ACCEPTANCE_IDENTITY="cutover-one",
         AGENTGOV_ACCEPTANCE_API_KEY="one-time-key",
+        AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret",
     )
     assert settings.api_mode == "acceptance"
 
 
 def test_runtime_and_governance_timeouts_are_bounded() -> None:
-    defaults = AppSettings(_env_file=None)
+    defaults = AppSettings(_env_file=None, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret")
     overridden = AppSettings(
         _env_file=None,
+        AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret",
         RUNTIME_REQUEST_TIMEOUT_SECONDS=45,
         GOVERNANCE_AGENT_TIMEOUT_SECONDS=123,
         AGENT_TEST_RUN_TIMEOUT_SECONDS=456,
@@ -190,7 +203,7 @@ def test_runtime_and_governance_timeouts_are_bounded() -> None:
     assert overridden.governance_agent_timeout_seconds == 123
     assert overridden.agent_test_run_timeout_seconds == 456
     with pytest.raises(ValueError):
-        AppSettings(_env_file=None, RUNTIME_REQUEST_TIMEOUT_SECONDS=0)
+        AppSettings(_env_file=None, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret", RUNTIME_REQUEST_TIMEOUT_SECONDS=0)
 
 
 def test_get_settings_is_pure_and_does_not_create_runtime_dirs(tmp_path, process_environment) -> None:
@@ -200,6 +213,7 @@ def test_get_settings_is_pure_and_does_not_create_runtime_dirs(tmp_path, process
     process_environment.chdir(tmp_path)
     runtime_root = tmp_path / "runtime"
     process_environment.set("DATA_DIR", str(runtime_root / "data"))
+    process_environment.set("AGENTGOV_RUNTIME_SHARED_SECRET", "test-runtime-shared-secret")
     process_environment.set("GOVERNOR_WORKSPACE_DIR", str(runtime_root / "governor"))
     get_settings.cache_clear()
 

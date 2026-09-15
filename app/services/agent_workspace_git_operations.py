@@ -10,7 +10,6 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from app.runtime.agent_git_raw_storage import RawGitStorageError, configure_raw_git_storage
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.business_agent_workspace import WorkspaceProvisionEntry
 from app.services import agent_workspace_package_codec as package_codec
@@ -20,13 +19,6 @@ WorkspacePackageError = package_codec.WorkspacePackageError
 
 class GitCommandError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True)
-class SnapshotState:
-    original_head: str
-    current_head: str
-    snapshot_created: bool
 
 
 @dataclass(frozen=True)
@@ -47,50 +39,6 @@ def cleanup_imported_versioning(workspace: Path, version_base: Path) -> bool:
         except OSError:
             complete = False
     return complete
-
-
-def configure_workspace_git_storage(repository: Path) -> None:
-    try:
-        configure_raw_git_storage(
-            repository,
-            run_git=lambda args, cwd: run_git(cwd, args),
-        )
-    except RawGitStorageError as exc:
-        raise GitCommandError(str(exc)) from exc
-
-
-def snapshot_live_workspace(
-    store: GitAgentVersionStore,
-    *,
-    expected_head: str | None = None,
-) -> SnapshotState:
-    repository = store.repository_dir
-    original_head = git_text(repository, ["rev-parse", "HEAD"]).strip()
-    if expected_head is not None and original_head != expected_head:
-        raise WorkspacePackageError(
-            409,
-            "WORKSPACE_HEAD_CONFLICT",
-            f"Agent workspace HEAD changed (expected {expected_head}, found {original_head})",
-        )
-    try:
-        run_git(repository, ["add", "-A", "-f", "--", "."])
-        run_git(repository, ["add", "--renormalize", "--ignore-errors", "--", "."])
-        if not has_staged_changes(repository):
-            return SnapshotState(original_head=original_head, current_head=original_head, snapshot_created=False)
-        run_git(repository, ["commit", "-m", "Snapshot live workspace before package operation"])
-        current_head = git_text(repository, ["rev-parse", "HEAD"]).strip()
-        return SnapshotState(original_head=original_head, current_head=current_head, snapshot_created=True)
-    except Exception:
-        run_git(repository, ["reset", "--mixed", original_head], check=False)
-        raise
-
-
-def restore_dirty_state_after_failure(store: GitAgentVersionStore, snapshot: SnapshotState) -> None:
-    if not snapshot.snapshot_created:
-        return
-    current = git_text(store.repository_dir, ["rev-parse", "HEAD"], check=False).strip()
-    if current == snapshot.current_head:
-        run_git(store.repository_dir, ["reset", "--mixed", snapshot.original_head], check=False)
 
 
 def replace_tree_from_entries(
@@ -287,9 +235,9 @@ def git_text(repository: Path, args: list[str], *, check: bool = True) -> str:
 
 def git_process(repository: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
-        ["git", *args],
+        ["git", "-c", f"safe.directory={repository.resolve()}", *args],
         cwd=str(repository),
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"},
         capture_output=True,
         check=False,
     )

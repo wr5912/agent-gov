@@ -36,7 +36,9 @@ export function mergeRecoveredPendingRequests(
   const recoveredActionIds = new Set<string>();
   for (const action of pendingActions) {
     const requests = action.kind === "human" ? recoveredConfirm : recoveredExternal;
-    if (requests?.some((request) => pendingRequestContainsAction(request, action, turn.sessionId))) {
+    if (requests?.some((request) => pendingRequestContainsAction(
+      request, action, turn.sessionId, turn.agentId,
+    ))) {
       recoveredActionIds.add(action.action_id);
     }
   }
@@ -47,10 +49,12 @@ function pendingRequestContainsAction(
   request: RuntimeUserConfirmRequest | RuntimeExternalExecutionRequest,
   action: RuntimePendingAction,
   leaderSessionId: string,
+  leaderRuntimeAgentId: string,
 ) {
   return request.status === "waiting"
     && request.replyId === action.reply_id
     && (request.workerSessionId || leaderSessionId) === action.session_id
+    && (request.workerRuntimeAgentId || leaderRuntimeAgentId) === action.runtime_agent_id
     && request.toolCalls.some((toolCall) => (
       toolCall.id === action.tool_call_id
       && toolCall.name === action.tool_call_name
@@ -66,10 +70,14 @@ export function reconcilePendingRequestCards(
   updateAssistant((current) => ({
     ...current,
     userConfirmRequests: current.userConfirmRequests?.filter((request) => (
-      request.status !== "waiting" || pendingRequestMatchesLedger(request, "human", pendingActions, turn.sessionId)
+      request.status !== "waiting" || pendingRequestMatchesLedger(
+        request, "human", pendingActions, turn.sessionId, turn.agentId,
+      )
     )),
     externalExecutionRequests: current.externalExecutionRequests?.filter((request) => (
-      request.status !== "waiting" || pendingRequestMatchesLedger(request, "external", pendingActions, turn.sessionId)
+      request.status !== "waiting" || pendingRequestMatchesLedger(
+        request, "external", pendingActions, turn.sessionId, turn.agentId,
+      )
     )),
   }));
 }
@@ -79,11 +87,14 @@ function pendingRequestMatchesLedger(
   kind: "human" | "external",
   pendingActions: RuntimePendingAction[],
   leaderSessionId: string,
+  leaderRuntimeAgentId: string,
 ) {
   const requestSessionId = request.workerSessionId || leaderSessionId;
+  const requestRuntimeAgentId = request.workerRuntimeAgentId || leaderRuntimeAgentId;
   const candidates = pendingActions.filter((action) => (
     action.kind === kind
     && action.session_id === requestSessionId
+    && action.runtime_agent_id === requestRuntimeAgentId
     && action.reply_id === request.replyId
     && action.status === "pending"
   ));

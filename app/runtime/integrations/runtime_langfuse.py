@@ -171,11 +171,47 @@ def _project_observation(value: object) -> JsonObject | None:
     for key in ("start_time", "startTime", "end_time", "endTime"):
         _copy_text(value, projected, key, max_length=64)
     _copy_attribute_containers(value, projected)
+    operation_name = _consistent_operation_name(value)
+    if operation_name is not None:
+        projected_name = projected.get("name")
+        if projected_name is not None and projected_name != operation_name:
+            return None
+        # Langfuse may expose a concrete tool name even though the redacted OTel
+        # span name is ``execute_tool``. Discard that upstream label and retain
+        # only the approved semantic operation.
+        projected["name"] = operation_name
     for key in ("usage", "usage_details", "usageDetails"):
         usage = _safe_usage(value.get(key))
         if usage:
             projected[key] = usage
     return projected
+
+
+def _consistent_operation_name(source: Mapping[str, object]) -> str | None:
+    """只用一致且已批准的 OTel operation 补齐 Langfuse 空 observation name。"""
+
+    values: list[object] = []
+    for attributes in _attribute_containers(source):
+        if "gen_ai.operation.name" in attributes:
+            values.append(attributes["gen_ai.operation.name"])
+    if not values or any(type(value) is not type(values[0]) or value != values[0] for value in values[1:]):
+        return None
+    value = values[0]
+    return value if isinstance(value, str) and value in _SAFE_OBSERVATION_NAMES else None
+
+
+def _attribute_containers(source: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
+    containers: list[Mapping[str, object]] = [source]
+    attributes = source.get("attributes")
+    if isinstance(attributes, Mapping):
+        containers.append(attributes)
+    metadata = source.get("metadata")
+    if isinstance(metadata, Mapping):
+        containers.append(metadata)
+        nested_attributes = metadata.get("attributes")
+        if isinstance(nested_attributes, Mapping):
+            containers.append(nested_attributes)
+    return tuple(containers)
 
 
 def _copy_attribute_containers(source: Mapping[str, object], target: JsonObject) -> None:

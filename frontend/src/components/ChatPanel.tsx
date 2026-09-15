@@ -31,6 +31,7 @@ interface ChatPanelProps {
   agentName: string;
   agentPresentation: AgentPresentation | null;
   runtimeReady: boolean;
+  error?: string;
   promptSuggestions?: string[];
   onInputChange: (value: string) => void;
   onUsePromptSuggestion: (suggestion: string) => void;
@@ -63,6 +64,7 @@ export function ChatPanel({
   agentName,
   agentPresentation,
   runtimeReady,
+  error,
   promptSuggestions,
   onInputChange,
   onUsePromptSuggestion,
@@ -135,6 +137,7 @@ export function ChatPanel({
         </div>
       </header>
 
+      <PlaygroundErrorNotice error={error} />
       <div className="message-scroll-region" data-testid="playground-message-scroll-region">
         <section id="playground-messages" className="messages" data-testid="playground-messages" ref={containerRef} onScroll={handleScroll}>
           {messages.length === 0 ? (
@@ -236,4 +239,8 @@ export function ChatPanel({
       </footer>
     </main>
   );
+}
+
+export function PlaygroundErrorNotice({ error }: { error?: string }) {
+  return error ? <div className="error-box" role="alert" data-testid="playground-error">{error}</div> : null;
 }

@@ -349,8 +349,7 @@ def _control_store(tmp_path: Path) -> tuple[RuntimeRunStore, object]:
         session_id="leader-session",
         runtime_agent_id="leader-agent",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)
@@ -648,9 +647,12 @@ def test_worker_hitl_is_persisted_against_child_and_resumes_same_root_run(
         assert action.status == "pending"
 
     resumed = store.begin_run(
-        session_id="leader-session",
-        runtime_agent_id="leader-agent",
+        # Worker HITL is submitted to the exact pending child binding while the
+        # governed run keeps its root Session identity.
+        session_id="worker-session",
+        runtime_agent_id="worker-agent",
         input_value={
+            "id": "worker-continuation",
             "type": "USER_CONFIRM_RESULT",
             "reply_id": "worker-reply",
             "confirm_results": [
@@ -660,11 +662,8 @@ def test_worker_hitl_is_persisted_against_child_and_resumes_same_root_run(
                 },
             ],
         },
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
-        client_operation_id="worker-continuation",
-        expected_run_id=run.run_id,
     )
     assert resumed.run_id == run.run_id
     assert resumed.status is RunStatus.RUNNING

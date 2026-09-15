@@ -70,8 +70,7 @@ def _begin(store: RuntimeRunStore):
         session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value=_message(),
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
 
@@ -203,11 +202,8 @@ def test_user_confirmation_reuses_run_and_rejects_kind_tamper_and_rules(tmp_path
             session_id="session-a",
             runtime_agent_id="runtime-a",
             input_value=external,
-            alert_id=None,
-            case_id=None,
+            entities={},
             metadata={},
-            client_operation_id="continuation-kind-tamper",
-            expected_run_id=run.run_id,
         )
 
     def confirmation(*, input_value: str = '{"path":"out.txt","text":"ok"}', rules=None):
@@ -228,33 +224,24 @@ def test_user_confirmation_reuses_run_and_rejects_kind_tamper_and_rules(tmp_path
             session_id="session-a",
             runtime_agent_id="runtime-a",
             input_value=confirmation(rules=[{"behavior": "allow"}]),
-            alert_id=None,
-            case_id=None,
+            entities={},
             metadata={},
-            client_operation_id="continuation-client-rules",
-            expected_run_id=run.run_id,
         )
     with pytest.raises(RuntimeStateConflict, match="cannot be modified"):
         store.begin_run(
             session_id="session-a",
             runtime_agent_id="runtime-a",
             input_value=confirmation(input_value='{"path":"other"}'),
-            alert_id=None,
-            case_id=None,
+            entities={},
             metadata={},
-            client_operation_id="continuation-tool-tamper",
-            expected_run_id=run.run_id,
         )
 
     resumed = store.begin_run(
         session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value=confirmation(),
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
-        client_operation_id="continuation-approved",
-        expected_run_id=run.run_id,
     )
     assert resumed.run_id == run.run_id
     assert resumed.trace_id == run.trace_id
@@ -298,12 +285,9 @@ def test_allow_for_run_uses_only_persisted_suggestions_and_expires_at_terminal(t
         session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value=decision,
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
-        client_operation_id="continuation-run-scope",
         confirmation_scope=ConfirmationScope.RUN,
-        expected_run_id=run.run_id,
     )
 
     expected_rule = {
@@ -357,12 +341,9 @@ def test_allow_for_run_fails_closed_without_safe_suggestions_and_under_concurren
                 "reply_id": "reply-a",
                 "confirm_results": [{"confirmed": True, "tool_call": call}],
             },
-            alert_id=None,
-            case_id=None,
+            entities={},
             metadata={},
-            client_operation_id="continuation-run-scope-race",
             confirmation_scope=ConfirmationScope.RUN,
-            expected_run_id=run.run_id,
         )
 
     with pytest.raises(RuntimeStateConflict, match="requires AgentScope suggested"):
@@ -502,11 +483,8 @@ def test_external_result_requires_exact_identity_and_terminal_state(tmp_path) ->
                 "reply_id": "reply-a",
                 "execution_results": [{"type": "tool_result", "id": "external-a", "name": name, "output": "done", "state": state}],
             },
-            alert_id=None,
-            case_id=None,
+            entities={},
             metadata={},
-            client_operation_id="continuation-external",
-            expected_run_id=run.run_id,
         )
 
     with pytest.raises(RuntimeStateConflict, match="terminal tool state"):
@@ -516,7 +494,7 @@ def test_external_result_requires_exact_identity_and_terminal_state(tmp_path) ->
     assert resume("success").run_id == run.run_id
 
 
-def test_hitl_allows_exact_partial_batch_and_rejects_stale_run_or_mixed_kind(tmp_path) -> None:
+def test_hitl_allows_exact_partial_batch_and_rejects_foreign_reply_or_mixed_kind(tmp_path) -> None:
     store = _store(tmp_path)
     run = _begin(store)
     store.mark_trigger_started(run.run_id)
@@ -537,27 +515,21 @@ def test_hitl_allows_exact_partial_batch_and_rejects_stale_run_or_mixed_kind(tmp
         "confirm_results": [{"confirmed": False, "tool_call": deepcopy(calls[0])}],
     }
 
-    with pytest.raises(RuntimeStateConflict, match="expected_run_id"):
+    with pytest.raises(RuntimeStateConflict, match="unknown or ambiguous"):
         store.begin_run(
             session_id="session-a",
             runtime_agent_id="runtime-a",
-            input_value=deepcopy(decision),
-            alert_id=None,
-            case_id=None,
+            input_value={**decision, "reply_id": "foreign-reply"},
+            entities={},
             metadata={},
-            client_operation_id="continuation-stale-run",
-            expected_run_id="run-stale",
         )
 
     resumed = store.begin_run(
         session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value=decision,
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
-        client_operation_id="continuation-partial-batch",
-        expected_run_id=run.run_id,
     )
     assert resumed.run_id == run.run_id
     with store.Session() as db:
@@ -733,8 +705,7 @@ def test_client_metadata_cannot_preseed_recovery_control_facts(tmp_path) -> None
         session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value=_message(),
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={
             "business_label": "preserved",
             "cancellation_requested": True,

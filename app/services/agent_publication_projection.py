@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import AgentChangeSetModel
-from app.services.agent_governance_projections import matching_passed_test_run, projected_publication_blocker
+from app.services.agent_governance_projections import matching_passed_test_run, matching_recorded_passed_test_run, projected_publication_blocker
 from app.services.agent_publication import PublicationIntent
 
 
@@ -34,13 +34,21 @@ def project_change_set_publication_state(
             if latest_candidate_test_run and candidate
             else None
         )
-    passed_run = matching_passed_test_run(
+    matcher = matching_recorded_passed_test_run if row.status == "published" else matching_passed_test_run
+    passed_run = matcher(
         candidate_run,
         agent_id=agent_id,
         commit_sha=candidate,
         change_set_id=str(row.change_set_id),
         not_before=str(change_set.get("evidence_not_before") or "") or None,
     )
+    if row.status == "published" and (
+        publication_evidence is None
+        or passed_run is None
+        or passed_run["test_run_id"] != publication_evidence["test_run_id"]
+        or passed_run["suite_digest"] != publication_evidence["suite_digest"]
+    ):
+        passed_run = None
     change_set["latest_test_run_id"] = passed_run.get("test_run_id") if passed_run else None
     change_set["latest_test_run"] = passed_run
     change_set["publication_blocker"] = projected_publication_blocker(change_set, passed_run)

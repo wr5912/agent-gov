@@ -58,28 +58,26 @@ _COMPONENT_DESCRIPTIONS: Mapping[str, str] = {
     "NormalizedFeedbackUpsertRequest": "Replace the editable normalized-feedback artifact for one improvement.",
     "OptimizationChange": "One concrete target and change pair in an optimization plan.",
     "OptimizationPlanUpsertRequest": "Replace the editable optimization-plan artifact for one improvement.",
-    "PendingCorrelationResolveRequest": "Supply identifiers that resolve one pending SOC event correlation.",
+    "PendingCorrelationResolveRequest": "Supply identifiers that resolve one pending business event correlation.",
     "RuntimeChatRequest": "Start an AgentScope turn or resume the exact run waiting for a native HITL result.",
     "RuntimeSessionCreateRequest": "Create an AgentScope session pinned to the published immutable Harness version.",
-    "SocEventIngestRequest": "Ingest one typed SOC event and attempt deterministic run correlation.",
+    "FeedbackEventIngestRequest": "Ingest one business event and attempt deterministic run correlation. Reusing event_id requires the same normalized immutable request.",
     "WorkspaceRestoreRequest": "Restore a historical Agent workspace tree as a new commit.",
 }
 
 
 _FIELD_DOCS: Mapping[str, InputDoc] = {
-    "actor_id": InputDoc("Identifier of the human or system actor that caused the SOC event.", "analyst-17"),
-    "after": InputDoc("Structured value after the observed SOC change.", {"verdict": "malicious"}),
+    "actor_id": InputDoc("Identifier of the human or system actor that caused the business event.", "analyst-17"),
+    "after": InputDoc("Structured value after the observed business change.", {"verdict": "malicious"}),
     "agent_id": InputDoc("Registered business Agent identifier.", "security-operations-expert"),
     "agent_data": InputDoc("Reviewed AgentScope fields to write into the isolated Git candidate.", {"name": "SOC evidence reviewer"}),
     "agent_version_id": InputDoc("Agent revision associated with the feedback.", "agent-ver-20260729"),
-    "alert_id": InputDoc("SOC alert identifier used for correlation or feedback routing.", "alert-20260729-001"),
     "asset_type": InputDoc("Governed asset category.", "methodology"),
     "auto_captured": InputDoc("Whether the source was captured automatically rather than entered by an analyst.", True),
     "auto_merge": InputDoc("Whether deterministic duplicate detection may merge the new improvement automatically.", False),
     "base_commit_sha": InputDoc("Expected Git commit from which the candidate change set starts.", "a1b2c3d4e5f6"),
-    "before": InputDoc("Structured value before the observed SOC change.", {"verdict": "unknown"}),
+    "before": InputDoc("Structured value before the observed business change.", {"verdict": "unknown"}),
     "body": InputDoc("Governed asset body.", "所有高危处置必须同时记录证据来源。"),
-    "case_id": InputDoc("SOC business-case identifier used for correlation or feedback routing.", "case-20260729-001"),
     "candidate_commit_sha": InputDoc("Exact immutable candidate Git commit being approved.", "b" * 40),
     "change": InputDoc("Concrete modification to make to the selected target.", "补充停止后续聊的并发回归测试。"),
     "change_set_id": InputDoc("Agent change set associated with this test session.", "chg-20260729-001"),
@@ -94,22 +92,17 @@ _FIELD_DOCS: Mapping[str, InputDoc] = {
     "context_buffer_ratio": InputDoc("Fraction of the context window retained as a safety buffer.", 0.2),
     "context_config": InputDoc("AgentScope context-window and compression settings.", {}),
     "commit_sha": InputDoc("Git commit to test; omit to use the route's documented current revision.", "a1b2c3d4e5f6"),
-    "client_operation_id": InputDoc(
-        "Caller-stable idempotency identifier for one logical AgentScope turn.",
-        "soc-console-turn-20260909-001",
-    ),
-    "confidence": InputDoc("Confidence assigned to the feedback or SOC event.", "high"),
-    "confirmation_scope": InputDoc(
-        "Permission scope for a native USER_CONFIRM_RESULT: once or the current run only.",
-        "once",
-    ),
+    "confidence": InputDoc("Confidence assigned to the feedback or business event.", "high"),
     "cron_expression": InputDoc("Five-field cron expression interpreted in the supplied timezone.", "0 2 * * *"),
     "detail_sha256": InputDoc("SHA-256 of the canonical complete file-Diff response.", "c" * 64),
     "diff_digest": InputDoc("SHA-256 of the complete candidate Diff summary.", "d" * 64),
     "enabled": InputDoc("Whether scheduled Agent regression testing is enabled.", True),
-    "entities": InputDoc("Entity identifiers grouped by entity kind.", {"host": ["host-17"], "user": ["alice"]}),
-    "event_id": InputDoc("Caller-stable SOC event identifier used for idempotent ingestion.", "soc-event-20260729-001"),
-    "event_type": InputDoc("Closed SOC event type that describes the observed change.", "case.verdict_changed"),
+    "entities": InputDoc("业务对象引用按类型分组；不承载治理 feedback_case_id 的归属关系。", {"document": ["guide-1"]}),
+    "event_id": InputDoc(
+        "Caller-stable globally unique idempotency identifier. A retry must keep the same normalized immutable request; different content returns 409 FEEDBACK_EVENT_ID_CONFLICT.",
+        "business-event-20260729-001",
+    ),
+    "event_type": InputDoc("Nonempty business event type describing the observed change.", "case.verdict_changed"),
     "evidence": InputDoc("Evidence points supporting the attribution.", ["停止后同一 session 的 active turn 已释放。"]),
     "expected_current_commit_sha": InputDoc("Current workspace HEAD used as an optimistic concurrency guard.", "a1b2c3d4e5f6"),
     "expected_candidate_commit_sha": InputDoc(
@@ -117,10 +110,6 @@ _FIELD_DOCS: Mapping[str, InputDoc] = {
         "b" * 40,
     ),
     "expected_diff_digest": InputDoc("SHA-256 of the complete reviewed candidate Diff.", "d" * 64),
-    "expected_run_id": InputDoc(
-        "Existing AgentGov run that must own the pending native HITL action.",
-        "run-20260909-001",
-    ),
     "expected_suite_digest": InputDoc("SHA-256 identity of the reviewed candidate test suite.", "e" * 64),
     "expected_test_run_id": InputDoc("Exact candidate test run reviewed for normal publication.", "atr-20260729-tested-candidate"),
     "expected_sha256": InputDoc("SHA-256 returned by the preceding read; rejects stale replacement writes.", "7f83b1657ff1fc53b92dc18148a1d65dfa13514e"),
@@ -131,8 +120,9 @@ _FIELD_DOCS: Mapping[str, InputDoc] = {
     "force_reason": InputDoc("Required audit reason when force is true.", "紧急修复已由值班负责人复核。"),
     "impact": InputDoc("Observed or expected impact.", "高：停止后的下一轮无法继续会话。"),
     "input": InputDoc(
-        "Native AgentScope input: a user Message, USER_CONFIRM_RESULT, or EXTERNAL_EXECUTION_RESULT.",
+        "AgentScope 原生 Msg、Msg 列表、确认/外部执行事件或 null；同次重试复用显式 input.id，无 ID 请求不自动重发。",
         {
+            "id": "user-input-20260913-001",
             "name": "user",
             "role": "user",
             "content": [{"type": "text", "text": "请核查当前告警并给出处置建议"}],
@@ -181,7 +171,7 @@ _FIELD_DOCS: Mapping[str, InputDoc] = {
         "Non-empty typed source list; all sources must resolve to the same business Agent.",
         [{"source_kind": "signal", "source_id": "signal-20260729-001"}],
     ),
-    "source_system": InputDoc("System that produced the SOC event.", "soc-console"),
+    "source_system": InputDoc("System that produced the business event.", "soc-console"),
     "source_type": InputDoc("Feedback signal source category.", "explicit_feedback"),
     "stage": InputDoc("Target improvement lifecycle stage.", "attribution"),
     "suite_digest": InputDoc("SHA-256 identity of the exact candidate test suite.", "e" * 64),
@@ -210,7 +200,76 @@ _FIELD_DOCS: Mapping[str, InputDoc] = {
 }
 
 
+# 仅补文档注释；类型、必填项、枚举与默认值继续由固定版本 AgentScope 导出。
+_NATIVE_COMPONENTS = frozenset(
+    {
+        "Base64Source",
+        "URLSource",
+        "ConfirmResult",
+        "DataBlock",
+        "ExternalExecutionResultEvent",
+        "HintBlock",
+        "Msg",
+        "PermissionRule",
+        "TextBlock",
+        "ThinkingBlock",
+        "ToolCallBlock",
+        "ToolResultBlock",
+        "Usage",
+        "UserConfirmResultEvent",
+        "ErrorInfo",
+    }
+)
+_NATIVE_FIELD_DOCS: Mapping[str, InputDoc] = {
+    "id": InputDoc("AgentScope 原生对象 ID；消息或事件重试复用显式 ID，工具结果保留对应调用 ID。", "native-input-001"),
+    "created_at": InputDoc("AgentScope 原生对象的创建时间；省略时由原生模型生成。", "2026-09-14T00:00:00+00:00"),
+    "finished_at": InputDoc("原生对象完成时间；未完成时为 null。", None),
+    "data": InputDoc("Base64 编码的文件内容，不含 data URL 前缀。", "SGVsbG8="),
+    "media_type": InputDoc("文件内容的 MIME 类型。", "text/plain"),
+    "url": InputDoc("原生多模态资料的 URL；可用性与读取能力由 Runtime 决定。", "https://example.com/document.txt"),
+    "confirmed": InputDoc("是否允许当前精确工具调用继续执行。", True),
+    "tool_call": InputDoc("从待确认事件原样取得的工具调用。", {"type": "tool_call", "id": "tool-001", "name": "Read", "input": "{}"}),
+    "rules": InputDoc("原生确认规则字段；AgentGov 客户端应省略，不用它修改已发布权限。", None),
+    "reply_id": InputDoc("需要继续的原生 reply ID，取自当前待确认或待外部执行事件。", "reply-001"),
+    "confirm_results": InputDoc("当前 reply 的逐项原生确认结果。", [{"confirmed": True, "tool_call": {"id": "tool-001", "name": "Read", "input": "{}"}}]),
+    "execution_results": InputDoc(
+        "当前 reply 的原生外部执行结果，逐项对应原工具调用 ID。", [{"id": "tool-001", "name": "Read", "output": "资料读取完成", "state": "success"}]
+    ),
+    "hint": InputDoc("原生提示文本或文本/资料块列表。", "请先核对已提供的资料。"),
+    "content": InputDoc("有序的 AgentScope 原生消息内容块。", [{"type": "text", "text": "你好"}]),
+    "usage": InputDoc("原生模型 token 用量；尚无统计时为 null。", None),
+    "finished_reason": InputDoc("原生回复结束原因；消息尚未完成时为 null。", None),
+    "structured_output": InputDoc("原生结构化输出；未产生时为 null。", None),
+    "error": InputDoc("原生结构化错误；无错误时为 null，不替代正常消息正文。", None),
+    "tool_name": InputDoc("该原生权限规则作用的工具名称。", "Read"),
+    "rule_content": InputDoc("原生工具规则的匹配内容；没有额外条件时为 null。", None),
+    "behavior": InputDoc("原生权限匹配行为，取值以 AgentScope 枚举为准。", "ask"),
+    "thinking": InputDoc("原生推理内容块的文本；是否提供由模型决定。", "核对资料中的事实。"),
+    "suggested_rules": InputDoc("工具提出的原生规则建议，不等于已批准权限。", []),
+    "output": InputDoc("工具结果的原生文本或内容块列表。", "资料读取完成"),
+    "metadata": InputDoc("AgentScope 原生元数据；不表示 AgentGov 或 Langfuse 会保存原始业务正文。", {}),
+    "input_tokens": InputDoc("此次原生模型调用的输入 token 数。", 10),
+    "output_tokens": InputDoc("此次原生模型调用的输出 token 数。", 5),
+    "cache_input_tokens": InputDoc("此次调用命中的输入缓存 token 数。", 0),
+    "cache_creation_input_tokens": InputDoc("此次调用创建输入缓存使用的 token 数。", 0),
+}
+
+
 _FIELD_OVERRIDES: Mapping[tuple[str, str], InputDoc] = {
+    ("FeedbackEventIngestRequest", "timestamp"): InputDoc(
+        "Timezone-aware RFC 3339 timestamp; equivalent offsets are normalized to the same UTC instant without losing fractional precision.",
+        "2026-07-29T12:00:00Z",
+    ),
+    ("Msg", "name"): InputDoc("原生消息发送者名称；不是会话名或幂等键。", "user"),
+    ("DataBlock", "name"): InputDoc("资料块的可选显示名称。", "document.txt"),
+    ("DataBlock", "source"): InputDoc("原生 Base64 或 URL 资料来源对象。", {"type": "base64", "data": "SGVsbG8=", "media_type": "text/plain"}),
+    ("ToolCallBlock", "name"): InputDoc("原生工具调用名称。", "Read"),
+    ("ToolCallBlock", "input"): InputDoc("原生工具调用参数的 JSON 字符串，确认时保留原值。", '{"path":"references/README.md"}'),
+    ("ToolCallBlock", "state"): InputDoc("原生工具调用状态。", "pending"),
+    ("ToolResultBlock", "name"): InputDoc("与原工具调用对应的名称。", "Read"),
+    ("ToolResultBlock", "state"): InputDoc("原生工具结果状态。", "running"),
+    ("ErrorInfo", "type"): InputDoc("原生结构化错误类别。", "unknown"),
+    ("ErrorInfo", "message"): InputDoc("原生错误的可读说明，与正常回答正文分开。", "The session could not be prepared."),
     ("RuntimeChatRequest", "agent_id"): InputDoc(
         "AgentScope runtime_agent_id pinned by the target Session.",
         "runtime-agent-version-20260909-001",
@@ -258,7 +317,7 @@ _PATH_PARAMETER_DOCS: Mapping[str, InputDoc] = {
     "agent_id": InputDoc("Registered business Agent identifier addressed by this operation.", "security-operations-expert"),
     "asset_id": InputDoc("Governed asset identifier addressed by this operation.", "asset-20260729-001"),
     "change_set_id": InputDoc("Agent change set identifier addressed by this operation.", "chg-20260729-001"),
-    "event_id": InputDoc("SOC event identifier addressed by this operation.", "soc-event-20260729-001"),
+    "event_id": InputDoc("Business event identifier addressed by this operation.", "business-event-20260729-001"),
     "evidence_package_id": InputDoc("Evidence package identifier addressed by this operation.", "evp-20260729-001"),
     "feedback_case_id": InputDoc("First-class feedback case identifier addressed by this operation.", "fbc-20260729-001"),
     "feedback_id": InputDoc("Improvement feedback identifier addressed by this operation.", "feedback-20260729-001"),
@@ -275,7 +334,7 @@ _PATH_PARAMETER_DOCS: Mapping[str, InputDoc] = {
     "session_id": InputDoc("AgentScope session identifier addressed by this operation.", "session-20260909-001"),
     "signal_id": InputDoc("Feedback signal identifier addressed by this operation.", "signal-20260729-001"),
     "source_id": InputDoc("Identifier within the source_kind namespace.", "signal-20260729-001"),
-    "source_kind": InputDoc("Feedback source namespace: signal, soc_event, or pending_correlation.", "signal"),
+    "source_kind": InputDoc("Feedback source namespace: signal, event, or pending_correlation.", "signal"),
     "test_run_id": InputDoc("Platform Agent test-run identifier.", "test-run-20260729-001"),
     "test_session_id": InputDoc("Isolated Agent test-session identifier.", "test-session-20260729-001"),
     "trace_id": InputDoc("Langfuse trace identifier addressed by this debug operation.", "trace-20260729-001"),
@@ -285,17 +344,17 @@ _PATH_PARAMETER_DOCS: Mapping[str, InputDoc] = {
 _QUERY_PARAMETER_DOCS: Mapping[str, InputDoc] = {
     "before": InputDoc("Opaque AgentScope message cursor returned by the previous page.", "message-cursor-from-previous-page"),
     "agent_id": InputDoc("Registered business Agent selector or ownership filter for this operation.", "security-operations-expert"),
-    "alert_id": InputDoc("Filter records correlated with this SOC alert.", "alert-20260729-001"),
+    "entity_type": InputDoc("业务对象类型；必须与 entity_id 成对，精确匹配。", "document"),
     "asset_type": InputDoc("Filter assets by the closed governed asset category.", "methodology"),
-    "case_id": InputDoc("Filter records correlated with this SOC business case.", "case-20260729-001"),
+    "entity_id": InputDoc("所选业务对象类型中的完整标识；不是反馈 Case 归属。", "guide-1"),
     "change_set_id": InputDoc("Filter test runs by Agent change set.", "chg-20260729-001"),
     "commit_sha": InputDoc("Read or filter against this exact Agent repository commit.", "a1b2c3d4e5f6"),
-    "client_operation_id": InputDoc(
-        "Resolve the exact AgentGov run admitted for this caller-stable operation identifier.",
-        "soc-console-turn-20260909-001",
-    ),
+    "input_id": InputDoc("按原顺序重复提供显式原生消息/事件 ID，查询同一 Session 绑定内的精确操作。", ["user-input-20260913-001"]),
+    "operation_kind": InputDoc("原生输入动作类别；初始消息与确认/外部执行分别关联。", "initial"),
+    "before_created_at": InputDoc("上一页最后一条 run 的 created_at，必须与 before_run_id 一同使用。", "2026-09-13T00:00:00+00:00"),
+    "before_run_id": InputDoc("上一页最后一条 run 的 run_id，用于时间相同记录的稳定分页。", "run-previous-page-last"),
     "cursor": InputDoc("Opaque pagination cursor returned by the preceding history page.", "cursor-20260729-001"),
-    "event_type": InputDoc("Filter SOC events by the documented closed event-type enum.", "case.verdict_changed"),
+    "event_type": InputDoc("Filter business events by the exact caller-defined event type.", "case.verdict_changed"),
     "include_host_mounts": InputDoc("Include host mount paths in operator diagnostics.", False),
     "include_messages": InputDoc("Deprecated no-op; canonical messages must be read from AgentScope.", False),
     "job_type": InputDoc("Filter historical Agent jobs by the documented closed job type.", "feedback_attribution"),
@@ -319,14 +378,18 @@ _QUERY_PARAMETER_DOCS: Mapping[str, InputDoc] = {
 
 
 _HEADER_PARAMETER_DOCS: Mapping[str, InputDoc] = {
+    "X-AgentGov-Confirmation-Scope": InputDoc("仅对明确选择本次运行允许的 USER_CONFIRM_RESULT 发送 run；其他消息及单次允许/拒绝不发送。", "run"),
     "Idempotency-Key": InputDoc(
-        "Caller-stable key that makes AgentScope session creation safe to retry.",
+        "Caller-stable key that makes supported resource creation safe to retry after an ambiguous transport failure.",
         "session-create-20260909-001",
     ),
 }
 
 
 _QUERY_PARAMETER_OVERRIDES: Mapping[tuple[str, str, str], InputDoc] = {
+    ("/api/agent-runs/by-input-identity", "get", "agent_id"): InputDoc(
+        "目标 Session 已绑定的 AgentScope runtime_agent_id，不是业务 Agent 名称。", "runtime-agent-version-20260909-001"
+    ),
     ("/api/agent-change-sets", "get", "status"): InputDoc(
         "Filter Agent change sets by their governed change-set lifecycle state.",
         "draft",
@@ -395,13 +458,16 @@ def apply_request_input_documentation(schema: OpenApiMutableMapping) -> None:
         for field_name, raw_property in properties.items():
             if not isinstance(field_name, str) or not isinstance(raw_property, MutableMapping):
                 continue
-            documentation = _FIELD_OVERRIDES.get((component_name, field_name)) or _FIELD_DOCS.get(field_name)
+            documentation = _FIELD_OVERRIDES.get((component_name, field_name))
+            if component_name in _NATIVE_COMPONENTS:
+                documentation = documentation or _NATIVE_FIELD_DOCS.get(field_name)
+            documentation = documentation or _FIELD_DOCS.get(field_name)
             if documentation is None:
                 continue
             if not _meaningful(raw_property.get("description")):
                 raw_property["description"] = documentation.description
             if not raw_property.get("examples") and "example" not in raw_property:
-                raw_property["examples"] = [deepcopy(documentation.example)]
+                raw_property["examples"] = [deepcopy(raw_property.get("const", documentation.example))]
 
     for path, path_item in paths.items():
         if not isinstance(path, str) or not isinstance(path_item, MutableMapping):

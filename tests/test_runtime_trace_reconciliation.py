@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from app.runtime.integrations.runtime_langfuse import project_validation_trace
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import make_session_factory
 from app.runtime_gateway.contracts import RuntimeReceipt
@@ -20,7 +21,7 @@ def _store(tmp_path) -> RuntimeRunStore:
     return store
 
 
-def _terminal_run(store: RuntimeRunStore, suffix: str):
+def _terminal_run(store: RuntimeRunStore, suffix: str, *, tool_state: str | None = None):
     session_id = f"session-{suffix}"
     reply_id = f"reply-{suffix}"
     store.bind_session(
@@ -34,11 +35,23 @@ def _terminal_run(store: RuntimeRunStore, suffix: str):
         session_id=session_id,
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)
+    if tool_state is not None:
+        store.apply_receipt(
+            RuntimeReceipt(
+                receipt_id=f"receipt-{suffix}-tool",
+                event_id=f"event-{suffix}-tool",
+                session_id=session_id,
+                run_id=run.run_id,
+                reply_id=reply_id,
+                type="TOOL_RESULT_END",
+                payload={"tool_call_id": "call-1", "state": tool_state},
+                trace_id=run.trace_id,
+            ),
+        )
     for index, (event_type, payload) in enumerate(
         (
             ("REPLY_END", {"finished_reason": "completed"}),
@@ -192,3 +205,43 @@ def test_semantically_incomplete_trace_uses_terminal_time_deadline(tmp_path) -> 
     )
     assert after_deadline.incomplete == 1
     assert store.get_run(run.run_id).trace_status == "incomplete"
+
+
+def test_reconciliation_uses_durable_tool_state_and_real_langfuse_operation_shape(tmp_path) -> None:
+    store = _store(tmp_path)
+    executed = _terminal_run(store, "tool-error", tool_state="error")
+    denied = _terminal_run(store, "tool-denied", tool_state="denied")
+    executed_trace = _complete_trace(executed)
+    observations = executed_trace["observations"]
+    assert isinstance(observations, list)
+    observations.append(
+        {
+            "id": f"tool-{executed.run_id}",
+            "name": None,
+            "traceId": executed.trace_id,
+            "parentObservationId": f"invoke-{executed.run_id}",
+            "endTime": "2026-09-10T00:00:01Z",
+            "metadata": {
+                "attributes": {
+                    "gen_ai.operation.name": "execute_tool",
+                    "gen_ai.conversation.id": executed.session_id,
+                    "gen_ai.tool.call.id": "call-1",
+                }
+            },
+        },
+    )
+    traces = {
+        executed.trace_id: project_validation_trace(executed_trace),
+        denied.trace_id: project_validation_trace(_complete_trace(denied)),
+    }
+
+    report = reconcile_pending_traces(
+        store=store,
+        trace_fetcher=lambda trace_id: traces[trace_id],
+        now=max(_completed_at(executed), _completed_at(denied)) + timedelta(seconds=1),
+    )
+
+    assert report.scanned == report.completed == 2
+    assert report.incomplete == report.pending == report.failures == 0
+    assert store.get_run(executed.run_id).trace_status == "complete"
+    assert store.get_run(denied.run_id).trace_status == "complete"

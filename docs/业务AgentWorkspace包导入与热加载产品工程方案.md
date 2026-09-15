@@ -69,6 +69,10 @@ Provider credential、治理 ID、发布状态、版本字段、MCP secret、Wor
 字段到 Git 的映射集中在一个边界：`system_prompt` 写入 `AGENT.md`，其余受支持字段写入
 `agent.yaml`；未知字段和 schema 漂移必须 fail closed，不能静默丢弃。
 
+表单候选同时生成版本化的 Harness 文件契约测试与真实基础对话测试。前者在本地读取实际文件，
+后者使用平台 `agent` fixture 发起真实 AgentScope 调用；非空回复只说明基础可用，不替代业务效果
+断言。发布仍需用户显式运行精确 commit 的完整测试，不把表单创建或静态断言直接标成通过。
+
 ### 3.2 完整 Workspace 包
 
 ```text
@@ -88,6 +92,7 @@ workspace/
   subagents/<name>/AGENT.md
   tests/README.md
   tests/test_*.py
+  references/**
   ...其他受策略允许的普通文件
 ```
 
@@ -98,6 +103,13 @@ workspace/
 运行态 Session/Message、AgentGov run/feedback、Langfuse 数据、数据库和 Runtime 可写状态不得进入包。
 敏感 live Workspace 可以按字节导入/导出，但回流源码仓库初始化源前必须在仓库外形成候选并通过
 `make runtime-bootstrap-scan`；项目仓库、日志和回执不得暴露 secret。
+
+需要供真实文件工具读取的版本化业务资料放在 `references/`。该目录参与同一 Harness 内容摘要，
+Runtime 在现有 Workspace 初始化时物化到 `/workspace/references`，沿用固定版本；
+工具权限负责禁止修改参考资料，不宣称该副本是内核级只读挂载。旧 Workspace 缺少该目录时原子
+补齐，已有但与固定源不一致则明确拒绝，不覆盖运行数据。没有 `references/` 的旧 Harness 摘要
+保持不变；已有该目录的旧外部包须形成新版候选并发布，不能原地改写既有 Runtime 绑定。
+这不把完整 Harness、MCP 配置或 `.env` 暴露给文件工具，也不表示包内任意普通文件都会自动加载。
 
 ## 4. 候选回执与编辑
 

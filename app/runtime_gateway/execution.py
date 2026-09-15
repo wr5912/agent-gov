@@ -18,6 +18,7 @@ from agentgov_agentscope_contract import session_workspace_id
 
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_job_types import FormatterOutputModel
+from app.runtime.feedback_entities import FeedbackEntities
 from app.runtime.json_types import JsonObject
 from app.runtime.schemas import ChatRequest, ChatResponse
 from app.runtime.settings import AppSettings
@@ -36,6 +37,7 @@ from ._execution_support import (
     _reject_symlinks,
     _requires_runtime_restart,
     _stable_session_uuid,
+    _tool_activity_from_current_run,
     _user_message,
     _with_json_contract,
 )
@@ -51,7 +53,7 @@ from .run_trigger import (
     cancel_active_session_run,
     observe_background_run,
 )
-from .store import RuntimeRunStore, RuntimeStateConflict, harness_digest
+from .store import RuntimeRunStore, RuntimeStateConflict, RuntimeTemplateRestartRequired, harness_digest
 
 
 @dataclass(frozen=True)
@@ -194,7 +196,7 @@ class AgentScopeExecutionService:
             source_kinds={"candidate_snapshot", "staged"},
         ):
             try:
-                await self._release_key(row.cache_key)
+                await self._release_key(row.cache_key, preserve_restart=False)
             except Exception:
                 continue
             cleaned += 1
@@ -269,7 +271,7 @@ class AgentScopeExecutionService:
             except Exception as exc:
                 restart_required = await self._record_resource_failure(plan, source_root, stage, exc)
                 if restart_required:
-                    raise RuntimeStateConflict(
+                    raise RuntimeTemplateRestartRequired(
                         "Candidate subagent templates are prepared; restart AgentScope Runtime and retry the same Session",
                     ) from exc
                 raise
@@ -466,10 +468,8 @@ class AgentScopeExecutionService:
                 observed = await self._trigger_and_observe(
                     resource,
                     input_message,
-                    alert_id=req.alert_id,
-                    case_id=req.case_id,
+                    entities=req.entities,
                     metadata=run_metadata,
-                    client_operation_id=f"backend:{uuid.uuid4().hex}",
                 )
         except Exception:
             await cancel_active_session_run(
@@ -489,6 +489,13 @@ class AgentScopeExecutionService:
             messages,
             observed.terminal.reply_ids,
         )
+        tool_calls = _tool_activity_from_current_run(
+            messages=messages,
+            reply_ids=observed.terminal.reply_ids,
+            run_id=observed.terminal.run_id,
+            session_id=observed.terminal.session_id,
+            expectations=self.store.trace_expectations(observed.terminal.run_id),
+        )
         if observed.terminal.status is RunStatus.SUCCEEDED and canonical is None:
             raise RuntimeStateConflict("AgentScope canonical final reply is unavailable")
         errors: list[str] = []
@@ -507,6 +514,7 @@ class AgentScopeExecutionService:
             agent_activity={
                 "event_types": [str(item.get("type")) for item in observed.events],
                 "reply_ids": observed.terminal.reply_ids,
+                "tool_calls": tool_calls,
             },
             usage=canonical.usage if canonical is not None else None,
             stop_reason=(canonical.finished_reason if canonical is not None else None) or observed.terminal.terminal_reason or "",
@@ -518,10 +526,8 @@ class AgentScopeExecutionService:
         resource: _ExecutionResource,
         input_message: JsonObject,
         *,
-        alert_id: str | None,
-        case_id: str | None,
+        entities: FeedbackEntities,
         metadata: JsonObject,
-        client_operation_id: str,
     ) -> _ObservedExecution:
         async with self.client.stream(
             f"/sessions/{resource.session_id}/stream",
@@ -533,10 +539,8 @@ class AgentScopeExecutionService:
                 session_id=resource.session_id,
                 runtime_agent_id=resource.runtime_agent_id,
                 input_value=input_message,
-                alert_id=alert_id,
-                case_id=case_id,
+                entities=entities,
                 metadata=metadata,
-                client_operation_id=client_operation_id,
             )
             return await observe_background_run(
                 response,
@@ -544,11 +548,15 @@ class AgentScopeExecutionService:
                 run_id=triggered.run.run_id,
             )
 
-    async def _release_key(self, cache_key: str) -> None:
+    async def _release_key(self, cache_key: str, *, preserve_restart: bool = True) -> None:
         async with self._lock:
             resource = self._resources.pop(cache_key, None)
         ledger = self.store.get_ephemeral_resource(cache_key)
         if ledger is None or ledger.status == "cleanup_complete":
+            return
+        if preserve_restart and ledger.status == "awaiting_restart":
+            # pytest teardown 结束测试 Session，但不能删掉下次 Runtime 启动要加载的模板。
+            # 仍由现有恢复账本和 TTL 回收；周期恢复只对已过期条目显式取消保留。
             return
         if resource is not None:
             await cancel_active_session_run(

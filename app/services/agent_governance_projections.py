@@ -10,8 +10,10 @@ import hashlib
 import json
 from collections.abc import Callable
 
+from app.agent_testing.report_validation import passed_report_errors
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import AgentChangeSetEventModel, AgentReleaseModel
+from app.services.agent_test_receipts import recorded_report_conflicts
 
 
 def event_to_payload(row: AgentChangeSetEventModel) -> JsonObject:
@@ -124,7 +126,7 @@ def manual_approval_paths(diff: JsonObject) -> tuple[str, ...]:
     return tuple(sorted(sensitive))
 
 
-def matching_passed_test_run(
+def matching_recorded_passed_test_run(
     value: object,
     *,
     agent_id: str,
@@ -132,12 +134,15 @@ def matching_passed_test_run(
     change_set_id: str | None,
     not_before: str | None = None,
 ) -> JsonObject | None:
+    """读取既有 passed 事实；不代表候选满足当前发布准入规则。"""
+
     if not isinstance(value, dict):
         return None
     if (
         str(value.get("agent_id") or "") != agent_id
         or str(value.get("commit_sha") or "") != commit_sha
         or str(value.get("status") or "") != "passed"
+        or str(value.get("source") or "") != "release_check"
         or (change_set_id is not None and str(value.get("change_set_id") or "") != change_set_id)
         or not str(value.get("test_run_id") or "")
         or not str(value.get("suite_digest") or "")
@@ -146,6 +151,52 @@ def matching_passed_test_run(
         return None
     items = value.get("items")
     if not isinstance(items, list) or not items or any(not isinstance(item, dict) or item.get("outcome") != "passed" for item in items):
+        return None
+    nodeids = [item.get("nodeid") for item in items]
+    if any(not isinstance(nodeid, str) or not nodeid for nodeid in nodeids) or len(set(nodeids)) != len(nodeids):
+        return None
+    if recorded_report_conflicts(value.get("report"), nodeids=nodeids, test_run_id=str(value["test_run_id"]), commit_sha=commit_sha):
+        return None
+    return value
+
+
+def matching_passed_test_run(
+    value: object,
+    *,
+    agent_id: str,
+    commit_sha: str,
+    change_set_id: str | None,
+    not_before: str | None = None,
+) -> JsonObject | None:
+    value = matching_recorded_passed_test_run(
+        value,
+        agent_id=agent_id,
+        commit_sha=commit_sha,
+        change_set_id=change_set_id,
+        not_before=not_before,
+    )
+    if value is None:
+        return None
+    items = value.get("items")
+    if not isinstance(items, list):
+        return None
+    report = value.get("report")
+    invocations = report.get("invocations") if isinstance(report, dict) else None
+    if not isinstance(report, dict) or not isinstance(invocations, list) or any(not isinstance(item, dict) for item in invocations):
+        return None
+    if passed_report_errors(
+        report,
+        actual_exit_code=0,
+        release_check=True,
+        attested_invocations=invocations,
+        test_run_id=str(value["test_run_id"]),
+        commit_sha=commit_sha,
+    ):
+        return None
+    reported_items = report.get("items")
+    if not isinstance(reported_items, list) or {str(item["nodeid"]) for item in reported_items if isinstance(item, dict)} != {
+        str(item["nodeid"]) for item in items if isinstance(item, dict)
+    }:
         return None
     return value
 

@@ -4,11 +4,12 @@ import { createRequire } from "node:module";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  apiJson, apiRequest, assertExactRuntimeRun, getCurrentRuntimeAgent, jsonInit, waitForTerminalRuntimeRun,
+  apiJson, apiRequest, assertExactRuntimeRun, getCurrentRuntimeAgent, jsonInit, lookupRuntimeRunByNativeInput, waitForTerminalRuntimeRun,
 } from "./improvement_ui_e2e/runtime_client.mjs";
+import { nativeChatReceiptIdentity, nativeChatRequestIdentity } from "./improvement_ui_e2e/native_chat_contract.mjs";
 import {
   deployedNetworkSummary, deployedStreamEvidence, eventually, observeDeployedBrowser,
-  requireDeployedCheck as check, safeBrowserFailure, settleDeployedNetwork, textFingerprint,
+  recoverDeployedOwnedRuns, requireDeployedCheck as check, safeBrowserFailure, settleDeployedNetwork, textFingerprint,
 } from "./improvement_ui_e2e/deployed_playground_evidence.mjs";
 
 const SCOPE = "deployed_playground_two_turn_refresh";
@@ -93,10 +94,13 @@ async function submitThroughUi(page, config, binding, prompt) {
   check(response.ok(), "CHAT_HTTP_FAILED");
   const payload = await response.json();
   const input = response.request().postDataJSON();
-  const runId = (await response.allHeaders())["x-agentgov-run-id"];
-  check(payload?.status === "started" && typeof runId === "string" && runId.length > 0, "CHAT_RECEIPT_INVALID");
-  check(input.agent_id === binding.runtime_agent_id && input.session_id === payload.session_id, "CHAT_IDENTITY_MISMATCH");
-  return { ...binding, run_id: runId, session_id: payload.session_id };
+  const headers = await response.allHeaders();
+  const identity = nativeChatRequestIdentity(input, response.request().headers()["x-agentgov-confirmation-scope"]);
+  const observed = nativeChatReceiptIdentity(identity, payload, headers["x-agentgov-run-id"], headers["x-agentgov-session-id"]);
+  check(identity.agentId === binding.runtime_agent_id && identity.operationKind === "initial" && identity.inputIds?.length > 0,
+    "CHAT_IDENTITY_MISMATCH");
+  return { ...binding, run_id: observed.runId, session_id: observed.sessionId,
+    native_session_id: observed.nativeSessionId, identity };
 }
 
 async function proveOwnership(network, ownership, receipt) {
@@ -167,6 +171,7 @@ async function verifyTurn(page, config, binding, network, ownership, index) {
   const startedAt = performance.now();
   const receipt = await submitThroughUi(page, config, binding, INPUTS[index]);
   await proveOwnership(network, ownership, receipt);
+  assertExactRuntimeRun(await lookupRuntimeRunByNativeInput(config, receipt.identity), receipt);
   const run = await waitForTerminalRuntimeRun(config, receipt);
   await assertSendUnlocked(page);
   const reply = await canonicalReply(config, receipt, run);
@@ -177,6 +182,8 @@ async function verifyTurn(page, config, binding, network, ownership, index) {
   const nativeEvents = await nativeTraceEvidence(page, receipt, reply.replyId);
   return {
     run_id: run.run_id, session_id: run.session_id, status: run.status,
+    input_ids: receipt.identity.inputIds, operation_kind: receipt.identity.operationKind,
+    native_response_session_id: receipt.native_session_id,
     reply_ids: run.reply_ids, persisted_reply_ids: run.persisted_reply_ids,
     final_reply_id: reply.replyId,
     ui_text: textFingerprint(rendered), canonical_text: textFingerprint(reply.text),
@@ -198,6 +205,9 @@ async function verifyRefresh(page, config, binding, sessionId, turns, network) {
     ACTION_TIMEOUT_MS, "REFRESH_CHANGED_VISIBLE_TEXT");
     const run = await apiJson(config, `/api/agent-runs/${encodeURIComponent(turn.run_id)}`);
     assertExactRuntimeRun(run, { ...binding, run_id: turn.run_id, session_id: sessionId });
+    const recovered = await lookupRuntimeRunByNativeInput(config, { agentId: binding.runtime_agent_id,
+      requestedSessionId: sessionId, operationKind: turn.operation_kind, inputIds: turn.input_ids });
+    assertExactRuntimeRun(recovered, { ...binding, run_id: turn.run_id, session_id: sessionId });
     const canonical = await canonicalReply(config, { ...binding, session_id: sessionId }, run);
     check(JSON.stringify(textFingerprint(canonical.text)) === JSON.stringify(turn.canonical_text), "REFRESH_CHANGED_PERSISTED_TEXT");
   }
@@ -245,6 +255,7 @@ async function runBrowser(engine, browserType, config, binding) {
       result.turns.push(await verifyTurn(page, config, binding, network, ownership, index));
     }
     check(result.turns[0].run_id !== result.turns[1].run_id, "TWO_TURNS_REUSED_RUN");
+    check(result.turns[0].input_ids.every((id) => !result.turns[1].input_ids.includes(id)), "TWO_TURNS_REUSED_NATIVE_INPUT");
     check(network.sessionCreates.length === 1 && network.chats.length === 2, "UNEXPECTED_BROWSER_MUTATION_COUNT");
     stage = "refresh";
     await verifyRefresh(page, config, binding, ownership.sessionId, result.turns, network);
@@ -254,7 +265,8 @@ async function runBrowser(engine, browserType, config, binding) {
     result.status = "failed";
     result.failure = safeBrowserFailure(error, stage);
     if (network) await Promise.all([...network.responses]);
-    result.cleanup_failures = await cancelOnlyOwnedRuns(config, ownership, binding);
+    const lookupFailures = network ? await recoverDeployedOwnedRuns(config, network, ownership, binding) : [];
+    result.cleanup_failures = [...lookupFailures, ...await cancelOnlyOwnedRuns(config, ownership, binding)];
   } finally {
     result.session_id = ownership.sessionId || null;
     result.owned_run_ids = [...ownership.runs.keys()];

@@ -1,5 +1,6 @@
 import type { ChatMessage } from "./types/runtime";
 import { isRecord } from "./utils/records";
+import { validateFeedbackEntities } from "./feedbackEntities";
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
@@ -46,8 +47,9 @@ export function mergeChatMessageRunContext(message: ChatMessage, source: unknown
       : hasRunContext
         ? "not_recorded"
         : message.langfuseTraceStatus,
-    alertId: optionalString(source.alert_id) || message.alertId,
-    caseId: optionalString(source.case_id) || message.caseId,
+    entities: source.entities === undefined
+      ? (sameRun ? message.entities : undefined)
+      : validateFeedbackEntities(source.entities),
     runOutcome,
     partial: runOutcome && runOutcome !== "succeeded"
       ? sourceHasPartialAnswer || message.partial

@@ -19,7 +19,7 @@ from typing import Any, TypedDict
 
 from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout
-from app.runtime.errors import ConflictError, RuntimeUnavailableError
+from app.runtime.errors import RuntimeUnavailableError
 from app.runtime.json_types import JsonObject
 from app.runtime.stores.improvement_content_store import (
     AttributionRecord,
@@ -30,11 +30,15 @@ from app.runtime.stores.improvement_content_store import (
 )
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.generated_agent_tests import build_generated_agent_test
+from app.services.improvement_evidence_gate import (
+    FindRunById,
+    ValidatedRunEvidenceSnapshot,
+    require_automatic_feedback_evidence,
+)
 
 logger = logging.getLogger(__name__)
 
 RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
-FindRunById = Callable[[str], JsonObject | None]
 
 
 class OptimizationChangeItem(TypedDict):
@@ -188,7 +192,7 @@ class ImprovementGovernorService:
     ) -> NormalizedFeedbackRecord:
         item = self._improvements.get_improvement(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
-        self._require_automatic_feedback_evidence(feedbacks)
+        self._require_automatic_feedback_evidence(feedbacks, expected_agent_id=_text(getattr(item, "agent_id", "")))
         existing = self._content.get_normalized_feedback(improvement_id)
         raw = self._feedback_text(feedbacks)
         title, problem, generated_by = self._heuristic_normalized_feedback(item, feedbacks)
@@ -263,7 +267,7 @@ class ImprovementGovernorService:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
-        self._require_automatic_feedback_evidence(feedbacks)
+        self._require_automatic_feedback_evidence(feedbacks, expected_agent_id=_text(getattr(item, "agent_id", "")))
         summary, boundary, evidence, counter, uncertainty, verification, generated_by = self._heuristic_attribution(item, nf)
         trace_ref: dict[str, str] = {}
         job_input = self._build_attribution_input(item, nf, feedbacks)
@@ -324,7 +328,10 @@ class ImprovementGovernorService:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         attr = self._content.get_attribution(improvement_id)
-        self._require_automatic_feedback_evidence(self._content.list_feedbacks(improvement_id))
+        self._require_automatic_feedback_evidence(
+            self._content.list_feedbacks(improvement_id),
+            expected_agent_id=_text(getattr(item, "agent_id", "")),
+        )
         summary, changes, risk_level, generated_by = self._heuristic_plan(item, nf, attr)
         trace_ref: dict[str, str] = {}
         job_input = self._build_plan_input(item, nf, attr)
@@ -373,10 +380,13 @@ class ImprovementGovernorService:
     ) -> RegressionTestDesignRecord:
         item = self._improvements.get_improvement(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
-        self._require_automatic_feedback_evidence(feedbacks)
+        runs_by_id = self._require_automatic_feedback_evidence(
+            feedbacks,
+            expected_agent_id=_text(getattr(item, "agent_id", "")),
+        )
         attr = self._content.get_attribution(improvement_id)
         plan = self._content.get_optimization_plan(improvement_id)
-        source_cases = self._regression_source_cases(feedbacks)
+        source_cases = self._regression_source_cases(feedbacks, runs_by_id=runs_by_id)
         if self._run_profile_json is None:
             raise RuntimeUnavailableError("回归测试代码生成需要可用的治理模型运行时。")
         trace_ref: dict[str, str] = {}
@@ -417,12 +427,17 @@ class ImprovementGovernorService:
             advance_to_stage=advance_to_stage,
         )
 
-    def _regression_source_cases(self, feedbacks: list[Any]) -> list[RegressionSourceCase]:
+    @staticmethod
+    def _regression_source_cases(
+        feedbacks: list[Any],
+        *,
+        runs_by_id: ValidatedRunEvidenceSnapshot,
+    ) -> list[RegressionSourceCase]:
         cases: list[RegressionSourceCase] = []
         for feedback in feedbacks:
             run_id = _text(getattr(feedback, "run_id", ""))
-            run = self._find_run(run_id) if run_id else {}
-            run_message = _text(run.get("message")) if run else ""
+            run = runs_by_id.get(run_id)
+            run_message = run.message if run else ""
             raw_text = _text(getattr(feedback, "raw_text", ""))
             cases.append(
                 RegressionSourceCase(
@@ -432,45 +447,22 @@ class ImprovementGovernorService:
                     raw_text=raw_text,
                     run_id=run_id,
                     original_input=run_message or raw_text,
-                    answer_summary=_text(run.get("answer_summary")) if run else "",
+                    answer_summary=run.answer_summary if run else "",
                 )
             )
         return cases
 
-    def _find_run(self, run_id: str) -> JsonObject:
-        if self._find_run_by_id is None:
-            return {}
-        try:
-            return self._find_run_by_id(run_id) or {}
-        except Exception as exc:  # noqa: BLE001 — run 证据缺失不应阻断启发式回归候选生成
-            logger.warning("failed to resolve regression source run run_id=%s error=%s", run_id, exc.__class__.__name__)
-            return {}
-
-    def _require_automatic_feedback_evidence(self, feedbacks: list[Any]) -> None:
-        """阻止不完整 Runtime/Trace 证据进入自动改进分析。
-
-        手工记录和提交反馈不受此门限制；只有配置了生产 run 查询器的自动
-        governor 路径执行该检查；无查询器的纯领域或离线路径不会冒充已有证据。
-        """
-
-        if self._find_run_by_id is None:
-            return
-        if not feedbacks:
-            raise ConflictError("Automatic improvement analysis requires source feedback bound to a completed run")
-        for feedback in feedbacks:
-            run_id = _text(getattr(feedback, "run_id", ""))
-            if not run_id:
-                raise ConflictError("Automatic improvement analysis requires every feedback item to carry run_id")
-            try:
-                run = self._find_run_by_id(run_id)
-            except Exception as exc:  # noqa: BLE001 - evidence lookup failures must fail closed
-                raise ConflictError(f"Automatic improvement run evidence is unavailable: {run_id}") from exc
-            if not run:
-                raise ConflictError(f"Automatic improvement run evidence was not found: {run_id}")
-            if _text(run.get("status")) not in {"succeeded", "failed", "cancelled", "interrupted"}:
-                raise ConflictError(f"Automatic improvement requires a terminal run: {run_id}")
-            if _text(run.get("trace_status")) != "complete" or not _text(run.get("trace_id")):
-                raise ConflictError(f"Automatic improvement requires a complete Langfuse trace: {run_id}")
+    def _require_automatic_feedback_evidence(
+        self,
+        feedbacks: list[Any],
+        *,
+        expected_agent_id: str,
+    ) -> ValidatedRunEvidenceSnapshot:
+        return require_automatic_feedback_evidence(
+            feedbacks,
+            expected_agent_id=expected_agent_id,
+            find_run_by_id=self._find_run_by_id,
+        )
 
     def _build_regression_input(
         self,

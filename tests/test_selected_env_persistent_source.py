@@ -402,7 +402,7 @@ def test_frozen_mutation_acquires_host_cutover_lock_before_daemon_lock(tmp_path:
     monkeypatch.setattr(runner, "_prepare_daemon_boundary", lambda *_args: (None, None, None))
     monkeypatch.setattr(runner, "_execute_operation", lambda *_args, **_kwargs: events.append("execute") or 0)
     monkeypatch.setattr(runner, "_verify_daemon_after_operation", lambda *_args: None)
-    monkeypatch.setattr(runner, "_verify_frozen_stage_postconditions", lambda *_args: None)
+    monkeypatch.setattr(runner.selected_env_reexec, "verify_stage_postconditions", lambda *_args: None)
 
     assert runner._run_frozen_stage(snapshot, "down") == 0
     assert events == ["host-enter", "daemon-enter", "execute", "daemon-exit", "host-exit"]

@@ -43,7 +43,7 @@ def test_selected_env_child_removes_hostile_ambient_and_rejects_control_explicit
 
     child = images.selected_env_child_env(
         env_file,
-        explicit={"APP_VERSION": "4.0.0"},
+        explicit={"APP_VERSION": "4.0.0", "AGENTGOV_RUNTIME_VERSION": "4.0.0"},
         compose_files=(
             REPO_ROOT / "docker/docker-compose.yml",
             REPO_ROOT / "docker/docker-compose.langfuse.yml",
@@ -53,6 +53,7 @@ def test_selected_env_child_removes_hostile_ambient_and_rejects_control_explicit
     assert child["PATH"] == "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     assert child["LANG"] == "C.UTF-8"
     assert child["APP_VERSION"] == "4.0.0"
+    assert child["AGENTGOV_RUNTIME_VERSION"] == "4.0.0"
     for key in hostile:
         if key != "APP_VERSION":
             assert key not in child
@@ -110,6 +111,7 @@ def test_selected_env_transaction_uses_snapshot_and_rejects_source_env_swap(tmp_
         observed["operation"] = command[command.index("--operation") + 1]
         observed["snapshot"] = snapshot.read_text(encoding="utf-8")
         observed["source_base"] = command[command.index("--env-base-dir") + 1]
+        observed["runtime_version"] = child_env["AGENTGOV_RUNTIME_VERSION"]
         env_file.write_text(original + "HOST_PORT=50401\n", encoding="utf-8")
         runner.verify_stable_env_file(
             state.original_env,
@@ -128,6 +130,7 @@ def test_selected_env_transaction_uses_snapshot_and_rejects_source_env_swap(tmp_
         "operation": "down",
         "snapshot": original,
         "source_base": tmp_path.as_posix(),
+        "runtime_version": "4.0.0",
     }
 
 

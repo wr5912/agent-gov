@@ -17,6 +17,7 @@ from app.runtime_gateway.client import (
 )
 from app.runtime_gateway.contracts import RunStatus, RuntimeChildSessionRegistration, RuntimeReceipt
 from app.runtime_gateway.models import RuntimePendingActionModel
+from app.runtime_gateway.operation_identity import RuntimeChatOperationKind
 from app.runtime_gateway.provisioning import RuntimeAgentBinding
 from app.runtime_gateway.router import create_runtime_router, reconcile_runtime_gateway
 from app.runtime_gateway.store import RuntimeRunStore, RuntimeStateConflict, SessionCreationStatus
@@ -53,8 +54,7 @@ def _begin(store: RuntimeRunStore, *, session_id: str = "session-a"):
         session_id=session_id,
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)
@@ -315,18 +315,16 @@ def test_restart_recovery_retains_team_fences_and_expires_hitl_only_at_terminal(
     assert store.reconcile_after_restart() == [run.run_id]
     with pytest.raises(RuntimeStateConflict, match="recovery must complete"):
         store.begin_run(
-            session_id="leader-session",
-            runtime_agent_id="runtime-a",
+            # 先满足 worker pending action 的精确 Session/Agent 身份，才验证 recovery 闸门。
+            session_id="worker-session",
+            runtime_agent_id="worker-agent",
             input_value={
                 "type": "USER_CONFIRM_RESULT",
                 "reply_id": "worker-reply",
                 "confirm_results": [{"confirmed": True, "tool_call": tool_call}],
             },
-            alert_id=None,
-            case_id=None,
+            entities={},
             metadata={},
-            client_operation_id="continuation-during-recovery",
-            expected_run_id=run.run_id,
         )
     store.apply_receipt(_interrupted_receipt(run, session_id="leader-session"))
     store.apply_receipt(_interrupted_receipt(run, session_id="worker-session"))
@@ -360,8 +358,7 @@ def test_runtime_boot_marks_only_active_runs_for_recovery(tmp_path: Path) -> Non
         session_id="session-terminal",
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.fail_trigger(terminal.run_id, error={"type": "test"})
@@ -455,8 +452,7 @@ def test_proven_unscheduled_chat_failure_terminates_fence_without_retrigger(
     request_data = {
         "agent_id": "runtime-a",
         "session_id": "session-a",
-        "client_operation_id": f"not-scheduled-{status_code}",
-        "input": {"role": "user", "content": []},
+        "input": {"id": f"not-scheduled-{status_code}", "name": "user", "role": "user", "content": []},
     }
 
     with TestClient(app) as client:
@@ -465,16 +461,18 @@ def test_proven_unscheduled_chat_failure_terminates_fence_without_retrigger(
 
     assert [first.status_code, replay.status_code] == [status_code, 409]
     assert runtime.chat_attempts == 1
-    run = store.run_for_client_operation(
+    run = store.run_for_input_identity(
+        runtime_agent_id="runtime-a",
         session_id="session-a",
-        client_operation_id=f"not-scheduled-{status_code}",
+        operation_kind=RuntimeChatOperationKind.INITIAL,
+        input_ids=(f"not-scheduled-{status_code}",),
     )
     assert run.status is RunStatus.FAILED
     assert run.terminal_reason == "trigger_failed"
     assert store.active_run_for_session("session-a") is None
 
 
-def test_worker_hitl_chat_response_keeps_root_public_identity_and_durable_replay(tmp_path: Path) -> None:
+def test_worker_chat_response_preserves_native_body_and_root_header_durable_replay(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _begin(store)
     active = store.active_run_for_session("session-a")
@@ -498,8 +496,7 @@ def test_worker_hitl_chat_response_keeps_root_public_identity_and_durable_replay
     payload = {
         "agent_id": "runtime-a",
         "session_id": "session-a",
-        "client_operation_id": "worker-hitl-response",
-        "input": {"role": "user", "content": [{"type": "text", "text": "continue worker"}]},
+        "input": {"id": "worker-hitl-response", "name": "user", "role": "user", "content": [{"type": "text", "text": "continue worker"}]},
     }
 
     with TestClient(app) as client:
@@ -507,15 +504,7 @@ def test_worker_hitl_chat_response_keeps_root_public_identity_and_durable_replay
         replay = client.post("/api/runtime/chat/", json=payload)
 
     assert first.status_code == replay.status_code == 200
-    assert (
-        first.json()
-        == replay.json()
-        == {
-            "status": "started",
-            "session_id": "session-a",
-            "worker_session_id": "worker-session",
-        }
-    )
+    assert first.json() == replay.json() == {"status": "started", "session_id": "worker-session"}
     assert first.headers["X-AgentGov-Session-Id"] == "session-a"
     assert runtime.chat_attempts == 1
 
@@ -548,8 +537,7 @@ def test_uncertain_chat_response_keeps_exact_run_fence_and_never_retriggers(
     payload = {
         "agent_id": "runtime-a",
         "session_id": "session-a",
-        "client_operation_id": "response-loss",
-        "input": {"role": "user", "content": []},
+        "input": {"id": "response-loss", "name": "user", "role": "user", "content": []},
     }
 
     with TestClient(app) as client:
@@ -557,14 +545,16 @@ def test_uncertain_chat_response_keeps_exact_run_fence_and_never_retriggers(
         replay = client.post("/api/runtime/chat/", json=payload)
         competing = client.post(
             "/api/runtime/chat/",
-            json={**payload, "client_operation_id": "competing-operation"},
+            json={**payload, "input": {"id": "competing-operation", "name": "user", "role": "user", "content": []}},
         )
 
     assert [first.status_code, replay.status_code, competing.status_code] == [status_code, 409, 409]
     assert runtime.chat_attempts == 1
-    run = store.run_for_client_operation(
+    run = store.run_for_input_identity(
+        runtime_agent_id="runtime-a",
         session_id="session-a",
-        client_operation_id="response-loss",
+        operation_kind=RuntimeChatOperationKind.INITIAL,
+        input_ids=("response-loss",),
     )
     assert run.status is RunStatus.RUNNING
     assert run.metadata["recovery_required"] is True

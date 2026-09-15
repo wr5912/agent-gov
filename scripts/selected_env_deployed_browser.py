@@ -15,35 +15,35 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
+from scripts import selected_env_reexec
 from scripts.agentscope_atomic_cutover_env import parse_selected_env_bindings
 from scripts.agentscope_atomic_cutover_types import DockerDaemonIdentity
 from scripts.container_acceptance_identity import write_exclusive_file
 from scripts.selected_env_browser_toolchain import BROWSER_TOOLCHAIN_ENV, browser_mutation_monitor, prepare_browser_toolchain
 from scripts.selected_env_deployed_context import (
     API_KEY_ENV,
-    OPERATION,
-    SCOPE,
     BrowserMetadata,
     DeployedBrowserContext,
     deployment_urls,
+    load_context,
     require_live_opt_in,
     require_no_active_work,
     seal_context,
     stack_container_ids,
     verify_context,
 )
-from scripts.selected_env_operation_contract import SelectedEnvError, StackImageIds
+from scripts.selected_env_operation_contract import DEPLOYED_BROWSER_OPERATIONS, SelectedEnvError, StackImageIds
 
 
 def require_operation_opt_in(operation: str, environ: Mapping[str, str]) -> None:
-    if operation == OPERATION:
+    if operation in DEPLOYED_BROWSER_OPERATIONS:
         require_live_opt_in(environ)
 
 
 def run_frozen_command(operation: str, directory: Path, source_root: Path, child_env: dict[str, str], command: list[str]) -> int:
     from scripts import run_selected_env_operation as runner
 
-    if operation != OPERATION:
+    if operation not in DEPLOYED_BROWSER_OPERATIONS:
         return runner._run(command, child_env)
     require_live_opt_in(os.environ)
     child_env.update(prepare_browser_toolchain(directory, source_root, dict(os.environ)))
@@ -104,9 +104,10 @@ def _deploy_stage(
 def _run_browser(source_root: Path, child_env: dict[str, str]) -> BrowserMetadata:
     from scripts import run_selected_env_operation as runner
 
+    context = load_context(child_env)
     verify_context(child_env, require_node_parent=False)
     with browser_mutation_monitor(child_env) as toolchain, runner._command_monitor(child_env):
-        command = [toolchain["node"]["path"], str(source_root / "scripts/verify_playground_deployed.mjs")]
+        command = [toolchain["node"]["path"], str(source_root / DEPLOYED_BROWSER_OPERATIONS[context.operation][1])]
         with subprocess.Popen(
             command,
             cwd=source_root,
@@ -126,17 +127,25 @@ def _run_browser(source_root: Path, child_env: dict[str, str]) -> BrowserMetadat
                     raise SelectedEnvError("部署浏览器验收超时；已停止本轮浏览器进程组") from exc
                 raise
     verify_context(child_env, require_node_parent=False)
+    if process.returncode is None:
+        raise SelectedEnvError("部署浏览器进程尚未退出，拒绝判定验收结果")
+    return decode_browser_result(stdout, process.returncode, context, child_env[API_KEY_ENV])
+
+
+def decode_browser_result(stdout: str, returncode: int, context: DeployedBrowserContext, api_key: str) -> BrowserMetadata:
+    scope, script = DEPLOYED_BROWSER_OPERATIONS[context.operation]
     try:
         if len(stdout.encode()) > 256_000:
             raise ValueError("oversized metadata")
         result = json.loads(stdout)
-        if not isinstance(result, dict) or result.get("scope") != SCOPE:
+        if not isinstance(result, dict) or result.get("scope") != scope or result.get("acceptance_id") != context.acceptance_id:
             raise ValueError("invalid metadata")
-        if result.get("status") not in {"passed", "failed"}:
+        allowed_statuses = {"passed", "failed", "not_proven"} if script == "scripts/verify_playground_recovery.mjs" else {"passed", "failed"}
+        if result.get("status") not in allowed_statuses:
             raise ValueError("invalid status")
-        if process.returncode and result.get("status") != "failed":
+        if (returncode == 0) != (result.get("status") == "passed"):
             raise ValueError("inconsistent exit")
-        if child_env[API_KEY_ENV] in stdout:
+        if not api_key or api_key in stdout:
             raise ValueError("credential in metadata")
     except (ValueError, TypeError, KeyError) as exc:
         raise SelectedEnvError("部署浏览器返回无效或未脱敏的元数据") from exc
@@ -144,6 +153,7 @@ def _run_browser(source_root: Path, child_env: dict[str, str]) -> BrowserMetadat
 
 
 def _browser_context(
+    operation: str,
     snapshot: Path,
     source_root: Path,
     child_env: dict[str, str],
@@ -156,6 +166,7 @@ def _browser_context(
     values = {item.key: item.value or "" for item in parse_selected_env_bindings(snapshot) if item.key}
     ui_base, api_base = deployment_urls(values)
     context = DeployedBrowserContext(
+        operation=operation,
         acceptance_id=acceptance_id,
         source_sha256=digest,
         selected_env_sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest(),
@@ -174,6 +185,7 @@ def _browser_context(
 
 
 def run_deployed_browser(
+    operation: str,
     snapshot: Path,
     source_root: Path,
     source_base: Path,
@@ -189,7 +201,7 @@ def run_deployed_browser(
     evidence_root.chmod(0o700)
     report: BrowserMetadata = {
         "acceptance_id": acceptance_id,
-        "scope": SCOPE,
+        "scope": DEPLOYED_BROWSER_OPERATIONS[operation][0],
         "status": "failed",
         "source_sha256": digest,
         "selected_env_sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
@@ -201,13 +213,15 @@ def run_deployed_browser(
         values = {item.key: item.value or "" for item in parse_selected_env_bindings(snapshot) if item.key}
         deployment_urls(values)
         require_no_active_work(snapshot)
-        with browser_mutation_monitor(child_env), runner._daemon_mutation_lock(OPERATION, child_env) as identity:
+        with browser_mutation_monitor(child_env), runner._daemon_mutation_lock(operation, child_env) as identity:
             for stage in ("build", "all-up"):
                 report["stage"] = stage
                 images = _deploy_stage(stage, snapshot, source_root, source_base, child_env, version, digest, identity)
             if images is None or identity is None:
                 raise SelectedEnvError("部署浏览器验收缺少已核验镜像/daemon 身份")
-            context = _browser_context(snapshot, source_root, child_env, version, digest, acceptance_id, images, cast(DockerDaemonIdentity, identity))
+            context = _browser_context(
+                operation, snapshot, source_root, child_env, version, digest, acceptance_id, images, cast(DockerDaemonIdentity, identity)
+            )
             report.update({key: value for key, value in asdict(context).items() if key not in {"runner_pid", "browser_toolchain_sha256"}})
             report["stage"] = "browser"
             result = _run_browser(source_root, child_env)
@@ -216,7 +230,10 @@ def run_deployed_browser(
             report["browser_result"] = result
             report["stage"] = "postconditions"
             runner._verify_local_daemon(child_env, identity, next(iter(images.values())))
-            runner._verify_frozen_stage_postconditions(snapshot, source_root, child_env, digest)
+            selected_env_reexec.verify_stage_postconditions(snapshot, child_env, digest)
+            if result.get("status") == "not_proven":
+                report["status"] = "not_proven"
+                return 2
             if result.get("status") == "failed":
                 raise SelectedEnvError("真实部署浏览器交互验收失败；仅保留脱敏元数据")
             report["status"] = "passed"

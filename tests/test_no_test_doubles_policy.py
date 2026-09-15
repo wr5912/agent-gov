@@ -19,7 +19,9 @@ from scripts.check_no_test_doubles import (
     validate_formal_target_allowlist,
 )
 from scripts.container_acceptance_environment import acceptance_allowlisted_targets
-from scripts.no_test_doubles_contract import CANONICAL_FORMAL_DISPATCHES, DEPLOYED_FORMAL_TARGETS
+from scripts.no_test_doubles_contract import CANONICAL_FORMAL_DISPATCHES, DEPLOYED_FORMAL_TARGETS, FORMAL_TARGET_ENTRYPOINT_MARKERS
+
+DEPLOYED_TARGET, RECLAIM_TARGET = "ui-playground-deployed-smoke", "runtime-workspace-reclaim-live-smoke"
 
 
 def _rules(source: str) -> set[str]:
@@ -456,65 +458,94 @@ def test_policy_rejects_formal_target_allowlist_drift() -> None:
 
 def test_policy_keeps_deployed_smoke_outside_isolated_runner_allowlist() -> None:
     isolated_targets = acceptance_allowlisted_targets()
+    expected_targets = frozenset(
+        {
+            RECLAIM_TARGET,
+            DEPLOYED_TARGET,
+            "ui-playground-deployed-recovery-smoke",
+            "ui-self-use-governance-smoke",
+        },
+    )
 
-    assert frozenset({"ui-playground-deployed-smoke"}) == DEPLOYED_FORMAL_TARGETS
-    assert isolated_targets.isdisjoint(DEPLOYED_FORMAL_TARGETS)
-    validate_formal_target_allowlist(tuple(sorted(isolated_targets | DEPLOYED_FORMAL_TARGETS)))
-    with pytest.raises(ValueError, match="missing=ui-playground-deployed-smoke"):
-        validate_formal_target_allowlist(tuple(sorted(isolated_targets)))
+    assert expected_targets == DEPLOYED_FORMAL_TARGETS
+    assert isolated_targets.isdisjoint(expected_targets)
+    all_targets = isolated_targets | expected_targets
+    validate_formal_target_allowlist(tuple(sorted(all_targets)))
+    for missing_target in sorted(expected_targets):
+        with pytest.raises(ValueError, match=f"missing={missing_target};"):
+            validate_formal_target_allowlist(tuple(sorted(all_targets - {missing_target})))
 
 
 def test_policy_audits_exact_deployed_selected_env_dispatch() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    inspection = inspect_make_targets(repo_root / "Makefile", ("ui-playground-deployed-smoke",), repo_root=repo_root)
+    inspection = inspect_make_targets(repo_root / "Makefile", (DEPLOYED_TARGET,), repo_root=repo_root)
 
-    assert CANONICAL_FORMAL_DISPATCHES["ui-playground-deployed-smoke"] == (
+    assert CANONICAL_FORMAL_DISPATCHES[DEPLOYED_TARGET] == (
         '@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation ui-playground-deployed-smoke'
     )
     assert inspection.findings == ()
-    assert inspection.targets == ("ui-playground-deployed-smoke",)
+    assert inspection.targets == (DEPLOYED_TARGET,)
     assert inspection.files == ((repo_root / "scripts/run_selected_env_operation.py").resolve(),)
+    reclaim = inspect_make_targets(repo_root / "Makefile", (RECLAIM_TARGET,), repo_root=repo_root)
+    assert reclaim.findings == ()
+    assert reclaim.files == ((repo_root / "scripts/run_workspace_reclaim_acceptance.py").resolve(),)
+    assert FORMAL_TARGET_ENTRYPOINT_MARKERS[RECLAIM_TARGET] == "scripts/run_workspace_reclaim_acceptance.py --env-file"
 
 
 @pytest.mark.parametrize(
-    "replacement",
+    ("target", "replacement"),
     [
-        "@$(SELECTED_ENV_RUNNER) --operation ui-playground-deployed-smoke",
-        '@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation check',
+        (DEPLOYED_TARGET, "@$(SELECTED_ENV_RUNNER) --operation ui-playground-deployed-smoke"),
         (
+            DEPLOYED_TARGET,
+            '@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation check',
+        ),
+        (
+            DEPLOYED_TARGET,
             '@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" '
-            "--operation ui-playground-deployed-smoke\n\t@echo bypass"
+            "--operation ui-playground-deployed-smoke\n\t@echo bypass",
+        ),
+        (
+            RECLAIM_TARGET,
+            '@$(ACCEPTANCE_PYTHON) scripts/run_workspace_reclaim_acceptance.py --env-file "$(COMPOSE_ENV_FILE)" --preflight-only',
+        ),
+        (
+            RECLAIM_TARGET,
+            CANONICAL_FORMAL_DISPATCHES[RECLAIM_TARGET] + "\n\t@echo bypass",
         ),
     ],
 )
-def test_policy_rejects_deployed_dispatch_bypass(tmp_path: Path, replacement: str) -> None:
+def test_policy_rejects_deployed_dispatch_bypass(tmp_path: Path, target: str, replacement: str) -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    canonical = "ui-playground-deployed-smoke:\n\t" + CANONICAL_FORMAL_DISPATCHES["ui-playground-deployed-smoke"]
+    canonical = f"{target}:\n\t" + CANONICAL_FORMAL_DISPATCHES[target]
     source = (repo_root / "Makefile").read_text(encoding="utf-8")
     assert source.count(canonical) == 1
     makefile = tmp_path / "Makefile"
-    makefile.write_text(source.replace(canonical, "ui-playground-deployed-smoke:\n\t" + replacement, 1), encoding="utf-8")
+    makefile.write_text(source.replace(canonical, f"{target}:\n\t" + replacement, 1), encoding="utf-8")
     scripts = tmp_path / "scripts"
     scripts.mkdir()
-    (scripts / "run_selected_env_operation.py").write_bytes((repo_root / "scripts/run_selected_env_operation.py").read_bytes())
+    entrypoint = "run_workspace_reclaim_acceptance.py" if target.startswith("runtime-workspace") else "run_selected_env_operation.py"
+    (scripts / entrypoint).write_bytes((repo_root / "scripts" / entrypoint).read_bytes())
 
-    findings = scan_make_targets(makefile, ("ui-playground-deployed-smoke",), repo_root=tmp_path)
+    findings = scan_make_targets(makefile, (target,), repo_root=tmp_path)
 
     assert "public formal Make target does not use the canonical acceptance dispatch" in {item.rule for item in findings}
 
 
-def test_policy_rejects_deployed_smoke_hidden_prerequisite(tmp_path: Path) -> None:
+@pytest.mark.parametrize("target", [DEPLOYED_TARGET, RECLAIM_TARGET])
+def test_policy_rejects_deployed_smoke_hidden_prerequisite(tmp_path: Path, target: str) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     source = (repo_root / "Makefile").read_text(encoding="utf-8")
-    canonical = "ui-playground-deployed-smoke:\n\t" + CANONICAL_FORMAL_DISPATCHES["ui-playground-deployed-smoke"]
+    canonical = f"{target}:\n\t" + CANONICAL_FORMAL_DISPATCHES[target]
     assert source.count(canonical) == 1
     makefile = tmp_path / "Makefile"
     makefile.write_text(source.replace(canonical, canonical.replace(":\n", ": hidden-step\n", 1), 1), encoding="utf-8")
     scripts = tmp_path / "scripts"
     scripts.mkdir()
-    (scripts / "run_selected_env_operation.py").write_bytes((repo_root / "scripts/run_selected_env_operation.py").read_bytes())
+    entrypoint = "run_workspace_reclaim_acceptance.py" if target.startswith("runtime-workspace") else "run_selected_env_operation.py"
+    (scripts / entrypoint).write_bytes((repo_root / "scripts" / entrypoint).read_bytes())
 
-    findings = scan_make_targets(makefile, ("ui-playground-deployed-smoke",), repo_root=tmp_path)
+    findings = scan_make_targets(makefile, (target,), repo_root=tmp_path)
 
     assert "public formal Make prerequisites do not match the audited action manifest" in {item.rule for item in findings}
 

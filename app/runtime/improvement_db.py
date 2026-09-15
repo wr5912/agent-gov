@@ -100,8 +100,7 @@ class ImprovementFeedbackModel(Base):
     agent_version_id: Mapped[str] = mapped_column(String(256), default="")
     scenario: Mapped[str] = mapped_column(String(256), default="")
     task_id: Mapped[str] = mapped_column(String(256), default="")
-    alert_id: Mapped[str] = mapped_column(String(256), default="")
-    case_id: Mapped[str] = mapped_column(String(256), default="")
+    entities_json: Mapped[dict[str, list[str]]] = mapped_column(JSON, default=dict)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
 
 
@@ -115,6 +114,21 @@ class ImprovementFeedbackCaseAssignmentModel(Base):
     feedback_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     agent_id: Mapped[str] = mapped_column(String(128), index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+
+
+class ImprovementIdempotencyOperationModel(Base):
+    """改进事项写操作的独立幂等契约账本，不复制业务资源正文。"""
+
+    __tablename__ = "improvement_idempotency_operations"
+
+    operation_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    operation_kind: Mapped[str] = mapped_column(String(64), index=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    result_resource_kind: Mapped[str] = mapped_column(String(64), default="")
+    result_resource_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    tombstoned: Mapped[bool] = mapped_column(default=False, index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
 
 
 class AttributionModel(Base):

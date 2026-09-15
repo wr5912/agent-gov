@@ -40,8 +40,10 @@
     "vite": "8.0.16"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "happy-dom": "^20.14.5",
     "openapi-typescript": "^7.13.0",
     "playwright": "^1.60.0",
     "vitest": "^4.1.10"

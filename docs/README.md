@@ -70,7 +70,7 @@
 - [反馈闭环当前实现基线](./反馈闭环当前实现基线.md)：`docs/反馈闭环当前实现基线.md`
 - [AgentGov AgentScope Runtime 替换实施基线与验收](./engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md)：
   `docs/engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md`，吸收替换方案中的事实源、
-  Harness、切换恢复和验收要求，标明当前实现与 50-run、浏览器等完整验收的边界
+  Harness、切换恢复和验收要求，并记录在线 Session Workspace 回收、远程部署以及 50-run、浏览器等完整验收边界
 - [AgentScope 与 Langfuse 观测契约及验收](./engineering/AgentScope与Langfuse观测契约及验收.md)：
   `docs/engineering/AgentScope与Langfuse观测契约及验收.md`，说明 run/Trace 关联、安全出口、
   完整性对账及验收，并区分 AgentScope 示例应用原始需求与 AgentGov 当前实现

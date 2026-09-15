@@ -7,6 +7,7 @@ import type {
   RuntimeExternalExecutionRequest,
 } from "./types/runtime";
 import { isRecord } from "./utils/records";
+import { mergeRuntimePendingRequests } from "./runtimePendingRequestIdentity";
 
 export function buildExternalExecutionSubmission(
   request: RuntimeExternalExecutionRequest,
@@ -29,6 +30,7 @@ export function buildExternalExecutionSubmission(
 export function externalExecutionRequestsFromEvent(
   event: AgentScopeAgentEvent,
   workerSessionId?: string,
+  workerRuntimeAgentId?: string,
 ): RuntimeExternalExecutionRequest[] {
   if (event.type !== "REQUIRE_EXTERNAL_EXECUTION" || !event.reply_id || !Array.isArray(event.tool_calls)) return [];
   const toolCalls = event.tool_calls.map(asToolCall).filter((value): value is AgentScopeToolCallBlock => Boolean(value));
@@ -37,6 +39,7 @@ export function externalExecutionRequestsFromEvent(
     requestId: event.id,
     replyId: event.reply_id,
     workerSessionId,
+    workerRuntimeAgentId,
     toolCalls,
     status: "waiting",
   }];
@@ -46,12 +49,7 @@ export function mergeExternalExecutionRequests(
   current: RuntimeExternalExecutionRequest[] | undefined,
   incoming: RuntimeExternalExecutionRequest[],
 ) {
-  const byId = new Map((current || []).map((request) => [request.requestId, request]));
-  for (const request of incoming) {
-    const existing = byId.get(request.requestId);
-    byId.set(request.requestId, existing?.status === "resolved" ? existing : { ...existing, ...request });
-  }
-  return [...byId.values()];
+  return mergeRuntimePendingRequests(current, incoming);
 }
 
 export function clearProjectedExternalExecutionRequest(

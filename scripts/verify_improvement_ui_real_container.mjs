@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
-import { join } from "node:path";
 import process from "node:process";
 import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
 import {
@@ -8,6 +7,7 @@ import {
   verifyCompletedImprovementAcceptance,
 } from "./improvement_ui_e2e/real_container_flow.mjs";
 import { runtimeConfigFromEnv } from "./improvement_ui_e2e/runtime_client.mjs";
+import { safeAcceptanceFailure } from "./improvement_ui_e2e/page_audit.mjs";
 import {
   browserExecutionPlan,
   FORMAL_BROWSER_REPETITIONS,
@@ -41,7 +41,7 @@ async function main() {
   try {
     completedEvidence = await runRealContainerAcceptance(
       mutationBrowser,
-      { ...baseConfig, screenshotDir: join(baseConfig.screenshotDir, `${mutationEngine}-1`) },
+      baseConfig,
       governanceAgentId,
       scenario,
     );
@@ -62,7 +62,7 @@ async function main() {
             mode: "read-only-completed-loop",
             result: await verifyCompletedImprovementAcceptance(
               browser,
-              { ...baseConfig, screenshotDir: join(baseConfig.screenshotDir, `${engine}-${attempt}`) },
+              baseConfig,
               completedEvidence,
             ),
           });
@@ -80,10 +80,10 @@ async function main() {
     mutation_runs: 1,
     browsers: results,
   }, null, 2));
-  console.log(`REAL_UI_ACCEPTANCE passed; screenshots=${baseConfig.screenshotDir}`);
+  console.log("REAL_UI_ACCEPTANCE passed; metadata-only evidence");
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : error);
+  console.error(JSON.stringify(safeAcceptanceFailure(error)));
   process.exit(1);
 });

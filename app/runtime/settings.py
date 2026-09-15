@@ -91,7 +91,7 @@ def _mode_for_env_file(value: object) -> RuntimeVolumeMode | None:
 
 
 class AppSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=None, extra="ignore")
+    model_config = SettingsConfigDict(env_file=None, extra="ignore", hide_input_in_errors=True)
     _settings_env_file: Path | None = PrivateAttr(default=None)
 
     def __init__(self, **values: Any) -> None:
@@ -132,9 +132,9 @@ class AppSettings(BaseSettings):
     agentscope_runtime_url: str = Field(default="http://agentscope-runtime:8090", alias="AGENTSCOPE_RUNTIME_URL")
     agentscope_runtime_user_id: str = Field(default="agentgov-runtime", alias="AGENTSCOPE_RUNTIME_USER_ID")
     runtime_shared_secret: str = Field(
-        default="local-dev-insecure-change-me-32",
         min_length=16,
         alias="AGENTGOV_RUNTIME_SHARED_SECRET",
+        repr=False,
     )
     agentscope_model_type: str = Field(default="openai_credential", alias="AGENTSCOPE_MODEL_TYPE")
     agentscope_credential_id: str = Field(default="agentgov-runtime-provider", alias="AGENTSCOPE_CREDENTIAL_ID")
@@ -160,6 +160,13 @@ class AppSettings(BaseSettings):
     langfuse_public_key: Optional[str] = Field(default=None, alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: Optional[str] = Field(default=None, alias="LANGFUSE_SECRET_KEY")
     langfuse_base_url: str = Field(default="http://langfuse-web:3000", alias="LANGFUSE_BASE_URL")
+
+    @field_validator("runtime_shared_secret")
+    @classmethod
+    def _require_private_shared_secret(cls, value: str) -> str:
+        if not value.strip() or value in {"replace-with-at-least-32-random-characters", "local-dev-insecure-change-me-32"}:
+            raise ValueError("AGENTGOV_RUNTIME_SHARED_SECRET 必须先在所选私有 env 中初始化")
+        return value
 
     @field_validator(
         "agent_git_repository_dir_override",

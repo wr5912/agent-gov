@@ -353,7 +353,11 @@ def _expected_healthcheck(service: object, image: object) -> HealthcheckContract
     base = _healthcheck(image)
     if service is None:
         return _complete_healthcheck(base)
-    base.update(_healthcheck(service))
+    configured = _healthcheck(service)
+    command = configured.get("test")
+    if isinstance(command, tuple):
+        configured["test"] = tuple(part.replace("$$", "$") for part in command)
+    base.update(configured)
     return _complete_healthcheck(base)
 
 

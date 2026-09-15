@@ -69,14 +69,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env = load_env(Path(args.env_file))
-    try:
-        require_live_authorization(
-            dict(env),
-            require_trace_complete=True,
-        )
-    except AcceptanceError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
+    # 精确 Trace 查询是只读操作；只有下方新建真实 Runtime run 才需要 live 场景授权。
     if args.projected_trace_id:
         if args.scenario_file is not None or args.agent_id:
             parser.error("--projected-trace-id 不能与 --scenario-file/--agent-id 同时使用")
@@ -85,6 +78,14 @@ def main() -> int:
             trace_id=args.projected_trace_id,
             timeout_seconds=args.timeout_seconds,
         )
+    try:
+        require_live_authorization(
+            dict(env),
+            require_trace_complete=True,
+        )
+    except AcceptanceError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     if args.scenario_file is None or not args.agent_id:
         parser.error("Runtime smoke requires --scenario-file and --agent-id")
     try:
@@ -169,7 +170,8 @@ def load_env(path: Path) -> Mapping[str, str]:
             key, value = line.split("=", 1)
             values[key.strip()] = value.strip().strip("'\"")
     merged = dict(values)
-    merged.update({key: value for key, value in os.environ.items() if value})
+    # Compose 项目身份只来自这次选定的文件，不由终端残留值重定向。
+    merged.update({key: value for key, value in os.environ.items() if value and key != "COMPOSE_PROJECT_NAME"})
     return merged
 
 
@@ -210,17 +212,13 @@ def print_runtime_versions(env: Mapping[str, str]) -> None:
 
 
 def check_queues(env: Mapping[str, str]) -> list[str]:
-    container_prefix = env.get("CONTAINER_NAME_PREFIX") or "agent-gov"
-    redis_container = env.get("LANGFUSE_REDIS_CONTAINER") or f"{container_prefix}-langfuse-redis"
-    container_error = redis_container_status_error(redis_container, running=container_running(redis_container))
-    if container_error:
-        return [container_error]
     auth = env.get("LANGFUSE_REDIS_AUTH")
     if not auth:
         return ["Langfuse Redis queue check requires private LANGFUSE_REDIS_AUTH"]
     errors: list[str] = []
-    print("Langfuse queue state:")
     try:
+        redis_container = resolve_redis_container(env)
+        print("Langfuse queue state:")
         for queue in QUEUE_NAMES:
             counts = {state: redis_queue_count(redis_container, auth, queue, state) for state in QUEUE_STATES}
             print("  " + queue + ": " + ", ".join(f"{state}={counts[state]}" for state in QUEUE_STATES))
@@ -233,12 +231,6 @@ def check_queues(env: Mapping[str, str]) -> list[str]:
     except RedisCommandError as exc:
         errors.append(str(exc))
     return errors
-
-
-def redis_container_status_error(container: str, *, running: bool) -> str | None:
-    if running:
-        return None
-    return f"Langfuse Redis queue check failed: container {container} is not running"
 
 
 def trigger_and_check_runtime_trace(
@@ -270,7 +262,6 @@ def trigger_and_check_runtime_trace(
             api_key,
             runtime_agent_id,
             session_id,
-            scenario_id=scenario_id,
             input_text=input_text,
         )
         print(f"AgentScope smoke run started: run_id={run_id} session_id={session_id}")
@@ -335,32 +326,33 @@ def _start_smoke_run(
     runtime_agent_id: str,
     session_id: str,
     *,
-    scenario_id: str,
     input_text: str,
 ) -> str:
     _, headers = request_agentgov_json(
         f"{api_base}/api/runtime/chat/",
         method="POST",
-        payload={
-            "agent_id": runtime_agent_id,
-            "session_id": session_id,
-            "client_operation_id": f"langfuse-smoke-turn-{uuid4().hex}",
-            "input": {
-                "name": "user",
-                "role": "user",
-                "content": [{"type": "text", "text": input_text}],
-            },
-            "metadata": {
-                "purpose": "langfuse-smoke",
-                "scenario_id": scenario_id,
-            },
-        },
+        payload=runtime_chat_payload(runtime_agent_id, session_id, input_text),
         api_key=api_key,
     )
     run_id = header_value(headers, "X-AgentGov-Run-Id")
     if not run_id:
         raise RuntimeError("AgentGov did not return X-AgentGov-Run-Id for Langfuse smoke")
     return run_id
+
+
+def runtime_chat_payload(runtime_agent_id: str, session_id: str, input_text: str) -> ExternalJsonObject:
+    """构造只含 AgentScope 原生三字段的 Runtime chat 请求。"""
+
+    return {
+        "agent_id": runtime_agent_id,
+        "session_id": session_id,
+        "input": {
+            "id": f"langfuse-smoke-message-{uuid4().hex}",
+            "name": "user",
+            "role": "user",
+            "content": [{"type": "text", "text": input_text}],
+        },
+    }
 
 
 def _cleanup_smoke_run(
@@ -626,9 +618,58 @@ def request_agentgov_json(
     return (parsed if isinstance(parsed, dict) else {}), response_headers
 
 
-def container_running(container: str) -> bool:
-    result = run(["docker", "inspect", "-f", "{{.State.Running}}", container])
-    return result.returncode == 0 and result.stdout.strip() == "true"
+def redis_container_query(env: Mapping[str, str]) -> list[str]:
+    if "LANGFUSE_REDIS_CONTAINER" in env:
+        raise RedisCommandError("Remove retired LANGFUSE_REDIS_CONTAINER; Redis is selected by Compose project and service")
+    project = env.get("COMPOSE_PROJECT_NAME", "")
+    if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", project) is None:
+        raise RedisCommandError("Langfuse Redis queue check requires a valid selected COMPOSE_PROJECT_NAME")
+    return [
+        "docker",
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--format",
+        "{{.ID}}",
+        "--filter",
+        f"label=com.docker.compose.project={project}",
+        "--filter",
+        "label=com.docker.compose.service=langfuse-redis",
+    ]
+
+
+def require_redis_container_identity(payload: object, *, project: str, container_id: str) -> str:
+    if not isinstance(payload, dict) or (
+        payload.get("id") != container_id
+        or payload.get("project") != project
+        or payload.get("service") != "langfuse-redis"
+        or payload.get("running") is not True
+    ):
+        raise RedisCommandError("Langfuse Redis container is not the running service of the selected Compose project")
+    return container_id
+
+
+def require_single_redis_container(output: str) -> str:
+    found = output.splitlines()
+    if len(found) != 1 or re.fullmatch(r"[0-9a-f]{64}", found[0]) is None:
+        raise RedisCommandError("Langfuse Redis requires exactly one container for the selected Compose service")
+    return found[0]
+
+
+def resolve_redis_container(env: Mapping[str, str]) -> str:
+    command = redis_container_query(env)
+    try:
+        container_id = require_single_redis_container(require_redis_command_output(run(command), "resolve"))
+        # 只读身份与运行状态，不读取 inspect 中的容器环境或凭据。
+        metadata_format = (
+            '{"id":{{json .Id}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},'
+            '"service":{{json (index .Config.Labels "com.docker.compose.service")}},"running":{{json .State.Running}}}'
+        )
+        inspected = run(["docker", "inspect", "--format", metadata_format, container_id])
+        payload = json.loads(require_redis_command_output(inspected, "inspect"))
+        return require_redis_container_identity(payload, project=env["COMPOSE_PROJECT_NAME"], container_id=container_id)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise RedisCommandError("Langfuse Redis container identity could not be resolved") from exc
 
 
 def redis_queue_count(container: str, auth: str, queue: str, state: str) -> int:
@@ -660,23 +701,11 @@ def parse_redis_queue_count(key_type: str, count_output: str) -> int:
 
 def redis(container: str, auth: str, *args: str) -> str:
     operation = args[0] if args else "unknown"
+    command, stdin = redis_request(container, auth, *args)
     try:
-        # 不把 Redis 密码放进宿主机可观察的 docker exec argv。固定 shell
-        # 从 stdin 读取秘密后才在容器内设置 redis-cli 专用环境变量。
         result = subprocess.run(
-            [
-                "docker",
-                "exec",
-                "-i",
-                container,
-                "sh",
-                "-eu",
-                "-c",
-                'REDISCLI_AUTH="$(cat)"; export REDISCLI_AUTH; exec redis-cli --no-auth-warning "$@"',
-                "redis-cli",
-                *args,
-            ],
-            input=auth,
+            command,
+            input=stdin,
             capture_output=True,
             text=True,
             timeout=15,
@@ -684,6 +713,22 @@ def redis(container: str, auth: str, *args: str) -> str:
     except (OSError, subprocess.SubprocessError) as exc:
         raise RedisCommandError(f"Langfuse Redis {operation} command could not be executed") from exc
     return require_redis_command_output(result, operation)
+
+
+def redis_request(container: str, auth: str, *args: str) -> tuple[list[str], str]:
+    # 密码只走 stdin；固定 shell 在容器内设置 redis-cli 专用环境变量。
+    return [
+        "docker",
+        "exec",
+        "-i",
+        container,
+        "sh",
+        "-eu",
+        "-c",
+        'REDISCLI_AUTH="$(cat)"; export REDISCLI_AUTH; exec redis-cli --no-auth-warning "$@"',
+        "redis-cli",
+        *args,
+    ], auth
 
 
 def require_redis_command_output(result: subprocess.CompletedProcess[str], operation: str) -> str:

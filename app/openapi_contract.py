@@ -23,7 +23,7 @@ DOMAIN_ERROR_COMPONENT = "DomainErrorResponse"
 RUNTIME_SESSIONS_PATH = "/api/runtime/sessions/"
 RUNTIME_CHAT_PATH = "/api/runtime/chat/"
 AGENT_RUN_PATH = "/api/agent-runs/{run_id}"
-AGENT_RUN_BY_OPERATION_PATH = "/api/agent-runs/by-client-operation"
+AGENT_RUN_BY_OPERATION_PATH = "/api/agent-runs/by-input-identity"
 AGENT_RUN_TRACE_PATH = "/api/agent-runs/{run_id}/trace"
 
 REMOVED_RUNTIME_PATHS = frozenset(
@@ -44,6 +44,9 @@ REMOVED_RUNTIME_PATHS = frozenset(
         "/api/agent-releases/{release_id}/restore",
         "/api/agent-releases/{release_id}/rollback",
         "/api/runtime/agents/{governance_agent_id}/provision",
+        "/api/agent-runs/by-client-operation",
+        "/api/soc-events",
+        "/api/soc-events/{event_id}",
         "/v1/chat/completions",
         "/v1/responses",
         "/v1/conversations",

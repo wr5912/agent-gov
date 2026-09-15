@@ -6,10 +6,10 @@ from threading import Event
 import pytest
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_paths import business_agent_layout
-from app.runtime.errors import BusinessRuleViolation, ConflictError
+from app.runtime.errors import BusinessRuleViolation, ConflictError, FeedbackEventIdConflictError
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
-from app.runtime.runtime_db import FeedbackCaseModel, FeedbackCaseSourceModel, utc_now
-from app.runtime.schemas import FeedbackCaseCreateRequest, FeedbackSignalCreateRequest, SocEventIngestRequest
+from app.runtime.runtime_db import FeedbackCaseModel, FeedbackCaseSourceModel, FeedbackSignalModel, utc_now
+from app.runtime.schemas import FeedbackCaseCreateRequest, FeedbackEventIngestRequest, FeedbackSignalCreateRequest
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
@@ -42,7 +42,6 @@ def _store(tmp_path, *, resolve_versions: bool = False) -> FeedbackStore:
                 worktrees_dir=default_layout.version_base / "worktrees",
                 releases_dir=default_layout.version_base / "releases",
             ),
-            runtime_mode="local-debug",
         )
         governance.agent_exists = registry.has_agent
         store.agent_version_provider = governance.current_agent_version_id
@@ -78,7 +77,7 @@ def test_feedback_case_create_contract_accepts_supported_source_kinds() -> None:
     payload = {
         "source_refs": [
             {"source_kind": "signal", "source_id": "sig-1"},
-            {"source_kind": "soc_event", "source_id": "evt-1"},
+            {"source_kind": "event", "source_id": "evt-1"},
             {"source_kind": "pending_correlation", "source_id": "pc-1"},
         ]
     }
@@ -118,6 +117,42 @@ def test_feedback_signal_reassignment_validates_target_and_preserves_case_proven
     assert store.find_case(feedback_case["feedback_case_id"])["agent_id"] == "agent-a"
 
 
+def test_reassigned_signal_case_does_not_export_the_previous_agents_run(tmp_path) -> None:
+    store = _store(tmp_path)
+    signal = _signal(store, run_id="run-a", agent_id="agent-a")
+
+    corrected = store.reassign_signal_agent(signal["signal_id"], agent_id="agent-b", operator="reviewer")
+    feedback_case = store.create_case(source_refs=[("signal", corrected.signal_id)])
+
+    assert feedback_case is not None
+    assert feedback_case["agent_id"] == "agent-b"
+    assert feedback_case["run_ids"] == []
+    evidence = store.create_evidence_package(feedback_case["feedback_case_id"])
+    assert evidence is not None
+    runs_file = store.get_evidence_package_file(evidence["evidence_package_id"], "runs.json")
+    assert runs_file is not None and runs_file["content"] == []
+
+
+def test_historical_reassigned_signal_filters_foreign_run_from_case_projection(tmp_path) -> None:
+    store = _store(tmp_path)
+    signal = _signal(store, run_id="run-a", agent_id="agent-a")
+    with store.Session.begin() as db:
+        row = db.get(FeedbackSignalModel, signal["signal_id"])
+        assert row is not None
+        row.agent_id = "agent-b"
+        payload = dict(row.payload_json or {})
+        payload["agent_id"] = "agent-b"
+        row.payload_json = payload
+
+    feedback_case = store.create_case(source_refs=[("signal", signal["signal_id"])])
+
+    assert feedback_case is not None
+    assert feedback_case["agent_id"] == "agent-b"
+    assert feedback_case["run_ids"] == []
+    projected = store.find_case(feedback_case["feedback_case_id"])
+    assert projected is not None and projected["run_ids"] == []
+
+
 def test_unmatched_signal_stays_unassigned_and_cannot_create_case(tmp_path) -> None:
     store = _store(tmp_path)
 
@@ -143,8 +178,8 @@ def test_session_locator_and_soc_event_persist_business_agent_owner(tmp_path) ->
     )
 
     signal = store.create_signal(FeedbackSignalCreateRequest(session_id="session-owner"))
-    event_result = store.ingest_soc_event(
-        SocEventIngestRequest(
+    event_result = store.ingest_feedback_event(
+        FeedbackEventIngestRequest(
             event_id="event-session-owner",
             source_system="test",
             event_type="recommendation.accepted",
@@ -155,17 +190,17 @@ def test_session_locator_and_soc_event_persist_business_agent_owner(tmp_path) ->
 
     assert signal["matched_run_id"] == "run-session-owner"
     assert signal["agent_id"] == "agent-a"
-    assert event_result["correlation_status"] == "matched"
-    assert event_result["event"]["agent_id"] == "agent-a"
-    feedback_case = store.create_case(source_refs=[("signal", signal["signal_id"]), ("soc_event", "event-session-owner")])
+    assert event_result.correlation_status == "matched"
+    assert event_result.event.agent_id == "agent-a"
+    feedback_case = store.create_case(source_refs=[("signal", signal["signal_id"]), ("event", "event-session-owner")])
     assert feedback_case is not None
     assert feedback_case["agent_id"] == "agent-a"
 
 
 def test_resolved_pending_updates_event_owner_before_case_creation(tmp_path) -> None:
     store = _store(tmp_path)
-    ingested = store.ingest_soc_event(
-        SocEventIngestRequest(
+    ingested = store.ingest_feedback_event(
+        FeedbackEventIngestRequest(
             event_id="event-pending",
             source_system="test",
             event_type="recommendation.rejected",
@@ -173,7 +208,8 @@ def test_resolved_pending_updates_event_owner_before_case_creation(tmp_path) -> 
             session_id="session-later",
         )
     )
-    pending_id = ingested["pending_correlation"]["pending_id"]
+    assert ingested.pending_correlation is not None
+    pending_id = ingested.pending_correlation.pending_id
     store.record_run(
         _run_payload(
             run_id="run-later",
@@ -192,7 +228,7 @@ def test_resolved_pending_updates_event_owner_before_case_creation(tmp_path) -> 
     assert feedback_case["agent_id"] == "agent-b"
     assert feedback_case["event_ids"] == ["event-pending"]
     pending_source = store.find_feedback_source("pending_correlation", pending_id)
-    event_source = store.find_feedback_source("soc_event", "event-pending")
+    event_source = store.find_feedback_source("event", "event-pending")
     assert pending_source is not None and event_source is not None
     assert pending_source["feedback_case_id"] == feedback_case["feedback_case_id"]
     assert event_source["feedback_case_id"] == feedback_case["feedback_case_id"]
@@ -255,7 +291,7 @@ def test_concurrent_ensure_case_for_source_is_idempotent(tmp_path) -> None:
         results = [future.result(timeout=5) for future in futures]
 
     assert all(result is not None for result in results)
-    assert len({result["feedback_case_id"] for result in results if result}) == 1
+    assert len({str(result["feedback_case_id"]) for result in results if result}) == 1
     assert len(store.list_cases()) == 1
 
 
@@ -336,6 +372,39 @@ def test_concurrent_feedback_signal_id_collision_has_one_immutable_winner(tmp_pa
     assert persisted == winners[0]
 
 
+def test_concurrent_feedback_event_id_collision_has_one_immutable_winner(tmp_path) -> None:
+    store = _store(tmp_path)
+    start = Event()
+
+    def ingest(comment: str):
+        start.wait(timeout=3)
+        try:
+            return store.ingest_feedback_event(
+                FeedbackEventIngestRequest(
+                    event_id="raced-event",
+                    source_system="test",
+                    event_type="recommendation.accepted",
+                    timestamp="2026-07-13T00:00:01Z",
+                    comment=comment,
+                )
+            )
+        except FeedbackEventIdConflictError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(ingest, comment) for comment in ("first", "second")]
+        start.set()
+        results = [future.result(timeout=5) for future in futures]
+
+    winners = [result for result in results if result is not None]
+    assert len(winners) == 1
+    assert winners[0].correlation_status == "pending_correlation"
+    persisted = store.find_event("raced-event")
+    assert persisted is not None
+    assert persisted["comment"] == winners[0].event.comment
+    assert len(store.list_pending(status="pending")) == 1
+
+
 def test_case_source_kind_prevents_cross_table_id_collision(tmp_path) -> None:
     store = _store(tmp_path)
     _signal(store, run_id="run-collision-a", agent_id="agent-a", signal_id="shared-source")
@@ -347,8 +416,8 @@ def test_case_source_kind_prevents_cross_table_id_collision(tmp_path) -> None:
             created_at="2026-07-13T00:00:00+00:00",
         )
     )
-    store.ingest_soc_event(
-        SocEventIngestRequest(
+    store.ingest_feedback_event(
+        FeedbackEventIngestRequest(
             event_id="shared-source",
             source_system="test",
             event_type="recommendation.accepted",
@@ -357,14 +426,14 @@ def test_case_source_kind_prevents_cross_table_id_collision(tmp_path) -> None:
         )
     )
 
-    feedback_case = store.ensure_case_for_source("soc_event", "shared-source")
+    feedback_case = store.ensure_case_for_source("event", "shared-source")
 
     assert feedback_case is not None
     assert feedback_case["agent_id"] == "agent-b"
     assert feedback_case["signal_ids"] == []
     assert feedback_case["event_ids"] == ["shared-source"]
     assert store.find_feedback_source("signal", "shared-source")["feedback_case_id"] is None
-    assert store.find_feedback_source("soc_event", "shared-source")["feedback_case_id"] == feedback_case["feedback_case_id"]
+    assert store.find_feedback_source("event", "shared-source")["feedback_case_id"] == feedback_case["feedback_case_id"]
 
 
 def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp_path) -> None:
@@ -377,8 +446,8 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
                 created_at="2026-07-13T00:00:00+00:00",
             )
         )
-        store.ingest_soc_event(
-            SocEventIngestRequest(
+        store.ingest_feedback_event(
+            FeedbackEventIngestRequest(
                 event_id=f"event-{run_id.removeprefix('run-')}",
                 source_system="test",
                 event_type="recommendation.accepted",
@@ -405,8 +474,7 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
                     pending_correlation_ids_json=[],
                     run_ids_json=["run-stale"],
                     session_ids_json=["session-run-stale"],
-                    alert_ids_json=[],
-                    case_ids_json=[],
+                    entities_json={},
                 ),
                 FeedbackCaseModel(
                     feedback_case_id="case-unclaimed-loser",
@@ -422,11 +490,10 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
                     pending_correlation_ids_json=[],
                     run_ids_json=["run-claimed"],
                     session_ids_json=["session-run-claimed"],
-                    alert_ids_json=[],
-                    case_ids_json=[],
+                    entities_json={},
                 ),
                 FeedbackCaseSourceModel(
-                    source_kind="soc_event",
+                    source_kind="event",
                     source_id="event-claimed",
                     case_id="case-claim-winner",
                     agent_id="agent-a",
@@ -447,16 +514,37 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
     assert store.list_cases(agent_id=ORDINARY_TEST_AGENT_ID) == []
     assert store.find_case("case-unclaimed-loser") is None
     assert store.create_evidence_package("case-unclaimed-loser") is None
-    assert store.find_feedback_source("soc_event", "event-claimed")["feedback_case_id"] == "case-claim-winner"
-    assert store.find_feedback_source("soc_event", "event-stale")["feedback_case_id"] is None
+    assert store.find_feedback_source("event", "event-claimed")["feedback_case_id"] == "case-claim-winner"
+    assert store.find_feedback_source("event", "event-stale")["feedback_case_id"] is None
 
+    agent_workspace = business_agent_layout(store.data_dir, "agent-a").workspace
+    (agent_workspace / "agent-only.md").write_text("${AGENT_A_ONLY}", encoding="utf-8")
+    (store.default_workspace_dir / "default-only.md").write_text("${DEFAULT_ONLY}", encoding="utf-8")
     evidence = store.create_evidence_package("case-claim-winner")
     assert evidence is not None
     assert evidence["business_agent_version_id"] == store._current_agent_version_id("agent-a")
     assert evidence["source_refs"]["event_ids"] == ["event-claimed"]
     assert evidence["source_refs"]["run_ids"] == ["run-claimed"]
-    event_file = store.get_evidence_package_file(evidence["evidence_package_id"], "soc_events.json")
-    assert [event["event_id"] for event in event_file["content"]] == ["event-claimed"]
+    event_file = store.get_evidence_package_file(evidence["evidence_package_id"], "events.json")
+    assert event_file is not None
+    event_content = event_file["content"]
+    assert isinstance(event_content, list)
+    assert [event["event_id"] for event in event_content] == ["event-claimed"]
+    runtime_file = store.get_evidence_package_file(evidence["evidence_package_id"], "runtime_config_summary.json")
+    assert runtime_file is not None
+    assert runtime_file["content"]["business_agent_id"] == "agent-a"
+    assert runtime_file["content"]["workspace_dir"] == str(agent_workspace)
+    assert runtime_file["content"]["agent_manifest"]["agent_id"] == "agent-a"
+    mcp_file = store.get_evidence_package_file(evidence["evidence_package_id"], "effective_mcp_config.json")
+    assert mcp_file is not None
+    assert mcp_file["content"]["profile"] == "agent-a"
+    placeholder_file = store.get_evidence_package_file(evidence["evidence_package_id"], "workspace_placeholder_summary.json")
+    assert placeholder_file is not None
+    placeholder_items = placeholder_file["content"]["items"]
+    assert isinstance(placeholder_items, list)
+    placeholder_paths = [item["path"] for item in placeholder_items]
+    assert "agent-only.md" in placeholder_paths
+    assert "default-only.md" not in placeholder_paths
 
     with store.Session() as db:
         repaired = db.get(FeedbackCaseModel, "case-claim-winner")
@@ -472,7 +560,7 @@ def test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser(tmp
     [
         (FeedbackSignalCreateRequest, {"comment": "hostile", "agent_id": "agent-b"}),
         (
-            SocEventIngestRequest,
+            FeedbackEventIngestRequest,
             {
                 "event_id": "evt-hostile-agent",
                 "source_system": "test",

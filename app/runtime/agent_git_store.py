@@ -20,6 +20,7 @@ from app.runtime.agent_git_read_helpers import (
     file_entry,
     parse_name_status_z,
     read_file_at_ref,
+    read_file_snapshot_at_ref,
     run_git_read_only,
     run_git_read_only_bytes,
     safe_relative_path,
@@ -368,17 +369,22 @@ class GitAgentVersionStore:
             right = self._resolve_ref(to_version_id)
         except AgentGitError:
             return None
-        before = read_file_at_ref(self.repository_dir, left, safe_path)
-        after = read_file_at_ref(self.repository_dir, right, safe_path)
-        status = file_diff_status(before, after)
+        try:
+            before_snapshot = read_file_snapshot_at_ref(self.repository_dir, left, safe_path)
+            after_snapshot = read_file_snapshot_at_ref(self.repository_dir, right, safe_path)
+        except AgentGitError:
+            return None
+        before = before_snapshot.content if before_snapshot is not None else None
+        after = after_snapshot.content if after_snapshot is not None else None
+        status = file_diff_status(before_snapshot, after_snapshot)
         result: JsonObject = {
             "from_version_id": left,
             "to_version_id": right,
             "path": safe_path,
             "archive_path": safe_path,
             "status": status,
-            "before": file_entry(self.repository_dir, left, safe_path) if before is not None else None,
-            "after": file_entry(self.repository_dir, right, safe_path) if after is not None else None,
+            "before": before_snapshot.to_entry() if before_snapshot is not None else None,
+            "after": after_snapshot.to_entry() if after_snapshot is not None else None,
             "unified_diff": "",
             "is_text": False,
             "truncated": False,
@@ -404,7 +410,16 @@ class GitAgentVersionStore:
             result["reason"] = "文件不是 UTF-8 文本，未展开内容。"
             return result
         result["is_text"] = True
-        result["unified_diff"] = "".join(
+        mode_diff = "".join(
+            difflib.unified_diff(
+                [f"{before_snapshot.mode}\n"] if before_snapshot is not None else [],
+                [f"{after_snapshot.mode}\n"] if after_snapshot is not None else [],
+                fromfile=f"{left}:{safe_path} (git mode)" if before_snapshot is not None else "/dev/null (git mode)",
+                tofile=f"{right}:{safe_path} (git mode)" if after_snapshot is not None else "/dev/null (git mode)",
+                lineterm="\n",
+            )
+        )
+        content_diff = "".join(
             difflib.unified_diff(
                 before_text.splitlines(keepends=True),
                 after_text.splitlines(keepends=True),
@@ -413,6 +428,7 @@ class GitAgentVersionStore:
                 lineterm="\n",
             )
         )
+        result["unified_diff"] = mode_diff + content_diff
         return result
 
     def publish_commit(

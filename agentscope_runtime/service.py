@@ -24,7 +24,7 @@ from .receipt_middleware import (
     AgentGovReceiptMiddleware,
 )
 from .run_trace import AgentGovRunTraceRegistry
-from .session_workspace_release import SessionWorkspaceReleaseMiddleware
+from .session_workspace_release import SessionWorkspaceReclaimer, SessionWorkspaceReleaseMiddleware
 from .settings import RUNTIME_USER_ID, RuntimeSettings
 from .subagent_templates import discover_subagent_templates
 from .team_coordination import (
@@ -34,6 +34,7 @@ from .team_coordination import (
 )
 from .trace_context_middleware import AgentGovTraceContextMiddleware
 from .workspace_manager import AgentGovLocalWorkspace, AgentGovWorkspaceManager
+from .workspace_reference_fence import SessionWorkspaceReferenceFence
 
 AgentMiddlewareFactory = Callable[
     [str, str, str, WorkspaceBase],
@@ -110,7 +111,6 @@ def create_runtime_app(
     settings: RuntimeSettings | None = None,
 ) -> FastAPI:
     """Build the internal AgentScope service without private framework hooks."""
-
     resolved = settings or RuntimeSettings.from_env()
     resolved.prepare_writable_directories()
     resolved.validate_source_mounts()
@@ -122,11 +122,13 @@ def create_runtime_app(
     )
     message_bus = AgentGovInMemoryMessageBus(resolved)
     boot_coordinator = RuntimeBootCoordinator(resolved)
+    workspace_reference_fence = SessionWorkspaceReferenceFence()
 
     storage = ProvisionedAsyncSQLAlchemyStorage(
         resolved,
         receipt_dispatcher=receipt_dispatcher,
         message_bus=message_bus,
+        workspace_reference_fence=workspace_reference_fence,
     )
     subagent_templates = discover_subagent_templates(resolved.candidates_root)
     workspace_manager = AgentGovWorkspaceManager(
@@ -135,7 +137,10 @@ def create_runtime_app(
         workspaces_root=resolved.workspaces_root,
         require_read_only_sources=resolved.require_read_only_source_mounts,
         subagent_templates=subagent_templates,
+        workspace_reference_fence=workspace_reference_fence,
     )
+    workspace_reclaimer = SessionWorkspaceReclaimer(workspace_manager)
+    storage.bind_workspace_deletion_reconciler(workspace_reclaimer)
     http_middlewares = [
         Middleware(
             RuntimeBootCoordinationMiddleware,
@@ -143,7 +148,7 @@ def create_runtime_app(
         ),
         Middleware(
             SessionWorkspaceReleaseMiddleware,
-            workspace_manager=workspace_manager,
+            workspace_reclaimer=workspace_reclaimer,
         ),
         Middleware(
             AgentGovReceiptLifespanMiddleware,

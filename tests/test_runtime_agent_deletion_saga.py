@@ -79,8 +79,7 @@ def deletion_resources(tmp_path: Path, unavailable_runtime_endpoint: str):
         session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": [{"type": "text", "text": "retain history"}]},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     retained_run = store.fail_trigger(run.run_id, error={"type": "network-unavailable"})
@@ -95,7 +94,6 @@ def deletion_resources(tmp_path: Path, unavailable_runtime_endpoint: str):
     governance = AgentGovernanceService(
         feedback_store=feedback,
         agent_version_store=versions,
-        runtime_mode="local-debug",
     )
     client = AgentScopeRuntimeClient(
         unavailable_runtime_endpoint,

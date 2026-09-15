@@ -40,7 +40,7 @@ def test_feedback_store_error_handler_returns_structured_error(process_environme
 
     assert response.status_code == 400
     assert response.json()["error_code"] == "BUSINESS_RULE_VIOLATION"
-    assert "run_id, session_id, alert_id, or case_id" in response.json()["detail"]
+    assert "run_id, session_id, or entities" in response.json()["detail"]
 
 
 def test_feedback_route_not_found_returns_structured_error(process_environment, tmp_path):
@@ -100,12 +100,16 @@ def test_public_finite_value_inputs_reject_unknown_values_at_validation_boundary
             ("/api/agent-jobs", {"status": "unknown"}),
             ("/api/feedback-cases", {"status": "unknown"}),
             ("/api/feedback-signals", {"source_type": "unknown"}),
-            ("/api/soc-events", {"event_type": "unknown"}),
             ("/api/pending-correlations", {"status": "unknown"}),
         )
         for path, params in invalid_queries:
             response = client.get(path, params=params)
             assert response.status_code == 422, (path, response.text)
+
+        # FeedbackEvent.event_type 是受长度/非空约束的开放来源事件名，不是有限枚举。
+        unknown_event_type = client.get("/api/feedback-events", params={"event_type": "unknown"})
+        assert unknown_event_type.status_code == 200, unknown_event_type.text
+        assert unknown_event_type.json() == []
 
         invalid_bodies = (
             ("/api/agent-registry/unknown/lifecycle", {"status": "unknown"}),
@@ -116,11 +120,47 @@ def test_public_finite_value_inputs_reject_unknown_values_at_validation_boundary
             response = client.post(path, json=body)
             assert response.status_code == 422, (path, response.text)
 
-        for alias in ("feedback_signal", "event", "pending"):
+        for alias in ("feedback_signal", "pending", "unknown"):
             get_response = client.get(f"/api/feedback-sources/{alias}/unknown")
             patch_response = client.patch(f"/api/feedback-sources/{alias}/unknown", json={})
             assert get_response.status_code == 422, (alias, get_response.text)
             assert patch_response.status_code == 422, (alias, patch_response.text)
+
+        # event 是有效来源类型；不存在的具体来源身份返回 404，而不是枚举校验错误。
+        missing_event = client.get("/api/feedback-sources/event/unknown")
+        assert missing_event.status_code == 404, missing_event.text
+
+
+def test_feedback_event_rejects_blank_identity_and_non_finite_nested_json_without_500(
+    process_environment,
+    tmp_path,
+):
+    module = _load_app(process_environment, tmp_path)
+    base = {
+        "event_id": "finite-event",
+        "source_system": "document-review",
+        "event_type": "document.annotation.corrected",
+        "timestamp": "2026-09-13T00:00:00Z",
+    }
+
+    with TestClient(module.app, raise_server_exceptions=False) as client:
+        for field in ("event_id", "source_system"):
+            response = client.post("/api/feedback-events", json={**base, field: " \t "})
+            assert response.status_code == 422, response.text
+            assert isinstance(response.json()["detail"], list)
+
+        for index, non_finite in enumerate(("NaN", "Infinity", "-Infinity")):
+            # Raw content exercises Starlette's permissive JSON parser.  httpx's
+            # ``json=`` encoder correctly refuses these non-standard tokens first.
+            body = (
+                f'{{"event_id":"non-finite-{index}","source_system":"document-review",'
+                '"event_type":"document.annotation.corrected",'
+                f'"timestamp":"2026-09-13T00:00:00Z","metadata":{{"nested":[{non_finite}]}}}}'
+            )
+            response = client.post("/api/feedback-events", content=body, headers={"content-type": "application/json"})
+            assert response.status_code == 422, response.text
+            assert "[NON_FINITE_NUMBER]" in response.text
+            assert client.get(f"/api/feedback-events/non-finite-{index}").status_code == 404
 
 
 def test_agent_change_set_route_not_found_returns_structured_error(process_environment, tmp_path):
@@ -257,8 +297,12 @@ def test_chat_during_agent_version_maintenance_returns_structured_503(process_en
                 json={
                     "agent_id": runtime_agent_id,
                     "session_id": "session-maintenance",
-                    "client_operation_id": "maintenance-block",
-                    "input": {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+                    "input": {
+                        "id": "maintenance-block",
+                        "name": "user",
+                        "role": "user",
+                        "content": [{"type": "text", "text": "hello"}],
+                    },
                 },
             )
 

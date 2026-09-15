@@ -20,6 +20,7 @@ from app.runtime.runtime_db import make_session_factory
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.services.agent_candidate_approval import inspect_candidate_review
+from app.services.agent_governance_errors import AgentGovernanceError
 from app.services.agent_governance_projections import candidate_diff_digest
 from fastapi.testclient import TestClient
 
@@ -53,7 +54,7 @@ def _store(tmp_path: Path) -> tuple[AgentRegistryStore, dict]:
     """
 
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
-    settings = AppSettings()
+    settings = AppSettings(_env_file=None, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret")
     profiles = build_profiles(settings)
     profiles[DEFAULT_BUSINESS_AGENT_ID] = build_business_agent_profile(
         settings,
@@ -63,11 +64,12 @@ def _store(tmp_path: Path) -> tuple[AgentRegistryStore, dict]:
     return AgentRegistryStore(factory), profiles
 
 
-def _record_passed_test_run(module, *, agent_id: str, commit_sha: str, change_set_id: str) -> dict:
+def _record_unrun_test_run(module, *, agent_id: str, commit_sha: str, change_set_id: str) -> dict:
+    """只登记待执行测试以验证删除影响面；绝不冒充发布所需的真实通过证据。"""
     suite = module.agent_testing_service.inspect_suite(agent_id, commit_sha=commit_sha)
     assert suite.runnable
     assert suite.suite_digest
-    run = module.agent_testing_store.create_run(
+    return module.agent_testing_store.create_run(
         agent_id=agent_id,
         commit_sha=commit_sha,
         change_set_id=change_set_id,
@@ -75,16 +77,6 @@ def _record_passed_test_run(module, *, agent_id: str, commit_sha: str, change_se
         command=FIXED_PYTEST_COMMAND,
         suite=suite.model_dump(mode="json"),
         suite_digest=suite.suite_digest,
-    )
-    claimed = module.agent_testing_store.claim_run(str(run["test_run_id"]))
-    assert claimed is not None
-    return module.agent_testing_store.finish_run(
-        str(run["test_run_id"]),
-        status="passed",
-        report={"passed": 1, "failed": 0},
-        items=[{"nodeid": "tests/test_agent.py::test_agent", "outcome": "passed"}],
-        stdout="1 passed",
-        stderr="",
     )
 
 
@@ -311,7 +303,7 @@ def test_workspace_import_creates_draft_while_existing_agents_remain_active(proc
 
 def test_feedback_asset_provenance_traces_agent_and_relationship(process_environment, tmp_path: Path) -> None:
     """AGV-022：从某次反馈可追溯资产关系——影响了哪个 Agent、改了哪些资产、进入哪个版本。"""
-    from app.runtime.schemas import FeedbackSignalCreateRequest
+    from app.runtime.schemas import FeedbackEventIngestRequest, FeedbackSignalCreateRequest
 
     module = _load_app(process_environment, tmp_path)
     fs = module.feedback_store
@@ -335,16 +327,31 @@ def test_feedback_asset_provenance_traces_agent_and_relationship(process_environ
         summary=case["title"],
     )
     module.improvement_store.add_link(improvement.improvement_id, kind="change_set", ref_id="agc-test")
+    event = fs.ingest_feedback_event(
+        FeedbackEventIngestRequest(
+            event_id="event-only-provenance",
+            source_system="document-review",
+            event_type="document.annotation.corrected",
+            timestamp="2026-09-15T00:00:00Z",
+            run_id="run-x",
+        )
+    )
+    assert event.event.agent_id == "soc-ops"
+    event_case = fs.create_case(source_refs=[("event", event.event.event_id)], title="事件来源归属")
+    assert event_case is not None
 
     with TestClient(module.app) as client:
         prov = client.get(f"/api/asset-registry/feedback/{case_id}")
+        event_prov = client.get(f"/api/asset-registry/feedback/{event_case['feedback_case_id']}")
         assert prov.status_code == 200
+        assert event_prov.status_code == 200
         body = prov.json()
         assert body["feedback_case_id"] == case_id
         # 影响了哪个 Agent：从反馈归属可追溯。
         assert "soc-ops" in body["agent_ids"]
         assert body["improvements"][0]["improvement_id"] == improvement.improvement_id
         assert body["improvements"][0]["change_set_ids"] == ["agc-test"]
+        assert event_prov.json()["agent_ids"] == ["soc-ops"]
         # 未知 case -> 404。
         assert client.get("/api/asset-registry/feedback/nope").status_code == 404
 
@@ -396,7 +403,7 @@ def test_delete_business_agent_reports_impact_and_protects_builtin_agent(process
         # 版本维度：该 Agent 独立 change set → release（落自己的版本 store）。
         change_set = gov.create_change_set(title="soc-ops 候选", operator="t", agent_id="soc-ops")
         worktree = Path(str(change_set["worktree_path"]))
-        worktree.joinpath("AGENT.md").write_text("# soc-ops\n", encoding="utf-8")
+        # 仅变更测试资产，使此宿主删除事务用例保持非敏感候选；人工强制发布有明确例外标签。
         _write_runnable_agent_test(worktree)
         commit = gov._store_for("soc-ops").commit_worktree(worktree, message="c")
         change_set = gov.mark_candidate_committed(
@@ -405,19 +412,21 @@ def test_delete_business_agent_reports_impact_and_protects_builtin_agent(process
             execution_job_id=None,
             operator="t",
         )
-        test_run = _record_passed_test_run(
+        test_run = _record_unrun_test_run(
             module,
             agent_id="soc-ops",
             commit_sha=commit,
             change_set_id=str(change_set["change_set_id"]),
         )
-        change_set = gov.approve_change_set(
+        assert change_set["status"] == "candidate_committed"
+        assert test_run["status"] == "queued"
+        release = gov.publish_change_set(
             str(change_set["change_set_id"]),
-            operator="reviewer",
-            **_approval_kwargs(gov, change_set, test_run),
+            operator="t",
+            force=True,
+            note="仅验证宿主删除事务与跨实体影响面，不作为真实候选测试或正式发布验收",
         )
-        assert change_set["approval_evidence"]["test_run_id"] == test_run["test_run_id"]
-        release = gov.publish_change_set(str(change_set["change_set_id"]), operator="t")
+        assert release["force_published"] is True
 
         # Agent ID 在运行、反馈、测试和版本中保持一致。
         assert signal["agent_id"] == "soc-ops"
@@ -486,36 +495,48 @@ def test_workspace_imported_business_agents_share_governance_without_builtin_spe
         change_set = gov.get_change_set(str(imported_body["change_set_id"]))
         assert change_set is not None
         commit = str(imported_body["candidate_commit_sha"])
-        test_run = _record_passed_test_run(
+        test_run = _record_unrun_test_run(
             module,
             agent_id="shop-bot",
             commit_sha=commit,
             change_set_id=str(change_set["change_set_id"]),
         )
-        if change_set["status"] == "pending_approval":
-            change_set = gov.approve_change_set(
+        assert change_set["status"] == "pending_approval"
+        assert test_run["status"] == "queued"
+        with pytest.raises(AgentGovernanceError, match="候选审批前必须完成且通过精确 candidate commit 的平台测试") as approval_rejected:
+            gov.approve_change_set(
                 str(change_set["change_set_id"]),
                 operator="reviewer",
                 **_approval_kwargs(gov, change_set, test_run),
             )
-        release = gov.publish_change_set(str(change_set["change_set_id"]), operator="t")
+        assert approval_rejected.value.status_code == 409
+        with pytest.raises(AgentGovernanceError, match="require explicit manual approval before publication") as force_rejected:
+            gov.publish_change_set(
+                str(change_set["change_set_id"]),
+                operator="t",
+                force=True,
+                note="宿主测试不得绕过敏感候选审批",
+            )
+        assert force_rejected.value.status_code == 409
 
         # 同一抽象、不同实例：内置 Agent 与新 Agent 的版本 store 物理隔离。
         assert gov._store_for("shop-bot") is not gov._store_for(DEFAULT_BUSINESS_AGENT_ID)
         builtin_head = gov._store_for(DEFAULT_BUSINESS_AGENT_ID).current_commit_sha()
-        # 反馈、版本和测试按 Agent 维度隔离，内置 Agent 版本链不被新 Agent 发布污染。
+        # 反馈、版本和测试按 Agent 维度隔离；未获真实测试证据时双方版本链均不变。
         assert signal["agent_id"] == "shop-bot" and test_run["agent_id"] == "shop-bot"
         shop_cs = {c["change_set_id"] for c in gov.list_change_sets(agent_id="shop-bot")}
         assert shop_cs == {change_set["change_set_id"]}
         assert shop_cs.isdisjoint({c["change_set_id"] for c in gov.list_change_sets(agent_id=DEFAULT_BUSINESS_AGENT_ID)})
-        assert gov._store_for("shop-bot").current_commit_sha() == release["commit_sha"]
+        assert gov.get_change_set(str(change_set["change_set_id"]))["status"] == "pending_approval"
+        assert gov.list_releases(agent_id="shop-bot") == []
+        assert gov._store_for("shop-bot").current_commit_sha() != commit
         assert gov._store_for(DEFAULT_BUSINESS_AGENT_ID).current_commit_sha() == builtin_head
 
 
 def _settings_with_data_dir(process_environment, tmp_path: Path) -> AppSettings:
     """构造 data_dir 指向 tmp 的设置，用于隔离发现逻辑的磁盘扫描。"""
     process_environment.set("DATA_DIR", str(tmp_path / "data"))
-    return AppSettings()
+    return AppSettings(_env_file=None, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret")
 
 
 def test_discover_business_agents_finds_all_live_workspaces(process_environment, tmp_path: Path) -> None:

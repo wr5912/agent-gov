@@ -183,31 +183,70 @@ def _tool_results_match(
     expected_tools: list[RuntimeTraceToolExpectation],
 ) -> bool:
     tool_spans = [value for value in observations if value.get("name") == "execute_tool"]
-    return all(_tool_result_has_span(expectation, tool_spans, graph) for expectation in expected_tools)
+    expectation_keys = [(expectation.session_id, expectation.reply_id, expectation.tool_call_id) for expectation in expected_tools]
+    if len(set(expectation_keys)) != len(expectation_keys):
+        return False
+
+    matched_span_ids: set[str] = set()
+    for expectation in expected_tools:
+        matches = [span for span in tool_spans if _tool_result_has_span(expectation, span, graph)]
+        # state 以 AgentGov durable receipt 为准；Trace 只证明工具是否实际执行。
+        # AgentScope 对 denied 调用不创建 execute span，其余状态都必须恰有一个已闭合 span。
+        if expectation.state == "denied":
+            if matches:
+                return False
+            continue
+        if len(matches) != 1:
+            return False
+        span_id = matches[0].get("id")
+        if not isinstance(span_id, str) or span_id in matched_span_ids:
+            return False
+        matched_span_ids.add(span_id)
+    return len(matched_span_ids) == len(tool_spans)
 
 
 def _tool_result_has_span(
     expectation: RuntimeTraceToolExpectation,
-    tool_spans: list[JsonObject],
+    span: JsonObject,
     graph: _ObservationGraph,
 ) -> bool:
-    for span in tool_spans:
-        if _direct_session_id(span) != expectation.session_id:
-            continue
-        if _attribute(span, "gen_ai.tool.call.id") != expectation.tool_call_id:
-            continue
-        direct_reply = _attribute(span, "agentscope.agent.reply_id")
-        observed_reply = direct_reply or _ancestor_attribute(span, "agentscope.agent.reply_id", graph)
-        if observed_reply != expectation.reply_id:
-            continue
-        if expectation.source == "tool_result_receipt" and direct_reply != expectation.reply_id:
-            continue
-        if expectation.source == "external_action" and _attribute(span, "agentscope.agent.is_external_execution") is not True:
-            continue
-        if expectation.state is not None and _attribute(span, "agentscope.tool.result.state") != expectation.state:
-            continue
-        return True
-    return False
+    if _direct_session_id(span) != expectation.session_id:
+        return False
+    if _attribute(span, "gen_ai.tool.call.id") != expectation.tool_call_id:
+        return False
+    direct_reply = _attribute(span, "agentscope.agent.reply_id")
+    if direct_reply is not None and direct_reply != expectation.reply_id:
+        return False
+    parent_invoke = _parent_invoke(span, graph)
+    if parent_invoke is None:
+        return False
+    if _direct_session_id(parent_invoke) != expectation.session_id:
+        return False
+    if _attribute(parent_invoke, "agentscope.agent.reply_id") != expectation.reply_id:
+        return False
+    external_execution = _attribute(span, "agentscope.agent.is_external_execution")
+    if expectation.source == "external_action":
+        return external_execution is True
+    return external_execution is None or external_execution is False
+
+
+def _parent_invoke(
+    observation: JsonObject,
+    graph: _ObservationGraph,
+) -> JsonObject | None:
+    current = observation
+    visited: set[str] = set()
+    while True:
+        parent_id = _parent_identifier(current)
+        if parent_id is None or parent_id in visited:
+            return None
+        visited.add(parent_id)
+        parent = graph.by_id.get(parent_id)
+        if parent is None:
+            return None
+        if parent.get("name") == "invoke_agent":
+            return parent
+        current = parent
 
 
 def _actions_match(
@@ -330,27 +369,6 @@ def _is_descendant_of(
         parent = graph.by_id.get(parent_id)
         if parent is None:
             return False
-        current = parent
-
-
-def _ancestor_attribute(
-    observation: JsonObject,
-    key: str,
-    graph: _ObservationGraph,
-) -> object:
-    current = observation
-    visited: set[str] = set()
-    while True:
-        value = _attribute(current, key)
-        if value is not None:
-            return value
-        parent_id = _parent_identifier(current)
-        if parent_id is None or parent_id in visited:
-            return None
-        visited.add(parent_id)
-        parent = graph.by_id.get(parent_id)
-        if parent is None:
-            return None
         current = parent
 
 

@@ -80,7 +80,7 @@ def test_reservation_is_hidden_from_list_get_and_chat_resolution(tmp_path: Path)
     assert store.list_agents() == []
     assert store.get_agent("soc-ops") is None
     with pytest.raises(NotFoundError):
-        resolve_business_profile(AppSettings(), store, "soc-ops")
+        resolve_business_profile(AppSettings(_env_file=None, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret"), store, "soc-ops")
 
     store.compensate_business_agent(reservation, workspace_cleanup_complete=True)
     assert store.list_agents() == []

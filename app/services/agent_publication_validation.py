@@ -4,16 +4,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeAlias
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.json_types import JsonObject
-from app.runtime.runtime_db import AgentChangeSetModel
+from app.runtime.runtime_db import AgentChangeSetModel, AgentReleaseModel
 from app.services.agent_candidate_approval import (
     CandidateApprovalFailure,
     approval_review_evidence_matches,
     inspect_candidate_review,
     require_exact_passed_candidate_test,
+    require_recorded_publication_test,
 )
 from app.services.agent_governance_errors import AgentGovernanceError
 from app.services.agent_governance_projections import (
@@ -25,6 +27,7 @@ from app.services.agent_publication import (
     PublicationIntent,
     PublicationSourceConflict,
     PublicationTagConflict,
+    release_matches_intent,
     validate_source_claim,
     validate_tag_claim,
 )
@@ -167,12 +170,14 @@ def require_publication_intent_evidence(
     intent: PublicationIntent,
     store: GitAgentVersionStore,
 ) -> None:
-    """重新核验持久化发布意图，不把其字段本身当作事实来源。"""
+    """未完成发布核准入；完成后核原发布事实，不回溯新版测试报告要求。"""
 
     candidate = str(row.candidate_commit_sha or "")
     base = str(row.base_commit_sha or "")
-    if intent.commit_sha != candidate or intent.previous_commit_sha != base:
+    if (intent.agent_id, intent.change_set_id, intent.commit_sha, intent.previous_commit_sha) != (row.agent_id, row.change_set_id, candidate, base):
         raise AgentGovernanceError(409, "Publication intent commit identity is stale")
+    if row.status == "published":
+        _require_completed_release_identity(db, row=row, intent=intent, store=store)
     diff = store.diff_versions(base, candidate)
     if diff is None or candidate_diff_digest(diff) != intent.diff_digest:
         raise AgentGovernanceError(409, "Publication intent diff evidence is stale")
@@ -187,16 +192,7 @@ def require_publication_intent_evidence(
     passed_run: JsonObject | None = None
     if not intent.force:
         try:
-            passed_run = require_exact_passed_candidate_test(
-                db,
-                agent_id=intent.agent_id,
-                commit_sha=intent.commit_sha,
-                change_set_id=intent.change_set_id,
-                test_run_id=intent.test_run_id,
-                suite_digest=intent.suite_digest,
-                require_latest=False,
-                not_before=str(payload.get("evidence_not_before") or "") or None,
-            )
+            passed_run = _require_publication_test(db, row=row, test_run_id=intent.test_run_id, suite_digest=intent.suite_digest)
         except CandidateApprovalFailure as exc:
             raise AgentGovernanceError(409, "Publication intent test evidence is stale") from exc
     _require_approval_intent_evidence(
@@ -204,7 +200,7 @@ def require_publication_intent_evidence(
         intent=intent,
         store=store,
         diff=diff,
-        change_set=payload,
+        row=row,
         passed_run=passed_run,
         base=base,
         candidate=candidate,
@@ -221,32 +217,75 @@ def require_publication_intent_evidence(
         raise AgentGovernanceError(409, str(exc)) from exc
 
 
+def _require_completed_release_identity(
+    db: Session,
+    *,
+    row: AgentChangeSetModel,
+    intent: PublicationIntent,
+    store: GitAgentVersionStore,
+) -> None:
+    releases = db.scalars(select(AgentReleaseModel).where(AgentReleaseModel.change_set_id == row.change_set_id).limit(2)).all()
+    if len(releases) != 1 or releases[0].rollback_of_release_id is not None or not release_matches_intent(releases[0], intent):
+        raise AgentGovernanceError(409, "Completed publication release identity is inconsistent")
+    try:
+        git_matches = store.published_identity_matches(intent.commit_sha, intent.tag_name)
+    except (AgentGitError, OSError, RuntimeError):
+        git_matches = False
+    if not git_matches:
+        raise AgentGovernanceError(409, "Published Agent release no longer matches its live Git/tag identity")
+
+
+def _require_publication_test(
+    db: Session,
+    *,
+    row: AgentChangeSetModel,
+    test_run_id: str | None,
+    suite_digest: str | None,
+) -> JsonObject:
+    if row.status == "published":
+        return require_recorded_publication_test(
+            db,
+            agent_id=row.agent_id,
+            commit_sha=str(row.candidate_commit_sha or ""),
+            change_set_id=row.change_set_id,
+            test_run_id=test_run_id or "",
+            suite_digest=suite_digest or "",
+        )
+    return require_exact_passed_candidate_test(
+        db,
+        agent_id=row.agent_id,
+        commit_sha=str(row.candidate_commit_sha or ""),
+        change_set_id=row.change_set_id,
+        test_run_id=test_run_id,
+        suite_digest=suite_digest,
+        require_latest=False,
+        not_before=str((row.payload_json or {}).get("evidence_not_before") or "") or None,
+    )
+
+
 def _require_approval_intent_evidence(
     db: Session,
     *,
     intent: PublicationIntent,
     store: GitAgentVersionStore,
     diff: JsonObject,
-    change_set: JsonObject,
+    row: AgentChangeSetModel,
     passed_run: JsonObject | None,
     base: str,
     candidate: str,
 ) -> None:
     if intent.previous_status != "approved":
         return
+    change_set = dict(row.payload_json or {})
     approval = change_set.get("approval_evidence")
     approval_payload = dict(approval) if isinstance(approval, dict) else {}
     if intent.force:
         try:
-            passed_run = require_exact_passed_candidate_test(
+            passed_run = _require_publication_test(
                 db,
-                agent_id=intent.agent_id,
-                commit_sha=intent.commit_sha,
-                change_set_id=intent.change_set_id,
+                row=row,
                 test_run_id=str(approval_payload.get("test_run_id") or ""),
                 suite_digest=str(approval_payload.get("suite_digest") or ""),
-                require_latest=False,
-                not_before=str(change_set.get("evidence_not_before") or "") or None,
             )
         except CandidateApprovalFailure as exc:
             raise AgentGovernanceError(409, "Force publication approval test evidence is stale") from exc

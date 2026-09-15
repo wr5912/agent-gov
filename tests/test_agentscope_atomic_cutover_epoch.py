@@ -7,6 +7,10 @@ from types import SimpleNamespace
 import pytest
 from app.runtime import runtime_db
 from app.runtime.runtime_db import make_session_factory
+from app.runtime.sqlite_schema_contract import (
+    IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION,
+    PRE_IDEMPOTENCY_V4_SCHEMA_CONTRACT_SHA256,
+)
 from scripts import agentscope_atomic_cutover as cutover
 from sqlalchemy import create_engine
 from tests.runtime_schema_test_utils import (
@@ -112,6 +116,80 @@ def test_exact_current_epoch_uses_the_frozen_physical_contract(tmp_path: Path) -
 
     assert result["classification"] == "agentscope"
     assert result.get("physical_contract_sha256") == cutover.CURRENT_SCHEMA_CONTRACT_SHA256
+
+
+def _exact_pre_idempotency_v4_database(db_path: Path, *, known_marker: bool = False) -> None:
+    _fresh_current_database(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute('DROP TABLE "improvement_idempotency_operations"')
+        if not known_marker:
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version = ?",
+                ("agentscope-hitl-fingerprint-v1",),
+            )
+
+
+@pytest.mark.parametrize("known_marker", [False, True])
+def test_exact_pre_idempotency_v4_epoch_is_allowed_for_deploy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    known_marker: bool,
+) -> None:
+    db_path = tmp_path / "runtime.sqlite3"
+    _exact_pre_idempotency_v4_database(db_path, known_marker=known_marker)
+
+    result = cutover.classify_runtime_epoch(db_path)
+
+    assert result["classification"] == "agentscope-v4-idempotency-migratable"
+    assert result["physical_contract_sha256"] == PRE_IDEMPOTENCY_V4_SCHEMA_CONTRACT_SHA256
+    monkeypatch.setattr(cutover, "resolve_runtime_root", lambda *_args, **_kwargs: tmp_path)
+    monkeypatch.setattr(cutover, "_database_path", lambda *_args, **_kwargs: db_path)
+    args = SimpleNamespace(env_file=tmp_path / "selected.env", runtime_root=None, require_current_or_empty=True)
+    assert cutover.command_inspect(args) == 0
+    assert '"classification": "agentscope-v4-idempotency-migratable"' in capsys.readouterr().out
+
+
+def test_exact_pre_idempotency_v4_reclassifies_as_current_after_migration(tmp_path: Path) -> None:
+    db_path = tmp_path / "runtime.sqlite3"
+    _exact_pre_idempotency_v4_database(db_path, known_marker=True)
+    assert cutover.classify_runtime_epoch(db_path)["classification"] == "agentscope-v4-idempotency-migratable"
+
+    factory = make_session_factory(db_path)
+    factory.kw["bind"].dispose()
+
+    result = cutover.classify_runtime_epoch(db_path)
+    assert result["classification"] == "agentscope"
+    assert result["physical_contract_sha256"] == cutover.CURRENT_SCHEMA_CONTRACT_SHA256
+    assert result["schema_versions"].count(IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION) == 1
+
+
+@pytest.mark.parametrize("mutation", ["unknown_marker", "premature_idempotency_marker", "extra_table"])
+def test_pre_idempotency_v4_with_unreviewed_shape_is_not_deployable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    db_path = tmp_path / "runtime.sqlite3"
+    _exact_pre_idempotency_v4_database(db_path)
+    with sqlite3.connect(db_path) as connection:
+        if mutation in {"unknown_marker", "premature_idempotency_marker"}:
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (
+                    "unknown-v4-migration" if mutation == "unknown_marker" else IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION,
+                    "2026-09-15T00:00:00Z",
+                ),
+            )
+        else:
+            connection.execute("CREATE TABLE unreviewed_runtime_shape (value TEXT)")
+
+    assert cutover.classify_runtime_epoch(db_path)["classification"] == "legacy-or-unknown"
+    monkeypatch.setattr(cutover, "resolve_runtime_root", lambda *_args, **_kwargs: tmp_path)
+    monkeypatch.setattr(cutover, "_database_path", lambda *_args, **_kwargs: db_path)
+    args = SimpleNamespace(env_file=tmp_path / "selected.env", runtime_root=None, require_current_or_empty=True)
+    with pytest.raises(cutover.CutoverError, match="普通 deploy 禁止启动"):
+        cutover.command_inspect(args)
 
 
 def test_exact_v2_epoch_is_allowed_for_startup_migration(

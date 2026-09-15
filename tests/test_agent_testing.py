@@ -47,7 +47,6 @@ def _version_governance(tmp_path: Path, *, agent_id: str) -> tuple[GitAgentVersi
     governance = AgentGovernanceService(
         feedback_store=FeedbackStore(data_dir=tmp_path / "data"),
         agent_version_store=git_store,
-        runtime_mode="local-debug",
     )
     return git_store, governance
 
@@ -218,13 +217,13 @@ def test_suite_inspection_rejects_test_asset_symlink(tmp_path: Path) -> None:
     assert "AGENT_TEST_PATH_SYMLINK" in {item.code for item in suite.diagnostics}
 
 
-def test_test_run_store_uses_independent_lifecycle_and_exact_commit_gate(tmp_path: Path) -> None:
+def test_test_run_store_does_not_promote_unattested_passed_row_to_release_evidence(tmp_path: Path) -> None:
     store = _testing_store(tmp_path)
     passed = _passed_run(store, agent_id="agent-a", commit_sha="a" * 40)
 
     assert passed["status"] == "passed"
     assert passed["items"][0]["nodeid"] == "tests/test_agent.py::test_agent"
-    assert store.latest_passed_for_commit(agent_id="agent-a", commit_sha="a" * 40)["test_run_id"] == passed["test_run_id"]
+    assert store.latest_passed_for_commit(agent_id="agent-a", commit_sha="a" * 40) is None
     assert store.latest_passed_for_commit(agent_id="agent-a", commit_sha="b" * 40) is None
     assert store.latest_passed_for_commit(agent_id="agent-b", commit_sha="a" * 40) is None
 
@@ -396,6 +395,112 @@ def test_runner_rejects_zero_exit_without_structured_test_items(tmp_path: Path) 
         assert persisted["status"] == "error"
         assert persisted["items"] == []
         assert persisted["error"]["error_code"] == "AGENT_TEST_REPORT_INVALID"
+    finally:
+        runner.close()
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_status"),
+    [("manual", "passed"), ("release_check", "error")],
+)
+def test_real_pytest_runner_requires_server_invocation_only_for_release_dialogue(
+    tmp_path: Path,
+    source: str,
+    expected_status: str,
+) -> None:
+    git_store, governance = _version_governance(tmp_path, agent_id="agent-a")
+    workspace = git_store.repository_dir
+    workspace.mkdir(parents=True, exist_ok=True)
+    _write_suite(workspace)
+    git_store.ensure_bootstrap()
+    commit_sha = str(git_store.current_commit_sha())
+    suite = inspect_agent_test_suite(workspace, agent_id="agent-a", commit_sha=commit_sha)
+    assert suite.runnable and suite.suite_digest
+    store = _testing_store(tmp_path)
+    run = store.create_run(
+        agent_id="agent-a",
+        commit_sha=commit_sha,
+        change_set_id="agc-test" if source == "release_check" else None,
+        source=source,
+        command=FIXED_PYTEST_COMMAND,
+        suite=suite.model_dump(mode="json"),
+        suite_digest=suite.suite_digest,
+    )
+    runner = AgentTestRunner(
+        store=store,
+        store_for=governance._store_for,
+        artifacts_dir=tmp_path / "artifacts",
+        api_base_url="http://127.0.0.1:50400",
+        api_key=None,
+        timeout_seconds=30,
+    )
+    try:
+        runner.enqueue(str(run["test_run_id"]))
+        deadline = time.monotonic() + 10
+        current = store.get_run(str(run["test_run_id"]))
+        while current and current["status"] in {"queued", "running"} and time.monotonic() < deadline:
+            time.sleep(0.05)
+            current = store.get_run(str(run["test_run_id"]))
+        assert current is not None
+        assert current["status"] == expected_status, current
+        assert current["report"]["collected_nodeids"] == ["test_agent.py::test_agent"]
+        assert current["report"]["items"][0]["phase_outcomes"] == {
+            "setup": "passed",
+            "call": "passed",
+            "teardown": "passed",
+        }
+        if source == "release_check":
+            assert "release test has no server-attested Agent invocation" in current["report"]["validation_errors"]
+    finally:
+        runner.close()
+
+
+def test_real_pytest_runner_rejects_setup_skip_despite_zero_exit(tmp_path: Path) -> None:
+    git_store, governance = _version_governance(tmp_path, agent_id="agent-a")
+    workspace = git_store.repository_dir
+    workspace.mkdir(parents=True, exist_ok=True)
+    _write_suite(workspace)
+    workspace.joinpath("tests/test_agent.py").write_text(
+        "from unittest import SkipTest\nimport pytest\n"
+        "def test_pass(): assert True\n"
+        "@pytest.fixture\ndef resource(): raise SkipTest('setup unavailable')\n"
+        "def test_skipped(resource): assert True\n",
+        encoding="utf-8",
+    )
+    git_store.ensure_bootstrap()
+    commit_sha = str(git_store.current_commit_sha())
+    suite = inspect_agent_test_suite(workspace, agent_id="agent-a", commit_sha=commit_sha)
+    assert suite.runnable and suite.suite_digest
+    store = _testing_store(tmp_path)
+    run = store.create_run(
+        agent_id="agent-a",
+        commit_sha=commit_sha,
+        change_set_id=None,
+        source="manual",
+        command=FIXED_PYTEST_COMMAND,
+        suite=suite.model_dump(mode="json"),
+        suite_digest=suite.suite_digest,
+    )
+    runner = AgentTestRunner(
+        store=store,
+        store_for=governance._store_for,
+        artifacts_dir=tmp_path / "artifacts",
+        api_base_url="http://127.0.0.1:50400",
+        api_key=None,
+        timeout_seconds=30,
+    )
+    try:
+        runner.enqueue(str(run["test_run_id"]))
+        deadline = time.monotonic() + 10
+        current = store.get_run(str(run["test_run_id"]))
+        while current and current["status"] in {"queued", "running"} and time.monotonic() < deadline:
+            time.sleep(0.05)
+            current = store.get_run(str(run["test_run_id"]))
+        assert current is not None
+        assert current["status"] == "error", current
+        assert current["error"]["error_code"] == "AGENT_TEST_REPORT_INVALID"
+        assert {item["outcome"] for item in current["items"]} == {"passed", "skipped"}
+        assert len(current["report"]["collected_nodeids"]) == 2
     finally:
         runner.close()
 

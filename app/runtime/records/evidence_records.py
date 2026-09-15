@@ -8,6 +8,7 @@ from pydantic.types import JsonValue
 
 from app.runtime.runtime_db import EvidenceFileModel, EvidencePackageModel
 
+from ..feedback_entities import FeedbackEntities, merge_entities, parse_entities
 from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
 
@@ -22,11 +23,10 @@ class EvidenceSourceRefsRecord(StrictRuntimeRecord):
     run_ids: list[str] = Field(default_factory=list)
     session_ids: list[str] = Field(default_factory=list)
     trace_ids: list[str] = Field(default_factory=list)
-    alert_ids: list[str] = Field(default_factory=list)
-    case_ids: list[str] = Field(default_factory=list)
+    entities: FeedbackEntities = Field(default_factory=dict)
     event_ids: list[str] = Field(default_factory=list)
 
-    @field_validator("*")
+    @field_validator("feedback_ids", "signal_ids", "run_ids", "session_ids", "trace_ids", "event_ids")
     @classmethod
     def validate_string_list(cls, value: list[str]) -> list[str]:
         return [str(item) for item in value if item]
@@ -132,6 +132,11 @@ class EvidencePackageRecord(StrictRuntimeRecord):
     @classmethod
     def from_row(cls, row: EvidencePackageModel) -> EvidencePackageRecord:
         payload = dict(row.manifest_json or {})
+        # 只投影旧证据引用；不改归档 manifest/BLOB 字节及其哈希。
+        refs = dict(payload.get("source_refs") or {})
+        legacy = {kind: refs.pop(key) for kind, key in (("alert", "alert_ids"), ("case", "case_ids")) if key in refs}
+        refs["entities"] = merge_entities([parse_entities(refs.get("entities")), parse_entities(legacy)])
+        payload["source_refs"] = refs
         payload.update(
             {
                 "evidence_package_id": row.evidence_package_id,

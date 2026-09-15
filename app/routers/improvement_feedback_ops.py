@@ -12,6 +12,7 @@ from app.runtime.improvement_content_schemas import (
     ImprovementDeletionImpactResponse,
     ImprovementFeedbackReassignRequest,
     ImprovementFeedbackResponse,
+    ImprovementFeedbackSourceEvent,
 )
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_content_store import ImprovementContentStore, ImprovementFeedbackRecord
@@ -20,10 +21,22 @@ from app.runtime.stores.improvement_store import ImprovementStore
 
 def _fb_response(r: ImprovementFeedbackRecord) -> ImprovementFeedbackResponse:
     return ImprovementFeedbackResponse(
-        feedback_id=r.feedback_id, improvement_id=r.improvement_id, agent_id=r.agent_id, summary=r.summary,
-        source=r.source, status=r.status, raw_text=r.raw_text, run_id=r.run_id, session_id=r.session_id,
-        agent_version_id=r.agent_version_id, scenario=r.scenario, task_id=r.task_id,
-        alert_id=r.alert_id, case_id=r.case_id, created_at=r.created_at,
+        feedback_id=r.feedback_id,
+        improvement_id=r.improvement_id,
+        agent_id=r.agent_id,
+        summary=r.summary,
+        source=r.source,
+        status=r.status,
+        raw_text=r.raw_text,
+        run_id=r.run_id,
+        session_id=r.session_id,
+        agent_version_id=r.agent_version_id,
+        scenario=r.scenario,
+        task_id=r.task_id,
+        entities=r.entities,
+        feedback_case_id=r.feedback_case_id,
+        source_events=[ImprovementFeedbackSourceEvent(event_id=e.event_id, source_system=e.source_system, event_type=e.event_type) for e in r.source_events],
+        created_at=r.created_at,
     )
 
 
@@ -39,8 +52,24 @@ def create_improvement_feedback_ops_router(
     与 create_improvement_content_router 分离以保持单文件路由数与单函数体量在治理阈值内。
     """
     router = APIRouter(prefix="/api", tags=["improvements"], dependencies=[Depends(require_api_key)])
+    _register_feedback_selection_routes(router, improvement_store=improvement_store, content_store=content_store, feedback_store=feedback_store)
+    _register_feedback_mutation_routes(router, improvement_store=improvement_store, content_store=content_store)
+    return router
 
-    @router.get("/improvements/{improvement_id}/attachable-feedbacks", response_model=AttachableFeedbacksResponse, summary="List feedback selectable to add: unassigned FeedbackCases + other improvements' feedbacks")
+
+def _register_feedback_selection_routes(
+    router: APIRouter,
+    *,
+    improvement_store: ImprovementStore,
+    content_store: ImprovementContentStore,
+    feedback_store: FeedbackStore,
+) -> None:
+
+    @router.get(
+        "/improvements/{improvement_id}/attachable-feedbacks",
+        response_model=AttachableFeedbacksResponse,
+        summary="List feedback selectable to add: unassigned FeedbackCases + other improvements' feedbacks",
+    )
     async def attachable_feedbacks(improvement_id: str) -> AttachableFeedbacksResponse:
         item = improvement_store.get_improvement(improvement_id)
         if item is None:
@@ -48,8 +77,10 @@ def create_improvement_feedback_ops_router(
         assigned = improvement_store.assigned_feedback_case_ids()
         cases = [
             AttachableFeedbackCase(
-                feedback_case_id=str(c.get("feedback_case_id") or ""), title=str(c.get("title") or ""),
-                status=str(c.get("status") or ""), run_ids=[str(r) for r in (c.get("run_ids") or [])],
+                feedback_case_id=str(c.get("feedback_case_id") or ""),
+                title=str(c.get("title") or ""),
+                status=str(c.get("status") or ""),
+                run_ids=[str(r) for r in (c.get("run_ids") or [])],
             )
             for c in feedback_store.list_cases(agent_id=item.agent_id)
             if str(c.get("feedback_case_id") or "") and c.get("feedback_case_id") not in assigned
@@ -57,7 +88,12 @@ def create_improvement_feedback_ops_router(
         others = [_fb_response(r) for r in content_store.list_attachable_feedbacks(agent_id=item.agent_id, exclude_improvement_id=improvement_id)]
         return AttachableFeedbacksResponse(feedback_cases=cases, other_improvement_feedbacks=others)
 
-    @router.post("/improvements/{improvement_id}/attach-feedback-case", response_model=ImprovementFeedbackResponse, status_code=201, summary="Attach an existing FeedbackCase to this improvement (prefilled + ref registered)")
+    @router.post(
+        "/improvements/{improvement_id}/attach-feedback-case",
+        response_model=ImprovementFeedbackResponse,
+        status_code=201,
+        summary="Attach an existing FeedbackCase to this improvement (prefilled + ref registered)",
+    )
     async def attach_feedback_case(improvement_id: str, req: AttachFeedbackCaseRequest) -> ImprovementFeedbackResponse:
         item = improvement_store.get_improvement(improvement_id)
         if item is None:
@@ -68,6 +104,10 @@ def create_improvement_feedback_ops_router(
         if str(case.get("agent_id") or "") != item.agent_id:
             raise BusinessRuleViolation("Cannot attach feedback case across different business agents")
         run_ids = [str(r) for r in (case.get("run_ids") or [])]
+        for run_id in run_ids:
+            run = feedback_store.find_run(run_id=run_id)
+            if run is None or str(run.get("agent_id") or "") != item.agent_id:
+                raise BusinessRuleViolation("Cannot attach feedback case with cross-agent run evidence")
         fb = content_store.attach_feedback_case(
             improvement_id,
             agent_id=item.agent_id,
@@ -77,7 +117,18 @@ def create_improvement_feedback_ops_router(
         )
         return _fb_response(fb)
 
-    @router.post("/improvements/{improvement_id}/feedbacks/{feedback_id}/reassign", response_model=ImprovementFeedbackResponse, summary="Move a feedback to another improvement (cross-item adjust)")
+
+def _register_feedback_mutation_routes(
+    router: APIRouter,
+    *,
+    improvement_store: ImprovementStore,
+    content_store: ImprovementContentStore,
+) -> None:
+    @router.post(
+        "/improvements/{improvement_id}/feedbacks/{feedback_id}/reassign",
+        response_model=ImprovementFeedbackResponse,
+        summary="Move a feedback to another improvement (cross-item adjust)",
+    )
     async def reassign_feedback(improvement_id: str, feedback_id: str, req: ImprovementFeedbackReassignRequest) -> ImprovementFeedbackResponse:
         return _fb_response(
             content_store.reassign_feedback(
@@ -87,17 +138,27 @@ def create_improvement_feedback_ops_router(
             )
         )
 
-    @router.get("/improvements/{improvement_id}/deletion-impact", response_model=ImprovementDeletionImpactResponse, summary="Preview impact of deleting an improvement (dry-run; FeedbackCases return to the unassigned pool)")
+    @router.get(
+        "/improvements/{improvement_id}/deletion-impact",
+        response_model=ImprovementDeletionImpactResponse,
+        summary="Preview impact of deleting an improvement (dry-run; FeedbackCases return to the unassigned pool)",
+    )
     async def deletion_impact(improvement_id: str) -> ImprovementDeletionImpactResponse:
         imp = improvement_store.deletion_impact(improvement_id)
         return ImprovementDeletionImpactResponse(
-            improvement_id=imp.improvement_id, title=imp.title, source_feedback_refs=imp.source_feedback_refs,
-            feedbacks=imp.feedbacks, links=imp.links, has_attribution=imp.has_attribution,
+            improvement_id=imp.improvement_id,
+            title=imp.title,
+            source_feedback_refs=imp.source_feedback_refs,
+            feedbacks=imp.feedbacks,
+            links=imp.links,
+            has_attribution=imp.has_attribution,
             has_optimization_plan=imp.has_optimization_plan,
         )
 
-    @router.delete("/improvements/{improvement_id}", status_code=204, summary="Delete an improvement (hard delete; cascades feedbacks/content; FeedbackCases survive → unassigned pool)")
+    @router.delete(
+        "/improvements/{improvement_id}",
+        status_code=204,
+        summary="Delete an improvement (hard delete; cascades feedbacks/content; FeedbackCases survive → unassigned pool)",
+    )
     async def delete_improvement(improvement_id: str) -> None:
         improvement_store.delete_improvement(improvement_id)
-
-    return router

@@ -8,6 +8,7 @@ from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import FeedbackCaseModel
 from app.runtime.state_machines import CASE_STATES, FeedbackCaseStatus, validate_transition
 
+from ..feedback_entities import FeedbackEntities
 from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
 
@@ -28,8 +29,7 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
     pending_correlation_ids: list[str] = Field(default_factory=list)
     run_ids: list[str] = Field(default_factory=list)
     session_ids: list[str] = Field(default_factory=list)
-    alert_ids: list[str] = Field(default_factory=list)
-    case_ids: list[str] = Field(default_factory=list)
+    entities: FeedbackEntities = Field(default_factory=dict)
     evidence_package_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
 
@@ -47,8 +47,6 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
         "pending_correlation_ids",
         "run_ids",
         "session_ids",
-        "alert_ids",
-        "case_ids",
         "evidence_package_ids",
         "attribution_job_ids",
     )
@@ -103,8 +101,7 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
                 "pending_correlation_ids": row.pending_correlation_ids_json or [],
                 "run_ids": row.run_ids_json or [],
                 "session_ids": row.session_ids_json or [],
-                "alert_ids": row.alert_ids_json or [],
-                "case_ids": row.case_ids_json or [],
+                "entities": row.entities_json or {},
                 "evidence_package_ids": [row.current_evidence_package_id] if row.current_evidence_package_id else [],
                 "attribution_job_ids": [row.current_attribution_job_id] if row.current_attribution_job_id else [],
             }

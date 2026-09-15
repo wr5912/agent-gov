@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from agentgov_testkit import AgentGovTestkitError, invoke_agent, pytest_plugin
 from runtime_loopback import serve_loopback
@@ -77,6 +78,22 @@ def test_invoke_agent_accepts_canonical_trace_field_names_over_real_http() -> No
     assert result.langfuse_trace_url == "http://127.0.0.1:50402/trace/real"
 
 
+@pytest.mark.parametrize("error_code,expected", [("RUNTIME_STATE_CONFLICT", "RUNTIME_STATE_CONFLICT"), ("BAD\nPRIVATE", "UNCLASSIFIED")])
+def test_invoke_agent_reports_only_http_status_and_safe_error_code_over_real_http(error_code: str, expected: str) -> None:
+    app = FastAPI()
+
+    @app.post("/api/agent-test-sessions/ats-real/messages")
+    def invoke() -> JSONResponse:
+        return JSONResponse(status_code=409, content={"error_code": error_code, "detail": "private-response-marker"})
+
+    with serve_loopback(app) as api_base, pytest.raises(AgentGovTestkitError) as caught:
+        invoke_agent("real input", api_base=api_base, test_session_id="ats-real")
+
+    assert str(caught.value) == f"AgentGov test invocation failed: HTTP 409 error_code={expected}"
+    assert "private-response-marker" not in str(caught.value)
+    assert api_base not in str(caught.value)
+
+
 def test_pytest_plugin_records_real_pytest_call_and_setup_failure(tmp_path: Path) -> None:
     report_path = tmp_path / "report.json"
     test_module = tmp_path / "test_real_pytest_protocol.py"
@@ -130,3 +147,84 @@ def test_setup_failure(broken_resource):
         ("failed", "setup"),
     ]
     assert "resource setup failed" in payload["items"][1]["detail"]
+
+
+def test_pytest_plugin_reports_every_collected_leaf_after_real_setup_skip(tmp_path: Path) -> None:
+    report_path = tmp_path / "report.json"
+    test_module = tmp_path / "test_real_setup_skip.py"
+    test_module.write_text(
+        """from unittest import SkipTest
+import pytest
+
+
+def test_pass():
+    assert 2 + 2 == 4
+
+
+@pytest.fixture
+def unavailable_resource():
+    raise SkipTest("real setup skip")
+
+
+def test_setup_skipped(unavailable_resource):
+    raise AssertionError("call phase must not run")
+""",
+        encoding="utf-8",
+    )
+    package_src = Path(__file__).resolve().parents[1] / "packages" / "agentgov-testkit" / "src"
+    environment = dict(os.environ)
+    environment["AGENTGOV_TEST_REPORT_PATH"] = str(report_path)
+    environment["PYTHONPATH"] = os.pathsep.join(item for item in (str(package_src), environment.get("PYTHONPATH", "")) if item)
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "agentgov_testkit.pytest_plugin", str(test_module)],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["exit_code"] == 0
+    assert sorted(payload["collected_nodeids"]) == sorted(item["nodeid"] for item in payload["items"])
+    assert [(item["outcome"], item["phase"]) for item in payload["items"]] == [
+        ("passed", "call"),
+        ("skipped", "setup"),
+    ]
+
+
+def test_pytest_plugin_reports_real_teardown_failure_as_nonpassing_leaf(tmp_path: Path) -> None:
+    report_path = tmp_path / "report.json"
+    test_module = tmp_path / "test_teardown_failure.py"
+    test_module.write_text(
+        "import pytest\n\n"
+        "@pytest.fixture\n"
+        "def failing_cleanup():\n"
+        "    yield\n"
+        "    raise RuntimeError('real teardown failed')\n\n"
+        "def test_call_passes_but_teardown_fails(failing_cleanup):\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    package_src = Path(__file__).resolve().parents[1] / "packages" / "agentgov-testkit" / "src"
+    environment = dict(os.environ)
+    environment["AGENTGOV_TEST_REPORT_PATH"] = str(report_path)
+    environment["PYTHONPATH"] = os.pathsep.join(item for item in (str(package_src), environment.get("PYTHONPATH", "")) if item)
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "agentgov_testkit.pytest_plugin", str(test_module)],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert len(payload["collected_nodeids"]) == 1
+    assert payload["items"][0]["outcome"] == "failed"
+    assert payload["items"][0]["phase"] == "teardown"
+    assert payload["items"][0]["phase_outcomes"] == {"setup": "passed", "call": "passed", "teardown": "failed"}

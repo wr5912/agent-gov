@@ -10,19 +10,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..errors import BusinessRuleViolation, ConflictError, DataIntegrityError
+from ..feedback_entities import merge_entities, parse_entities
 from ..json_types import JsonObject
 from ..records.case_records import FeedbackCaseRecord
-from ..records.source_records import FeedbackSignalRecord, PendingCorrelationRecord, SocEventRecord
+from ..records.source_records import FeedbackEventRecord, FeedbackSignalRecord, PendingCorrelationRecord
 from ..runtime_db import (
+    AgentRunModel,
     FeedbackCaseModel,
     FeedbackCaseSourceModel,
+    FeedbackEventModel,
     FeedbackSignalModel,
     PendingCorrelationModel,
-    SocEventModel,
     utc_now,
 )
 
-CaseSourceKind = Literal["signal", "soc_event", "pending_correlation"]
+CaseSourceKind = Literal["signal", "event", "pending_correlation"]
 CaseSourceRef = tuple[CaseSourceKind, str]
 CaseSourceOwner = tuple[CaseSourceKind, str, str | None]
 
@@ -59,6 +61,7 @@ class FeedbackCaseStoreMixin:
                     return None
                 agent_id = self._case_agent_id(sources)
                 feedback_case = self._feedback_case_payload(
+                    db=db,
                     source_ids=self._unique_strings([source_id for _, source_id in unique_refs]),
                     signals=list(sources.signals.values()),
                     events=list(sources.events.values()),
@@ -92,14 +95,14 @@ class FeedbackCaseStoreMixin:
                 sources.signals[source_id] = signal
                 sources.owners.append(("signal", source_id, self._string(signal.get("agent_id"))))
                 continue
-            if source_kind == "soc_event":
-                event_row = db.get(SocEventModel, source_id)
+            if source_kind == "event":
+                event_row = db.get(FeedbackEventModel, source_id)
                 if event_row is None:
-                    sources.unresolved.append(f"soc_event:{source_id}")
+                    sources.unresolved.append(f"event:{source_id}")
                     continue
-                event = SocEventRecord.from_row(event_row).to_payload()
+                event = FeedbackEventRecord.from_row(event_row).to_payload()
                 sources.events[source_id] = event
-                sources.owners.append(("soc_event", source_id, self._string(event.get("agent_id"))))
+                sources.owners.append(("event", source_id, self._string(event.get("agent_id"))))
                 continue
             self._resolve_pending_case_source(db, source_id, sources)
         self._include_pending_events(sources)
@@ -112,15 +115,15 @@ class FeedbackCaseStoreMixin:
         for raw_kind, raw_source_id in source_refs:
             source_kind = raw_kind.strip()
             source_id = raw_source_id.strip()
-            if source_kind not in {"signal", "soc_event", "pending_correlation"}:
+            if source_kind not in {"signal", "event", "pending_correlation"}:
                 raise BusinessRuleViolation(f"Unsupported FeedbackCase source kind: {raw_kind}")
             if not source_id:
                 raise BusinessRuleViolation("FeedbackCase source_id cannot be empty")
             normalized: CaseSourceRef
             if source_kind == "signal":
                 normalized = ("signal", source_id)
-            elif source_kind == "soc_event":
-                normalized = ("soc_event", source_id)
+            elif source_kind == "event":
+                normalized = ("event", source_id)
             else:
                 normalized = ("pending_correlation", source_id)
             if normalized not in seen:
@@ -137,19 +140,19 @@ class FeedbackCaseStoreMixin:
         if pending_record.get("status") != "resolved":
             raise BusinessRuleViolation("FeedbackCase cannot include an unresolved correlation")
         event_id = self._string(pending_record.get("event_id"))
-        event_row = db.get(SocEventModel, event_id) if event_id else None
+        event_row = db.get(FeedbackEventModel, event_id) if event_id else None
         if event_row is None:
             raise BusinessRuleViolation("Resolved correlation source event no longer exists")
-        event = SocEventRecord.from_row(event_row).to_payload()
+        event = FeedbackEventRecord.from_row(event_row).to_payload()
         sources.pending[pending_row.pending_id] = pending_record
         sources.events[event_row.event_id] = event
         sources.owners.append(("pending_correlation", pending_row.pending_id, self._string(event.get("agent_id"))))
 
     def _include_pending_events(self, sources: _ResolvedCaseSources) -> None:
-        direct_event_ids = {source_id for kind, source_id, _ in sources.owners if kind == "soc_event"}
+        direct_event_ids = {source_id for kind, source_id, _ in sources.owners if kind == "event"}
         for event_id, event in sources.events.items():
             if event_id not in direct_event_ids:
-                sources.owners.append(("soc_event", event_id, self._string(event.get("agent_id"))))
+                sources.owners.append(("event", event_id, self._string(event.get("agent_id"))))
 
     def _case_agent_id(self, sources: _ResolvedCaseSources) -> str:
         if any(not agent_id for _, _, agent_id in sources.owners):
@@ -231,6 +234,7 @@ class FeedbackCaseStoreMixin:
     def _feedback_case_payload(
         self,
         *,
+        db: Session,
         source_ids: list[str],
         signals: list[JsonObject],
         events: list[JsonObject],
@@ -241,7 +245,8 @@ class FeedbackCaseStoreMixin:
     ) -> JsonObject:
         records = [*signals, *events, *pending]
         now = utc_now()
-        return self._scrub_record(
+        entities = merge_entities(parse_entities(record.get("entities")) for record in records)
+        payload = self._scrub_record(
             {
                 "feedback_case_id": f"fbc-{uuid.uuid4()}",
                 "agent_id": agent_id,
@@ -254,29 +259,40 @@ class FeedbackCaseStoreMixin:
                 "signal_ids": self._unique_strings([record.get("signal_id") for record in signals]),
                 "event_ids": self._unique_strings([record.get("event_id") for record in events]),
                 "pending_correlation_ids": self._unique_strings([record.get("pending_id") for record in pending]),
-                "run_ids": self._feedback_case_run_ids(signals=signals, events=events, pending=pending),
+                "run_ids": self._feedback_case_run_ids(
+                    db,
+                    agent_id=agent_id,
+                    signals=signals,
+                    events=events,
+                    pending=pending,
+                ),
                 "session_ids": self._unique_strings([self._string(record.get("session_id")) or "" for record in records]),
-                "alert_ids": self._unique_strings([self._string(record.get("alert_id")) or "" for record in records]),
-                "case_ids": self._unique_strings([self._string(record.get("case_id")) or "" for record in records]),
+                "entities": entities,
                 "evidence_package_ids": [],
                 "attribution_job_ids": [],
             }
         )
+        # entities 是封闭的 typed ID map；敏感词只应用于自由正文，不能破坏其 list[str] 结构。
+        payload["entities"] = entities
+        return payload
 
     def _feedback_case_run_ids(
         self,
+        db: Session,
         *,
+        agent_id: str,
         signals: list[JsonObject],
         events: list[JsonObject],
         pending: list[JsonObject],
     ) -> list[str]:
-        return self._unique_strings(
+        candidates = self._unique_strings(
             [
                 *[self._string(record.get("run_id")) or self._string(record.get("matched_run_id")) or "" for record in signals],
                 *[self._string(record.get("run_id")) or self._string(record.get("matched_run_id")) or "" for record in events],
                 *[self._string(record.get("resolved_run_id")) or "" for record in pending],
             ]
         )
+        return [run_id for run_id in candidates if (run := db.get(AgentRunModel, run_id)) is not None and run.agent_id == agent_id]
 
     def _case_model_from_dict(self, feedback_case: JsonObject) -> FeedbackCaseModel:
         record = FeedbackCaseRecord.model_validate(feedback_case)
@@ -296,8 +312,7 @@ class FeedbackCaseStoreMixin:
             pending_correlation_ids_json=record.pending_correlation_ids,
             run_ids_json=record.run_ids,
             session_ids_json=record.session_ids,
-            alert_ids_json=record.alert_ids,
-            case_ids_json=record.case_ids,
+            entities_json=record.entities,
         )
 
     def _case_to_dict(self, db: Session, row: FeedbackCaseModel) -> Optional[JsonObject]:
@@ -346,10 +361,15 @@ class FeedbackCaseStoreMixin:
                 "signal_ids": [claim.source_id for claim in signal_claims],
                 "event_ids": [claim.source_id for claim in event_claims],
                 "pending_correlation_ids": [claim.source_id for claim in pending_claims],
-                "run_ids": self._feedback_case_run_ids(signals=signals, events=events, pending=pending),
+                "run_ids": self._feedback_case_run_ids(
+                    db,
+                    agent_id=agent_id,
+                    signals=signals,
+                    events=events,
+                    pending=pending,
+                ),
                 "session_ids": self._unique_strings([self._string(record.get("session_id")) or "" for record in records]),
-                "alert_ids": self._unique_strings([self._string(record.get("alert_id")) or "" for record in records]),
-                "case_ids": self._unique_strings([self._string(record.get("case_id")) or "" for record in records]),
+                "entities": merge_entities(parse_entities(record.get("entities")) for record in records),
                 "evidence_package_ids": [row.current_evidence_package_id] if row.current_evidence_package_id else [],
                 "attribution_job_ids": [row.current_attribution_job_id] if row.current_attribution_job_id else [],
             }
@@ -397,14 +417,14 @@ class FeedbackCaseStoreMixin:
                 sources.signals[source_id] = payload
                 sources.owners.append(("signal", source_id, self._string(payload.get("agent_id"))))
                 continue
-            if source_kind == "soc_event":
-                row = db.get(SocEventModel, source_id)
+            if source_kind == "event":
+                row = db.get(FeedbackEventModel, source_id)
                 if row is None:
-                    sources.unresolved.append(f"soc_event:{source_id}")
+                    sources.unresolved.append(f"event:{source_id}")
                     continue
                 payload = self._claimed_source_payload(row, id_key="event_id", source_id=source_id)
                 sources.events[source_id] = payload
-                sources.owners.append(("soc_event", source_id, self._string(payload.get("agent_id"))))
+                sources.owners.append(("event", source_id, self._string(payload.get("agent_id"))))
                 continue
             self._resolve_claimed_pending_source(db, source_id, sources)
         self._include_pending_events(sources)
@@ -424,9 +444,9 @@ class FeedbackCaseStoreMixin:
         pending.update({"event_id": row.event_id, "status": row.status})
         if row.status != "resolved":
             raise DataIntegrityError(f"FeedbackCase claimed pending source is not resolved: {source_id}")
-        event_row = db.get(SocEventModel, row.event_id)
+        event_row = db.get(FeedbackEventModel, row.event_id)
         if event_row is None:
-            sources.unresolved.append(f"soc_event:{row.event_id}")
+            sources.unresolved.append(f"event:{row.event_id}")
             return
         event = self._claimed_source_payload(event_row, id_key="event_id", source_id=row.event_id)
         sources.pending[source_id] = pending
@@ -442,8 +462,6 @@ class FeedbackCaseStoreMixin:
             "run_id",
             "matched_run_id",
             "session_id",
-            "alert_id",
-            "case_id",
             "created_at",
             "updated_at",
         ):
@@ -463,12 +481,12 @@ class FeedbackCaseStoreMixin:
             raise DataIntegrityError(f"FeedbackCase {case_id} has a non-direct signal or pending claim")
         linked_event_ids = {self._string(pending.get("event_id")) for pending in sources.pending.values() if self._string(pending.get("event_id"))}
         for claim in claims:
-            if claim.source_kind != "soc_event" or claim.is_direct:
+            if claim.source_kind != "event" or claim.is_direct:
                 continue
             if claim.source_id not in linked_event_ids:
                 raise DataIntegrityError(f"FeedbackCase {case_id} has an unexplained indirect event claim: {claim.source_id}")
         for event_id in linked_event_ids:
-            if ("soc_event", event_id) not in {(claim.source_kind, claim.source_id) for claim in claims}:
+            if ("event", event_id) not in {(claim.source_kind, claim.source_id) for claim in claims}:
                 raise DataIntegrityError(f"FeedbackCase {case_id} is missing a pending-linked event claim: {event_id}")
         if not direct_refs:
             raise DataIntegrityError(f"FeedbackCase {case_id} has no direct source claims")
@@ -489,7 +507,7 @@ class FeedbackCaseStoreMixin:
                 return claim.direct_position, 0, claim.source_id
             return int(pending_positions.get(claim.source_id) or 0), 1, claim.source_id
 
-        return sorted((claim for claim in claims if claim.source_kind == "soc_event"), key=event_key)
+        return sorted((claim for claim in claims if claim.source_kind == "event"), key=event_key)
 
     @staticmethod
     def _case_claim_sort_key(claim: FeedbackCaseSourceModel) -> tuple[int, str, str]:
@@ -554,8 +572,7 @@ class FeedbackCaseStoreMixin:
         row.pending_correlation_ids_json = record.pending_correlation_ids
         row.run_ids_json = record.run_ids
         row.session_ids_json = record.session_ids
-        row.alert_ids_json = record.alert_ids
-        row.case_ids_json = record.case_ids
+        row.entities_json = record.entities
 
     def _case_title(self, records: list[JsonObject]) -> str:
         for record in records:

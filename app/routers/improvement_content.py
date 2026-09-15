@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 
 from app.runtime.errors import BusinessRuleViolation, NotFoundError
 from app.runtime.improvement_content_schemas import (
@@ -10,6 +11,7 @@ from app.runtime.improvement_content_schemas import (
     AttributionUpsertRequest,
     ImprovementFeedbackCreateRequest,
     ImprovementFeedbackResponse,
+    ImprovementFeedbackSourceEvent,
     NormalizedFeedbackResponse,
     NormalizedFeedbackUpsertRequest,
     OptimizationChange,
@@ -60,8 +62,9 @@ def _fb_response(r: ImprovementFeedbackRecord) -> ImprovementFeedbackResponse:
         agent_version_id=r.agent_version_id,
         scenario=r.scenario,
         task_id=r.task_id,
-        alert_id=r.alert_id,
-        case_id=r.case_id,
+        entities=r.entities,
+        feedback_case_id=r.feedback_case_id,
+        source_events=[ImprovementFeedbackSourceEvent(event_id=e.event_id, source_system=e.source_system, event_type=e.event_type) for e in r.source_events],
         created_at=r.created_at,
     )
 
@@ -122,7 +125,11 @@ def _register_feedback_routes(router: APIRouter, *, improvement_store: Improveme
         status_code=201,
         summary="Add a source feedback to an improvement (§8.4)",
     )
-    async def add_feedback(improvement_id: str, req: ImprovementFeedbackCreateRequest) -> ImprovementFeedbackResponse:
+    async def add_feedback(
+        improvement_id: str,
+        req: ImprovementFeedbackCreateRequest,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=256)] = None,
+    ) -> ImprovementFeedbackResponse:
         item = improvement_store.get_improvement(improvement_id)
         if item is None:
             raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
@@ -138,8 +145,8 @@ def _register_feedback_routes(router: APIRouter, *, improvement_store: Improveme
                 agent_version_id=req.agent_version_id,
                 scenario=req.scenario,
                 task_id=req.task_id,
-                alert_id=req.alert_id,
-                case_id=req.case_id,
+                entities=req.entities,
+                idempotency_key=idempotency_key,
             )
         )
 
@@ -290,6 +297,7 @@ def _register_governance_generation_routes(
             advance_to_stage="optimization",
         )
         return _opt_response(record)
+
 
 def _register_opt_routes(router: APIRouter, *, improvement_store: ImprovementStore, content_store: ImprovementContentStore, require: Callable) -> None:
     @router.put(

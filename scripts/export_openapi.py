@@ -70,7 +70,31 @@ def _export_environment(project_root: Path, volume_root: Path) -> EnvValues:
         "AGENTSCOPE_RUNTIME_URL": "http://127.0.0.1:18090",
         "AGENTGOV_RUNTIME_SHARED_SECRET": "openapi-export-only-secret",
     }
-    return {key: str(value) for key, value in values.items()}
+    return {**{key: str(value) for key, value in values.items()}, **_frozen_python_environment(project_root)}
+
+
+def _frozen_python_environment(project_root: Path) -> EnvValues:
+    if "AGENT_GOV_ACCEPTANCE_TOOLCHAIN_JSON" not in os.environ:
+        return {}
+
+    # 冻结解释器的 stdlib 与 site-packages 不在默认布局中；只取既有工具链
+    # 核验后派生的 Python 加载参数，不把部署配置传入 schema 导出子进程。
+    from scripts.container_acceptance_toolchain import (
+        FORMAL_SOURCE_ROOT_ENV,
+        TOOL_PATH_ENV_KEYS,
+        toolchain_environment,
+        verify_acceptance_toolchain,
+    )
+
+    bound = verify_acceptance_toolchain(dict(os.environ))
+    runtime = toolchain_environment(bound)
+    if (
+        bound["stage"] != "materialized"
+        or Path(runtime[TOOL_PATH_ENV_KEYS["python"]]).resolve() != Path(sys.executable).resolve()
+        or Path(runtime[FORMAL_SOURCE_ROOT_ENV]).resolve() != project_root
+    ):
+        raise ValueError("OpenAPI 导出必须继续使用已物化的 Python 与正式源码")
+    return {key: runtime[key] for key in ("PYTHONHOME", "PYTHONPATH", "PYTHONNOUSERSITE", "PYTHONSAFEPATH", "PYTHONDONTWRITEBYTECODE")}
 
 
 if __name__ == "__main__":

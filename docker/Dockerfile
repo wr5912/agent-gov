@@ -63,6 +63,9 @@ COPY scripts/bootstrap_runtime_volume.py /app/scripts/bootstrap_runtime_volume.p
 COPY scripts/runtime_cleanup.py /app/scripts/runtime_cleanup.py
 COPY docker/runtime-bootstrap /app/docker/runtime-bootstrap
 
+# API 只复用固定 SDK 的公开数据模型；在真实镜像依赖内验证启动契约，不启动 Runtime。
+RUN python -c "from app.runtime_gateway.contracts import RuntimeChatRequest; RuntimeChatRequest.model_json_schema()"
+
 RUN mkdir -p /governor-workspace /data
 
 ARG AGENT_GOV_ACCEPTANCE_RUN_ID=unmanaged

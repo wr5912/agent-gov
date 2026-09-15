@@ -155,8 +155,7 @@ def test_expired_workspace_maintenance_admits_a_version_pinned_run(
         session_id="session-a",
         runtime_agent_id="runtime-agent-a",
         input_value={"type": "text", "text": "continue safely"},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
 
@@ -176,8 +175,7 @@ def test_restart_reconcile_keeps_runtime_fence_and_blocks_maintenance(tmp_path) 
         session_id="session-a",
         runtime_agent_id="runtime-agent-a",
         input_value="work",
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
 

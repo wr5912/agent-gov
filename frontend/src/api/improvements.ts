@@ -23,8 +23,17 @@ export function listImprovementFeedbacks(config: RuntimeClientConfig, id: string
     readOptions,
   );
 }
-export function addImprovementFeedback(config: RuntimeClientConfig, id: string, body: components["schemas"]["ImprovementFeedbackCreateRequest"]) {
-  return requestJson<ImprovementFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/feedbacks`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+export function addImprovementFeedback(
+  config: RuntimeClientConfig,
+  id: string,
+  body: components["schemas"]["ImprovementFeedbackCreateRequest"],
+  idempotencyKey?: string,
+) {
+  return requestJson<ImprovementFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/feedbacks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}) },
+    body: JSON.stringify(body),
+  });
 }
 
 // Part B：选择已有反馈（未归属 Case 池 + 其他事项反馈）/ 跨事项调整 / 删除事项。
@@ -182,10 +191,14 @@ export function getImprovement(config: RuntimeClientConfig, improvementId: strin
   );
 }
 
-export function createImprovement(config: RuntimeClientConfig, payload: ImprovementCreateRequest) {
+export function createImprovement(
+  config: RuntimeClientConfig,
+  payload: ImprovementCreateRequest,
+  idempotencyKey?: string,
+) {
   return requestJson<ImprovementItem>(config, "/api/improvements", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}) },
     body: JSON.stringify(payload),
   });
 }

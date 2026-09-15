@@ -15,7 +15,7 @@ from app.runtime.agent_paths import InvalidAgentId, validate_agent_id
 from app.runtime.json_types import JsonObject
 
 from .client import RuntimeUpstreamError
-from .contracts import GOVERNED_EVIDENCE_ROOT_METADATA_KEY, AgentRunResponse
+from .contracts import GOVERNED_EVIDENCE_ROOT_METADATA_KEY, AgentRunResponse, RuntimeTraceExpectations
 from .store import RuntimeStateConflict
 
 
@@ -84,6 +84,7 @@ def _requires_interactive_continuation(event: JsonObject) -> bool:
 
 def _user_message(message: str, *, governed_evidence_root: str | None = None) -> JsonObject:
     result: JsonObject = {
+        "id": uuid.uuid4().hex,
         "name": "user",
         "role": "user",
         "content": [{"type": "text", "text": message}],
@@ -125,6 +126,75 @@ def _canonical_assistant_result(
                 finished_reason=reason if isinstance(reason, str) else None,
             )
     return None
+
+
+def _tool_activity_from_current_run(
+    *,
+    messages: list[JsonObject],
+    reply_ids: list[str],
+    run_id: str,
+    session_id: str,
+    expectations: RuntimeTraceExpectations,
+) -> list[JsonObject] | None:
+    """只从本 run 的 canonical Reply 与 durable 回执派生无正文工具元数据。
+
+    ``None`` 明确表示证据不完整；不得把未知工具活动伪装为 ``[]``。
+    """
+
+    if expectations.run_id != run_id or expectations.root_session_id != session_id or expectations.root_reply_ids != reply_ids:
+        raise RuntimeStateConflict("Tool activity evidence does not match the current run")
+    if not expectations.control_integrity_complete or len(set(reply_ids)) != len(reply_ids):
+        return None
+    canonical: dict[str, JsonObject] = {}
+    for message in messages:
+        reply_id = message.get("id")
+        if reply_id not in reply_ids or message.get("role") != "assistant":
+            continue
+        if not isinstance(reply_id, str) or reply_id in canonical:
+            return None
+        canonical[reply_id] = message
+    if len(canonical) != len(reply_ids):
+        return None
+
+    activity: dict[tuple[str, str, str], JsonObject] = {}
+    for reply_id in reply_ids:
+        content = canonical[reply_id].get("content")
+        if not isinstance(content, list):
+            return None
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") not in {"tool_call", "tool_result"}:
+                continue
+            tool_id, name, state = block.get("id"), block.get("name"), block.get("state")
+            if not isinstance(tool_id, str) or not tool_id or not isinstance(name, str) or not name or not isinstance(state, str) or not state:
+                return None
+            key = (session_id, reply_id, tool_id)
+            previous = activity.get(key)
+            if previous is not None and previous["name"] != name:
+                return None
+            activity[key] = {
+                "id": tool_id,
+                "name": name,
+                "state": state,
+                "reply_id": reply_id,
+                "session_id": session_id,
+            }
+
+    for receipt in expectations.tool_results:
+        if not receipt.session_id or not receipt.reply_id or not receipt.tool_call_id:
+            return None
+        key = (receipt.session_id, receipt.reply_id, receipt.tool_call_id)
+        previous = activity.get(key)
+        if previous is None:
+            activity[key] = {
+                "id": receipt.tool_call_id,
+                "name": None,
+                "state": receipt.state,
+                "reply_id": receipt.reply_id,
+                "session_id": receipt.session_id,
+            }
+        elif receipt.state is not None:
+            activity[key] = {**previous, "state": receipt.state}
+    return list(activity.values())
 
 
 def _governed_evidence_root(job_input: JsonObject) -> str | None:

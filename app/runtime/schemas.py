@@ -1,17 +1,19 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.types import JsonValue
 
+from app.runtime.feedback_entities import FeedbackEntities
+from app.runtime.feedback_event_identity import normalize_feedback_event_timestamp
 from app.runtime.json_types import JsonObject
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.records.source_records import (
     FeedbackConfidence,
+    FeedbackEventType,
     FeedbackPriority,
     FeedbackSignalSourceType,
     FeedbackSourceAnnotationStatus,
     FeedbackSourceKind,
-    SocEventType,
 )
 from app.runtime.state_machines import FeedbackCaseStatus, PendingCorrelationStatus
 
@@ -43,16 +45,7 @@ class ChatRequest(BaseModel):
         description="Client-visible session id. If omitted, the API creates one.",
         examples=["sess-20260729"],
     )
-    alert_id: Optional[str] = Field(
-        default=None,
-        description="Optional SOC alert id used by the feedback loop.",
-        examples=["alert-20260729-001"],
-    )
-    case_id: Optional[str] = Field(
-        default=None,
-        description="Optional SOC case id used by the feedback loop.",
-        examples=["case-20260729-001"],
-    )
+    entities: FeedbackEntities = Field(default_factory=dict, description="可选的业务对象引用；不包含治理反馈 Case 归属。")
     agent_id: Optional[str] = Field(
         default=None,
         description="Registered business agent to run. Required by /api/chat and /api/chat/stream; requests without it are rejected with 422.",
@@ -169,8 +162,7 @@ class FeedbackSignalCreateRequest(BaseModel):
     timestamp: Optional[str] = None
     run_id: Optional[str] = None
     session_id: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     labels: list[str] = Field(default_factory=list)
     comment: Optional[str] = None
     confidence: Optional[FeedbackConfidence] = None
@@ -186,6 +178,7 @@ from app.runtime.agent_governance_schemas import (  # noqa: E402,F401
     AgentLifecycleTransitionRequest,
     AgentSummaryResponse,
     AssetProvenanceImprovement,
+    AssetProvenanceRelease,
     AssetProvenanceResponse,
     FeedbackSignalReassignRequest,
 )
@@ -196,6 +189,7 @@ __all_agent_governance__ = [
     "AgentLifecycleTransitionRequest",
     "AgentSummaryResponse",
     "AssetProvenanceImprovement",
+    "AssetProvenanceRelease",
     "AssetProvenanceResponse",
     "FeedbackSignalReassignRequest",
 ]
@@ -210,8 +204,7 @@ class FeedbackSignalResponse(BaseModel):
     run_id: Optional[str] = None
     matched_run_id: Optional[str] = None
     session_id: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     labels: list[str] = Field(default_factory=list)
     comment: Optional[str] = None
     confidence: Optional[FeedbackConfidence] = None
@@ -220,44 +213,45 @@ class FeedbackSignalResponse(BaseModel):
     metadata: JsonObject = Field(default_factory=dict)
 
 
-class SocEventIngestRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class FeedbackEventIngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
-    event_id: str
-    source_system: str
-    event_type: SocEventType
+    event_id: str = Field(min_length=1, max_length=128, pattern=NON_BLANK_TEXT_PATTERN)
+    source_system: str = Field(min_length=1, max_length=128, pattern=NON_BLANK_TEXT_PATTERN)
+    event_type: FeedbackEventType
     timestamp: str
     run_id: Optional[str] = None
     session_id: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     actor_id: Optional[str] = None
     before: Optional[JsonObject] = None
     after: Optional[JsonObject] = None
-    entities: dict[str, list[str]] = Field(default_factory=dict)
     auto_captured: bool = True
     confidence: Optional[FeedbackConfidence] = "medium"
     requires_review: bool = True
     comment: Optional[str] = None
     metadata: JsonObject = Field(default_factory=dict)
 
+    @field_validator("timestamp")
+    @classmethod
+    def normalize_timestamp(cls, value: str) -> str:
+        return normalize_feedback_event_timestamp(value)
 
-class SocEventResponse(ExtensibleResponse):
+
+class FeedbackEventResponse(ExtensibleResponse):
     event_id: str
     source_system: str
-    event_type: SocEventType
+    event_type: FeedbackEventType
     timestamp: str
     created_at: Optional[str] = None
     agent_id: Optional[str] = None
     matched_run_id: Optional[str] = None
     run_id: Optional[str] = None
     session_id: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     actor_id: Optional[str] = None
     before: Optional[JsonObject] = None
     after: Optional[JsonObject] = None
-    entities: dict[str, list[str]] = Field(default_factory=dict)
     auto_captured: bool = True
     confidence: Optional[FeedbackConfidence] = None
     requires_review: bool = True
@@ -275,24 +269,24 @@ class PendingCorrelationResponse(ExtensibleResponse):
     event_type: Optional[str] = None
     source_system: Optional[str] = None
     session_id: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     resolved_run_id: Optional[str] = None
     comment: Optional[str] = None
 
 
-class SocEventIngestResponse(BaseModel):
-    event: SocEventResponse
+class FeedbackEventIngestResponse(BaseModel):
+    event: FeedbackEventResponse
     correlation_status: Literal["matched", "pending_correlation", "duplicate", "stored_only"]
     matched_run_id: Optional[str] = None
     pending_correlation: Optional[PendingCorrelationResponse] = None
 
 
 class PendingCorrelationResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     run_id: Optional[str] = None
     session_id: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     comment: Optional[str] = None
 
 
@@ -304,12 +298,20 @@ class FeedbackSourceRef(BaseModel):
 
 
 class FeedbackSourceUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     comment: Optional[str] = None
     labels: Optional[list[str]] = None
     priority: Optional[FeedbackPriority] = None
     status: Optional[FeedbackSourceAnnotationStatus] = None
     requires_review: Optional[bool] = None
     metadata: Optional[JsonObject] = None
+
+    @model_validator(mode="after")
+    def require_at_least_one_update(self) -> "FeedbackSourceUpdateRequest":
+        if not self.model_fields_set:
+            raise ValueError("At least one feedback source annotation field is required")
+        return self
 
 
 class FeedbackSourceResponse(ExtensibleResponse):
@@ -328,8 +330,7 @@ class FeedbackSourceResponse(ExtensibleResponse):
     metadata: JsonObject = Field(default_factory=dict)
     run_id: Optional[str] = None
     session_id: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     feedback_case_id: Optional[str] = None
     latest_attribution_job_id: Optional[str] = None
     latest_attribution_status: Optional[str] = None
@@ -361,8 +362,7 @@ class FeedbackCaseResponse(BaseModel):
     pending_correlation_ids: list[str] = Field(default_factory=list)
     run_ids: list[str] = Field(default_factory=list)
     session_ids: list[str] = Field(default_factory=list)
-    alert_ids: list[str] = Field(default_factory=list)
-    case_ids: list[str] = Field(default_factory=list)
+    entities: FeedbackEntities = Field(default_factory=dict)
     evidence_package_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
 
@@ -373,8 +373,7 @@ class EvidenceSourceRefsResponse(BaseModel):
     run_ids: list[str] = Field(default_factory=list)
     session_ids: list[str] = Field(default_factory=list)
     trace_ids: list[str] = Field(default_factory=list)
-    alert_ids: list[str] = Field(default_factory=list)
-    case_ids: list[str] = Field(default_factory=list)
+    entities: FeedbackEntities = Field(default_factory=dict)
     event_ids: list[str] = Field(default_factory=list)
 
 

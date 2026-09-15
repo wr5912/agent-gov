@@ -25,8 +25,9 @@ from .receipt_middleware import CURRENT_RUNTIME_CONTEXT
 from .types import MiddlewareInput
 
 _PROTECTED_FILES = {".mcp", "AGENT.md", "agent.yaml"}
-_PROTECTED_DIRECTORIES = {"skills", "mcp", "subagents"}
+_PROTECTED_DIRECTORIES = {"skills", "mcp", "subagents", "references"}
 _READ_TOOL_PATH_KEYS = {"Read": "file_path", "Grep": "path", "Glob": "path"}
+_FILE_RULE_TOOLS = frozenset({"Read", "Write", "Edit"})
 _MAX_PERMISSION_SCAN_ENTRIES = 10_000
 _BASH_METADATA_MUTATOR = re.compile(r"(?:^|[;&|()\s])(chmod|chown|chgrp|chattr)(?:$|\s)")
 _RUN_RULE_SOURCE_PREFIX = "agentgov-run:"
@@ -111,6 +112,8 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
         tool_input = input_kwargs.get("tool_input")
         if not isinstance(tool, ToolBase) or not isinstance(tool_input, dict):
             return self._deny("AgentGov policy received an invalid permission request")
+        if tool.name in _FILE_RULE_TOOLS and not self._permission_path_candidates(tool_input.get("file_path")):
+            return self._deny("AgentGov policy received an invalid file path")
         if self._is_protected_write(tool.name, tool_input):
             return self._deny("AgentGov Harness assets are immutable")
         if self._is_protected_bash(tool.name, tool_input):
@@ -207,18 +210,17 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
             rule for rules in value.values() if isinstance(rules, list) for rule in rules if str(getattr(rule, "source", "")).startswith("agentgov-subagent:")
         )
 
-    @classmethod
     async def _matches_permission_rules(
-        cls,
+        self,
         rules: tuple[Any, ...],
         tool: ToolBase,
         tool_input: MiddlewareInput,
     ) -> bool:
         for rule in rules:
             rule_tool_name = getattr(rule, "tool_name", None)
-            if not isinstance(rule_tool_name, str) or not cls._tool_name_matches(rule_tool_name, tool.name):
+            if not isinstance(rule_tool_name, str) or not self._tool_name_matches(rule_tool_name, tool.name):
                 continue
-            if await tool.match_rule(getattr(rule, "rule_content", None), tool_input):
+            if await self._match_tool_rule(getattr(rule, "rule_content", None), tool, tool_input):
                 return True
         return False
 
@@ -396,7 +398,7 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
         for rule in rules:
             if not self._tool_name_matches(rule.tool_name, tool.name):
                 continue
-            if await tool.match_rule(rule.rule_content, tool_input):
+            if await self._match_tool_rule(rule.rule_content, tool, tool_input):
                 return True
         return False
 
@@ -407,9 +409,32 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
         tool_input: MiddlewareInput,
     ) -> _HarnessRule | None:
         for rule in rules:
-            if self._tool_name_matches(rule.tool_name, tool.name) and await tool.match_rule(rule.rule_content, tool_input):
+            if self._tool_name_matches(rule.tool_name, tool.name) and await self._match_tool_rule(rule.rule_content, tool, tool_input):
                 return rule
         return None
+
+    async def _match_tool_rule(self, rule_content: str | None, tool: ToolBase, tool_input: MiddlewareInput) -> bool:
+        if tool.name not in _FILE_RULE_TOOLS:
+            return await tool.match_rule(rule_content, tool_input)
+        # 权限与执行使用同一实际目标；保留已发布规则的相对/绝对路径写法。
+        for candidate in self._permission_path_candidates(tool_input.get("file_path")):
+            if await tool.match_rule(rule_content, {**tool_input, "file_path": candidate}):
+                return True
+        return False
+
+    def _permission_path_candidates(self, raw_path: object) -> tuple[str, ...]:
+        if not isinstance(raw_path, str) or not raw_path or "\0" in raw_path:
+            return ()
+        try:
+            target = self._resolve_tool_path(raw_path)
+        except (OSError, RuntimeError, ValueError):
+            return ()
+        candidates = {target.as_posix()}
+        for root in (self._tool_workdir, self._workspace_root):
+            with suppress(ValueError):
+                relative = target.relative_to(root).as_posix()
+                candidates.update({relative, f"./{relative}"})
+        return tuple(sorted(candidates))
 
     async def _matches_current_run_rule(
         self,
@@ -443,20 +468,8 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
     ) -> bool:
         if not is_bounded_run_path_rule(tool_name, rule_content):
             return False
-        raw_path = tool_input.get("file_path")
-        if not isinstance(raw_path, str) or not raw_path or "\0" in raw_path:
-            return False
-        raw_parts = PurePosixPath(raw_path.replace("\\", "/")).parts
-        if ".." in raw_parts:
-            return False
-        target = self._resolve_tool_path(raw_path)
-        candidates = {target.as_posix()}
-        for root in (self._tool_workdir, self._workspace_root):
-            with suppress(ValueError):
-                relative = target.relative_to(root).as_posix()
-                candidates.update({relative, f"./{relative}"})
         assert rule_content is not None
-        return any(fnmatch.fnmatchcase(candidate, rule_content) for candidate in candidates)
+        return any(fnmatch.fnmatchcase(candidate, rule_content) for candidate in self._permission_path_candidates(tool_input.get("file_path")))
 
     @staticmethod
     def _tool_name_matches(pattern: str, tool_name: str) -> bool:
@@ -491,7 +504,7 @@ class AgentGovPolicyMiddleware(MiddlewareBase):
         lowered = command.lower()
         if _BASH_METADATA_MUTATOR.search(lowered):
             return True
-        protected = (".mcp", "agent.yaml", "agent.md", "skills/", "mcp/", "subagents/")
+        protected = (".mcp", "agent.yaml", "agent.md", "skills/", "mcp/", "subagents/", "references/")
         return any(item in lowered for item in protected) or str(self._workspace_root).lower() in lowered
 
     def _is_unsafe_bash(self, tool_name: str, tool_input: MiddlewareInput) -> bool:

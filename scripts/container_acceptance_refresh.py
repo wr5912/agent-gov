@@ -1,5 +1,7 @@
 """正式容器验收的 Compose rebuild/recreate 事务。"""
 
+# pyright: reportAttributeAccessIssue=true, reportIndexIssue=true
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -38,6 +40,7 @@ class RefreshActions:
     validate_isolated_mounts: Callable[[list[str], IsolatedEnvironment, dict[str, str]], None]
     inspect_api_image: Callable[[dict[str, str], str], str]
     verify_daemon: Callable[..., None]
+    verify_identity: Callable[[dict[str, str], dict[str, object]], None]
     verify_container: Callable[..., ContainerIdentity]
 
 
@@ -149,7 +152,6 @@ def _recreate_profile_containers(
     profile: AcceptanceProfile,
     base: list[str],
     env: dict[str, str],
-    docker_monitor: DockerMutationMonitor,
     actions: RefreshActions,
 ) -> tuple[ContainerIdentity, ...]:
     started_at = datetime.now(timezone.utc)
@@ -170,7 +172,6 @@ def _recreate_profile_containers(
         env=env,
         label="Compose 服务 recreate",
     )
-    docker_monitor.start()
     local_services = set(profile.build_services)
     return tuple(
         actions.verify_container(
@@ -197,14 +198,17 @@ def _verify_refresh_result(
     def output(command: list[str], label: str) -> str:
         return _contract_output(actions, env, command, label)
 
+    actions.verify_daemon(env, daemon_identity, isolation.runtime_root.parent, plan.daemon_probe_image)
+    docker_monitor.start()
     for container in containers:
-        expected_image_id = plan.intended_images.get(container.service)
+        service = container["service"]
+        expected_image_id = plan.intended_images.get(service)
         if expected_image_id is None:
-            raise AcceptanceError(f"服务 {container.service} 缺少构建后的镜像 identity")
+            raise AcceptanceError(f"服务 {service} 缺少构建后的镜像 identity")
         verify_running_service(
-            service=container.service,
-            service_config=plan.services[container.service],
-            container_id=container.container_id,
+            service=service,
+            service_config=plan.services[service],
+            container_id=container["container_id"],
             expected_image_id=expected_image_id,
             project_name=isolation.project_name,
             docker_path=env[TOOL_PATH_ENV_KEYS["docker"]],
@@ -219,7 +223,7 @@ def _verify_refresh_result(
     )
     if current_inventory != plan.external_inventory:
         raise AcceptanceError("Compose recreate 期间外部镜像 inventory 发生变化")
-    actions.verify_daemon(env, daemon_identity, isolation.runtime_root.parent, plan.daemon_probe_image)
+    actions.verify_identity(env, daemon_identity)
     docker_monitor.bind(containers)
 
 
@@ -233,6 +237,6 @@ def refresh_profile(
 ) -> tuple[ContainerIdentity, ...]:
     plan = _prepare_refresh_plan(profile, isolation, env, daemon_identity, actions)
     _prepare_profile_runtime(profile, plan.compose, env, actions)
-    containers = _recreate_profile_containers(profile, plan.compose, env, docker_monitor, actions)
+    containers = _recreate_profile_containers(profile, plan.compose, env, actions)
     _verify_refresh_result(isolation, env, daemon_identity, docker_monitor, plan, containers, actions)
     return containers

@@ -191,8 +191,7 @@ def test_cancel_recovery_uses_real_runtime_404_and_two_quiescent_probes(tmp_path
             session_id="session-missing",
             runtime_agent_id="runtime-missing",
             input_value={"role": "user", "content": []},
-            alert_id=None,
-            case_id=None,
+            entities={},
             metadata={},
         )
         store.mark_trigger_started(run.run_id)
@@ -244,8 +243,7 @@ def test_interrupted_receipt_crosses_real_signed_control_http_boundary(tmp_path:
         session_id="session-receipt",
         runtime_agent_id="runtime-receipt",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)

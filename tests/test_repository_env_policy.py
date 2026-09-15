@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 import yaml
+from scripts import check_public_bind as guard
+from scripts import run_container_acceptance as acceptance
+from scripts.agentscope_atomic_cutover_env import parse_selected_env_bindings
+from scripts.initialize_runtime_shared_secret import initialize_before_operation
+from scripts.remote_deploy_python_toolchain import ToolchainError, validate_candidate_env
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_PATH = REPO_ROOT / "docker/docker-compose.yml"
@@ -20,34 +22,11 @@ LOCAL_DEBUG_EXAMPLE = REPO_ROOT / "docker/.env.local-debug.example"
 CORE_SERVICES = {"agent-gov-api", "agent-gov-ui", "agentscope-runtime"}
 
 
-def _load_container_acceptance() -> ModuleType:
-    module_name = "_agentgov_container_acceptance_test"
-    cached = sys.modules.get(module_name)
-    if cached is not None:
-        return cached
-    spec = importlib.util.spec_from_file_location(module_name, REPO_ROOT / "scripts/run_container_acceptance.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        sys.modules.pop(module_name, None)
-        raise
-    return module
-
-
-def _load_public_bind_guard() -> ModuleType:
-    module_name = "_agentgov_public_bind_guard_test"
-    cached = sys.modules.get(module_name)
-    if cached is not None:
-        return cached
-    spec = importlib.util.spec_from_file_location(module_name, REPO_ROOT / "scripts/check_public_bind.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
+def _initialize_private_test_env(path: Path) -> None:
+    content = path.read_text(encoding="utf-8")
+    content = re.sub(r"(?m)^HOST_RUNTIME_VOLUME_ROOT=.*$", f"HOST_RUNTIME_VOLUME_ROOT={path.parent / 'runtime'}", content)
+    path.write_text(content, encoding="utf-8")
+    initialize_before_operation(path, "up")
 
 
 def _compose() -> dict[str, object]:
@@ -55,14 +34,7 @@ def _compose() -> dict[str, object]:
 
 
 def _env_values(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key] = value
-    return values
+    return {binding.key: binding.value or "" for binding in parse_selected_env_bindings(path) if binding.key}
 
 
 def _volume_targets(service: dict[str, object]) -> set[str]:
@@ -93,6 +65,7 @@ def test_clean_checkout_compose_config_resolves_exact_agentscope_core_services(t
         "\n".join(line for line in ENV_EXAMPLE.read_text(encoding="utf-8").splitlines() if not line.startswith(("LANGFUSE_", "OTEL_"))),
         encoding="utf-8",
     )
+    _initialize_private_test_env(core_env)
     result = subprocess.run(
         [
             docker,
@@ -157,6 +130,7 @@ def test_langfuse_config_derives_identity_and_browser_port(tmp_path, custom_fron
         line for line in ENV_EXAMPLE.read_text(encoding="utf-8").splitlines() if not line.startswith(("LANGFUSE_", "OTEL_", "FRONTEND_LANGFUSE_"))
     )
     env_file.write_text(source + "\n" + "\n".join(f"{key}={value}" for key, value in values.items()), encoding="utf-8")
+    _initialize_private_test_env(env_file)
     result = subprocess.run(
         [
             docker,
@@ -197,7 +171,6 @@ def test_langfuse_config_derives_identity_and_browser_port(tmp_path, custom_fron
 
 
 def test_container_acceptance_loads_langfuse_compose_only_for_langfuse_profile(tmp_path) -> None:
-    acceptance = _load_container_acceptance()
     for profile_name in ("core", "langfuse"):
         profile = acceptance.PROFILES[profile_name]
         env_file = tmp_path / "selected.env"
@@ -208,16 +181,19 @@ def test_container_acceptance_loads_langfuse_compose_only_for_langfuse_profile(t
         assert child_env["LANGFUSE_ENABLED"] == ("true" if profile_name == "langfuse" else "false")
 
 
-def test_all_default_published_ports_stay_in_project_range_without_changing_internal_ports() -> None:
+def test_all_default_published_ports_stay_in_project_range_without_changing_internal_ports(tmp_path) -> None:
     docker = shutil.which("docker")
     if docker is None:
         pytest.skip("docker is unavailable")
+    env_file = tmp_path / "defaults.env"
+    env_file.write_bytes(ENV_EXAMPLE.read_bytes())
+    _initialize_private_test_env(env_file)
     result = subprocess.run(
         [
             docker,
             "compose",
             "--env-file",
-            str(ENV_EXAMPLE),
+            str(env_file),
             "-f",
             str(COMPOSE_PATH),
             "-f",
@@ -282,7 +258,7 @@ def test_deployment_selects_infra_images_only_for_local_langfuse(tmp_path, langf
     source = (REPO_ROOT / "scripts/deploy_agent_gov_to_host").read_text(encoding="utf-8")
     image_selection = source.split("<<'REMOTE_IMAGES'\n", 1)[1].split("\nREMOTE_IMAGES", 1)[0]
     result = subprocess.run(
-        ["bash", "-s", "--", str(tmp_path)],
+        ["bash", "-s", "--", str(tmp_path), str(tmp_path / "docker/.env")],
         input=image_selection,
         capture_output=True,
         text=True,
@@ -299,7 +275,24 @@ def test_deployment_selects_infra_images_only_for_local_langfuse(tmp_path, langf
 
 @pytest.mark.parametrize(("self_hosted", "with_storage", "expected_success"), [(False, False, True), (True, False, False), (True, True, True)])
 def test_deployment_requires_storage_secrets_only_for_self_hosted_langfuse(tmp_path, self_hosted, with_storage, expected_success) -> None:
-    values = {key: "test-only-credential-value" for key in ("API_KEY", "AGENTGOV_RUNTIME_SHARED_SECRET", "MODEL_PROVIDER_API_KEY")}
+    values = {
+        key: "test-only-credential-value"
+        for key in (
+            "API_KEY",
+            "FRONTEND_RUNTIME_API_KEY",
+            "AGENTGOV_RUNTIME_SHARED_SECRET",
+            "MODEL_PROVIDER_API_KEY",
+            "LANGFUSE_PUBLIC_KEY",
+            "LANGFUSE_SECRET_KEY",
+        )
+    }
+    values.update(
+        {
+            "AGENTGOV_API_MODE": "open",
+            "LANGFUSE_ENABLED": "true",
+            "LANGFUSE_BASE_URL": "http://langfuse-web:3000" if self_hosted else "https://traces.example.test",
+        }
+    )
     if with_storage:
         values.update(
             {
@@ -318,18 +311,15 @@ def test_deployment_requires_storage_secrets_only_for_self_hosted_langfuse(tmp_p
         )
         values["LANGFUSE_ENCRYPTION_KEY"] = "b" * 64
     (tmp_path / "docker").mkdir()
-    (tmp_path / "docker/.env").write_text("\n".join(f"{key}={value}" for key, value in values.items()), encoding="utf-8")
-    source = (REPO_ROOT / "scripts/deploy_agent_gov_to_host").read_text(encoding="utf-8")
-    private_preflight = "read_env() {" + source.split("\nread_env() {", 1)[1].split("\nrequire_public_bind_opt_in()", 1)[0]
-    result = subprocess.run(
-        ["bash", "-s"],
-        input=f"set -euo pipefail\nversion=test\nwith_langfuse={int(self_hosted)}\n" + private_preflight,
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert (result.returncode == 0) is expected_success, result.stderr
+    env_file = tmp_path / "docker/.env"
+    env_file.write_text("\n".join(f"{key}={value}" for key, value in values.items()), encoding="utf-8")
+    try:
+        validate_candidate_env(REPO_ROOT, env_file)
+    except ToolchainError:
+        succeeded = False
+    else:
+        succeeded = True
+    assert succeeded is expected_success
 
 
 def test_provider_and_mcp_secrets_are_injected_only_into_runtime() -> None:
@@ -421,7 +411,6 @@ def test_public_operator_ports_default_to_configurable_loopback_bindings() -> No
 
 
 def test_public_bind_guard_requires_explicit_single_tenant_opt_in(process_environment) -> None:
-    guard = _load_public_bind_guard()
     for name in (
         "API_BIND_IP",
         "API_ALLOW_PUBLIC_BIND",
@@ -438,7 +427,6 @@ def test_public_bind_guard_requires_explicit_single_tenant_opt_in(process_enviro
 
 
 def test_public_bind_guard_rejects_out_of_range_or_duplicate_project_ports(process_environment) -> None:
-    guard = _load_public_bind_guard()
     guard.require_project_host_ports({})
 
     # Ambient shell values are not part of the selected env contract.
@@ -453,7 +441,6 @@ def test_public_bind_guard_rejects_out_of_range_or_duplicate_project_ports(proce
 
 
 def test_public_bind_guard_accepts_project_port_range_boundaries() -> None:
-    guard = _load_public_bind_guard()
     guard.require_project_host_ports(
         {
             "HOST_PORT": "50400",
@@ -466,7 +453,6 @@ def test_public_bind_guard_accepts_project_port_range_boundaries() -> None:
 
 
 def test_langfuse_image_overrides_must_be_a_same_version_pair(process_environment) -> None:
-    guard = _load_public_bind_guard()
     process_environment.remove("LANGFUSE_WEB_IMAGE")
     process_environment.remove("LANGFUSE_WORKER_IMAGE")
 
@@ -552,7 +538,7 @@ def test_official_env_examples_keep_secrets_and_runtime_ownership_explicit() -> 
     local = _env_values(LOCAL_DEBUG_EXAMPLE)
 
     assert container["LANGFUSE_ENABLED"] == "false"
-    assert container["AGENTGOV_RUNTIME_SHARED_SECRET"].startswith("replace-with-")
+    assert container["AGENTGOV_RUNTIME_SHARED_SECRET"] == local["AGENTGOV_RUNTIME_SHARED_SECRET"] == ""
     assert container["MODEL_PROVIDER_API_KEY"] == "replace-with-private-provider-key"
     assert "SEC_OPS_MCP_TOKEN" not in container
     assert container["API_KEY"] == "replace-with-private-api-key"
@@ -621,8 +607,6 @@ def test_container_acceptance_make_variables_cannot_bypass_public_runner() -> No
 
 
 def test_container_acceptance_uses_exact_agentscope_core_services() -> None:
-    acceptance = _load_container_acceptance()
-
     assert set(acceptance.CORE_SERVICES) == CORE_SERVICES
     assert acceptance.PROFILES["core"].build_services == acceptance.CORE_SERVICES
     assert "isolated-health" not in acceptance.PROFILES
@@ -637,8 +621,6 @@ def test_real_feedback_acceptance_enables_langfuse_profile(target) -> None:
 
 
 def test_container_acceptance_generates_isolated_project_ports_and_mounts(tmp_path) -> None:
-    acceptance = _load_container_acceptance()
-
     source_env = tmp_path / "source.env"
     source_env.write_text(
         "COMPOSE_PROJECT_NAME=live-project\n"
@@ -696,8 +678,6 @@ def test_container_acceptance_generates_isolated_project_ports_and_mounts(tmp_pa
 
 
 def test_container_acceptance_compose_config_resolves_only_isolated_bind_mounts(tmp_path) -> None:
-    acceptance = _load_container_acceptance()
-
     docker = shutil.which("docker")
     if docker is None:
         pytest.skip("docker is unavailable")
@@ -725,6 +705,7 @@ def test_container_acceptance_compose_config_resolves_only_isolated_bind_mounts(
         encoding="utf-8",
     )
     isolation = acceptance.prepare_isolated_environment(source_env, "1234-configcheck", tmp_path)
+    assert re.fullmatch(r"[0-9a-f]{64}", _env_values(isolation.env_file)["AGENTGOV_RUNTIME_SHARED_SECRET"])
     child_env = acceptance.build_acceptance_env(
         acceptance.PROFILES["langfuse"],
         isolation,
@@ -737,7 +718,6 @@ def test_container_acceptance_compose_config_resolves_only_isolated_bind_mounts(
 
 
 def test_container_acceptance_public_target_owns_refresh_and_failure_cleanup() -> None:
-    acceptance = _load_container_acceptance()
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     source = Path(acceptance.__file__).read_text(encoding="utf-8")
     frozen_source = (REPO_ROOT / "scripts/container_acceptance_frozen_runner.py").read_text(encoding="utf-8")

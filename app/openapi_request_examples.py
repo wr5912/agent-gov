@@ -469,7 +469,7 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
     ),
     ("/api/feedback-cases", "post"): RequestExampleContract(
         media_type="application/json",
-        operation_description="Create one FeedbackCase from typed feedback sources owned by the same business Agent. Source IDs must come from feedback-signal, SOC-event, or resolved pending-correlation APIs; backend correlation fields are projected from those sources.",
+        operation_description="Create one FeedbackCase from typed feedback sources owned by the same business Agent. Source IDs must come from feedback-signal, business-event, or resolved pending-correlation APIs; backend correlation fields are projected from those sources.",
         examples={
             "from_feedback_signal": _example(
                 "Create a case from one reviewed signal",
@@ -506,7 +506,7 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
                 "Collect an analyst annotation",
                 {
                     "source_type": "analyst_annotation",
-                    "alert_id": "alert-id-from-business-system",
+                    "entities": {"alert": ["alert-id-from-business-system"]},
                     "labels": ["analyst-review"],
                     "comment": "该告警属于已知维护活动。",
                     "confidence": "medium",
@@ -531,22 +531,21 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
             )
         },
     ),
-    ("/api/soc-events", "post"): RequestExampleContract(
+    ("/api/feedback-events", "post"): RequestExampleContract(
         media_type="application/json",
-        operation_description="Collect one immutable SOC event and attempt deterministic correlation to an Agent run. event_id must be unique in the source system; before/after and entities should contain domain fields, not opaque dumps.",
+        operation_description="Collect one business event and attempt unique run correlation. An exact retry of the normalized immutable request returns duplicate; reusing event_id with different input returns 409 FEEDBACK_EVENT_ID_CONFLICT. Equivalent RFC 3339 offsets identify the same instant. Ambiguous Sessions remain pending; entities hold business references, not governance Case ownership.",
         examples={
-            "case_verdict_changed": _example(
-                "Collect a case verdict change",
+            "document_annotation_changed": _example(
+                "Collect a document annotation change",
                 {
-                    "event_id": "soc-event-20260729-001",
-                    "source_system": "soc-console",
-                    "event_type": "case.verdict_changed",
+                    "event_id": "docs-event-20260913-001",
+                    "source_system": "document-review",
+                    "event_type": "document.annotation.corrected",
                     "timestamp": "2026-07-29T10:30:00Z",
-                    "case_id": "case-id-from-business-system",
                     "actor_id": "analyst-42",
-                    "before": {"verdict": "suspicious"},
-                    "after": {"verdict": "benign", "reason": "confirmed maintenance"},
-                    "entities": {"host": ["server-17"], "user": ["svc-backup"]},
+                    "before": {"citation": "missing"},
+                    "after": {"citation": "section-2"},
+                    "entities": {"document": ["guide-1"]},
                     "confidence": "high",
                     "requires_review": False,
                     "metadata": {"source_region": "north"},
@@ -575,7 +574,7 @@ _DOMAIN_REQUEST_EXAMPLE_CONTRACTS: Mapping[OperationKey, RequestExampleContract]
         "patch",
     ): RequestExampleContract(
         media_type="application/json",
-        operation_description="Patch developer-owned annotations for one canonical feedback source. Omitted properties are unchanged; source_kind is signal, soc_event, or pending_correlation and source_id comes from the matching list API.",
+        operation_description="Patch developer-owned annotations for one canonical feedback source. Omitted properties are unchanged; source_kind is signal, event, or pending_correlation and source_id comes from the matching list API.",
         examples={
             "add_comment": _example(
                 "Add one reviewer comment",

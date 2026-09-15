@@ -290,11 +290,16 @@ def _native_workspace_test_entries(agent_id: str) -> tuple[WorkspaceProvisionEnt
         "    assert policy.get('allow_for_run') is False\n"
         "    for section in ('context_config', 'react_config', 'invite_config'):\n"
         "        assert isinstance(manifest.get(section), dict)\n"
+        "\n\ndef test_native_agent_responds(agent) -> None:\n"
+        "    result = agent.run('你好，请简短介绍你的职责和可以提供的帮助。')\n"
+        "    assert not result.errors\n"
+        "    assert result.text.strip(), '真实 Agent 应给出非空回复'\n"
     )
     readme = (
         "# Agent 测试套件\n\n"
         "`test_native_agent_harness_contract.py` 校验该候选的实际 `AGENT.md` 与 `agent.yaml`。"
-        "发布前还应根据业务预期增加调用真实 Agent 的行为回归测试。\n"
+        "同文件另有真实 Agent 基础对话测试；非空回复只证明基础运行，不证明业务效果。"
+        "发布前还应根据业务预期增加实质行为回归测试。\n"
     )
     return (
         WorkspaceProvisionEntry(_NATIVE_TEST_README_PATH, readme.encode("utf-8"), 0o644),

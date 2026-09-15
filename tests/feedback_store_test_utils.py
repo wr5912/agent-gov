@@ -9,7 +9,7 @@ import pytest
 from app.runtime.improvement_db import ExecutionRecordModel
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.runtime_db import utc_now
-from app.runtime.schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
+from app.runtime.schemas import FeedbackEventIngestRequest, FeedbackSignalCreateRequest
 from app.runtime.settings import AppSettings
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import advance_improvement_stage_in_transaction
@@ -23,6 +23,7 @@ def _settings(tmp_path):
     governor_workspace.mkdir(parents=True, exist_ok=True)
     settings = AppSettings(
         _env_file=None,
+        AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret",
         GOVERNOR_WORKSPACE_DIR=governor_workspace,
         DATA_DIR=data,
         RUNTIME_VOLUME_MODE="local-debug",
@@ -103,8 +104,7 @@ def _record_run(store: FeedbackStore):
     return store.record_run(
         _run_payload(
             session_id="session-1",
-            alert_id="alert-1",
-            case_id="case-1",
+            entities={"alert": ["alert-1"], "case": ["case-1"]},
             completed_at="2026-05-20T00:00:01+00:00",
             updated_at="2026-05-20T00:00:01+00:00",
         )
@@ -173,7 +173,7 @@ def _seed_execution_record(
 __all__ = [
     "FeedbackSignalCreateRequest",
     "FeedbackStore",
-    "SocEventIngestRequest",
+    "FeedbackEventIngestRequest",
     "_record_run",
     "_run_payload",
     "_seed_execution_record",

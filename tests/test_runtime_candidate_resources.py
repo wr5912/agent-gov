@@ -243,8 +243,7 @@ def test_candidate_interrupt_partial_failure_keeps_all_team_fences_and_redacts(
         session_id="leader-session",
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)

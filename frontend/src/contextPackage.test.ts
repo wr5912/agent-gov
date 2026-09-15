@@ -80,17 +80,24 @@ const execution: ExecutionRecord = {
   updated_at: "2026-09-11T00:00:00Z",
 };
 
-const feedbacks = [{
+const feedbacks: ImprovementFeedback[] = [{
   feedback_id: "fb-context",
   improvement_id: item.improvement_id,
   agent_id: item.agent_id,
   summary: "同一查询执行两次",
   source: "feedback_inbox",
   status: "open",
+  created_at: "2026-09-11T00:00:00Z",
+  raw_text: "",
+  scenario: "",
+  task_id: "",
   run_id: "run-context",
   session_id: "session-context",
   agent_version_id: "a".repeat(40),
-} as ImprovementFeedback];
+  entities: { document: ["doc-context"], case: ["business-case-context"] },
+  feedback_case_id: "fbc-context",
+  source_events: [{ event_id: "event-context", source_system: "document-service", event_type: "document.reviewed" }],
+}];
 
 const links = [{ kind: "change_set", ref_id: "agc-context" }] as ImprovementLink[];
 const assets = [{
@@ -170,6 +177,13 @@ describe("改进事项上下文包", () => {
       run_ids: ["run-context"],
       session_ids: ["session-context"],
     });
+    expect(payload.feedbacks[0]).toMatchObject({
+      entities: { document: ["doc-context"], case: ["business-case-context"] },
+      feedback_case_id: "fbc-context",
+      source_events: [{ event_id: "event-context", source_system: "document-service", event_type: "document.reviewed" }],
+    });
+    expect(payload.feedbacks[0]).not.toHaveProperty("alert_id");
+    expect(payload.feedbacks[0]).not.toHaveProperty("case_id");
     expect(payload.assets[0]).toMatchObject({
       asset_id: "ast-context",
       source_improvement_id: "imp-context",

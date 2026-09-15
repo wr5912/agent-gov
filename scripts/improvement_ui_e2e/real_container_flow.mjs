@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   apiJson,
   assertHostileTestRunRejected,
@@ -8,10 +10,16 @@ import {
 import {
   assertNoForbiddenUiRequests,
   attachDiagnostics,
-  screenshotAndAudit,
+  acceptanceError,
+  auditState,
   unexpectedDiagnostics,
 } from "./page_audit.mjs";
 import { reviewAndApprovePassedCandidate } from "./candidate_review.mjs";
+import {
+  isRuntimeTemplateRestartRequired,
+  restartCandidateRuntime,
+} from "./candidate_runtime_restart.mjs";
+import { configureUiApiConnection } from "./ui_connection.mjs";
 
 const VIEWPORTS = [
   { name: "desktop", width: 1440, height: 980 },
@@ -60,12 +68,14 @@ async function openImprovement(page, config, seed) {
   await page.locator('[data-testid="improvement-detail"][data-item-id="' + seed.item.improvement_id + '"]').waitFor({ timeout: 30000 });
 }
 
-async function responseBody(response) {
+async function responseFailure(response, code) {
+  const error = acceptanceError(code, response.status());
   try {
-    return await response.text();
+    error.generatedTestError = /"error_type"\s*:\s*"GeneratedAgentTestError"/.test(await response.text());
   } catch {
-    return "";
+    error.generatedTestError = false;
   }
+  return error;
 }
 
 async function clickPrimaryBusinessAction(page, config, dataAction, endpointSuffix) {
@@ -79,12 +89,7 @@ async function clickPrimaryBusinessAction(page, config, dataAction, endpointSuff
   const response = await responsePromise;
   if (!response.ok()) {
     await page.getByTestId("decision-operation-error").waitFor({ timeout: 15000 }).catch(() => {});
-    const detail = await page.getByTestId("decision-operation-error").innerText().catch(() => "failure detail missing");
-    const body = await responseBody(response);
-    const error = new Error(dataAction + " failed with visible detail '" + detail + "': " + response.status() + " " + body);
-    error.httpStatus = response.status();
-    error.responseBody = body;
-    throw error;
+    throw await responseFailure(response, "PRIMARY_BUSINESS_ACTION_FAILED");
   }
   await page.getByTestId("decision-operation-status").waitFor({ state: "detached", timeout: 30000 }).catch(() => {});
   return { action: dataAction, endpoint: new URL(response.url()).pathname, status: response.status() };
@@ -100,7 +105,7 @@ async function regenerateOptimizationPlan(page, config, improvementId) {
   await button.click();
   const response = await responsePromise;
   if (!response.ok()) {
-    throw new Error("governor optimization plan regeneration failed: " + response.status() + " " + await responseBody(response));
+    throw await responseFailure(response, "PLAN_REGENERATION_FAILED");
   }
   await page.getByTestId("decision-operation-status").waitFor({ state: "detached", timeout: 30000 }).catch(() => {});
   return { action: "regenerate-optimization-plan", endpoint, status: response.status() };
@@ -114,9 +119,9 @@ async function generateRegressionTestDesign(
   minimumTestCount,
   requiredTestLiterals = [],
   requiredTestCodeFragments = [],
+  allowedTargetPaths = null,
 ) {
   let design;
-  let lastError;
   for (let attempt = 1; attempt <= MAX_REGRESSION_DESIGN_ATTEMPTS; attempt += 1) {
     let action;
     try {
@@ -127,9 +132,8 @@ async function generateRegressionTestDesign(
         "/api/improvements/" + improvementId + "/regression-test-design/generate",
       );
     } catch (error) {
-      lastError = error;
       const retryableGenerationFailure = error?.httpStatus === 503
-        && String(error?.responseBody || "").includes('"error_type":"GeneratedAgentTestError"');
+        && error?.generatedTestError === true;
       actions.push({
         action: "generate-regression-rejected",
         attempt,
@@ -147,6 +151,7 @@ async function generateRegressionTestDesign(
       const assertions = code.match(/^\s*assert\b/gm) || [];
       const assertionLines = code.split("\n").filter((line) => /^\s*assert\b/.test(line));
       return /^tests\/test_.*\.py$/.test(item.target_path || "")
+        && (allowedTargetPaths === null || allowedTargetPaths.includes(item.target_path))
         && code.includes("agent.run(")
         && (code.includes("result.text") || code.includes("result.raw"))
         && /assert\s+not\s+\w+\.errors/.test(code)
@@ -160,11 +165,7 @@ async function generateRegressionTestDesign(
     });
     if (design.regression_test_design_id && tests.length >= minimumTestCount && executable) return design;
   }
-  throw new Error(
-    "regression test design did not persist at least " + minimumTestCount
-      + " executable pytest files after " + MAX_REGRESSION_DESIGN_ATTEMPTS + " attempts: "
-      + JSON.stringify(design) + (lastError ? "; last_error=" + lastError.message : ""),
-  );
+  throw acceptanceError("REGRESSION_TEST_DESIGN_INVALID");
 }
 
 function assertExecutionTargetScope(seed, execution) {
@@ -179,22 +180,18 @@ function assertExecutionTargetScope(seed, execution) {
     .map((entry) => entry.path)
     .filter((path) => path && !allowed.has(path));
   if (unexpected.length) {
-    throw new Error("execution modified paths outside the confirmed feedback scope: " + JSON.stringify({
-      allowed: [...allowed],
-      unexpected,
-      diff,
-    }));
+    throw acceptanceError("EXECUTION_OUTSIDE_APPROVED_SCOPE");
   }
   for (const entry of diff.modified || []) {
     const beforeSize = Number(entry.before?.size || 0);
     const afterSize = Number(entry.after?.size || 0);
     if (beforeSize >= 256 && afterSize < beforeSize * 0.5) {
-      throw new Error("execution unexpectedly truncated an existing document: " + JSON.stringify(entry));
+      throw acceptanceError("EXECUTION_TRUNCATED_EXISTING_DOCUMENT");
     }
   }
 }
 
-async function confirmAndMaterializeTests(page, config, seed, execution, actions) {
+async function confirmAndMaterializeTests(page, config, seed, execution, actions, allowedTargetPaths = null) {
   const improvementId = seed.item.improvement_id;
   const endpoint = "/api/improvements/" + improvementId + "/regression-test-design/confirm";
   const button = page.getByTestId("confirm-regression-tests");
@@ -205,20 +202,23 @@ async function confirmAndMaterializeTests(page, config, seed, execution, actions
   await button.click();
   const response = await responsePromise;
   if (!response.ok()) {
-    throw new Error("materializing Workspace pytest files failed: " + response.status() + " " + await responseBody(response));
+    throw await responseFailure(response, "TEST_MATERIALIZATION_FAILED");
   }
   const confirmed = await response.json();
   const generatedFiles = confirmed.generated_test_files || [];
   if (!generatedFiles.some((path) => /^tests\/test_.*\.py$/.test(path))) {
-    throw new Error("confirmed test design did not create tests/test_*.py: " + JSON.stringify(confirmed));
+    throw acceptanceError("CONFIRMED_TEST_FILES_MISSING");
+  }
+  if (allowedTargetPaths !== null && generatedFiles.some((path) => !allowedTargetPaths.includes(path))) {
+    throw acceptanceError("GENERATED_TEST_OUTSIDE_APPROVED_SCOPE");
   }
   if (!confirmed.candidate_commit_sha || confirmed.test_run !== null) {
-    throw new Error("confirm must pin the candidate commit without auto-running pytest: " + JSON.stringify(confirmed));
+    throw acceptanceError("TEST_CONFIRMATION_CONTRACT_INVALID");
   }
   const reboundExecution = await apiJson(config, "/api/improvements/" + improvementId + "/execution");
   if (reboundExecution.change_set_id !== execution.change_set_id
       || reboundExecution.applied_agent_version_id !== confirmed.candidate_commit_sha) {
-    throw new Error("execution record was not rebound to the test-bearing candidate commit: " + JSON.stringify(reboundExecution));
+    throw acceptanceError("TEST_CANDIDATE_EXECUTION_BINDING_INVALID");
   }
   actions.push({ action: "confirm-and-materialize-tests", endpoint, status: response.status() });
   return { confirmed, execution: reboundExecution };
@@ -233,18 +233,18 @@ async function startPlatformTests(page, config, seed, execution, confirmed, acti
   ), { timeout: config.actionTimeoutMs });
   await button.click({ timeout: 30000 });
   const response = await responsePromise;
-  if (!response.ok()) throw new Error("starting platform pytest failed: " + response.status() + " " + await responseBody(response));
+  if (!response.ok()) throw await responseFailure(response, "PLATFORM_TEST_START_FAILED");
   const run = await response.json();
   if (run.agent_id !== seed.agent.agent_id
       || run.commit_sha !== confirmed.candidate_commit_sha
       || run.change_set_id !== execution.change_set_id) {
-    throw new Error("platform test run lost Agent/change-set/commit binding: " + JSON.stringify(run));
+    throw acceptanceError("PLATFORM_TEST_BINDING_INVALID");
   }
   actions.push({ action: "run-platform-pytest", endpoint, status: response.status() });
   return run;
 }
 
-async function exerciseFourStageActions(page, config, seed, minimumRegressionTestCount = 1) {
+async function exerciseFourStageActions(page, config, seed, minimumRegressionTestCount = 1, allowedTargetPaths = null) {
   const improvementId = seed.item.improvement_id;
   const actions = [];
   await page.getByTestId("normalized-feedback").waitFor({ timeout: 30000 });
@@ -284,7 +284,7 @@ async function exerciseFourStageActions(page, config, seed, minimumRegressionTes
       break;
     }
     if (attempt === MAX_GOVERNOR_PLAN_ATTEMPTS) {
-      throw new Error("governor did not produce a writable execution plan after " + attempt + " attempts: " + JSON.stringify(execution));
+      throw acceptanceError("GOVERNOR_WRITABLE_PLAN_MISSING");
     }
     const regeneration = await regenerateOptimizationPlan(page, config, improvementId);
     actions.push({ ...regeneration, attempt: attempt + 1 });
@@ -298,8 +298,9 @@ async function exerciseFourStageActions(page, config, seed, minimumRegressionTes
     minimumRegressionTestCount,
     seed.requiredTestLiterals,
     seed.requiredTestCodeFragments,
+    allowedTargetPaths,
   );
-  const materialized = await confirmAndMaterializeTests(page, config, seed, execution, actions);
+  const materialized = await confirmAndMaterializeTests(page, config, seed, execution, actions, allowedTargetPaths);
   const initialRun = await startPlatformTests(
     page,
     config,
@@ -331,48 +332,51 @@ async function waitForTerminalTestRun(config, testRunId) {
     if (TERMINAL_TEST_RUN_STATES.has(run.status)) return run;
     await sleep(1200);
   }
-  throw new Error(
-    `agent test run did not finish within ${config.testRunTimeoutMs}ms: ` + JSON.stringify(run),
-  );
+  throw acceptanceError("PLATFORM_TEST_TERMINAL_TIMEOUT");
+}
+
+function assertExactTestCandidate(flow, suite, run) {
+  if (run.test_run_id !== flow.initialRun.test_run_id
+      || run.agent_id !== flow.initialRun.agent_id
+      || run.change_set_id !== flow.execution.change_set_id
+      || run.commit_sha !== flow.confirmed.candidate_commit_sha) {
+    throw acceptanceError("TEST_TERMINAL_CANDIDATE_DRIFT");
+  }
+  if (!suite.suite_digest
+      || suite.agent_id !== run.agent_id
+      || suite.commit_sha !== run.commit_sha
+      || suite.suite_digest !== flow.initialRun.suite_digest
+      || suite.suite_digest !== run.suite_digest) {
+    throw acceptanceError("TEST_SUITE_DIGEST_MISMATCH");
+  }
 }
 
 function assertPassedTestEvidence(flow, suite, run) {
+  assertExactTestCandidate(flow, suite, run);
   if (run.status !== "passed") {
-    throw new Error("Workspace pytest did not pass: " + JSON.stringify({
-      status: run.status,
-      stdout: run.stdout,
-      stderr: run.stderr,
-      error: run.error,
-      items: run.items,
-    }));
-  }
-  if (run.agent_id !== flow.initialRun.agent_id
-      || run.change_set_id !== flow.execution.change_set_id
-      || run.commit_sha !== flow.confirmed.candidate_commit_sha) {
-    throw new Error("terminal test run drifted from the exact candidate: " + JSON.stringify(run));
+    throw acceptanceError("WORKSPACE_PYTEST_NOT_PASSED");
   }
   const [pythonExecutable, ...testArguments] = Array.isArray(run.command) ? run.command : [];
   const pythonName = typeof pythonExecutable === "string" ? pythonExecutable.split("/").at(-1) : "";
   if (!/^python(?:\d+(?:\.\d+)*)?$/.test(pythonName)
       || JSON.stringify(testArguments) !== JSON.stringify(FIXED_TEST_ARGUMENTS)) {
-    throw new Error("platform test command drifted: " + JSON.stringify(run.command));
+    throw acceptanceError("PLATFORM_TEST_COMMAND_DRIFT");
   }
   if (!suite.tests_directory_present
       || !suite.test_file_count
       || suite.test_files.some((path) => !/^tests\/test_.*\.py$/.test(path))
       || suite.suite_digest !== run.suite_digest) {
-    throw new Error("test suite digest/files do not match the run evidence: " + JSON.stringify({ suite, run }));
+    throw acceptanceError("TEST_SUITE_DIGEST_MISMATCH");
   }
   if (!(run.items || []).length || run.items.some((item) => item.outcome !== "passed")) {
-    throw new Error("platform test run contains a non-passing pytest item: " + JSON.stringify(run.items));
+    throw acceptanceError("PLATFORM_TEST_ITEM_NOT_PASSED");
   }
   if (!(run.invocations || []).length
       || run.invocations.some((invocation) => invocation.test_run_id !== run.test_run_id
         || invocation.agent_version_id !== run.commit_sha
         || !invocation.langfuse_trace_id
         || (invocation.errors || []).length)) {
-    throw new Error("business Agent invocation evidence is incomplete or contains runtime errors: "
-      + JSON.stringify(run.invocations));
+    throw acceptanceError("PLATFORM_TEST_INVOCATION_INCOMPLETE");
   }
 }
 
@@ -384,8 +388,28 @@ async function waitForPassedGate(page, run) {
   }, run.test_run_id, { timeout: 60000 });
 }
 
-async function publishPassedCandidate(page, config, flow) {
+async function assertCandidateDiffScope(config, flow, allowedTargetPaths) {
+  const encodedId = encodeURIComponent(flow.execution.change_set_id);
+  const diff = await apiJson(config, `/api/agent-change-sets/${encodedId}/diff`);
+  const added = (diff.added || []).map((item) => item.path);
+  const modified = (diff.modified || []).map((item) => item.path);
+  const deleted = (diff.deleted || []).map((item) => item.path);
+  const changed = [...added, ...modified, ...deleted];
+  const approved = new Set(allowedTargetPaths);
+  const expectedTests = flow.confirmed.generated_test_files || [];
+  if (diff.to_version_id !== flow.confirmed.candidate_commit_sha
+      || changed.length < 2 || new Set(changed).size !== changed.length
+      || deleted.length || modified.length !== 1 || modified[0] !== "AGENT.md"
+      || !expectedTests.length || expectedTests.some((path) => !added.includes(path))
+      || changed.some((path) => !approved.has(path))
+      || added.some((path) => !/^tests\/test_.*\.py$/.test(path))) {
+    throw acceptanceError("CANDIDATE_DIFF_OUTSIDE_APPROVED_SCOPE");
+  }
+}
+
+async function publishPassedCandidate(page, config, flow, allowedTargetPaths = null) {
   const changeSetId = flow.execution.change_set_id;
+  if (allowedTargetPaths !== null) await assertCandidateDiffScope(config, flow, allowedTargetPaths);
   const approval = await reviewAndApprovePassedCandidate(page, config, {
     changeSetId,
     candidateCommitSha: flow.confirmed.candidate_commit_sha,
@@ -404,7 +428,7 @@ async function publishPassedCandidate(page, config, flow) {
   await button.click();
   const response = await responsePromise;
   if (!response.ok()) {
-    throw new Error("normal publication failed: " + response.status() + " " + await responseBody(response));
+    throw await responseFailure(response, "CANDIDATE_PUBLICATION_FAILED");
   }
   const request = response.request().postDataJSON();
   if (request.force !== false
@@ -414,13 +438,13 @@ async function publishPassedCandidate(page, config, flow) {
       || request.expected_diff_digest !== approval.diffDigest
       || request.expected_test_run_id !== flow.terminalRun.test_run_id
       || request.expected_suite_digest !== flow.suite.suite_digest) {
-    throw new Error("passed candidate did not use normal publication: " + JSON.stringify(request));
+    throw acceptanceError("CANDIDATE_PUBLICATION_REQUEST_INVALID");
   }
   const release = await response.json();
   if (release.change_set_id !== changeSetId
       || release.commit_sha !== flow.confirmed.candidate_commit_sha
       || release.force_published) {
-    throw new Error("published release lost exact passed commit binding: " + JSON.stringify(release));
+    throw acceptanceError("RELEASE_PASSED_COMMIT_BINDING_INVALID");
   }
   await page.getByTestId("release-item").filter({ hasText: release.tag_name || release.release_id }).waitFor({ timeout: 30000 });
   return { ...approval, endpoint, release, status: response.status() };
@@ -459,18 +483,19 @@ async function assertCreateDrawerFullyVisible(page) {
     return { drawer: true, clipped };
   });
   if (!visibility.drawer || visibility.clipped.length) {
-    throw new Error("new improvement drawer controls are clipped: " + JSON.stringify(visibility));
+    throw acceptanceError("IMPROVEMENT_DRAWER_CONTROLS_CLIPPED");
   }
   await page.getByTestId("improvement-create-cancel").click();
   await page.getByTestId("improvement-create-drawer").waitFor({ state: "detached", timeout: 5000 });
 }
 
-async function verifyResponsiveStates(browser, config, seed, flow, release) {
+async function verifyResponsiveStates(browser, config, seed, flow, release, configureConnection = false) {
   const results = [];
   for (const viewport of VIEWPORTS) {
     const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } });
     const diagnostics = attachDiagnostics(page, config.apiBase, config.uiBase);
     try {
+      if (configureConnection) await configureUiApiConnection(page, config);
       await openImprovement(page, config, seed);
       await assertCreateDrawerFullyVisible(page);
       await page.getByTestId("improvement-terminal").filter({ hasText: "已完成平台测试并发布" }).waitFor({ timeout: 30000 });
@@ -479,7 +504,7 @@ async function verifyResponsiveStates(browser, config, seed, flow, release) {
       await page.locator('[data-testid="closed-loop-step"][data-stage-key="test_release"][data-state="done"]').waitFor({ timeout: 30000 });
       await page.getByTestId("regression-test-code-coverage").waitFor({ timeout: 30000 });
       await page.getByTestId("release-item").filter({ hasText: release.tag_name || release.release_id }).waitFor({ timeout: 30000 });
-      const success = await screenshotAndAudit(page, config.screenshotDir, viewport.name + "-success");
+      const success = await auditState(page, viewport.name + "-success");
 
       await page.getByTestId("nav-asset").click();
       await page.getByTestId("asset-registry").waitFor({ timeout: 30000 });
@@ -487,15 +512,12 @@ async function verifyResponsiveStates(browser, config, seed, flow, release) {
       await page.getByTestId("governance-asset-registry").waitFor({ timeout: 30000 });
       await page.getByTestId("asset-source-filter").fill("missing-" + seed.stamp);
       await page.locator(".iw-empty").filter({ hasText: "当前范围还没有沉淀资产" }).waitFor({ timeout: 15000 });
-      const empty = await screenshotAndAudit(page, config.screenshotDir, viewport.name + "-empty");
+      const empty = await auditState(page, viewport.name + "-empty");
 
       assertNoForbiddenUiRequests(diagnostics.requests);
       const unexpected = unexpectedDiagnostics(diagnostics);
       if (Object.values(unexpected).some((items) => items.length)) {
-        throw new Error("browser diagnostics failed for " + viewport.name + ": " + JSON.stringify({
-          unexpected,
-          allHttpErrors: diagnostics.httpErrors,
-        }));
+        throw acceptanceError("RESPONSIVE_BROWSER_DIAGNOSTICS_FAILED");
       }
       results.push({
         viewport,
@@ -545,10 +567,52 @@ export async function verifyCompletedImprovementAcceptance(browser, config, evid
   };
 }
 
-export async function runRealContainerAcceptance(browser, config, governanceAgentId, scenario) {
-  const seed = await seedBaseImprovement(config, governanceAgentId, scenario);
+function assertPreparedSeed(seed, governanceAgentId, scenario) {
+  const baseline = seed?.sourceRuns?.[0];
+  const expectedInputSha = createHash("sha256").update(scenario.input, "utf8").digest("hex");
+  const approvedPaths = scenario.acceptance?.allowed_target_paths || [];
+  if (seed?.agent?.agent_id !== governanceAgentId
+      || seed?.item?.agent_id !== governanceAgentId
+      || seed?.binding?.governance_agent_id !== governanceAgentId
+      || seed?.scenario?.scenario_id !== scenario.scenario_id
+      || seed.scenario.input !== scenario.input
+      || baseline?.agent_id !== governanceAgentId
+      || baseline.runtime_agent_id !== seed.binding.runtime_agent_id
+      || baseline.agent_version_id !== seed.binding.agent_version_id
+      || baseline.inputSha256 !== expectedInputSha
+      || baseline.status !== "succeeded" || baseline.trace_status !== "complete"
+      || !Array.isArray(seed.authorizedTargetPaths)
+      || seed.authorizedTargetPaths.length !== approvedPaths.length
+      || new Set(seed.authorizedTargetPaths).size !== approvedPaths.length
+      || seed.authorizedTargetPaths.some((path) => !approvedPaths.includes(path))
+      || JSON.stringify(seed.requiredTestLiterals) !== JSON.stringify(scenario.acceptance.required_test_literals)
+      || JSON.stringify(seed.requiredTestCodeFragments) !== JSON.stringify(scenario.acceptance.required_code_fragments || [])
+      || seed?.feedback?.feedback_case_id !== seed?.feedbackCaseId) {
+    throw acceptanceError("PREPARED_FEEDBACK_SEED_IDENTITY_INVALID");
+  }
+}
+
+async function acceptancePage(browser, config, governanceAgentId, scenario, preparedSeed) {
+  if (preparedSeed) assertPreparedSeed(preparedSeed, governanceAgentId, scenario);
+  const seed = preparedSeed || await seedBaseImprovement(config, governanceAgentId, scenario);
+  const allowedTargetPaths = preparedSeed ? seed.authorizedTargetPaths : null;
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
   const diagnostics = attachDiagnostics(page, config.apiBase, config.uiBase);
+  try {
+    if (preparedSeed) await configureUiApiConnection(page, config);
+  } catch (error) {
+    await page.close();
+    throw error;
+  }
+  return { seed, page, diagnostics, allowedTargetPaths };
+}
+
+export async function runRealContainerAcceptance(
+  browser, config, governanceAgentId, scenario, { preparedSeed = null } = {},
+) {
+  const { seed, page, diagnostics, allowedTargetPaths } = await acceptancePage(
+    browser, config, governanceAgentId, scenario, preparedSeed,
+  );
   let flow;
   let publication;
   let outcomeComparison;
@@ -556,7 +620,7 @@ export async function runRealContainerAcceptance(browser, config, governanceAgen
   let functionalDiagnostics;
   try {
     await openImprovement(page, config, seed);
-    flow = await exerciseFourStageActions(page, config, seed);
+    flow = await exerciseFourStageActions(page, config, seed, 1, allowedTargetPaths);
     negativeBoundary = await assertHostileTestRunRejected(
       config,
       seed.agent.agent_id,
@@ -567,12 +631,25 @@ export async function runRealContainerAcceptance(browser, config, governanceAgen
       "/api/agent-registry/" + encodeURIComponent(seed.agent.agent_id)
         + "/test-suite?commit_sha=" + encodeURIComponent(flow.confirmed.candidate_commit_sha),
     );
-    const terminalRun = await waitForTerminalTestRun(config, flow.initialRun.test_run_id);
+    let terminalRun = await waitForTerminalTestRun(config, flow.initialRun.test_run_id);
+    if (preparedSeed && terminalRun.status === "error"
+        && isRuntimeTemplateRestartRequired(terminalRun.error)) {
+      assertExactTestCandidate(flow, suite, terminalRun);
+      await restartCandidateRuntime({
+        signal: terminalRun.error,
+        stage: "candidate_test",
+        maintenance: config.runtimeMaintenance,
+      });
+      flow.initialRun = await startPlatformTests(
+        page, config, seed, flow.execution, flow.confirmed, flow.actions,
+      );
+      terminalRun = await waitForTerminalTestRun(config, flow.initialRun.test_run_id);
+    }
     assertPassedTestEvidence(flow, suite, terminalRun);
     flow.suite = suite;
     flow.terminalRun = terminalRun;
     await waitForPassedGate(page, terminalRun);
-    publication = await publishPassedCandidate(page, config, flow);
+    publication = await publishPassedCandidate(page, config, flow, allowedTargetPaths);
     outcomeComparison = await verifyPublishedCandidateOutcome(config, seed, publication.release);
     flow.actions.push({
       action: "platform-pytest",
@@ -595,10 +672,7 @@ export async function runRealContainerAcceptance(browser, config, governanceAgen
     assertNoForbiddenUiRequests(diagnostics.requests);
     const unexpected = unexpectedDiagnostics(diagnostics);
     if (Object.values(unexpected).some((items) => items.length)) {
-      throw new Error("functional browser diagnostics failed: " + JSON.stringify({
-        unexpected,
-        allHttpErrors: diagnostics.httpErrors,
-      }));
+      throw acceptanceError("FUNCTIONAL_BROWSER_DIAGNOSTICS_FAILED");
     }
     functionalDiagnostics = {
       consoleErrors: diagnostics.consoleErrors,
@@ -610,7 +684,7 @@ export async function runRealContainerAcceptance(browser, config, governanceAgen
     await page.close();
   }
 
-  const viewports = await verifyResponsiveStates(browser, config, seed, flow, publication.release);
+  const viewports = await verifyResponsiveStates(browser, config, seed, flow, publication.release, Boolean(preparedSeed));
   return {
     status: "passed",
     mode: "real-container",
@@ -642,7 +716,7 @@ export async function runRealContainerAcceptance(browser, config, governanceAgen
     test_run: {
       test_run_id: flow.terminalRun.test_run_id,
       status: flow.terminalRun.status,
-      command: flow.terminalRun.command,
+      fixed_command_verified: true,
       item_count: flow.terminalRun.items?.length || 0,
     },
     release: {

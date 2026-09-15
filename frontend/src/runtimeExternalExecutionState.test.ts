@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildExternalExecutionSubmission,
   externalExecutionRequestsFromEvent,
+  mergeExternalExecutionRequests,
 } from "./runtimeExternalExecutionState";
 import type { AgentScopeAgentEvent } from "./types/runtime";
 
@@ -22,13 +23,16 @@ describe("AgentScope external execution continuation", () => {
       }],
     } satisfies AgentScopeAgentEvent;
 
-    const requests = externalExecutionRequestsFromEvent(event, "worker-session");
+    const requests = externalExecutionRequestsFromEvent(
+      event, "worker-session", "worker-agent",
+    );
 
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({
       requestId: "external-event-1",
       replyId: "reply-worker",
       workerSessionId: "worker-session",
+      workerRuntimeAgentId: "worker-agent",
       status: "waiting",
     });
     expect(requests[0].toolCalls).toEqual(event.tool_calls);
@@ -55,5 +59,21 @@ describe("AgentScope external execution continuation", () => {
         state: "success",
       }],
     });
+  });
+
+  it("deduplicates live and history cards for the same worker ledger action", () => {
+    const request = externalExecutionRequestsFromEvent({
+      id: "live-external-event",
+      created_at: "2026-09-10T00:00:00Z",
+      metadata: {},
+      type: "REQUIRE_EXTERNAL_EXECUTION",
+      reply_id: "reply-worker",
+      tool_calls: [{ type: "tool_call", id: "tool-1", name: "browser", input: "{}", state: "pending" }],
+    }, "worker-session", "worker-agent")[0];
+
+    expect(mergeExternalExecutionRequests([request], [{
+      ...request,
+      requestId: "pending:run:worker:reply",
+    }])).toEqual([request]);
   });
 });

@@ -8,6 +8,7 @@ import {
   type ImprovementItem,
 } from "../api/improvements";
 import type { RuntimeClientConfig } from "../types/runtime";
+import { parseFeedbackEntities } from "../feedbackEntities";
 
 interface ImprovementAddFeedbackFlowProps {
   clientConfig: RuntimeClientConfig;
@@ -30,12 +31,12 @@ export function ImprovementAddFeedbackFlow({ clientConfig, item, busy, onAdded, 
       .catch(() => setAttachable({ feedback_cases: [], other_improvement_feedbacks: [] }));
   }, [clientConfig, item.improvement_id]);
 
-  const attachCase = async (caseId: string) => {
+  const attachCase = async (feedbackCaseId: string) => {
     if (saving || busy) return;
     setSaving(true);
     setError(undefined);
     try {
-      await attachFeedbackCase(clientConfig, item.improvement_id, caseId);
+      await attachFeedbackCase(clientConfig, item.improvement_id, feedbackCaseId);
       await onAdded();
       onCancel();
     } catch (e) {
@@ -69,8 +70,7 @@ export function ImprovementAddFeedbackFlow({ clientConfig, item, busy, onAdded, 
     agent_version_id: "",
     scenario: "",
     task_id: "",
-    alert_id: "",
-    case_id: "",
+    entitiesText: "",
   });
 
   const canContinue = draft.summary.trim().length > 0;
@@ -84,7 +84,8 @@ export function ImprovementAddFeedbackFlow({ clientConfig, item, busy, onAdded, 
     setSaving(true);
     setError(undefined);
     try {
-      await addImprovementFeedback(clientConfig, item.improvement_id, draft);
+      const { entitiesText, ...payload } = draft;
+      await addImprovementFeedback(clientConfig, item.improvement_id, { ...payload, entities: parseFeedbackEntities(entitiesText) });
       await onAdded();
       onCancel();
     } catch (e) {
@@ -146,7 +147,7 @@ export function ImprovementAddFeedbackFlow({ clientConfig, item, busy, onAdded, 
           <div className="iw-form-grid">
             <label>
               <span>反馈摘要</span>
-              <input className="iw-input" data-testid="add-feedback-summary" value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} placeholder="例如：AI 没注意到事件时间和告警时间不一致" />
+              <input className="iw-input" data-testid="add-feedback-summary" value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} placeholder="例如：回答没有核对资料版本" />
             </label>
             <label>
               <span>来源</span>
@@ -180,13 +181,9 @@ export function ImprovementAddFeedbackFlow({ clientConfig, item, busy, onAdded, 
               <span>Task</span>
               <input className="iw-input" value={draft.task_id} onChange={(e) => setDraft({ ...draft, task_id: e.target.value })} placeholder="task_id，可选" />
             </label>
-            <label>
-              <span>Alert</span>
-              <input className="iw-input" value={draft.alert_id} onChange={(e) => setDraft({ ...draft, alert_id: e.target.value })} placeholder="alert_id，可选" />
-            </label>
-            <label>
-              <span>Case</span>
-              <input className="iw-input" value={draft.case_id} onChange={(e) => setDraft({ ...draft, case_id: e.target.value })} placeholder="case_id，可选" />
+            <label className="iw-form-span">
+              <span>业务对象引用（可选 JSON）</span>
+              <textarea className="iw-input" data-testid="add-feedback-entities" value={draft.entitiesText} onChange={(e) => setDraft({ ...draft, entitiesText: e.target.value })} placeholder={'{"document":["doc-1"]}；对象类型 → ID 数组，不填写治理 FeedbackCase ID'} />
             </label>
           </div>
           <div className="iw-next-step">已关联到当前事项的反馈不需要重复添加；跨 Agent 反馈应先确认归属边界。</div>
@@ -209,6 +206,7 @@ export function ImprovementAddFeedbackFlow({ clientConfig, item, busy, onAdded, 
             <span>Session：{draft.session_id || "-"}</span>
             <span>Agent Version：{draft.agent_version_id || "-"}</span>
             <span>场景：{draft.scenario || "-"}</span>
+            <span>业务对象引用：{draft.entitiesText || "-"}</span>
           </div>
           <div className="iw-content-subhead">与目标事项的关系</div>
           <ul className="iw-content-list">
@@ -234,6 +232,7 @@ export function ImprovementAddFeedbackFlow({ clientConfig, item, busy, onAdded, 
             <span>Session：{draft.session_id || "-"}</span>
             <span>Agent Version：{draft.agent_version_id || "-"}</span>
           </div>
+          <div className="iw-next-step">业务对象引用：{draft.entitiesText || "-"}</div>
           <div className="iw-content-subhead">系统匹配判断</div>
           <div className="iw-next-step">建议：可以加入当前改进事项。依据：同业务 Agent、同问题模式，并可复用当前闭环路径。</div>
           <div className="iw-content-subhead">确认后会发生什么</div>

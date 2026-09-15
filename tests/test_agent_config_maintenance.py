@@ -19,7 +19,6 @@ def test_candidate_write_leaves_the_live_workspace_unchanged(tmp_path: Path) -> 
             worktrees_dir=settings.agent_git_worktrees_dir,
             releases_dir=settings.agent_release_archives_dir,
         ),
-        runtime_mode="local-debug",
     )
     change_set = governance.create_change_set(title="isolated")
     original = settings.default_workspace_dir.joinpath("AGENT.md").read_text(encoding="utf-8")

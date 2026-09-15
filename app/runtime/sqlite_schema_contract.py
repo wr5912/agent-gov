@@ -52,7 +52,9 @@ _DDL_FEATURE_PATTERN: Final = re.compile(
 )
 
 # 这些摘要是 epoch 的物理格式标识。只有显式 schema 迁移并同步负向测试时才能更新。
-CURRENT_SCHEMA_CONTRACT_SHA256: Final = "6839624b48d7fccedfd8551295b3857df88e23bebc66aa4f72a1eaec3cf969ff"
+CURRENT_SCHEMA_CONTRACT_SHA256: Final = "5eb8dfb47ffa89d3fbf788c4495778dde12d4fc19c0f70a788fd3054976ba71b"
+PRE_IDEMPOTENCY_V4_SCHEMA_CONTRACT_SHA256: Final = "22eb7ebec969d58def769bac1fba6f33d740934f5e02a910a34f57974568b56d"
+V3_SCHEMA_CONTRACT_SHA256: Final = "6839624b48d7fccedfd8551295b3857df88e23bebc66aa4f72a1eaec3cf969ff"
 PREVIOUS_SCHEMA_CONTRACT_SHA256: Final = frozenset(
     {"bca5c87f7ec8f6e77d0c3182e47540e53ec2e07556ff39a55fc86c69ea81eaaf"},
 )
@@ -63,7 +65,9 @@ LEGACY_V1_SCHEMA_CONTRACT_SHA256: Final = frozenset(
     },
 )
 
-CURRENT_SCHEMA_EPOCH: Final = "agentscope-runtime-v3"
+CURRENT_SCHEMA_EPOCH: Final = "agentscope-runtime-v4"
+IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION: Final = "improvement-idempotency-ledger-v1"
+V3_SCHEMA_EPOCH: Final = "agentscope-runtime-v3"
 PREVIOUS_SCHEMA_EPOCH: Final = "agentscope-runtime-v2"
 LEGACY_SCHEMA_EPOCH: Final = "agentscope-runtime-v1"
 REMOVED_RELEASE_OPERATION_TABLE: Final = "agent_release_operations"
@@ -72,6 +76,8 @@ REMOVED_RELEASE_OPERATION_TABLE: Final = "agent_release_operations"
 class SqliteSchemaEpochClassification(StrEnum):
     EMPTY = "empty"
     CURRENT = "agentscope"
+    CURRENT_V4_IDEMPOTENCY_MIGRATABLE = "agentscope-v4-idempotency-migratable"
+    V3_MIGRATABLE = "agentscope-v3-migratable"
     PREVIOUS_MIGRATABLE = "agentscope-v2-migratable"
     LEGACY_MIGRATABLE = "agentscope-v1-migratable"
     LEGACY_UNSAFE_HISTORY = "agentscope-v1-unsafe-history"
@@ -370,11 +376,16 @@ def inspect_sqlite_schema_epoch(
         )
     versions = _schema_versions(connection, tables)
     contract_sha256 = physical_schema_contract_sha256(connection)
+    prior_markers = known_data_migration_markers - {IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION}
     if _markers_match(versions, CURRENT_SCHEMA_EPOCH, known_data_migration_markers) and contract_sha256 == CURRENT_SCHEMA_CONTRACT_SHA256:
         classification = SqliteSchemaEpochClassification.CURRENT
-    elif _markers_match(versions, PREVIOUS_SCHEMA_EPOCH, known_data_migration_markers) and contract_sha256 in PREVIOUS_SCHEMA_CONTRACT_SHA256:
+    elif _markers_match(versions, CURRENT_SCHEMA_EPOCH, prior_markers) and contract_sha256 == PRE_IDEMPOTENCY_V4_SCHEMA_CONTRACT_SHA256:
+        classification = SqliteSchemaEpochClassification.CURRENT_V4_IDEMPOTENCY_MIGRATABLE
+    elif _markers_match(versions, V3_SCHEMA_EPOCH, prior_markers) and contract_sha256 == V3_SCHEMA_CONTRACT_SHA256:
+        classification = SqliteSchemaEpochClassification.V3_MIGRATABLE
+    elif _markers_match(versions, PREVIOUS_SCHEMA_EPOCH, prior_markers) and contract_sha256 in PREVIOUS_SCHEMA_CONTRACT_SHA256:
         classification = SqliteSchemaEpochClassification.PREVIOUS_MIGRATABLE
-    elif _markers_match(versions, LEGACY_SCHEMA_EPOCH, known_data_migration_markers) and contract_sha256 in LEGACY_V1_SCHEMA_CONTRACT_SHA256:
+    elif _markers_match(versions, LEGACY_SCHEMA_EPOCH, prior_markers) and contract_sha256 in LEGACY_V1_SCHEMA_CONTRACT_SHA256:
         classification = (
             SqliteSchemaEpochClassification.LEGACY_MIGRATABLE
             if _removed_release_history_is_empty(connection, tables)

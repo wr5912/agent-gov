@@ -159,6 +159,20 @@ describe("AgentScope user confirmation state", () => {
     expect(mergeUserConfirmRequests([resolved], [repeated])).toEqual([resolved]);
   });
 
+  it("does not duplicate one ledger action when live and history projections use different request IDs", () => {
+    const live = {
+      requestId: "live-event-id",
+      replyId: "reply-1",
+      workerSessionId: "worker-1",
+      workerRuntimeAgentId: "worker-agent-1",
+      toolCalls: [toolCall()],
+      status: "waiting" as const,
+    };
+    const restored = { ...live, requestId: "pending:run:worker:reply" };
+
+    expect(mergeUserConfirmRequests([live], [restored])).toEqual([live]);
+  });
+
   it("tracks and clears only the matching projected Team worker request", () => {
     const event: AgentScopeAgentEvent = {
       id: "confirm-1",
@@ -168,10 +182,16 @@ describe("AgentScope user confirmation state", () => {
       reply_id: "reply-1",
       tool_calls: [toolCall()],
     };
-    const first = userConfirmRequestsFromEvent(event, "worker-1")[0];
-    const second = { ...first, requestId: "confirm-2", workerSessionId: "worker-2" };
+    const first = userConfirmRequestsFromEvent(event, "worker-1", "worker-agent-1")[0];
+    const second = {
+      ...first,
+      requestId: "confirm-2",
+      workerSessionId: "worker-2",
+      workerRuntimeAgentId: "worker-agent-2",
+    };
 
     expect(first.workerSessionId).toBe("worker-1");
+    expect(first.workerRuntimeAgentId).toBe("worker-agent-1");
     expect(clearProjectedUserConfirmRequest([first, second], "worker-1", "reply-1")).toEqual([second]);
   });
 

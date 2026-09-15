@@ -1,4 +1,5 @@
 import { getAgentRun, getAgentRunPendingActions } from "./api/feedback";
+import { apiReadFailureDisposition } from "./api/readRecovery";
 import type { SubagentHitlProjection, SubagentHitlResolution } from "./api/runtime";
 import { bindLogEventRunId } from "./playgroundRunHelpers";
 import type { ActiveTurn, AssistantUpdater, PlaygroundRunOptions } from "./playgroundRunContract";
@@ -218,8 +219,12 @@ async function acceptValidatedPendingEvent(
   const runId = turn.runtimeRunId?.trim();
   if (!runId || !context.isMutable()) return;
   const requests = kind === "human"
-    ? userConfirmRequestsFromEvent(event, projection?.worker_session_id)
-    : externalExecutionRequestsFromEvent(event, projection?.worker_session_id);
+    ? userConfirmRequestsFromEvent(
+      event, projection?.worker_session_id, projection?.worker_agent_id,
+    )
+    : externalExecutionRequestsFromEvent(
+      event, projection?.worker_session_id, projection?.worker_agent_id,
+    );
   if (requests.length !== 1) return;
   try {
     const [run, pendingActions] = await Promise.all([
@@ -228,12 +233,17 @@ async function acceptValidatedPendingEvent(
     ]);
     if (!context.isMutable()) return;
     const expectedStatus = kind === "human" ? "waiting_human" : "waiting_external";
-    if (run.run_id !== runId || run.session_id !== turn.sessionId || run.status !== expectedStatus) return;
+    if (run.run_id !== runId || run.session_id !== turn.sessionId) {
+      throw new Error("pending projection 返回了不匹配的 run_id/session_id。");
+    }
+    if (run.status !== expectedStatus) return;
     const request = requests[0];
     const actionSessionId = projection?.worker_session_id || turn.sessionId;
+    const actionRuntimeAgentId = projection?.worker_agent_id || turn.agentId;
     const candidates = pendingActions.filter((action) => (
       action.run_id === runId
       && action.session_id === actionSessionId
+      && action.runtime_agent_id === actionRuntimeAgentId
       && action.reply_id === request.replyId
       && action.kind === kind
       && action.status === "pending"
@@ -250,29 +260,43 @@ async function acceptValidatedPendingEvent(
       unmatched.splice(index, 1);
     }
     if (!context.isMutable()) return;
-    context.updateAssistant((current) => kind === "human" ? {
-      ...current,
-      controlError: undefined,
-      userConfirmRequests: mergeUserConfirmRequests(
-        current.userConfirmRequests,
-        requests as RuntimeUserConfirmRequest[],
-      ),
-    } : {
-      ...current,
-      controlError: undefined,
-      externalExecutionRequests: mergeExternalExecutionRequests(
-        current.externalExecutionRequests,
-        requests as RuntimeExternalExecutionRequest[],
-      ),
+    const recoveredError = turn.pendingProjectionError;
+    turn.pendingProjectionError = undefined;
+    context.updateAssistant((current) => {
+      const cleared = {
+        ...current,
+        controlError: current.controlError === recoveredError ? undefined : current.controlError,
+      };
+      return kind === "human" ? {
+        ...cleared,
+        userConfirmRequests: mergeUserConfirmRequests(
+          current.userConfirmRequests,
+          requests as RuntimeUserConfirmRequest[],
+        ),
+      } : {
+        ...cleared,
+        externalExecutionRequests: mergeExternalExecutionRequests(
+          current.externalExecutionRequests,
+          requests as RuntimeExternalExecutionRequest[],
+        ),
+      };
     });
     const observed = turn.observedPendingActionIds || new Set<string>();
     for (const action of candidates) observed.add(action.action_id);
     turn.observedPendingActionIds = observed;
-    options.setLastError(undefined);
+    if (recoveredError) {
+      options.setLastError((current) => current === recoveredError ? undefined : current);
+    }
     options.dispatchRun({ type: "awaiting_input", operationId: turn.operationId });
-  } catch {
-    // Durable run/pending-action projection is authoritative. A transient
-    // validation failure leaves the replay event inert; the exact run monitor
-    // will retry and reconnect the public SSE projection.
+  } catch (error) {
+    const disposition = apiReadFailureDisposition(error, turn.controller.signal);
+    if (!context.isMutable() || disposition !== "report") return;
+    const subject = kind === "human" ? "人工确认" : "外部执行";
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = `无法读取 ${subject} 的精确 pending projection，运行保持锁定：${detail}`;
+    turn.pendingProjectionError = message;
+    options.setLastError(message);
+    options.dispatchRun({ type: "reconciling", operationId: turn.operationId, message });
+    context.updateAssistant((current) => ({ ...current, controlError: message }));
   }
 }

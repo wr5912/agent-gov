@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { apiJson } from "./runtime_client.mjs";
+import { apiJson, assertExactRuntimeRun, lookupRuntimeRunByNativeInput } from "./runtime_client.mjs";
+import { NativeChatContractError, nativeChatReceiptIdentity, nativeChatRequestIdentity } from "./native_chat_contract.mjs";
 
 export class DeployedBrowserCheckError extends Error {
   constructor(code) {
@@ -21,10 +22,10 @@ export function textFingerprint(text) {
 }
 
 export function safeBrowserFailure(error, stage) {
-  const knownNames = new Set(["Error", "TimeoutError", "AbortError", "RuntimeApiError", "DeployedBrowserCheckError"]);
+  const knownNames = new Set(["Error", "TimeoutError", "AbortError", "RuntimeApiError", "DeployedBrowserCheckError", "NativeChatContractError"]);
   return {
     stage,
-    code: error instanceof DeployedBrowserCheckError ? error.code : "DEPLOYED_BROWSER_FAILED",
+    code: error instanceof DeployedBrowserCheckError || error instanceof NativeChatContractError ? error.code : "DEPLOYED_BROWSER_FAILED",
     error_name: knownNames.has(error?.name) ? error.name : "Error",
     ...(Number.isInteger(error?.status) ? { http_status: error.status } : {}),
   };
@@ -64,6 +65,7 @@ export function registerObservedOwnedRuns(state, ownership) {
   for (const chat of state.chats) {
     if (typeof chat.sessionId !== "string" || !chat.sessionId || typeof chat.runId !== "string" || !chat.runId
       || chat.agentId !== ownership.runtimeAgentId || chat.requestedSessionId !== chat.sessionId
+      || chat.rootSessionId !== chat.sessionId
       || !Number.isInteger(chat.status) || chat.status < 200 || chat.status >= 300 || chat.started !== true
       || ownership.existingSessionIds.has(chat.sessionId)) continue;
     const created = state.sessionCreates.some((item) => item.sessionId === chat.sessionId
@@ -74,6 +76,36 @@ export function registerObservedOwnedRuns(state, ownership) {
     ownership.sessionId ||= chat.sessionId;
     ownership.runs.set(chat.runId, { sessionId: chat.sessionId });
   }
+}
+
+/** 回执丢失只允许查询已证明为本轮新建 Session 的显式输入身份。 */
+export function ownedNativeLookupCandidates(state, ownership) {
+  const candidates = new Map();
+  for (const chat of state.chats) {
+    if (chat.agentId !== ownership.runtimeAgentId || ownership.existingSessionIds.has(chat.requestedSessionId)
+      || ownership.runs.has(chat.runId) || !chat.inputIds?.length) continue;
+    if (!state.sessionCreates.some((created) => created.sessionId === chat.requestedSessionId
+      && created.agentId === ownership.runtimeAgentId && created.status >= 200 && created.status < 300)) continue;
+    const identity = { agentId: chat.agentId, requestedSessionId: chat.requestedSessionId,
+      operationKind: chat.operationKind, inputIds: chat.inputIds };
+    candidates.set(JSON.stringify(identity), identity);
+  }
+  return [...candidates.values()];
+}
+
+export async function recoverDeployedOwnedRuns(config, state, ownership, binding) {
+  const failures = [];
+  for (const identity of ownedNativeLookupCandidates(state, ownership)) {
+    try {
+      const run = await lookupRuntimeRunByNativeInput(config, identity);
+      assertExactRuntimeRun(run, { ...binding, run_id: run.run_id, session_id: identity.requestedSessionId });
+      ownership.sessionId ||= identity.requestedSessionId;
+      ownership.runs.set(run.run_id, { sessionId: identity.requestedSessionId });
+    } catch (error) {
+      if (error?.status !== 404) failures.push({ code: "OWNED_INPUT_LOOKUP_FAILED" });
+    }
+  }
+  return failures;
 }
 
 function observeRequest(state, request, apiBase) {
@@ -91,8 +123,12 @@ function observeRequest(state, request, apiBase) {
   if (event.path !== "/api/runtime/chat/" && event.path !== "/api/runtime/sessions/") return;
   try {
     const input = request.postDataJSON();
-    event.agentId = input?.agent_id;
-    event.requestedSessionId = input?.session_id;
+    if (event.path === "/api/runtime/chat/") {
+      Object.assign(event, nativeChatRequestIdentity(input, request.headers()["x-agentgov-confirmation-scope"]));
+    } else {
+      event.agentId = input?.agent_id;
+      event.requestedSessionId = input?.session_id;
+    }
   } catch {
     state.issues.push({ kind: "request_identity_invalid" });
   }
@@ -105,20 +141,24 @@ async function observeResponse(state, response, ownership) {
   }
   const stream = state.streams.find((item) => item.request === response.request());
   if (stream) {
+    // 以 Playwright response 事件进入时刻为准；allHeaders 的异步读取不得把
+    // readiness 时间戳推迟到随后发出的 chat request 之后。
+    stream.responseAt = performance.now();
     const headers = await response.allHeaders();
     stream.status = response.status();
     stream.contentType = headers["content-type"]?.split(";", 1)[0].trim().toLowerCase();
-    stream.responseAt = performance.now();
   }
   const receipt = [...state.chats, ...state.sessionCreates].find((item) => item.request === response.request());
   if (!receipt) return;
   receipt.status = response.status();
   if (!response.ok()) return;
   const payload = await response.json();
-  receipt.sessionId = payload?.session_id;
   if (receipt.path === "/api/runtime/chat/") {
-    receipt.runId = (await response.allHeaders())["x-agentgov-run-id"];
-    receipt.started = payload?.status === "started";
+    const headers = await response.allHeaders();
+    Object.assign(receipt, nativeChatReceiptIdentity(receipt, payload,
+      headers["x-agentgov-run-id"], headers["x-agentgov-session-id"]));
+  } else {
+    receipt.sessionId = payload?.session_id;
   }
   registerObservedOwnedRuns(state, ownership);
 }
@@ -195,12 +235,17 @@ export function deployedStreamEvidence(state, receipt, startedAt, binding) {
   requireDeployedCheck(streams.length > 0, "OWNED_SESSION_SSE_MISSING");
   requireDeployedCheck(streams.every((stream) => stream.status === 200
     && stream.contentType === "text/event-stream" && stream.responseAt && stream.closedAt), "OWNED_SESSION_SSE_INVALID");
+  const chat = state.chats.find((event) => event.runId === receipt.run_id
+    && event.requestedSessionId === receipt.session_id && event.agentId === binding.runtime_agent_id);
+  requireDeployedCheck(Boolean(chat), "OWNED_CHAT_NETWORK_EVIDENCE_MISSING");
+  requireDeployedCheck(streams.some((stream) => stream.responseAt <= chat.at), "SSE_NOT_READY_BEFORE_CHAT");
   return streams.map((stream) => ({
     status: stream.status,
     content_type: stream.contentType,
     session_id: stream.sessionId,
     runtime_agent_id: stream.agentId,
     ready_ms: Math.round(stream.responseAt - stream.at),
+    ready_before_chat: stream.responseAt <= chat.at,
     closed: true,
   }));
 }

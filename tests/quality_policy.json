@@ -134,18 +134,58 @@
         }
       },
       {
+        "id": "remote-deploy-live-boundary-suite",
+        "selectors": [
+          "tests/test_remote_deploy_boundary_acceptance.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "resilience",
+          "purpose": "compatibility-migration",
+          "owner": "runtime-platform",
+          "capabilities": ["runtime-deployment"],
+          "lanes": ["container-live-acceptance"],
+          "parallelism": "exclusive",
+          "resources": ["docker", "port", "process", "serial"]
+        }
+      },
+      {
+        "id": "remote-deploy-runtime-unit-suite",
+        "selectors": [
+          "tests/test_runtime_remote_deploy.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "unit",
+          "purpose": "defect-regression",
+          "owner": "runtime-platform",
+          "capabilities": ["runtime-deployment"],
+          "lanes": ["main-full"],
+          "parallelism": "worker-safe",
+          "resources": ["process"]
+        }
+      },
+      {
         "id": "runtime-platform-suite",
         "selectors": [
           "tests/test_agentscope*.py",
           "tests/test_container_acceptance*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
+          "tests/test_remote_deploy_python_toolchain.py",
+          "tests/test_remote_deploy_transaction.py",
           "tests/test_harness_conversion.py",
           "tests/test_health*.py",
           "tests/test_logging_config.py",
           "tests/test_main_agentscope_cutover.py",
           "tests/test_runtime*.py",
           "tests/test_selected_env_deployed_browser.py",
+          "tests/test_initialize_runtime_shared_secret.py",
+          "tests/test_local_debug_launcher.py",
+          "tests/test_self_use_acceptance.py",
           "tests/test_settings.py"
+        ],
+        "exclude_selectors": [
+          "tests/test_runtime_remote_deploy.py"
         ],
         "classification": {
           "lifecycle": "KEEP",
@@ -165,6 +205,7 @@
           "tests/test_feedback*.py",
           "tests/test_generated_agent_tests.py",
           "tests/test_improvement*.py",
+          "tests/test_compare_agent_candidate.py",
           "tests/test_normalized_feedback_generation.py",
           "docker/runtime-bootstrap/governor-workspace/tests/test_*.py"
         ],
@@ -245,6 +286,9 @@
           "tests/test_business_agent*.py",
           "tests/test_container_acceptance*.py",
           "tests/test_deploy_agent_gov_to_host_script.py",
+          "tests/test_remote_deploy_boundary_acceptance.py",
+          "tests/test_remote_deploy_python_toolchain.py",
+          "tests/test_remote_deploy_transaction.py",
           "tests/test_selected_env_deployed_browser.py",
           "tests/test_execution_content_guards.py",
           "tests/test_feedback*.py",
@@ -252,7 +296,11 @@
           "tests/test_harness_conversion.py",
           "tests/test_health*.py",
           "tests/test_improvement*.py",
+          "tests/test_compare_agent_candidate.py",
+          "tests/test_initialize_runtime_shared_secret.py",
+          "tests/test_local_debug_launcher.py",
           "tests/test_langfuse*.py",
+          "tests/test_self_use_acceptance.py",
           "tests/test_logging_config.py",
           "tests/test_main_agentscope_cutover.py",
           "tests/test_managed_agent_policy.py",
@@ -280,6 +328,24 @@
   "quarantines": [],
   "delete_candidates": [],
   "gaps": [
+    {
+      "id": "playground-native-recovery-real-faults",
+      "capability": "frontend-workflows",
+      "owner": "frontend-experience",
+      "risk": "high",
+      "description": "原 hook test double 已删除；纯投影、原生输入及真实 SQLite/HTTP 组件契约不能替代下列真实浏览器故障与竞争证据。删除旧测试不代表这些场景已经通过。",
+      "target_lane": "container-live-acceptance",
+      "issue": "https://github.com/wr5912/agent-gov/issues/77",
+      "acceptance": [
+        "真实 pending/external Session、准备发送时切页/关闭，验证输入保留且无延迟 POST 或新 run；未发布版本不隐式创建绑定",
+        "真实短回复先于 POST 回执及旧 SSE 晚到时核对精确 run 与正文；未观察到真实事件顺序则不声明覆盖",
+        "真实网络断连、SSE 无结束窗口及 AgentGov 结算延迟下，通过精确 run 而非 Runtime idle 解锁；不得伪造事件或响应",
+        "丢回执后只用本次有序 input ID、Runtime Agent、根 Session 和操作种类查询；两个真实客户端竞争 409 时败方不得绑定胜方 run",
+        "HITL 断网刷新后同 run 只确认一次；验证允许、拒绝、本 run 范围、取消、两 worker pending 与跨 Session 拒绝",
+        "多回复和 worker 刷新恢复不串正文；Runtime 重启后旧 run 明确终态并可创建新 Session；回答精确 UTF-8 长度与摘要对齐",
+        "真实 401/404/422 与未落账的首次请求竞争只按实际观测记证据，不通过 mock API 生成；GET 网络重试、abort 和非 GET 不重发分别验证"
+      ]
+    },
     {
       "id": "agentscope-live-cutover-evidence",
       "capability": "runtime-deployment",
@@ -454,12 +520,12 @@
       "capability": "frontend-workflows",
       "owner": "runtime-platform",
       "risk": "critical",
-      "description": "精确 client_operation_id 恢复已进入实现和组件回归，但尚缺真实 chat POST 已被服务端受理而响应在浏览器收到前丢失的跨进程证据。",
+      "description": "基于 Runtime Agent、root Session、operation_kind 与有序原生 input_ids 的精确恢复已进入实现和组件回归，但尚缺真实 chat POST 已被服务端受理而响应在浏览器收到前丢失的跨进程证据。",
       "target_lane": "container-live-acceptance",
       "issue": "follow-up:runtime-chat-uncertain-submit-recovery",
       "acceptance": [
         "在 Chromium 与 Firefox 中真实提交 chat，并在 API 已持久化 admission 后中断响应连接，不拦截或伪造请求结果",
-        "仅通过原 session_id 与 client_operation_id 找回同一 run_id，重试不创建第二个 run、Session 或模型调用",
+        "仅通过 Runtime Agent、root Session、operation_kind 与本次有序原生 input_ids 找回同一 run_id，重试不创建第二个 run、Session 或模型调用",
         "确认 Playground 保持恢复态直到精确 run 终态与 Runtime Session idle 均成立"
       ]
     },
@@ -500,9 +566,23 @@
       "target_lane": "container-live-acceptance",
       "issue": "follow-up:runtime-public-read-authorization-negatives",
       "acceptance": [
-        "对真实 /by-client-operation 使用缺失、错误及跨 Session operation 身份，确认静态路由优先级正确且不会落入 /{run_id}",
+        "对真实 /by-input-identity 使用缺失、错误及跨 Session 的 Runtime Agent、operation_kind 与有序原生 input_id 身份，确认静态路由优先级正确且不会落入 /{run_id}",
         "使用错误 runtime_agent_id 读取或流式订阅真实 Session messages/status/stream，确认在任何上游数据返回前拒绝",
         "使用缺失和无效 principal/API key 重放上述请求，确认统一 401/403/404 边界且响应与日志不泄露资源存在性或凭据"
+      ]
+    },
+    {
+      "id": "remote-deploy-real-ssh-host-boundary",
+      "capability": "runtime-deployment",
+      "owner": "runtime-platform",
+      "risk": "high",
+      "description": "临时 loopback sshd 入口仅以 primitives_only 证据覆盖 SSH remote shell、排他 flock、不同镜像 identity 的 archive 校验/docker load、Compose recreate、HTTP health、失败探针和手工恢复；它未执行生产 execute/recover 事务且同机 SSH 不是独立 fresh host，因此不把它冒充事务回滚或独立主机部署验收。",
+      "target_lane": "container-live-acceptance",
+      "issue": "https://github.com/wr5912/agent-gov/issues/72",
+      "acceptance": [
+        "在独立 fresh host 上通过真实 SSH 运行精确提交的 deploy_agent_gov_to_host，并验证远端无项目 venv 时冻结工具链仍完成全栈部署",
+        "并发启动两个相同远端目标部署，确认只有一个从 stage/upload/archive 进入 image load、Compose 与 health，另一个稳定被远端 flock 拒绝",
+        "分别在 live 到 backup、stage 到 live、preserved path、docker load、Compose recreate 和 health 窗口终止部署进程，再用 --recover 重复恢复到精确旧 source、image identity 与健康服务"
       ]
     }
   ],
@@ -667,10 +747,15 @@
       "scripts/agentscope_live_acceptance_report.py",
       "scripts/agentscope_mcp_live_acceptance.py",
       "scripts/container_acceptance_inputs.py",
+      "scripts/compare_agent_candidate.py",
       "scripts/improvement_ui_e2e/browser_acceptance_contract.mjs",
+      "scripts/improvement_ui_e2e/candidate_runtime_restart.mjs",
+      "scripts/improvement_ui_e2e/dual_agent_tool_confirmation.mjs",
       "scripts/improvement_ui_e2e/page_audit.mjs",
       "scripts/improvement_ui_e2e/playground_cancel_evidence.mjs",
       "scripts/improvement_ui_e2e/playground_cancel_runtime.mjs",
+      "scripts/improvement_ui_e2e/playground_recovery_evidence.mjs",
+      "scripts/improvement_ui_e2e/playground_recovery_flow.mjs",
       "scripts/improvement_ui_e2e/real_container_flow.mjs",
       "scripts/improvement_ui_e2e/reviewed_scenarios.mjs",
       "scripts/improvement_ui_e2e/runtime_client.mjs",
@@ -679,6 +764,12 @@
       "scripts/run_agentscope_live_acceptance.py",
       "scripts/run_container_acceptance.py",
       "scripts/run_selected_env_operation.py",
+      "scripts/run_self_use_acceptance.py",
+      "scripts/run_workspace_reclaim_acceptance.py",
+      "scripts/workspace_reclaim_acceptance_sessions.py",
+      "scripts/workspace_reclaim_acceptance_runtime.py",
+      "scripts/workspace_reclaim_acceptance_watchdog.py",
+      "scripts/workspace_reclaim_acceptance_watchdog_control.py",
       "scripts/run_main_flow_live_targets.py",
       "scripts/validate_live_acceptance_scenarios.py",
       "scripts/verify_container_acceptance_context.py",
@@ -686,7 +777,9 @@
       "scripts/verify_agent_candidate_lifecycle.mjs",
       "scripts/verify_improvement_ui_real_container.mjs",
       "scripts/verify_playground_cancel.mjs",
-      "scripts/verify_playground_deployed.mjs"
+      "scripts/verify_playground_deployed.mjs",
+      "scripts/verify_playground_recovery.mjs",
+      "scripts/verify_self_use_governance.mjs"
     ],
     "formal_live_targets": [
       "smoke",
@@ -712,7 +805,10 @@
       "ui-playground-cancel-smoke",
       "_ui-playground-cancel-smoke",
       "ui-playground-technical-smoke",
+      "runtime-workspace-reclaim-live-smoke",
       "ui-playground-deployed-smoke",
+      "ui-playground-deployed-recovery-smoke",
+      "ui-self-use-governance-smoke",
       "ui-agent-candidate-technical-smoke",
       "_ui-agent-candidate-technical-smoke",
       "langfuse-smoke",
@@ -740,12 +836,17 @@
             "tests/test_runtime_gateway_router.py",
             "tests/test_runtime_gateway_session_listing.py",
             "tests/test_runtime_gateway_recovery.py",
-            "tests/test_runtime_gateway_operation_identity.py",
+            "tests/test_runtime_gateway_native_input.py",
+            "tests/test_runtime_native_store_identity.py",
+            "tests/test_runtime_agent_activity.py",
             "tests/test_runtime_gateway_store.py",
             "tests/test_runtime_receipt_identity.py",
             "tests/test_runtime_candidate_resources.py",
             "tests/test_runtime_agent_deletion_saga.py",
-            "tests/test_runtime_fresh_schema.py"
+            "tests/test_runtime_fresh_schema.py",
+            "tests/test_runtime_v4_migration.py",
+            "tests/test_agentscope_live_native_chat.py",
+            "tests/test_agentscope_runtime_references.py"
           ]
         },
         {
@@ -769,17 +870,28 @@
             "tests/test_runtime_technical_integration_seed.py",
             "tests/test_agentscope_live_acceptance_contract.py",
             "tests/test_langfuse_env.py",
+            "tests/test_initialize_runtime_shared_secret.py",
+            "tests/test_local_debug_launcher.py",
+            "tests/test_self_use_acceptance.py",
+            "tests/test_runtime_workspace_gc.py",
+            "tests/test_runtime_workspace_reclamation.py",
+            "tests/test_runtime_workspace_reclamation_faults.py",
+            "tests/test_runtime_workspace_reclamation_resilience.py",
+            "tests/test_runtime_workspace_reclaim_acceptance.py",
+            "tests/test_workspace_reclaim_acceptance_watchdog.py",
             "docker/runtime-bootstrap/governor-workspace/tests/test_governor_agentscope_harness.py"
           ]
         },
         {
           "id": "health_trace_and_cancel",
-          "description": "API readiness 反映 Runtime 状态；SSE 保持 AgentScope 原始字节，Firefox 接受原生约 30 秒心跳并使用 60 秒连接预算；未提交失败可重试，已提交运行保持精确终态核对并等待 Runtime Session 释放执行槽；semantic trace 可查询且浏览器可取消精确 run。",
+          "description": "API readiness 反映 Runtime 状态；SSE 保持 AgentScope 原始字节，Firefox 接受原生约 30 秒心跳并使用 60 秒连接预算；首次 lookup 与历史初载瞬态失败可取消重试且错误可见，已提交运行保持精确终态核对；semantic trace 可查询且浏览器可取消精确 run。",
           "pytest": [
             "tests/test_runtime_signature_security.py",
             "tests/test_runtime_access_boundary.py",
             "tests/test_runtime_control_receipt_delivery.py",
             "tests/test_runtime_trace_reconciliation.py",
+            "tests/test_runtime_trace_validation.py",
+            "tests/test_runtime_trace_expectation_store.py",
             "tests/test_health_endpoints.py",
             "tests/test_runtime_health_diagnose.py",
             "tests/test_langfuse_smoke_contract.py",
@@ -799,7 +911,11 @@
           "id": "improvement_lifecycle_and_execution",
           "pytest": [
             "tests/test_improvement_api.py",
+            "tests/test_improvement_store.py",
             "tests/test_improvement_core_workflow.py",
+            "tests/test_feedback_entities.py",
+            "tests/test_feedback_case_agent_ownership.py",
+            "tests/test_agent_release_provenance.py",
             "tests/test_improvement_content.py",
             "tests/test_improvement_execution_service.py",
             "tests/test_improvement_governor_service.py"
@@ -824,6 +940,11 @@
           "pytest": [
             "tests/test_agent_workspace_packages.py",
             "tests/test_agent_testing.py",
+            "tests/test_agent_test_report_validation.py",
+            "tests/test_agent_published_test_receipts.py",
+            "tests/test_agent_test_runtime_restart.py",
+            "tests/test_compare_agent_candidate.py",
+            "tests/test_test_shadow_evidence.py",
             "tests/test_agent_governance_publish.py"
           ]
         }

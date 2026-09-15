@@ -4,6 +4,7 @@ from typing import Literal, Optional, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.runtime.agent_git_read_helpers import AgentGitFileMode
 from app.runtime.json_types import JsonObject
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from app.runtime.schemas import ExtensibleResponse
@@ -53,6 +54,7 @@ class AgentGitRefResponse(ExtensibleResponse):
 class AgentGitFileEntryResponse(ExtensibleResponse):
     path: str
     type: str
+    mode: AgentGitFileMode = Field(description="Git tree 中记录的精确普通文件 mode。")
     sha256: Optional[str] = None
     size: Optional[int] = None
 
@@ -203,6 +205,7 @@ class AgentReleaseResponse(ExtensibleResponse):
     previous_commit_sha: Optional[str] = None
     source_improvement_id: Optional[str] = None
     change_set_id: Optional[str] = None
+    source_feedback_case_ids: list[str] = Field(default_factory=list, description="由来源改进事项的现存反馈归属派生，不复制反馈或 Git 资产。")
     rollback_of_release_id: Optional[str] = None
     archive_path: Optional[str] = None
     archive_sha256: Optional[str] = None

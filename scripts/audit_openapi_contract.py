@@ -40,7 +40,7 @@ REQUIRED_RUNTIME_OPERATIONS = frozenset(
         (RUNTIME_CHAT_PATH, "post"),
         ("/api/runtime/sessions/{session_id}/interrupt", "post"),
         ("/api/runtime/sessions/{session_id}", "delete"),
-        ("/api/agent-runs/by-client-operation", "get"),
+        ("/api/agent-runs/by-input-identity", "get"),
         (AGENT_RUN_PATH, "get"),
         (AGENT_RUN_TRACE_PATH, "get"),
         ("/api/agent-runs/{run_id}/pending-actions", "get"),

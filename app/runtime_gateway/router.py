@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 from agentgov_agentscope_contract import is_runtime_template_restart_response
@@ -39,6 +39,7 @@ from .contracts import (
     TERMINAL_RUN_STATUSES,
     AgentRunResponse,
     AgentRunTraceResponse,
+    ConfirmationScope,
     RuntimeBootAck,
     RuntimeBootAnnouncement,
     RuntimeChatRequest,
@@ -53,6 +54,7 @@ from .contracts import (
 )
 from .models import RuntimeSessionCreationIntentModel
 from .native_schema import register_native_agent_schema_route
+from .operation_identity import RuntimeChatOperationKind
 from .provisioning import RuntimeAgentProvisioner
 from .run_trigger import admit_and_trigger_chat, interrupt_active_run
 from .security import verify_internal_request
@@ -428,20 +430,23 @@ def _register_chat_route(
     provisioner: RuntimeAgentProvisioner,
 ) -> None:
     @router.post("/chat/", summary="Trigger one governed AgentScope run")
-    async def chat(request_data: RuntimeChatRequest) -> Response:
+    async def chat(
+        request_data: RuntimeChatRequest,
+        confirmation_scope: Annotated[Literal["run"] | None, Header(alias="X-AgentGov-Confirmation-Scope")] = None,
+    ) -> Response:
         provisioner.require_session(request_data.session_id, request_data.agent_id)
+        input_value = request_data.raw_input
+        if confirmation_scope is not None and (not isinstance(input_value, dict) or input_value.get("type") != "USER_CONFIRM_RESULT"):
+            raise HTTPException(status_code=422, detail="Run-scoped approval only applies to USER_CONFIRM_RESULT")
         triggered = await admit_and_trigger_chat(
             client=client,
             store=store,
             session_id=request_data.session_id,
             runtime_agent_id=request_data.agent_id,
-            input_value=request_data.input,
-            alert_id=request_data.alert_id,
-            case_id=request_data.case_id,
-            metadata=request_data.metadata,
-            client_operation_id=request_data.client_operation_id,
-            confirmation_scope=request_data.confirmation_scope,
-            expected_run_id=request_data.expected_run_id,
+            input_value=input_value,
+            entities={},
+            metadata={},
+            confirmation_scope=ConfirmationScope.RUN if confirmation_scope is not None else ConfirmationScope.ONCE,
         )
         return Response(
             content=triggered.body,
@@ -530,20 +535,21 @@ def create_agent_run_router(
     _register_run_cancel_route(router, client, store, authorize_run)
 
     @router.get(
-        "/by-client-operation",
+        "/by-input-identity",
         response_model=AgentRunResponse,
-        summary="Resolve one exact AgentGov run from a durable client operation identity",
+        summary="Resolve one exact AgentGov run from scoped native input IDs",
     )
-    async def get_run_by_client_operation(
+    async def get_run_by_input_identity(
+        agent_id: Annotated[str, Query(min_length=1, max_length=128)],
         session_id: Annotated[str, Query(min_length=1, max_length=128)],
-        client_operation_id: Annotated[
-            str,
-            Query(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"),
-        ],
+        operation_kind: RuntimeChatOperationKind,
+        input_id: Annotated[list[str], Query(min_length=1)],
     ) -> AgentRunResponse:
-        run = store.run_for_client_operation(
+        run = store.run_for_input_identity(
+            runtime_agent_id=agent_id,
             session_id=session_id,
-            client_operation_id=client_operation_id,
+            operation_kind=operation_kind,
+            input_ids=tuple(input_id),
         )
         authorize_run(run)
         return run

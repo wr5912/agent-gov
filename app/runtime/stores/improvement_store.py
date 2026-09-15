@@ -1,30 +1,109 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypedDict
 from uuid import uuid4
 
 from sqlalchemy import exists, update
 from sqlalchemy.dialects.sqlite import insert
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
-from ..errors import BusinessRuleViolation, ConflictError, NotFoundError
+from ..errors import BusinessRuleViolation, ConflictError, DataIntegrityError, NotFoundError
 from ..improvement_db import (
     AttributionModel,
     ExecutionRecordModel,
     ImprovementFeedbackCaseAssignmentModel,
     ImprovementFeedbackModel,
+    ImprovementIdempotencyOperationModel,
     ImprovementItemModel,
     ImprovementLinkModel,
     NormalizedFeedbackModel,
     OptimizationPlanModel,
     RegressionTestDesignModel,
 )
+from ..improvement_idempotency import (
+    CREATE_IMPROVEMENT_OPERATION,
+    bind_idempotency_operation,
+    complete_idempotency_operation,
+    improvement_create_request_fingerprint,
+    normalize_idempotency_key,
+    tombstone_idempotency_results,
+)
 from ..runtime_db import AgentChangeSetModel, utc_now
 from ..state_machines import IMPROVEMENT_STAGE_ORDER, StateTransitionError, validate_transition
 
 # 改进事项可引用的当前闭环对象类型（W2-c 轻引用）。
 LINK_KINDS = {"attribution", "optimization_plan", "test_run", "change_set"}
+
+
+class _ImprovementCreateValues(TypedDict):
+    improvement_id: str
+    agent_id: str
+    title: str
+    summary: str
+    improvement_stage: str
+    improvement_status: str
+    source_feedback_refs_json: list[str]
+    created_at: str
+    updated_at: str
+
+
+def _prepare_improvement_create_values(
+    *,
+    agent_id: str,
+    title: str,
+    summary: str,
+    source_feedback_refs: list[str] | None,
+    auto_merge: bool,
+    auto_merge_target_id: str | None,
+) -> _ImprovementCreateValues:
+    clean_agent = (agent_id or "").strip()
+    clean_title = (title or "").strip()
+    if not clean_agent:
+        raise BusinessRuleViolation("ImprovementItem must belong to a business agent (agent_id required)")
+    if not clean_title:
+        raise BusinessRuleViolation("ImprovementItem title cannot be empty")
+    refs = [str(ref).strip() for ref in (source_feedback_refs or []) if str(ref).strip()]
+    if any(ref.startswith("fbc-") for ref in refs):
+        raise BusinessRuleViolation("FeedbackCase refs must be assigned through attach-feedback-case")
+    if auto_merge_target_id and not auto_merge:
+        raise DataIntegrityError("auto_merge_target_id requires auto_merge")
+    now = utc_now()
+    return {
+        "improvement_id": f"imp-{uuid4().hex[:12]}",
+        "agent_id": clean_agent,
+        "title": clean_title,
+        "summary": summary or "",
+        "improvement_stage": "feedback_intake",
+        "improvement_status": "active",
+        "source_feedback_refs_json": refs,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _claim_improvement_create_in_transaction(
+    db: Session,
+    *,
+    key: str | None,
+    values: _ImprovementCreateValues,
+    auto_merge: bool,
+) -> tuple[ImprovementIdempotencyOperationModel | None, bool]:
+    if key is None:
+        return None, False
+    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    return bind_idempotency_operation(
+        db,
+        operation_kind=CREATE_IMPROVEMENT_OPERATION,
+        key=key,
+        request_fingerprint=improvement_create_request_fingerprint(
+            agent_id=values["agent_id"],
+            title=values["title"],
+            summary=values["summary"],
+            source_feedback_refs=values["source_feedback_refs_json"],
+            auto_merge=auto_merge,
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -211,34 +290,56 @@ class ImprovementStore:
         title: str,
         summary: str = "",
         source_feedback_refs: list[str] | None = None,
+        idempotency_key: str | None = None,
+        auto_merge: bool = False,
+        auto_merge_target_id: str | None = None,
     ) -> ImprovementItemRecord:
-        clean_agent = (agent_id or "").strip()
-        clean_title = (title or "").strip()
-        if not clean_agent:
-            raise BusinessRuleViolation("ImprovementItem must belong to a business agent (agent_id required)")
-        if not clean_title:
-            raise BusinessRuleViolation("ImprovementItem title cannot be empty")
-        refs = [str(ref).strip() for ref in (source_feedback_refs or []) if str(ref).strip()]
-        if any(ref.startswith("fbc-") for ref in refs):
-            raise BusinessRuleViolation("FeedbackCase refs must be assigned through attach-feedback-case")
-        improvement_id = f"imp-{uuid4().hex[:12]}"
-        now = utc_now()
+        values = _prepare_improvement_create_values(
+            agent_id=agent_id,
+            title=title,
+            summary=summary,
+            source_feedback_refs=source_feedback_refs,
+            auto_merge=auto_merge,
+            auto_merge_target_id=auto_merge_target_id,
+        )
+        clean_key = normalize_idempotency_key(idempotency_key)
         with self._session_factory.begin() as db:
-            db.add(
-                ImprovementItemModel(
-                    improvement_id=improvement_id,
-                    agent_id=clean_agent,
-                    title=clean_title,
-                    summary=summary or "",
-                    improvement_stage="feedback_intake",
-                    improvement_status="active",
-                    source_feedback_refs_json=refs,
-                    created_at=now,
-                    updated_at=now,
-                )
+            ledger, replayed = _claim_improvement_create_in_transaction(
+                db,
+                key=clean_key,
+                values=values,
+                auto_merge=auto_merge,
             )
+            if replayed:
+                record = self._project_improvement(db, ledger.result_resource_id)
+                if record is None:
+                    raise DataIntegrityError("Idempotent ImprovementItem result is missing")
+                return record
+
+            result_id = values["improvement_id"]
+            if auto_merge_target_id:
+                target = self._lock_mutable_improvement(db, auto_merge_target_id)
+                self._require_feedback_intake(target)
+                if target.agent_id != values["agent_id"]:
+                    raise BusinessRuleViolation("Cannot auto-merge improvements across different business agents")
+                existing = list(target.source_feedback_refs_json or [])
+                for ref in values["source_feedback_refs_json"]:
+                    if ref not in existing:
+                        existing.append(ref)
+                target.source_feedback_refs_json = existing
+                target.updated_at = values["updated_at"]
+                result_id = target.improvement_id
+            else:
+                db.add(ImprovementItemModel(**values))
             db.flush()
-            return self._require_projected_improvement(db, improvement_id)
+            if ledger is not None:
+                complete_idempotency_operation(
+                    ledger,
+                    resource_kind="improvement",
+                    resource_id=result_id,
+                )
+                db.flush()
+            return self._require_projected_improvement(db, result_id)
 
     def refine_stage(self, improvement_id: str, *, stage: str) -> ImprovementItemRecord:
         """执行用户请求的返工转移；公开 lifecycle 不得用于前推。"""
@@ -513,6 +614,14 @@ class ImprovementStore:
             if row.improvement_status != "archived":
                 row = self._lock_mutable_improvement(db, improvement_id)
             self._assert_execution_settled(db, improvement_id, action="delete")
+            feedback_ids = [
+                str(feedback_id)
+                for (feedback_id,) in db.query(ImprovementFeedbackModel.feedback_id).filter(ImprovementFeedbackModel.improvement_id == improvement_id).all()
+            ]
+            tombstone_idempotency_results(
+                db,
+                resource_ids=[improvement_id, *feedback_ids],
+            )
             for model in (
                 ImprovementFeedbackCaseAssignmentModel,
                 ImprovementFeedbackModel,

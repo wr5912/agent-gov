@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 
 import pytest
-from app.agent_testing.runner import FIXED_PYTEST_COMMAND, AgentTestRunner
 from app.agent_testing.store import AgentTestingStore
-from app.agent_testing.suite import inspect_agent_test_suite
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_maintenance_db import AgentWorktreeCleanupTaskModel
 from app.runtime.protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
@@ -31,8 +29,6 @@ def _governance(tmp_path):
     governance = AgentGovernanceService(
         feedback_store=feedback_store,
         agent_version_store=git_store,
-        runtime_mode=settings.runtime_volume_mode,
-        runtime_env={"MCP_SERVER_URL": "http://localhost:58001/mcp"},
     )
     testing_store = AgentTestingStore(feedback_store.Session)
 
@@ -55,50 +51,6 @@ def _write_real_workspace_suite(workspace: Path) -> None:
         "    assert (root / 'agent.yaml').is_file()\n",
         encoding="utf-8",
     )
-
-
-def _record_passed_test_run(
-    governance: AgentGovernanceService,
-    *,
-    commit_sha: str,
-    change_set_id: str,
-) -> None:
-    store = AgentTestingStore(governance.feedback_store.Session)
-    change_set = governance.get_change_set(change_set_id)
-    assert change_set is not None
-    suite = inspect_agent_test_suite(
-        Path(str(change_set["worktree_path"])),
-        agent_id=DEFAULT_BUSINESS_AGENT_ID,
-        commit_sha=commit_sha,
-    )
-    assert suite.runnable and suite.suite_digest
-    run = store.create_run(
-        agent_id=DEFAULT_BUSINESS_AGENT_ID,
-        commit_sha=commit_sha,
-        change_set_id=change_set_id,
-        source="release_check",
-        command=FIXED_PYTEST_COMMAND,
-        suite=suite.model_dump(mode="json"),
-        suite_digest=suite.suite_digest,
-    )
-    runner = AgentTestRunner(
-        store=store,
-        store_for=governance._store_for,
-        artifacts_dir=governance.feedback_store.data_dir / ".maintenance-test-runs",
-        api_base_url="http://127.0.0.1:1",
-        api_key=None,
-        timeout_seconds=30,
-    )
-    try:
-        runner.enqueue(str(run["test_run_id"]))
-        deadline = time.monotonic() + 30
-        persisted = store.get_run(str(run["test_run_id"]))
-        while persisted and persisted["status"] in {"queued", "running"} and time.monotonic() < deadline:
-            time.sleep(0.05)
-            persisted = store.get_run(str(run["test_run_id"]))
-        assert persisted is not None and persisted["status"] == "passed", persisted
-    finally:
-        runner.close()
 
 
 def test_worktree_cleanup_reconciles_expired_claim_after_real_git_delete(tmp_path) -> None:
@@ -163,11 +115,6 @@ def test_publish_is_fenced_by_real_durable_maintenance_claim_before_git_side_eff
         execution_job_id="job-fenced-publication",
         operator="tester",
     )
-    _record_passed_test_run(
-        governance,
-        commit_sha=candidate,
-        change_set_id=str(committed["change_set_id"]),
-    )
     original_head = git_store.current_commit_sha()
 
     with governance.version_maintenance.lease(
@@ -176,7 +123,14 @@ def test_publish_is_fenced_by_real_durable_maintenance_claim_before_git_side_eff
         owner_id="operator",
     ):
         with pytest.raises(AgentGovernanceError, match="maintenance"):
-            governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
+            asyncio.run(
+                governance.publish_change_set_async(
+                    str(change_set["change_set_id"]),
+                    operator="tester",
+                    expected_candidate_commit_sha=candidate,
+                    expected_diff_digest=str(committed["diff_summary"]["digest"]),
+                )
+            )
 
     assert git_store.current_commit_sha() == original_head
     assert governance.get_change_set(str(change_set["change_set_id"]))["status"] == "candidate_committed"

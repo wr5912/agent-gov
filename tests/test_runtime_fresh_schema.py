@@ -6,6 +6,7 @@ import pytest
 from app.runtime import runtime_db
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import Base, make_session_factory
+from app.runtime.sqlite_schema_contract import CURRENT_SCHEMA_EPOCH
 from app.runtime_gateway.hitl_migration import HITL_FINGERPRINT_DATA_MIGRATION
 from app.runtime_gateway.models import (
     AgentRunModel,
@@ -16,22 +17,21 @@ from app.runtime_gateway.models import (
 )
 from app.runtime_gateway.operation_identity import (
     LEGACY_UNKNOWN_SESSION_REQUEST_FINGERPRINT,
+    RuntimeChatOperationKind,
     canonical_request_fingerprint,
-    initial_operation_key,
     session_creation_request_fingerprint,
 )
-from app.runtime_gateway.store import RuntimeRunStore, RuntimeStateConflict
+from app.runtime_gateway.store import RuntimeObjectNotFound, RuntimeRunStore, RuntimeStateConflict
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine
 from tests.runtime_schema_test_utils import (
     V1_EPOCH,
     V2_EPOCH,
-    V3_EPOCH,
     convert_current_to_v1,
     convert_current_to_v2,
 )
 
-CURRENT_EPOCH = V3_EPOCH
+CURRENT_EPOCH = CURRENT_SCHEMA_EPOCH
 LEGACY_EPOCH = V1_EPOCH
 
 
@@ -346,7 +346,7 @@ def test_exact_v2_epoch_migrates_response_ledger_and_preserves_runtime_facts(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "v2.sqlite3"
-    engine, request = _prepare_v2_epoch(db_path)
+    engine, _request = _prepare_v2_epoch(db_path)
 
     factory = make_session_factory(db_path)
 
@@ -369,7 +369,7 @@ def test_exact_v2_epoch_migrates_response_ledger_and_preserves_runtime_facts(
         )
         operation = session.get(
             RuntimeChatOperationModel,
-            initial_operation_key("chat-operation-v2"),
+            "initial:chat-operation-v2",
         )
         assert intent is not None
         assert intent.request_fingerprint == LEGACY_UNKNOWN_SESSION_REQUEST_FINGERPRINT
@@ -385,18 +385,14 @@ def test_exact_v2_epoch_migrates_response_ledger_and_preserves_runtime_facts(
         assert operation.response_headers_json == {}
 
     store = RuntimeRunStore(factory)
-    replay = store.admit_run(
-        session_id="session-run-v2",
-        runtime_agent_id="runtime-v2",
-        input_value=request,
-        alert_id=None,
-        case_id=None,
-        metadata={},
-        client_operation_id="chat-operation-v2",
-    )
-    assert replay.should_trigger_upstream is False
-    assert replay.replay_response is not None
-    assert replay.replay_response.body == b'{"session_id":"session-run-v2"}'
+    # 历史响应保留，但不得把旧 client ID 伪装成原生输入 ID。
+    with pytest.raises(RuntimeObjectNotFound):
+        store.run_for_input_identity(
+            session_id="session-run-v2",
+            runtime_agent_id="runtime-v2",
+            operation_kind=RuntimeChatOperationKind.INITIAL,
+            input_ids=("chat-operation-v2",),
+        )
     with pytest.raises(RuntimeStateConflict, match="no replay-safe request identity"):
         store.session_creation_for_request(
             key="session-operation-v2",

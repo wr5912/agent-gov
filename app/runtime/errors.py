@@ -28,6 +28,30 @@ class ConflictError(FeedbackStoreError):
     error_code = "CONFLICT"
 
 
+class FeedbackEventIdConflictError(ConflictError):
+    """Raised when one event id is retried with different immutable input."""
+
+    error_code = "FEEDBACK_EVENT_ID_CONFLICT"
+
+    def __init__(self, event_id: str) -> None:
+        super().__init__(
+            "Feedback event id is already bound to a different request",
+            error_details={"event_id": event_id},
+        )
+
+
+class IdempotencyKeyConflictError(ConflictError):
+    """Raised when one retry key is reused for different immutable input."""
+
+    error_code = "IDEMPOTENCY_KEY_CONFLICT"
+
+    def __init__(self, resource_kind: str) -> None:
+        super().__init__(
+            "Idempotency-Key is already bound to a different request",
+            error_details={"resource_kind": resource_kind},
+        )
+
+
 class SessionConflictError(ConflictError):
     """Raised when a session owner or optimistic mapping version conflicts."""
 

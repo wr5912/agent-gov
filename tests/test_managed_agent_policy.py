@@ -36,9 +36,6 @@ def test_builtin_business_agent_workspace_matches_agentscope_policy(tmp_path: Pa
         runtime_workspace_policy_violations(
             workspace=workspace,
             agent_id=SECURITY_OPERATIONS_EXPERT_AGENT_ID,
-            runtime_mode="local-debug",
-            env={},
-            runtime_root=runtime_root,
         )
         == ()
     )
@@ -129,9 +126,6 @@ def test_mcp_validator_accepts_http_with_exact_capability_allowlists(tmp_path: P
         validate_managed_mcp_content(
             json.dumps(config),
             agent_id="custom-agent",
-            runtime_mode="local-debug",
-            env={},
-            runtime_root=tmp_path,
         )
         == ()
     )
@@ -167,9 +161,6 @@ def test_mcp_validator_rejects_stdio_and_wildcard_capabilities(tmp_path: Path) -
         violations = validate_managed_mcp_content(
             json.dumps(config),
             agent_id="custom-agent",
-            runtime_mode="local-debug",
-            env={},
-            runtime_root=tmp_path,
         )
         assert [item.rule_id for item in violations] == [rule_id]
 
@@ -268,8 +259,5 @@ def test_mcp_validator_rejects_unsafe_configuration(tmp_path: Path, config: dict
     violations = validate_managed_mcp_content(
         json.dumps(config),
         agent_id="custom-agent",
-        runtime_mode="local-debug",
-        env={},
-        runtime_root=tmp_path,
     )
     assert [item.rule_id for item in violations] == [rule_id]

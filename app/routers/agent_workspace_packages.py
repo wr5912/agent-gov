@@ -109,7 +109,7 @@ def _create_workspace_package_service(
         settings=settings,
         registry_store=agent_registry_store,
         store_for=agent_governance._store_for,
-        version_maintenance=agent_governance.version_maintenance,
+        read_store_for=agent_governance._store_for_read_only,
         agent_testing=agent_testing,
         candidate_creation=candidate_creation,
         has_open_change_sets=open_change_sets,
@@ -123,7 +123,7 @@ def _register_export_route(router: APIRouter, service: AgentWorkspacePackageServ
         responses={
             200: {
                 "content": {"application/gzip": {}},
-                "description": "Current Git-backed workspace package.",
+                "description": "Read-only package of the published Git commit; excludes uncommitted workspace changes.",
                 "headers": {
                     "Content-Disposition": {"schema": {"type": "string"}, "description": "Download filename."},
                     "X-Agent-Commit-SHA": {"schema": {"type": "string"}, "description": "Exported full Git commit SHA."},
@@ -138,7 +138,7 @@ def _register_export_route(router: APIRouter, service: AgentWorkspacePackageServ
                 },
             }
         },
-        summary="Export the current live business-Agent workspace",
+        summary="Export the published business-Agent workspace without modifying Git",
     )
     def export_workspace(agent_id: str) -> FileResponse:
         artifact = service.export_workspace(agent_id)

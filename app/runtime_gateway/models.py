@@ -144,8 +144,9 @@ class AgentRunModel(Base):
     agent_version_id: Mapped[str] = mapped_column(String(256), index=True)
     runtime_agent_id: Mapped[str] = mapped_column(String(128), index=True)
     harness_digest: Mapped[str] = mapped_column(String(64))
-    client_operation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    input_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 旧 epoch 的只读历史列；新请求身份只归 runtime_chat_operations，不再双写。
+    legacy_client_operation_id: Mapped[Optional[str]] = mapped_column("client_operation_id", String(128), nullable=True)
+    legacy_input_fingerprint: Mapped[Optional[str]] = mapped_column("input_fingerprint", String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32), index=True)
     # reply_ids_json 是 Runtime lifecycle 已观察到的 expected 集合；下面
     # 两个集合分别记录 canonical Message 可读以及 Session state 已提交。
@@ -162,8 +163,7 @@ class AgentRunModel(Base):
     trace_status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     terminal_reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     error_json: Mapped[Optional[JsonObject]] = mapped_column(JSON, nullable=True)
-    alert_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, index=True)
-    case_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, index=True)
+    entities_json: Mapped[dict[str, list[str]]] = mapped_column(JSON, default=dict)
     metadata_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     started_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -178,13 +178,6 @@ Index(
     sqlite_where=text("status IN ('queued','running','waiting_human','waiting_external','finalizing')"),
 )
 
-Index(
-    "ux_agent_runs_client_operation",
-    AgentRunModel.client_operation_id,
-    unique=True,
-    sqlite_where=text("client_operation_id IS NOT NULL"),
-)
-
 
 class RuntimeChatOperationModel(Base):
     """一次初始提交或 HITL continuation 的不可变请求与响应账本。"""
@@ -192,7 +185,7 @@ class RuntimeChatOperationModel(Base):
     __tablename__ = "runtime_chat_operations"
 
     operation_key: Mapped[str] = mapped_column(String(384), primary_key=True)
-    client_operation_id: Mapped[str] = mapped_column(String(128), index=True)
+    legacy_client_operation_id: Mapped[Optional[str]] = mapped_column("client_operation_id", String(128), nullable=True, index=True)
     operation_kind: Mapped[str] = mapped_column(String(32), index=True)
     request_fingerprint: Mapped[str] = mapped_column(String(64))
     run_id: Mapped[str] = mapped_column(

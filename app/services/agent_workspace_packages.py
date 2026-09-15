@@ -42,24 +42,11 @@ from app.services.agent_native_candidate_mapping import (
     native_agent_data_entries,
     native_agent_data_from_harness,
 )
-from app.services.agent_version_maintenance import AgentVersionMaintenanceCoordinator
 from app.services.agent_workspace_git_operations import (
     GitCommandError as _GitCommandError,
 )
 from app.services.agent_workspace_git_operations import (
-    SnapshotState as _SnapshotState,
-)
-from app.services.agent_workspace_git_operations import (
-    configure_workspace_git_storage as _configure_raw_git_storage,
-)
-from app.services.agent_workspace_git_operations import (
-    restore_dirty_state_after_failure as _restore_dirty_state_after_failure,
-)
-from app.services.agent_workspace_git_operations import (
     run_git as _git,
-)
-from app.services.agent_workspace_git_operations import (
-    snapshot_live_workspace as _snapshot_live_workspace,
 )
 
 _FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -83,7 +70,7 @@ class AgentWorkspacePackageService:
         settings: AppSettings,
         registry_store: AgentRegistryStore,
         store_for: Callable[[str], GitAgentVersionStore],
-        version_maintenance: AgentVersionMaintenanceCoordinator,
+        read_store_for: Callable[[str], GitAgentVersionStore],
         has_open_change_sets: Callable[[str], bool],
         agent_testing: AgentTestingService,
         candidate_creation: AgentCandidateCreationService,
@@ -91,45 +78,21 @@ class AgentWorkspacePackageService:
         self._settings = settings
         self._registry = registry_store
         self._store_for = store_for
-        self._version_maintenance = version_maintenance
+        self._read_store_for = read_store_for
         self._has_open_change_sets = has_open_change_sets
         self._agent_testing = agent_testing
         self._candidate_creation = candidate_creation
 
     def export_workspace(self, agent_id: str) -> WorkspaceExportArtifact:
         try:
-            safe_agent_id, _ = self._require_agent(agent_id)
-            self._require_no_open_change_set(safe_agent_id)
-            lease = self._version_maintenance.lease(
-                agent_id=safe_agent_id,
-                kind="workspace_export",
-                owner_id="api:workspace-export",
-            )
-            lease.__enter__()
-            artifact: WorkspaceExportArtifact | None = None
-            snapshot: _SnapshotState | None = None
-            try:
-                store = self._store_for(safe_agent_id)
-                store.ensure_bootstrap()
-                self._require_no_open_change_set(safe_agent_id)
-                with store.mutation_guard():
-                    _configure_raw_git_storage(store.repository_dir)
-                    snapshot = _snapshot_live_workspace(store)
-                    try:
-                        lease.assert_active()
-                        artifact = self._archive_current_tree(store, safe_agent_id, snapshot.current_head)
-                        lease.assert_active()
-                        lease.close(validate_claim=True)
-                        return artifact
-                    except Exception:
-                        if artifact is not None:
-                            artifact.path.unlink(missing_ok=True)
-                        _restore_dirty_state_after_failure(store, snapshot)
-                        raise
-            finally:
-                lease.close(validate_claim=False)
-        except AgentAdmissionError as exc:
-            raise _workspace_admission_error(exc) from exc
+            safe_agent_id, record = self._require_agent(agent_id)
+            if record.status == "draft":
+                raise WorkspacePackageError(409, "WORKSPACE_NOT_PUBLISHED", "业务 Agent 尚未发布，不能导出活动版本。")
+            store = self._read_store_for(safe_agent_id)
+            # 发布流程以活动仓库 HEAD 为版本指针；候选位于独立 worktree。
+            # 固定一次 commit 后只读对象库，dirty 文件、index 和并发候选都不参与导出。
+            commit_sha, _dirty = store.inspect_clean_head()
+            return self._archive_commit(store, safe_agent_id, commit_sha)
         except (AgentGitError, package_codec.WorkspaceGitReadError, _GitCommandError) as exc:
             raise WorkspacePackageError(409, "WORKSPACE_GIT_OPERATION_FAILED", "Git workspace operation failed") from exc
 
@@ -550,7 +513,7 @@ class AgentWorkspacePackageService:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _archive_current_tree(
+    def _archive_commit(
         self,
         store: GitAgentVersionStore,
         agent_id: str,
@@ -591,14 +554,6 @@ class AgentWorkspacePackageService:
         if record is None:
             raise WorkspacePackageError(404, "WORKSPACE_AGENT_NOT_FOUND", f"Business Agent not found: {safe_agent_id}")
         return safe_agent_id, record
-
-    def _require_no_open_change_set(self, agent_id: str) -> None:
-        if self._has_open_change_sets(agent_id):
-            raise WorkspacePackageError(
-                409,
-                "WORKSPACE_CHANGE_SET_ACTIVE",
-                f"Business Agent {agent_id} has an unfinished change set",
-            )
 
 
 def _safe_agent_id(agent_id: str) -> str:

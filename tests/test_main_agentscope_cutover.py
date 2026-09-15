@@ -13,6 +13,19 @@ if str(ROOT) not in sys.path:
 from app_test_utils import load_test_app  # noqa: E402
 
 
+def test_api_image_installs_native_input_models_without_runtime_service_extras() -> None:
+    from agentgov_agentscope_contract import AGENTSCOPE_RUNTIME_CONTRACT
+
+    requirements = (ROOT / "requirements-api.txt").read_text(encoding="utf-8").splitlines()
+    expected_version = AGENTSCOPE_RUNTIME_CONTRACT.rsplit("/", 1)[1]
+    native_requirements = [line.strip() for line in requirements if line.strip().startswith("agentscope")]
+    assert native_requirements == [f"agentscope=={expected_version}"]
+    dockerfile = (ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+    build_check = 'RUN python -c "from app.runtime_gateway.contracts import RuntimeChatRequest; RuntimeChatRequest.model_json_schema()"'
+    assert build_check in dockerfile
+    assert dockerfile.index("COPY app /app/app") < dockerfile.index(build_check)
+
+
 def test_main_exposes_only_agentscope_runtime_surfaces(process_environment, tmp_path) -> None:
     process_environment.set("AGENTGOV_RUNTIME_SHARED_SECRET", "test-runtime-shared-secret")
     module = load_test_app(process_environment, tmp_path)
@@ -52,7 +65,7 @@ def test_api_main_does_not_load_runtime_provider_or_mcp_secrets() -> None:
 
     assert "load_runtime_env" not in source
     assert "dict(os.environ)" not in source
-    assert "runtime_env = MappingProxyType({})" in source
+    assert "runtime_env" not in source
 
 
 def test_api_startup_reconciles_publication_evidence_before_serving_requests(

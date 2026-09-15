@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from app.runtime.errors import BusinessRuleViolation
 from fastapi.testclient import TestClient
 
 from app_test_utils import load_test_app
@@ -120,7 +122,7 @@ def _attach_feedback_case(client: TestClient, feedback_case_id: str) -> str:
     )
     assert attached_response.status_code == 201
     assert attached_response.json()["run_id"] == "run-core-feedback"
-    assert attached_response.json()["case_id"] == feedback_case_id
+    assert attached_response.json()["feedback_case_id"] == feedback_case_id
 
     provenance_response = client.get(f"/api/asset-registry/feedback/{feedback_case_id}")
     assert provenance_response.status_code == 200
@@ -183,6 +185,28 @@ def test_feedback_to_improvement_to_asset_public_workflow(process_environment, t
         _create_and_inherit_asset(client, improvement_id)
 
 
+def test_feedback_source_empty_or_unknown_patch_is_rejected_without_state_change(process_environment, tmp_path: Path) -> None:
+    module = _load_core_app(process_environment, tmp_path)
+    _record_completed_run(
+        module,
+        run_id="run-source-patch-boundary",
+        session_id="session-source-patch-boundary",
+        agent_id=AGENT_ALPHA,
+    )
+    with TestClient(module.app) as client:
+        created = client.post("/api/feedback-signals", json={"run_id": "run-source-patch-boundary"})
+        assert created.status_code == 200
+        path = f"/api/feedback-sources/signal/{created.json()['signal_id']}"
+        before = client.get(path)
+        assert before.status_code == 200
+        for payload in ({}, {"alert_id": "legacy-alert"}):
+            rejected = client.patch(path, json=payload)
+            assert rejected.status_code == 422
+            assert client.get(path).json() == before.json()
+    with pytest.raises(BusinessRuleViolation, match="At least one"):
+        module.feedback_store.update_feedback_source_annotation("signal", created.json()["signal_id"], {})
+
+
 def test_pending_soc_event_resolves_into_queryable_feedback_case(process_environment, tmp_path: Path) -> None:
     """暂未匹配的真实事件可在 run 到达后解析，并继续进入反馈 Case。"""
 
@@ -192,20 +216,30 @@ def test_pending_soc_event_resolves_into_queryable_feedback_case(process_environ
         "source_system": "operator-console",
         "event_type": "recommendation.modified",
         "timestamp": "2026-09-11T00:00:01Z",
-        "session_id": "session-core-late",
         "comment": "人工修改了处置建议",
     }
 
     with TestClient(module.app) as client:
-        pending_response = client.post("/api/soc-events", json=event_payload)
+        pending_response = client.post("/api/feedback-events", json=event_payload)
         assert pending_response.status_code == 200
         pending_result = pending_response.json()
         assert pending_result["correlation_status"] == "pending_correlation"
         pending_id = pending_result["pending_correlation"]["pending_id"]
 
-        duplicate_response = client.post("/api/soc-events", json=event_payload)
+        duplicate_response = client.post("/api/feedback-events", json=event_payload)
         assert duplicate_response.status_code == 200
         assert duplicate_response.json()["correlation_status"] == "duplicate"
+
+        conflict_response = client.post(
+            "/api/feedback-events",
+            json={**event_payload, "comment": "同一 ID 的不同内容"},
+        )
+        assert conflict_response.status_code == 409
+        assert conflict_response.json() == {
+            "detail": "Feedback event id is already bound to a different request",
+            "error_code": "FEEDBACK_EVENT_ID_CONFLICT",
+            "event_id": "event-core-pending",
+        }
         assert len(client.get("/api/pending-correlations", params={"status": "pending"}).json()) == 1
 
         _record_completed_run(
@@ -216,19 +250,31 @@ def test_pending_soc_event_resolves_into_queryable_feedback_case(process_environ
         )
         resolved_response = client.post(
             f"/api/pending-correlations/{pending_id}/resolve",
-            json={"run_id": "run-core-late", "comment": "已关联到迟到的运行记录"},
+            json={
+                "run_id": "run-core-late",
+                "entities": {"document": ["late-guide"]},
+                "comment": "已关联到迟到的运行记录",
+            },
         )
         assert resolved_response.status_code == 200
         resolved = resolved_response.json()
         assert resolved["status"] == "resolved"
         assert resolved["resolved_run_id"] == "run-core-late"
 
-        event_response = client.get("/api/soc-events/event-core-pending")
+        event_response = client.get("/api/feedback-events/event-core-pending")
         assert event_response.status_code == 200
         assert event_response.json()["agent_id"] == AGENT_ALPHA
         assert event_response.json()["matched_run_id"] == "run-core-late"
+        assert event_response.json()["session_id"] == "session-core-late"
+        assert event_response.json()["entities"] == {"document": ["late-guide"]}
 
-        matched_events = client.get("/api/soc-events", params={"run_id": "run-core-late"})
+        enriched_duplicate = client.post("/api/feedback-events", json=event_payload)
+        assert enriched_duplicate.status_code == 200
+        assert enriched_duplicate.json()["correlation_status"] == "duplicate"
+        assert enriched_duplicate.json()["event"]["matched_run_id"] == "run-core-late"
+        assert enriched_duplicate.json()["event"]["entities"] == {"document": ["late-guide"]}
+
+        matched_events = client.get("/api/feedback-events", params={"run_id": "run-core-late"})
         assert matched_events.status_code == 200
         assert [item["event_id"] for item in matched_events.json()] == ["event-core-pending"]
 
@@ -248,5 +294,5 @@ def test_pending_soc_event_resolves_into_queryable_feedback_case(process_environ
         sources_response = client.get("/api/feedback-sources")
         assert sources_response.status_code == 200
         sources = {(item["source_kind"], item["source_id"]): item for item in sources_response.json()}
-        assert sources[("soc_event", "event-core-pending")]["feedback_case_id"] == feedback_case["feedback_case_id"]
+        assert sources[("event", "event-core-pending")]["feedback_case_id"] == feedback_case["feedback_case_id"]
         assert sources[("pending_correlation", pending_id)]["feedback_case_id"] == feedback_case["feedback_case_id"]

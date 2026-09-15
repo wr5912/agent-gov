@@ -454,7 +454,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Export the current live business-Agent workspace */
+        /** Export the published business-Agent workspace without modifying Git */
         post: operations["export_workspace_api_agent_registry__agent_id__workspace_export_post"];
         delete?: never;
         options?: never;
@@ -587,15 +587,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/agent-runs/by-client-operation": {
+    "/api/agent-runs/by-input-identity": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Resolve one exact AgentGov run from a durable client operation identity */
-        get: operations["get_run_by_client_operation_api_agent_runs_by_client_operation_get"];
+        /** Resolve one exact AgentGov run from scoped native input IDs */
+        get: operations["get_run_by_input_identity_api_agent_runs_by_input_identity_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -939,7 +939,7 @@ export interface paths {
         put?: never;
         /**
          * Create one feedback disposition case from feedback signals
-         * @description Create one FeedbackCase from typed feedback sources owned by the same business Agent. Source IDs must come from feedback-signal, SOC-event, or resolved pending-correlation APIs; backend correlation fields are projected from those sources.
+         * @description Create one FeedbackCase from typed feedback sources owned by the same business Agent. Source IDs must come from feedback-signal, business-event, or resolved pending-correlation APIs; backend correlation fields are projected from those sources.
          */
         post: operations["create_feedback_case_api_feedback_cases_post"];
         delete?: never;
@@ -976,6 +976,44 @@ export interface paths {
         put?: never;
         /** Create one immutable evidence package for a feedback case */
         post: operations["create_evidence_package_api_feedback_cases__feedback_case_id__evidence_packages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feedback-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List collected business events */
+        get: operations["list_feedback_events_api_feedback_events_get"];
+        put?: never;
+        /**
+         * Collect one business event without attribution or proposal generation
+         * @description Collect one business event and attempt unique run correlation. An exact retry of the normalized immutable request returns duplicate; reusing event_id with different input returns 409 FEEDBACK_EVENT_ID_CONFLICT. Equivalent RFC 3339 offsets identify the same instant. Ambiguous Sessions remain pending; entities hold business references, not governance Case ownership.
+         */
+        post: operations["ingest_feedback_event_api_feedback_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feedback-events/{event_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one business event */
+        get: operations["get_feedback_event_api_feedback_events__event_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1073,7 +1111,7 @@ export interface paths {
         head?: never;
         /**
          * Update developer annotations for one feedback source
-         * @description Patch developer-owned annotations for one canonical feedback source. Omitted properties are unchanged; source_kind is signal, soc_event, or pending_correlation and source_id comes from the matching list API.
+         * @description Patch developer-owned annotations for one canonical feedback source. Omitted properties are unchanged; source_kind is signal, event, or pending_correlation and source_id comes from the matching list API.
          */
         patch: operations["update_feedback_source_api_feedback_sources__source_kind___source_id__patch"];
         trace?: never;
@@ -1845,44 +1883,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/soc-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List collected SOC events */
-        get: operations["list_soc_events_api_soc_events_get"];
-        put?: never;
-        /**
-         * Collect one SOC event without attribution or proposal generation
-         * @description Collect one immutable SOC event and attempt deterministic correlation to an Agent run. event_id must be unique in the source system; before/after and entities should contain domain fields, not opaque dumps.
-         */
-        post: operations["ingest_soc_event_api_soc_events_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/soc-events/{event_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get one SOC event */
-        get: operations["get_soc_event_api_soc_events__event_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/health": {
         parameters: {
             query?: never;
@@ -2513,6 +2513,12 @@ export interface components {
         };
         /** AgentGitFileEntryResponse */
         AgentGitFileEntryResponse: {
+            /**
+             * Mode
+             * @description Git tree 中记录的精确普通文件 mode。
+             * @enum {string}
+             */
+            mode: "100644" | "100755";
             /** Path */
             path: string;
             /** Sha256 */
@@ -2739,6 +2745,11 @@ export interface components {
              * @default agent-release/v1
              */
             schema_version: string;
+            /**
+             * Source Feedback Case Ids
+             * @description 由来源改进事项的现存反馈归属派生，不复制反馈或 Git 资产。
+             */
+            source_feedback_case_ids?: string[];
             /** Source Improvement Id */
             source_improvement_id?: string | null;
             /**
@@ -2819,16 +2830,14 @@ export interface components {
             agent_id: string;
             /** Agent Version Id */
             agent_version_id: string;
-            /** Alert Id */
-            alert_id?: string | null;
-            /** Case Id */
-            case_id?: string | null;
-            /** Client Operation Id */
-            client_operation_id?: string | null;
             /** Completed At */
             completed_at?: string | null;
             /** Created At */
             created_at: string;
+            /** Entities */
+            entities?: {
+                [key: string]: string[];
+            };
             /** Error */
             error?: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -3425,6 +3434,19 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** AssetProvenanceRelease */
+        AssetProvenanceRelease: {
+            /** Agent Id */
+            agent_id: string;
+            /** Change Set Id */
+            change_set_id?: string | null;
+            /** Commit Sha */
+            commit_sha: string;
+            /** Release Id */
+            release_id: string;
+            /** Status */
+            status: string;
+        };
         /**
          * AssetProvenanceResponse
          * @description 某次反馈的资产关系链（AGV-022）：反馈影响了哪个 Agent、进入哪些改进事项和待发布变更。
@@ -3439,6 +3461,11 @@ export interface components {
             feedback_case_id: string;
             /** Improvements */
             improvements?: components["schemas"]["AssetProvenanceImprovement"][];
+            /**
+             * Released Versions
+             * @description 由该反馈归属事项派生的已存在发布记录；不代表当前活动版本。
+             */
+            released_versions?: components["schemas"]["AssetProvenanceRelease"][];
         };
         /** AssetResponse */
         AssetResponse: {
@@ -3588,11 +3615,107 @@ export interface components {
             summary: string;
         };
         /**
-         * ConfirmationScope
-         * @description Permission scope for one native AgentScope user-confirmation result.
-         * @enum {string}
+         * Base64Source
+         * @description The base64 source.
          */
-        ConfirmationScope: "once" | "run";
+        Base64Source: {
+            /**
+             * Data
+             * @description Base64 编码的文件内容，不含 data URL 前缀。
+             * @example SGVsbG8=
+             */
+            data: string;
+            /**
+             * Media Type
+             * @description 文件内容的 MIME 类型。
+             * @example text/plain
+             */
+            media_type: string;
+            /**
+             * Type
+             * @description Typed source or native AgentScope input discriminator.
+             * @default base64
+             * @example base64
+             * @constant
+             */
+            type: "base64";
+        };
+        /**
+         * ConfirmResult
+         * @description Confirm result for a tool call.
+         */
+        ConfirmResult: {
+            /**
+             * Confirmed
+             * @description 是否允许当前精确工具调用继续执行。
+             * @example true
+             */
+            confirmed: boolean;
+            /**
+             * Rules
+             * @description 原生确认规则字段；AgentGov 客户端应省略，不用它修改已发布权限。
+             * @example null
+             */
+            rules?: components["schemas"]["PermissionRule"][] | null;
+            /**
+             * @description 从待确认事件原样取得的工具调用。
+             * @example {
+             *       "id": "tool-001",
+             *       "input": "{}",
+             *       "name": "Read",
+             *       "type": "tool_call"
+             *     }
+             */
+            tool_call: components["schemas"]["ToolCallBlock"];
+        };
+        /**
+         * DataBlock
+         * @description The data block for binary content (images, audio, video, etc.).
+         */
+        DataBlock: {
+            /**
+             * Created At
+             * @description AgentScope 原生对象的创建时间；省略时由原生模型生成。
+             * @example 2026-09-14T00:00:00+00:00
+             */
+            created_at?: string;
+            /**
+             * Finished At
+             * @description 原生对象完成时间；未完成时为 null。
+             * @example null
+             */
+            finished_at?: string | null;
+            /**
+             * Id
+             * @description AgentScope 原生对象 ID；消息或事件重试复用显式 ID，工具结果保留对应调用 ID。
+             * @example native-input-001
+             */
+            id?: string;
+            /**
+             * Name
+             * @description 资料块的可选显示名称。
+             * @example document.txt
+             */
+            name?: string | null;
+            /**
+             * Source
+             * @description 原生 Base64 或 URL 资料来源对象。
+             * @example {
+             *       "data": "SGVsbG8=",
+             *       "media_type": "text/plain",
+             *       "type": "base64"
+             *     }
+             */
+            source: components["schemas"]["Base64Source"] | components["schemas"]["URLSource"];
+            /**
+             * Type
+             * @description Typed source or native AgentScope input discriminator.
+             * @default data
+             * @example data
+             * @constant
+             */
+            type: "data";
+        };
         /**
          * DomainErrorResponse
          * @description AgentGov domain error; extra fields may carry non-sensitive diagnostics.
@@ -3611,6 +3734,33 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * ErrorInfo
+         * @description Structured, UI-facing description of a fatal reply error.
+         */
+        ErrorInfo: {
+            /**
+             * Message
+             * @description 原生错误的可读说明，与正常回答正文分开。
+             * @example The session could not be prepared.
+             */
+            message: string;
+            /**
+             * @description 原生结构化错误类别。
+             * @default unknown
+             * @example unknown
+             */
+            type: components["schemas"]["ErrorType"];
+        };
+        /**
+         * ErrorType
+         * @description Classification of a fatal error that terminated a reply.
+         *
+         *     Not model-specific: the status-derived members apply to any upstream
+         *     service reached during a reply (chat model, embedding, TTS, MCP).
+         * @enum {string}
+         */
+        ErrorType: "authentication" | "permission" | "rate_limit" | "invalid_request" | "upstream" | "connection" | "internal" | "setup" | "unknown";
         /** EvidenceCompletenessResponse */
         EvidenceCompletenessResponse: {
             /**
@@ -3715,10 +3865,10 @@ export interface components {
         };
         /** EvidenceSourceRefsResponse */
         EvidenceSourceRefsResponse: {
-            /** Alert Ids */
-            alert_ids?: string[];
-            /** Case Ids */
-            case_ids?: string[];
+            /** Entities */
+            entities?: {
+                [key: string]: string[];
+            };
             /** Event Ids */
             event_ids?: string[];
             /** Feedback Ids */
@@ -3798,6 +3948,59 @@ export interface components {
             updated_at: string;
         };
         /**
+         * ExternalExecutionResultEvent
+         * @description External execution result event.
+         */
+        ExternalExecutionResultEvent: {
+            /**
+             * Created At
+             * @description AgentScope 原生对象的创建时间；省略时由原生模型生成。
+             * @example 2026-09-14T00:00:00+00:00
+             */
+            created_at?: string;
+            /**
+             * Execution Results
+             * @description 当前 reply 的原生外部执行结果，逐项对应原工具调用 ID。
+             * @example [
+             *       {
+             *         "id": "tool-001",
+             *         "name": "Read",
+             *         "output": "资料读取完成",
+             *         "state": "success"
+             *       }
+             *     ]
+             */
+            execution_results: components["schemas"]["ToolResultBlock"][];
+            /**
+             * Id
+             * @description AgentScope 原生对象 ID；消息或事件重试复用显式 ID，工具结果保留对应调用 ID。
+             * @example native-input-001
+             */
+            id?: string;
+            /**
+             * Metadata
+             * @description AgentScope 原生元数据；不表示 AgentGov 或 Langfuse 会保存原始业务正文。
+             * @example {}
+             */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Reply Id
+             * @description 需要继续的原生 reply ID，取自当前待确认或待外部执行事件。
+             * @example reply-001
+             */
+            reply_id: string;
+            /**
+             * Type
+             * @description Typed source or native AgentScope input discriminator.
+             * @default EXTERNAL_EXECUTION_RESULT
+             * @example EXTERNAL_EXECUTION_RESULT
+             * @constant
+             */
+            type: "EXTERNAL_EXECUTION_RESULT";
+        };
+        /**
          * FeedbackCaseCreateRequest
          * @description Create one feedback case from typed sources owned by the same business Agent.
          */
@@ -3835,14 +4038,14 @@ export interface components {
              * @default security-operations-expert
              */
             agent_id: string;
-            /** Alert Ids */
-            alert_ids?: string[];
             /** Attribution Job Ids */
             attribution_job_ids?: string[];
-            /** Case Ids */
-            case_ids?: string[];
             /** Created At */
             created_at: string;
+            /** Entities */
+            entities?: {
+                [key: string]: string[];
+            };
             /** Event Ids */
             event_ids?: string[];
             /** Evidence Package Ids */
@@ -3871,6 +4074,190 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
+        /**
+         * FeedbackEventIngestRequest
+         * @description Ingest one business event and attempt deterministic run correlation. Reusing event_id requires the same normalized immutable request.
+         */
+        FeedbackEventIngestRequest: {
+            /**
+             * Actor Id
+             * @description Identifier of the human or system actor that caused the business event.
+             * @example analyst-17
+             */
+            actor_id?: string | null;
+            /**
+             * After
+             * @description Structured value after the observed business change.
+             * @example {
+             *       "verdict": "malicious"
+             *     }
+             */
+            after?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /**
+             * Auto Captured
+             * @description Whether the source was captured automatically rather than entered by an analyst.
+             * @default true
+             * @example true
+             */
+            auto_captured: boolean;
+            /**
+             * Before
+             * @description Structured value before the observed business change.
+             * @example {
+             *       "verdict": "unknown"
+             *     }
+             */
+            before?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /**
+             * Comment
+             * @description Optional analyst or operator comment.
+             * @example 已复核原始运行证据。
+             */
+            comment?: string | null;
+            /**
+             * Confidence
+             * @description Confidence assigned to the feedback or business event.
+             * @default medium
+             * @example high
+             */
+            confidence: ("low" | "medium" | "high") | null;
+            /**
+             * Entities
+             * @description 业务对象引用按类型分组；不承载治理 feedback_case_id 的归属关系。
+             * @example {
+             *       "document": [
+             *         "guide-1"
+             *       ]
+             *     }
+             */
+            entities?: {
+                [key: string]: string[];
+            };
+            /**
+             * Event Id
+             * @description Caller-stable globally unique idempotency identifier. A retry must keep the same normalized immutable request; different content returns 409 FEEDBACK_EVENT_ID_CONFLICT.
+             * @example business-event-20260729-001
+             */
+            event_id: string;
+            /**
+             * Event Type
+             * @description Nonempty business event type describing the observed change.
+             * @example case.verdict_changed
+             */
+            event_type: string;
+            /**
+             * Metadata
+             * @description Caller-provided JSON metadata retained for correlation or observability.
+             * @example {
+             *       "source": "soc-console"
+             *     }
+             */
+            metadata?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Requires Review
+             * @description Whether the source must remain in the human-review queue.
+             * @default true
+             * @example true
+             */
+            requires_review: boolean;
+            /**
+             * Run Id
+             * @description Managed Agent run identifier used for correlation.
+             * @example run-20260729-001
+             */
+            run_id?: string | null;
+            /**
+             * Session Id
+             * @description AgentScope session identifier used for continuation or correlation.
+             * @example session-20260909-001
+             */
+            session_id?: string | null;
+            /**
+             * Source System
+             * @description System that produced the business event.
+             * @example soc-console
+             */
+            source_system: string;
+            /**
+             * Timestamp
+             * @description Timezone-aware RFC 3339 timestamp; equivalent offsets are normalized to the same UTC instant without losing fractional precision.
+             * @example 2026-07-29T12:00:00Z
+             */
+            timestamp: string;
+        };
+        /** FeedbackEventIngestResponse */
+        FeedbackEventIngestResponse: {
+            /**
+             * Correlation Status
+             * @enum {string}
+             */
+            correlation_status: "matched" | "pending_correlation" | "duplicate" | "stored_only";
+            event: components["schemas"]["FeedbackEventResponse"];
+            /** Matched Run Id */
+            matched_run_id?: string | null;
+            pending_correlation?: components["schemas"]["PendingCorrelationResponse"] | null;
+        };
+        /** FeedbackEventResponse */
+        FeedbackEventResponse: {
+            /** Actor Id */
+            actor_id?: string | null;
+            /** After */
+            after?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /**
+             * Auto Captured
+             * @default true
+             */
+            auto_captured: boolean;
+            /** Before */
+            before?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Comment */
+            comment?: string | null;
+            /** Confidence */
+            confidence?: ("low" | "medium" | "high") | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Entities */
+            entities?: {
+                [key: string]: string[];
+            };
+            /** Event Id */
+            event_id: string;
+            /** Event Type */
+            event_type: string;
+            /** Matched Run Id */
+            matched_run_id?: string | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Requires Review
+             * @default true
+             */
+            requires_review: boolean;
+            /** Run Id */
+            run_id?: string | null;
+            /** Session Id */
+            session_id?: string | null;
+            /** Source System */
+            source_system: string;
+            /** Timestamp */
+            timestamp: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** FeedbackJobErrorResponse */
         FeedbackJobErrorResponse: {
             /** Created At */
@@ -3892,24 +4279,12 @@ export interface components {
          */
         FeedbackSignalCreateRequest: {
             /**
-             * Alert Id
-             * @description SOC alert identifier used for correlation or feedback routing.
-             * @example alert-20260729-001
-             */
-            alert_id?: string | null;
-            /**
              * Auto Captured
              * @description Whether the source was captured automatically rather than entered by an analyst.
              * @default false
              * @example true
              */
             auto_captured: boolean;
-            /**
-             * Case Id
-             * @description SOC business-case identifier used for correlation or feedback routing.
-             * @example case-20260729-001
-             */
-            case_id?: string | null;
             /**
              * Comment
              * @description Optional analyst or operator comment.
@@ -3918,10 +4293,22 @@ export interface components {
             comment?: string | null;
             /**
              * Confidence
-             * @description Confidence assigned to the feedback or SOC event.
+             * @description Confidence assigned to the feedback or business event.
              * @example high
              */
             confidence?: ("low" | "medium" | "high") | null;
+            /**
+             * Entities
+             * @description 业务对象引用按类型分组；不承载治理 feedback_case_id 的归属关系。
+             * @example {
+             *       "document": [
+             *         "guide-1"
+             *       ]
+             *     }
+             */
+            entities?: {
+                [key: string]: string[];
+            };
             /**
              * Labels
              * @description Analyst-defined labels used for filtering and triage.
@@ -4009,21 +4396,21 @@ export interface components {
         FeedbackSignalResponse: {
             /** Agent Id */
             agent_id?: string | null;
-            /** Alert Id */
-            alert_id?: string | null;
             /**
              * Auto Captured
              * @default false
              */
             auto_captured: boolean;
-            /** Case Id */
-            case_id?: string | null;
             /** Comment */
             comment?: string | null;
             /** Confidence */
             confidence?: ("low" | "medium" | "high") | null;
             /** Created At */
             created_at: string;
+            /** Entities */
+            entities?: {
+                [key: string]: string[];
+            };
             /** Labels */
             labels?: string[];
             /** Matched Run Id */
@@ -4068,18 +4455,18 @@ export interface components {
              * @example signal
              * @enum {string}
              */
-            source_kind: "signal" | "soc_event" | "pending_correlation";
+            source_kind: "signal" | "event" | "pending_correlation";
         };
         /** FeedbackSourceResponse */
         FeedbackSourceResponse: {
-            /** Alert Id */
-            alert_id?: string | null;
-            /** Case Id */
-            case_id?: string | null;
             /** Comment */
             comment?: string | null;
             /** Created At */
             created_at?: string | null;
+            /** Entities */
+            entities?: {
+                [key: string]: string[];
+            };
             /** Feedback Case Id */
             feedback_case_id?: string | null;
             /** Id */
@@ -4119,7 +4506,7 @@ export interface components {
              * Source Kind
              * @enum {string}
              */
-            source_kind: "signal" | "soc_event" | "pending_correlation";
+            source_kind: "signal" | "event" | "pending_correlation";
             /** Status */
             status: string;
             /** Updated At */
@@ -4199,6 +4586,56 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HintBlock
+         * @description A block used to provide instructions or hints to the LLM during the
+         *     reasoning-acting loop. When passed to the LLM API, the hint block is
+         *     converted into a user message.
+         *
+         *     The ``hint`` field can be a plain string (text-only) or a list of
+         *     :class:`TextBlock` / :class:`DataBlock` for multimodal content
+         *     (e.g. a background tool result containing both text and an image).
+         */
+        HintBlock: {
+            /**
+             * Created At
+             * @description AgentScope 原生对象的创建时间；省略时由原生模型生成。
+             * @example 2026-09-14T00:00:00+00:00
+             */
+            created_at?: string;
+            /**
+             * Finished At
+             * @description 原生对象完成时间；未完成时为 null。
+             * @example null
+             */
+            finished_at?: string | null;
+            /**
+             * Hint
+             * @description 原生提示文本或文本/资料块列表。
+             * @example 请先核对已提供的资料。
+             */
+            hint: string | (components["schemas"]["TextBlock"] | components["schemas"]["DataBlock"])[];
+            /**
+             * Id
+             * @description AgentScope 原生对象 ID；消息或事件重试复用显式 ID，工具结果保留对应调用 ID。
+             * @example native-input-001
+             */
+            id?: string;
+            /**
+             * Source
+             * @description Origin category for general improvement feedback.
+             * @example playground_run
+             */
+            source?: string | null;
+            /**
+             * Type
+             * @description Typed source or native AgentScope input discriminator.
+             * @default hint
+             * @example hint
+             * @constant
+             */
+            type: "hint";
         };
         /** HttpErrorResponse */
         HttpErrorResponse: {
@@ -4314,19 +4751,17 @@ export interface components {
              */
             agent_version_id: string;
             /**
-             * Alert Id
-             * @description 反馈归属的告警 ID。
-             * @default
-             * @example alert-20260729-001
+             * Entities
+             * @description 业务对象类型到 ID 列表的映射；不承载治理反馈 Case 来源。
+             * @example {
+             *       "document": [
+             *         "guide-1"
+             *       ]
+             *     }
              */
-            alert_id: string;
-            /**
-             * Case Id
-             * @description 反馈归属的业务 Case ID，不接受 FeedbackCase ID。
-             * @default
-             * @example case-20260729-001
-             */
-            case_id: string;
+            entities?: {
+                [key: string]: string[];
+            };
             /**
              * Raw Text
              * @description 反馈原文。
@@ -4336,7 +4771,7 @@ export interface components {
             raw_text: string;
             /**
              * Run Id
-             * @description 关联 Run。
+             * @description 关联已存在且与改进事项属于同一业务 Agent 的 Run。
              * @default
              * @example run-20260729-001
              */
@@ -4394,12 +4829,14 @@ export interface components {
             agent_id: string;
             /** Agent Version Id */
             agent_version_id: string;
-            /** Alert Id */
-            alert_id: string;
-            /** Case Id */
-            case_id: string;
             /** Created At */
             created_at: string;
+            /** Entities */
+            entities?: {
+                [key: string]: string[];
+            };
+            /** Feedback Case Id */
+            feedback_case_id?: string | null;
             /** Feedback Id */
             feedback_id: string;
             /** Improvement Id */
@@ -4414,12 +4851,23 @@ export interface components {
             session_id: string;
             /** Source */
             source: string;
+            /** Source Events */
+            source_events?: components["schemas"]["ImprovementFeedbackSourceEvent"][];
             /** Status */
             status: string;
             /** Summary */
             summary: string;
             /** Task Id */
             task_id: string;
+        };
+        /** ImprovementFeedbackSourceEvent */
+        ImprovementFeedbackSourceEvent: {
+            /** Event Id */
+            event_id: string;
+            /** Event Type */
+            event_type: string;
+            /** Source System */
+            source_system: string;
         };
         /** ImprovementItemResponse */
         ImprovementItemResponse: {
@@ -4516,6 +4964,86 @@ export interface components {
         };
         /** @description Recursive JSON value accepted inside caller-provided metadata objects. */
         JsonValue: unknown;
+        /**
+         * Msg
+         * @description The message class in AgentScope, responsible for information storage
+         *     and transmission among different agents.
+         */
+        Msg: {
+            /**
+             * Content
+             * @description 有序的 AgentScope 原生消息内容块。
+             * @example [
+             *       {
+             *         "text": "你好",
+             *         "type": "text"
+             *       }
+             *     ]
+             */
+            content: (components["schemas"]["TextBlock"] | components["schemas"]["ThinkingBlock"] | components["schemas"]["HintBlock"] | components["schemas"]["ToolCallBlock"] | components["schemas"]["ToolResultBlock"] | components["schemas"]["DataBlock"])[];
+            /**
+             * Created At
+             * @description AgentScope 原生对象的创建时间；省略时由原生模型生成。
+             * @example 2026-09-14T00:00:00+00:00
+             */
+            created_at?: string;
+            /**
+             * @description 原生结构化错误；无错误时为 null，不替代正常消息正文。
+             * @example null
+             */
+            error?: components["schemas"]["ErrorInfo"] | null;
+            /**
+             * Finished At
+             * @description 原生对象完成时间；未完成时为 null。
+             * @example null
+             */
+            finished_at?: string | null;
+            /**
+             * @description 原生回复结束原因；消息尚未完成时为 null。
+             * @example null
+             */
+            finished_reason?: components["schemas"]["ReplyFinishedReason"] | null;
+            /**
+             * Id
+             * @description AgentScope 原生对象 ID；消息或事件重试复用显式 ID，工具结果保留对应调用 ID。
+             * @example native-input-001
+             */
+            id?: string;
+            /**
+             * Metadata
+             * @description AgentScope 原生元数据；不表示 AgentGov 或 Langfuse 会保存原始业务正文。
+             * @example {}
+             */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Name
+             * @description 原生消息发送者名称；不是会话名或幂等键。
+             * @example user
+             */
+            name: string;
+            /**
+             * Role
+             * @description Role of this text input message.
+             * @example user
+             * @enum {string}
+             */
+            role: "user" | "assistant" | "system";
+            /**
+             * Structured Output
+             * @description 原生结构化输出；未产生时为 null。
+             * @example null
+             */
+            structured_output?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * @description 原生模型 token 用量；尚无统计时为 null。
+             * @example null
+             */
+            usage?: components["schemas"]["Usage"] | null;
+        };
         /**
          * NativeAgentCandidateRequest
          * @description Agent-owned AgentScope fields plus backend-owned optimistic concurrency.
@@ -4920,27 +5448,27 @@ export interface components {
         };
         /**
          * PendingCorrelationResolveRequest
-         * @description Supply identifiers that resolve one pending SOC event correlation.
+         * @description Supply identifiers that resolve one pending business event correlation.
          */
         PendingCorrelationResolveRequest: {
-            /**
-             * Alert Id
-             * @description SOC alert identifier used for correlation or feedback routing.
-             * @example alert-20260729-001
-             */
-            alert_id?: string | null;
-            /**
-             * Case Id
-             * @description SOC business-case identifier used for correlation or feedback routing.
-             * @example case-20260729-001
-             */
-            case_id?: string | null;
             /**
              * Comment
              * @description Optional analyst or operator comment.
              * @example 已复核原始运行证据。
              */
             comment?: string | null;
+            /**
+             * Entities
+             * @description 业务对象引用按类型分组；不承载治理 feedback_case_id 的归属关系。
+             * @example {
+             *       "document": [
+             *         "guide-1"
+             *       ]
+             *     }
+             */
+            entities?: {
+                [key: string]: string[];
+            };
             /**
              * Run Id
              * @description Managed Agent run identifier used for correlation.
@@ -4956,14 +5484,14 @@ export interface components {
         };
         /** PendingCorrelationResponse */
         PendingCorrelationResponse: {
-            /** Alert Id */
-            alert_id?: string | null;
-            /** Case Id */
-            case_id?: string | null;
             /** Comment */
             comment?: string | null;
             /** Created At */
             created_at: string;
+            /** Entities */
+            entities?: {
+                [key: string]: string[];
+            };
             /** Event Id */
             event_id?: string | null;
             /** Event Type */
@@ -4987,6 +5515,60 @@ export interface components {
             updated_at?: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * PermissionBehavior
+         * @description The behavior of permission.
+         *
+         *     Attributes:
+         *         ALLOW: Allow the operation
+         *         DENY: Deny the operation
+         *         ASK: Ask the user for permission
+         *         PASSTHROUGH: Let the permission engine continue with rule matching
+         *             (used by tools to defer decision to the engine)
+         * @enum {string}
+         */
+        PermissionBehavior: "allow" | "deny" | "ask" | "passthrough";
+        /**
+         * PermissionRule
+         * @description Permission rule for tool usage.
+         *
+         *     A permission rule defines whether a specific tool or tool operation
+         *     should be allowed, denied, or require user confirmation. The
+         *     rule_content field has different semantics depending on the tool_name:
+         *
+         *     - For "Bash": rule_content is a substring pattern matched against the
+         *       command Example: rule_content="npm install" matches "npm install express"
+         *
+         *     - For "Write"/"Read": rule_content is a glob pattern matched against file
+         *       paths Example: rule_content="src/**" matches "src/main.py"
+         *
+         *     - For other tools: rule_content is a tool-specific filter pattern
+         */
+        PermissionRule: {
+            /**
+             * @description 原生权限匹配行为，取值以 AgentScope 枚举为准。
+             * @example ask
+             */
+            behavior: components["schemas"]["PermissionBehavior"];
+            /**
+             * Rule Content
+             * @description 原生工具规则的匹配内容；没有额外条件时为 null。
+             * @example null
+             */
+            rule_content: string | null;
+            /**
+             * Source
+             * @description Origin category for general improvement feedback.
+             * @example playground_run
+             */
+            source: string;
+            /**
+             * Tool Name
+             * @description 该原生权限规则作用的工具名称。
+             * @example Read
+             */
+            tool_name: string;
         };
         /** RegressionGeneratedTest */
         RegressionGeneratedTest: {
@@ -5057,13 +5639,24 @@ export interface components {
             updated_at: string;
         };
         /**
+         * ReplyFinishedReason
+         * @description The reason a reply finished.
+         * @enum {string}
+         */
+        ReplyFinishedReason: "completed" | "interrupted" | "exceed_max_iters" | "error";
+        /**
          * RunStatus
          * @enum {string}
          */
         RunStatus: "queued" | "running" | "waiting_human" | "waiting_external" | "finalizing" | "succeeded" | "failed" | "cancelled" | "interrupted";
         /**
+         * RuntimeChatOperationKind
+         * @enum {string}
+         */
+        RuntimeChatOperationKind: "initial" | "user_confirmation" | "external_execution";
+        /**
          * RuntimeChatRequest
-         * @description Start an AgentScope turn or resume the exact run waiting for a native HITL result.
+         * @description 公开请求仅保留原生三字段；生成默认 id 不得变成重试身份。
          */
         RuntimeChatRequest: {
             /**
@@ -5073,38 +5666,8 @@ export interface components {
              */
             agent_id: string;
             /**
-             * Alert Id
-             * @description SOC alert identifier used for correlation or feedback routing.
-             * @example alert-20260729-001
-             */
-            alert_id?: string | null;
-            /**
-             * Case Id
-             * @description SOC business-case identifier used for correlation or feedback routing.
-             * @example case-20260729-001
-             */
-            case_id?: string | null;
-            /**
-             * Client Operation Id
-             * @description Stable client-side idempotency identity for this logical turn
-             * @example soc-console-turn-20260909-001
-             */
-            client_operation_id: string;
-            /**
-             * @description Permission scope for a native USER_CONFIRM_RESULT: once or the current run only.
-             * @default once
-             * @example once
-             */
-            confirmation_scope: components["schemas"]["ConfirmationScope"];
-            /**
-             * Expected Run Id
-             * @description Existing AgentGov run that must own the pending native HITL action.
-             * @example run-20260909-001
-             */
-            expected_run_id?: string | null;
-            /**
              * Input
-             * @description Native AgentScope input: a user Message, USER_CONFIRM_RESULT, or EXTERNAL_EXECUTION_RESULT.
+             * @description AgentScope 原生 Msg、Msg 列表、确认/外部执行事件或 null；同次重试复用显式 input.id，无 ID 请求不自动重发。
              * @example {
              *       "content": [
              *         {
@@ -5112,21 +5675,12 @@ export interface components {
              *           "type": "text"
              *         }
              *       ],
+             *       "id": "user-input-20260913-001",
              *       "name": "user",
              *       "role": "user"
              *     }
              */
-            input: unknown;
-            /**
-             * Metadata
-             * @description Caller-provided JSON metadata retained for correlation or observability.
-             * @example {
-             *       "source": "soc-console"
-             *     }
-             */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
+            input: components["schemas"]["Msg"] | components["schemas"]["Msg"][] | components["schemas"]["UserConfirmResultEvent"] | components["schemas"]["ExternalExecutionResultEvent"] | null;
             /**
              * Session Id
              * @description AgentScope session identifier used for continuation or correlation.
@@ -5258,6 +5812,8 @@ export interface components {
             reply_id: string;
             /** Run Id */
             run_id: string;
+            /** Runtime Agent Id */
+            runtime_agent_id: string;
             /** Session Id */
             session_id: string;
             /**
@@ -5394,211 +5950,334 @@ export interface components {
             name: string;
         };
         /**
-         * SocEventIngestRequest
-         * @description Ingest one typed SOC event and attempt deterministic run correlation.
+         * TextBlock
+         * @description The text block.
          */
-        SocEventIngestRequest: {
+        TextBlock: {
             /**
-             * Actor Id
-             * @description Identifier of the human or system actor that caused the SOC event.
-             * @example analyst-17
+             * Created At
+             * @description AgentScope 原生对象的创建时间；省略时由原生模型生成。
+             * @example 2026-09-14T00:00:00+00:00
              */
-            actor_id?: string | null;
+            created_at?: string;
             /**
-             * After
-             * @description Structured value after the observed SOC change.
-             * @example {
-             *       "verdict": "malicious"
-             *     }
+             * Finished At
+             * @description 原生对象完成时间；未完成时为 null。
+             * @example null
              */
-            after?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
+            finished_at?: string | null;
             /**
-             * Alert Id
-             * @description SOC alert identifier used for correlation or feedback routing.
-             * @example alert-20260729-001
+             * Id
+             * @description AgentScope 原生对象 ID；消息或事件重试复用显式 ID，工具结果保留对应调用 ID。
+             * @example native-input-001
              */
-            alert_id?: string | null;
+            id?: string;
             /**
-             * Auto Captured
-             * @description Whether the source was captured automatically rather than entered by an analyst.
-             * @default true
-             * @example true
+             * Text
+             * @description Non-blank text in this typed input block.
+             * @example 请复核该告警的处置结论
              */
-            auto_captured: boolean;
+            text: string;
             /**
-             * Before
-             * @description Structured value before the observed SOC change.
-             * @example {
-             *       "verdict": "unknown"
-             *     }
+             * Type
+             * @description Typed source or native AgentScope input discriminator.
+             * @default text
+             * @example text
+             * @constant
              */
-            before?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-            /**
-             * Case Id
-             * @description SOC business-case identifier used for correlation or feedback routing.
-             * @example case-20260729-001
-             */
-            case_id?: string | null;
-            /**
-             * Comment
-             * @description Optional analyst or operator comment.
-             * @example 已复核原始运行证据。
-             */
-            comment?: string | null;
-            /**
-             * Confidence
-             * @description Confidence assigned to the feedback or SOC event.
-             * @default medium
-             * @example high
-             */
-            confidence: ("low" | "medium" | "high") | null;
-            /**
-             * Entities
-             * @description Entity identifiers grouped by entity kind.
-             * @example {
-             *       "host": [
-             *         "host-17"
-             *       ],
-             *       "user": [
-             *         "alice"
-             *       ]
-             *     }
-             */
-            entities?: {
-                [key: string]: string[];
-            };
-            /**
-             * Event Id
-             * @description Caller-stable SOC event identifier used for idempotent ingestion.
-             * @example soc-event-20260729-001
-             */
-            event_id: string;
-            /**
-             * Event Type
-             * @description Closed SOC event type that describes the observed change.
-             * @example case.verdict_changed
-             * @enum {string}
-             */
-            event_type: "case.verdict_changed" | "case.severity_changed" | "recommendation.accepted" | "recommendation.rejected" | "recommendation.modified" | "evidence.added" | "tool.manual_query_after_agent";
-            /**
-             * Metadata
-             * @description Caller-provided JSON metadata retained for correlation or observability.
-             * @example {
-             *       "source": "soc-console"
-             *     }
-             */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /**
-             * Requires Review
-             * @description Whether the source must remain in the human-review queue.
-             * @default true
-             * @example true
-             */
-            requires_review: boolean;
-            /**
-             * Run Id
-             * @description Managed Agent run identifier used for correlation.
-             * @example run-20260729-001
-             */
-            run_id?: string | null;
-            /**
-             * Session Id
-             * @description AgentScope session identifier used for continuation or correlation.
-             * @example session-20260909-001
-             */
-            session_id?: string | null;
-            /**
-             * Source System
-             * @description System that produced the SOC event.
-             * @example soc-console
-             */
-            source_system: string;
-            /**
-             * Timestamp
-             * @description RFC 3339 timestamp supplied by the source system.
-             * @example 2026-07-29T12:00:00Z
-             */
-            timestamp: string;
+            type: "text";
         };
-        /** SocEventIngestResponse */
-        SocEventIngestResponse: {
+        /**
+         * ThinkingBlock
+         * @description The thinking block.
+         *
+         *     Allows extra provider-specific fields (e.g. Anthropic's ``signature``,
+         *     ``redacted_thinking_data``) via ``extra="allow"`` so that model
+         *     implementations can pass arbitrary metadata without subclassing.
+         *
+         *     .. note::
+         *         Anthropic's ``redacted_thinking`` blocks are also stored as
+         *         ``ThinkingBlock`` instances with ``thinking=""`` and the
+         *         encrypted payload in the ``redacted_thinking_data`` extra
+         *         field. Callers filtering by ``type=="thinking"`` (e.g.
+         *         ``get_content_blocks``) will receive both visible and
+         *         redacted blocks.
+         */
+        ThinkingBlock: {
             /**
-             * Correlation Status
-             * @enum {string}
+             * Created At
+             * @description AgentScope 原生对象的创建时间；省略时由原生模型生成。
+             * @example 2026-09-14T00:00:00+00:00
              */
-            correlation_status: "matched" | "pending_correlation" | "duplicate" | "stored_only";
-            event: components["schemas"]["SocEventResponse"];
-            /** Matched Run Id */
-            matched_run_id?: string | null;
-            pending_correlation?: components["schemas"]["PendingCorrelationResponse"] | null;
-        };
-        /** SocEventResponse */
-        SocEventResponse: {
-            /** Actor Id */
-            actor_id?: string | null;
-            /** After */
-            after?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-            /** Agent Id */
-            agent_id?: string | null;
-            /** Alert Id */
-            alert_id?: string | null;
+            created_at?: string;
             /**
-             * Auto Captured
-             * @default true
+             * Finished At
+             * @description 原生对象完成时间；未完成时为 null。
+             * @example null
              */
-            auto_captured: boolean;
-            /** Before */
-            before?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-            /** Case Id */
-            case_id?: string | null;
-            /** Comment */
-            comment?: string | null;
-            /** Confidence */
-            confidence?: ("low" | "medium" | "high") | null;
-            /** Created At */
-            created_at?: string | null;
-            /** Entities */
-            entities?: {
-                [key: string]: string[];
-            };
-            /** Event Id */
-            event_id: string;
+            finished_at?: string | null;
             /**
-             * Event Type
-             * @enum {string}
+             * Id
+             * @description AgentScope 原生对象 ID；消息或事件重试复用显式 ID，工具结果保留对应调用 ID。
+             * @example native-input-001
              */
-            event_type: "case.verdict_changed" | "case.severity_changed" | "recommendation.accepted" | "recommendation.rejected" | "recommendation.modified" | "evidence.added" | "tool.manual_query_after_agent";
-            /** Matched Run Id */
-            matched_run_id?: string | null;
-            /** Metadata */
-            metadata?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
+            id?: string;
             /**
-             * Requires Review
-             * @default true
+             * Thinking
+             * @description 原生推理内容块的文本；是否提供由模型决定。
+             * @example 核对资料中的事实。
              */
-            requires_review: boolean;
-            /** Run Id */
-            run_id?: string | null;
-            /** Session Id */
-            session_id?: string | null;
-            /** Source System */
-            source_system: string;
-            /** Timestamp */
-            timestamp: string;
+            thinking: string;
+            /**
+             * Type
+             * @description Typed source or native AgentScope input discriminator.
+             * @default thinking
+             * @example thinking
+             * @constant
+             */
+            type: "thinking";
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * ToolCallBlock
+         * @description The tool call block.
+         */
+        ToolCallBlock: {
+            /**
+             * Created At
+             * @description AgentScope 原生对象的创建时间；省略时由原生模型生成。
+             * @example 2026-09-14T00:00:00+00:00
+             */
+            created_at?: string;
+            /**
+             * Finished At
+             * @description 原生对象完成时间；未完成时为 null。
+             * @example null
+             */
+            finished_at?: string | null;
+            /**
+             * Id
+             * @description AgentScope 原生对象 ID；消息或事件重试复用显式 ID，工具结果保留对应调用 ID。
+             * @example native-input-001
+             */
+            id: string;
+            /**
+             * Input
+             * @description 原生工具调用参数的 JSON 字符串，确认时保留原值。
+             * @example {"path":"references/README.md"}
+             */
+            input: string;
+            /**
+             * Name
+             * @description 原生工具调用名称。
+             * @example Read
+             */
+            name: string;
+            /**
+             * @description 原生工具调用状态。
+             * @default pending
+             * @example pending
+             */
+            state: components["schemas"]["ToolCallState"];
+            /**
+             * Suggested Rules
+             * @description 工具提出的原生规则建议，不等于已批准权限。
+             * @example []
+             */
+            suggested_rules?: components["schemas"]["PermissionRule"][];
+            /**
+             * Type
+             * @description Typed source or native AgentScope input discriminator.
+             * @default tool_call
+             * @example tool_call
+             * @constant
+             */
+            type: "tool_call";
+        };
+        /**
+         * ToolCallState
+         * @description The state of the tool call.
+         * @enum {string}
+         */
+        ToolCallState: "pending" | "asking" | "allowed" | "submitted" | "finished";
+        /**
+         * ToolResultBlock
+         * @description The tool result block.
+         */
+        ToolResultBlock: {
+            /**
+             * Created At
+             * @description AgentScope 原生对象的创建时间；省略时由原生模型生成。
+             * @example 2026-09-14T00:00:00+00:00
+             */
+            created_at?: string;
+            /**
+             * Finished At
+             * @description 原生对象完成时间；未完成时为 null。
+             * @example null
+             */
+            finished_at?: string | null;
+            /**
+             * Id
+             * @description AgentScope 原生对象 ID；消息或事件重试复用显式 ID，工具结果保留对应调用 ID。
+             * @example native-input-001
+             */
+            id: string;
+            /**
+             * Metadata
+             * @description AgentScope 原生元数据；不表示 AgentGov 或 Langfuse 会保存原始业务正文。
+             * @example {}
+             */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Name
+             * @description 与原工具调用对应的名称。
+             * @example Read
+             */
+            name: string;
+            /**
+             * Output
+             * @description 工具结果的原生文本或内容块列表。
+             * @example 资料读取完成
+             */
+            output: string | (components["schemas"]["TextBlock"] | components["schemas"]["DataBlock"])[];
+            /**
+             * @description 原生工具结果状态。
+             * @default running
+             * @example running
+             */
+            state: components["schemas"]["ToolResultState"];
+            /**
+             * Type
+             * @description Typed source or native AgentScope input discriminator.
+             * @default tool_result
+             * @example tool_result
+             * @constant
+             */
+            type: "tool_result";
+        };
+        /**
+         * ToolResultState
+         * @description The tool result state.
+         * @enum {string}
+         */
+        ToolResultState: "success" | "error" | "interrupted" | "denied" | "running";
+        /**
+         * URLSource
+         * @description The URL source.
+         */
+        URLSource: {
+            /**
+             * Media Type
+             * @description 文件内容的 MIME 类型。
+             * @example text/plain
+             */
+            media_type: string;
+            /**
+             * Type
+             * @description Typed source or native AgentScope input discriminator.
+             * @default url
+             * @example url
+             * @constant
+             */
+            type: "url";
+            /**
+             * Url
+             * Format: uri
+             * @description 原生多模态资料的 URL；可用性与读取能力由 Runtime 决定。
+             * @example https://example.com/document.txt
+             */
+            url: string;
+        };
+        /**
+         * Usage
+         * @description The token usage information of a message.
+         */
+        Usage: {
+            /**
+             * Cache Creation Input Tokens
+             * @description 此次调用创建输入缓存使用的 token 数。
+             * @default 0
+             * @example 0
+             */
+            cache_creation_input_tokens: number;
+            /**
+             * Cache Input Tokens
+             * @description 此次调用命中的输入缓存 token 数。
+             * @default 0
+             * @example 0
+             */
+            cache_input_tokens: number;
+            /**
+             * Input Tokens
+             * @description 此次原生模型调用的输入 token 数。
+             * @example 10
+             */
+            input_tokens: number;
+            /**
+             * Output Tokens
+             * @description 此次原生模型调用的输出 token 数。
+             * @example 5
+             */
+            output_tokens: number;
+        };
+        /**
+         * UserConfirmResultEvent
+         * @description User confirm result event.
+         */
+        UserConfirmResultEvent: {
+            /**
+             * Confirm Results
+             * @description 当前 reply 的逐项原生确认结果。
+             * @example [
+             *       {
+             *         "confirmed": true,
+             *         "tool_call": {
+             *           "id": "tool-001",
+             *           "input": "{}",
+             *           "name": "Read"
+             *         }
+             *       }
+             *     ]
+             */
+            confirm_results: components["schemas"]["ConfirmResult"][];
+            /**
+             * Created At
+             * @description AgentScope 原生对象的创建时间；省略时由原生模型生成。
+             * @example 2026-09-14T00:00:00+00:00
+             */
+            created_at?: string;
+            /**
+             * Id
+             * @description AgentScope 原生对象 ID；消息或事件重试复用显式 ID，工具结果保留对应调用 ID。
+             * @example native-input-001
+             */
+            id?: string;
+            /**
+             * Metadata
+             * @description AgentScope 原生元数据；不表示 AgentGov 或 Langfuse 会保存原始业务正文。
+             * @example {}
+             */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Reply Id
+             * @description 需要继续的原生 reply ID，取自当前待确认或待外部执行事件。
+             * @example reply-001
+             */
+            reply_id: string;
+            /**
+             * Type
+             * @description Typed source or native AgentScope input discriminator.
+             * @default USER_CONFIRM_RESULT
+             * @example USER_CONFIRM_RESULT
+             * @constant
+             */
+            type: "USER_CONFIRM_RESULT";
         };
         /** ValidationError */
         ValidationError: {
@@ -7425,7 +8104,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Current Git-backed workspace package. */
+            /** @description Read-only package of the published Git commit; excludes uncommitted workspace changes. */
             200: {
                 headers: {
                     /** @description Download filename. */
@@ -7867,15 +8546,15 @@ export interface operations {
                  */
                 session_id?: string | null;
                 /**
-                 * @description Filter records correlated with this SOC alert.
-                 * @example alert-20260729-001
+                 * @description 业务对象类型；必须与 entity_id 成对，精确匹配。
+                 * @example document
                  */
-                alert_id?: string | null;
+                entity_type?: string | null;
                 /**
-                 * @description Filter records correlated with this SOC business case.
-                 * @example case-20260729-001
+                 * @description 所选业务对象类型中的完整标识；不是反馈 Case 归属。
+                 * @example guide-1
                  */
-                case_id?: string | null;
+                entity_id?: string | null;
                 /**
                  * @description Registered business Agent selector or ownership filter for this operation.
                  * @example security-operations-expert
@@ -7886,6 +8565,16 @@ export interface operations {
                  * @example 100
                  */
                 limit?: number;
+                /**
+                 * @description 上一页最后一条 run 的 created_at，必须与 before_run_id 一同使用。
+                 * @example 2026-09-13T00:00:00+00:00
+                 */
+                before_created_at?: string | null;
+                /**
+                 * @description 上一页最后一条 run 的 run_id，用于时间相同记录的稳定分页。
+                 * @example run-previous-page-last
+                 */
+                before_run_id?: string | null;
                 /**
                  * @deprecated
                  * @description Ignored; messages are owned by AgentScope.
@@ -7928,19 +8617,31 @@ export interface operations {
             };
         };
     };
-    get_run_by_client_operation_api_agent_runs_by_client_operation_get: {
+    get_run_by_input_identity_api_agent_runs_by_input_identity_get: {
         parameters: {
             query: {
+                /**
+                 * @description 目标 Session 已绑定的 AgentScope runtime_agent_id，不是业务 Agent 名称。
+                 * @example runtime-agent-version-20260909-001
+                 */
+                agent_id: string;
                 /**
                  * @description Filter records by AgentScope session identifier.
                  * @example session-20260909-001
                  */
                 session_id: string;
                 /**
-                 * @description Resolve the exact AgentGov run admitted for this caller-stable operation identifier.
-                 * @example soc-console-turn-20260909-001
+                 * @description 原生输入动作类别；初始消息与确认/外部执行分别关联。
+                 * @example initial
                  */
-                client_operation_id: string;
+                operation_kind: components["schemas"]["RuntimeChatOperationKind"];
+                /**
+                 * @description 按原顺序重复提供显式原生消息/事件 ID，查询同一 Session 绑定内的精确操作。
+                 * @example [
+                 *       "user-input-20260913-001"
+                 *     ]
+                 */
+                input_id: string[];
             };
             header?: never;
             path?: never;
@@ -9399,6 +10100,189 @@ export interface operations {
             };
         };
     };
+    list_feedback_events_api_feedback_events_get: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Filter records by managed Agent run identifier.
+                 * @example run-20260729-001
+                 */
+                run_id?: string | null;
+                /**
+                 * @description Filter records by AgentScope session identifier.
+                 * @example session-20260909-001
+                 */
+                session_id?: string | null;
+                /**
+                 * @description 业务对象类型；必须与 entity_id 成对，精确匹配。
+                 * @example document
+                 */
+                entity_type?: string | null;
+                /**
+                 * @description 所选业务对象类型中的完整标识；不是反馈 Case 归属。
+                 * @example guide-1
+                 */
+                entity_id?: string | null;
+                /**
+                 * @description Filter business events by the exact caller-defined event type.
+                 * @example case.verdict_changed
+                 */
+                event_type?: string | null;
+                /**
+                 * @description Maximum number of records returned by this operation, within its documented bounds.
+                 * @example 100
+                 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackEventResponse"][];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_feedback_event_api_feedback_events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Collect one business event without attribution or proposal generation payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackEventIngestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackEventIngestResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_feedback_event_api_feedback_events__event_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Business event identifier addressed by this operation.
+                 * @example business-event-20260729-001
+                 */
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackEventResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation or semantic validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_feedback_signals_api_feedback_signals_get: {
         parameters: {
             query?: {
@@ -9413,15 +10297,15 @@ export interface operations {
                  */
                 session_id?: string | null;
                 /**
-                 * @description Filter records correlated with this SOC alert.
-                 * @example alert-20260729-001
+                 * @description 业务对象类型；必须与 entity_id 成对，精确匹配。
+                 * @example document
                  */
-                alert_id?: string | null;
+                entity_type?: string | null;
                 /**
-                 * @description Filter records correlated with this SOC business case.
-                 * @example case-20260729-001
+                 * @description 所选业务对象类型中的完整标识；不是反馈 Case 归属。
+                 * @example guide-1
                  */
-                case_id?: string | null;
+                entity_id?: string | null;
                 /**
                  * @description Filter feedback signals by the documented source-type enum.
                  * @example explicit_feedback
@@ -9713,10 +10597,10 @@ export interface operations {
             header?: never;
             path: {
                 /**
-                 * @description Feedback source namespace: signal, soc_event, or pending_correlation.
+                 * @description Feedback source namespace: signal, event, or pending_correlation.
                  * @example signal
                  */
-                source_kind: "signal" | "soc_event" | "pending_correlation";
+                source_kind: "signal" | "event" | "pending_correlation";
                 /**
                  * @description Identifier within the source_kind namespace.
                  * @example signal-20260729-001
@@ -9771,10 +10655,10 @@ export interface operations {
             header?: never;
             path: {
                 /**
-                 * @description Feedback source namespace: signal, soc_event, or pending_correlation.
+                 * @description Feedback source namespace: signal, event, or pending_correlation.
                  * @example signal
                  */
-                source_kind: "signal" | "soc_event" | "pending_correlation";
+                source_kind: "signal" | "event" | "pending_correlation";
                 /**
                  * @description Identifier within the source_kind namespace.
                  * @example signal-20260729-001
@@ -9893,7 +10777,13 @@ export interface operations {
     create_improvement_api_improvements_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description Caller-stable key that makes supported resource creation safe to retry after an ambiguous transport failure.
+                 * @example session-create-20260909-001
+                 */
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -10848,7 +11738,13 @@ export interface operations {
     add_feedback_api_improvements__improvement_id__feedbacks_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description Caller-stable key that makes supported resource creation safe to retry after an ambiguous transport failure.
+                 * @example session-create-20260909-001
+                 */
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 /**
                  * @description Improvement item identifier addressed by this operation.
@@ -12283,7 +13179,13 @@ export interface operations {
     chat_api_runtime_chat__post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description 仅对明确选择本次运行允许的 USER_CONFIRM_RESULT 发送 run；其他消息及单次允许/拒绝不发送。
+                 * @example run
+                 */
+                "X-AgentGov-Confirmation-Scope"?: "run" | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -12437,7 +13339,7 @@ export interface operations {
             query?: never;
             header?: {
                 /**
-                 * @description Caller-stable key that makes AgentScope session creation safe to retry.
+                 * @description Caller-stable key that makes supported resource creation safe to retry after an ambiguous transport failure.
                  * @example session-create-20260909-001
                  */
                 "Idempotency-Key"?: string | null;
@@ -13305,162 +14207,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-        };
-    };
-    list_soc_events_api_soc_events_get: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Filter records by managed Agent run identifier.
-                 * @example run-20260729-001
-                 */
-                run_id?: string | null;
-                /**
-                 * @description Filter records by AgentScope session identifier.
-                 * @example session-20260909-001
-                 */
-                session_id?: string | null;
-                /**
-                 * @description Filter records correlated with this SOC alert.
-                 * @example alert-20260729-001
-                 */
-                alert_id?: string | null;
-                /**
-                 * @description Filter records correlated with this SOC business case.
-                 * @example case-20260729-001
-                 */
-                case_id?: string | null;
-                /**
-                 * @description Filter SOC events by the documented closed event-type enum.
-                 * @example case.verdict_changed
-                 */
-                event_type?: ("case.verdict_changed" | "case.severity_changed" | "recommendation.accepted" | "recommendation.rejected" | "recommendation.modified" | "evidence.added" | "tool.manual_query_after_agent") | null;
-                /**
-                 * @description Maximum number of records returned by this operation, within its documented bounds.
-                 * @example 100
-                 */
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SocEventResponse"][];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    ingest_soc_event_api_soc_events_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Collect one SOC event without attribution or proposal generation payload. Use the schema for field constraints and select a named example for a validated scenario; optional fields should be omitted instead of sent as null placeholders. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SocEventIngestRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SocEventIngestResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_soc_event_api_soc_events__event_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /**
-                 * @description SOC event identifier addressed by this operation.
-                 * @example soc-event-20260729-001
-                 */
-                event_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SocEventResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation or semantic validation failed. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

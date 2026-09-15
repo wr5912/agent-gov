@@ -27,6 +27,8 @@ from scripts.agentscope_atomic_cutover_bootstrap import source_artifact_sha256
 from scripts.agentscope_atomic_cutover_daemon import HOST_FILESYSTEM_PROBE_IMAGE, CutoverDaemonSupport
 from scripts.agentscope_atomic_cutover_env import parse_selected_env_bindings, read_stable_env_file, verify_stable_env_file
 from scripts.agentscope_atomic_cutover_lock import run_with_global_cutover_lock
+from scripts.initialize_runtime_shared_secret import initialize_before_operation
+from scripts.selected_env_deployed_context import require_no_active_work
 
 OPERATIONS = operation_contract.OPERATIONS
 ComposeServices = operation_contract.ComposeServices
@@ -424,9 +426,16 @@ def _execute_operation(
     no_build: bool,
     force_recreate: bool,
     daemon_identity: Mapping[str, object] | None = None,
+    require_idle: bool = False,
 ) -> int:
     base = _compose(snapshot, source_root)
     langfuse = _compose(snapshot, source_root, langfuse=True)
+    if operation in operation_contract.WORKSPACE_GC_OPERATIONS:
+        from scripts.selected_env_workspace_gc import run_workspace_gc
+
+        return run_workspace_gc(operation, snapshot, source_root, child_env)
+    if operation == "runtime-recreate" and require_idle:
+        require_no_active_work(snapshot)
     if operation in operation_contract.PREFLIGHT_OPERATIONS:
         _preflight(snapshot, child_env)
     if operation == "build":
@@ -626,6 +635,7 @@ def run_operation(
     env_base_dir: Path | None = None,
     no_build: bool = False,
     force_recreate: bool = False,
+    require_idle: bool = False,
 ) -> int:
     deployed_browser.require_operation_opt_in(operation, os.environ)
     if "~" in env_file.parts:
@@ -633,6 +643,7 @@ def run_operation(
     source = env_file if env_file.is_absolute() else REPO_ROOT / env_file
     source = Path(os.path.abspath(source))
     source_base = selected_env_reexec.resolve_source_base(source, env_base_dir)
+    initialize_before_operation(source, operation)
     payload, original_identity = _read_stable_regular_file(source)
     with tempfile.TemporaryDirectory(prefix="agentgov-selected-env-") as raw_directory:
         directory = Path(raw_directory)
@@ -668,6 +679,7 @@ def run_operation(
             operation,
             no_build=no_build,
             force_recreate=force_recreate,
+            require_idle=require_idle,
         )
         return deployed_browser.run_frozen_command(operation, directory, source_root, stage_env, command)
 
@@ -679,6 +691,7 @@ def _run_frozen_stage(
     env_base_dir: Path | None = None,
     no_build: bool = False,
     force_recreate: bool = False,
+    require_idle: bool = False,
 ) -> int:
     child_env = dict(os.environ)
     state = selected_env_reexec.load_frozen_stage(child_env)
@@ -707,6 +720,7 @@ def _run_frozen_stage(
             digest,
             no_build=no_build,
             force_recreate=force_recreate,
+            require_idle=require_idle,
         )
 
     return run_with_global_cutover_lock(SelectedEnvError, execute) if operation in _MUTATING_OPERATIONS else execute()
@@ -723,9 +737,10 @@ def _execute_frozen_lifecycle(
     *,
     no_build: bool,
     force_recreate: bool,
+    require_idle: bool = False,
 ) -> int:
-    if operation == deployed_browser.OPERATION:
-        return deployed_browser.run_deployed_browser(snapshot, source_root, source_base, child_env, version, digest)
+    if operation in operation_contract.DEPLOYED_BROWSER_OPERATIONS:
+        return deployed_browser.run_deployed_browser(operation, snapshot, source_root, source_base, child_env, version, digest)
     with _daemon_mutation_lock(operation, child_env) as locked_identity:
         daemon_identity, probe_image, prepared_ids = _prepare_daemon_boundary(
             operation,
@@ -746,6 +761,7 @@ def _execute_frozen_lifecycle(
                 no_build=no_build,
                 force_recreate=force_recreate,
                 daemon_identity=daemon_identity,
+                require_idle=require_idle,
             )
         except BaseException:
             _verify_daemon_after_failure(child_env, daemon_identity, probe_image)
@@ -761,22 +777,8 @@ def _execute_frozen_lifecycle(
             probe_image,
             prepared_ids,
         )
-    _verify_frozen_stage_postconditions(snapshot, source_root, child_env, digest)
+    selected_env_reexec.verify_stage_postconditions(snapshot, child_env, digest)
     return result
-
-
-def _verify_frozen_stage_postconditions(
-    snapshot: Path,
-    source_root: Path,
-    child_env: dict[str, str],
-    digest: str,
-) -> None:
-    state = selected_env_reexec.load_frozen_stage(child_env)
-    source_snapshot.verify_command_source(child_env, hash_source=source_artifact_sha256)
-    payload = snapshot.read_bytes()
-    verify_stable_env_file(state.original_env, payload, state.original_identity, error_type=SelectedEnvError)
-    if source_artifact_sha256(state.live_repo_root) != digest:
-        raise SelectedEnvError("deployable source 在部署事务期间发生变化；镜像/容器结果拒绝放行")
 
 
 def main() -> int:

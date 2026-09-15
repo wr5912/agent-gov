@@ -5,7 +5,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ._store_support import RuntimeInputRejected, RuntimeStateConflict
+from ._store_operations import _continuation_request_shape, _submitted_tool_call_ids
+from ._store_support import RuntimeStateConflict
 from .contracts import ConfirmationScope, RunStatus, confirmation_reply_id
 from .hitl import HITLValidationError, validate_pending_actions
 from .models import AgentRunModel, RuntimePendingActionModel, RuntimeSessionBindingModel
@@ -15,25 +16,35 @@ def require_continuation_run(
     db: Session,
     *,
     binding: RuntimeSessionBindingModel,
-    client_operation_id: str | None,
-    expected_run_id: str | None,
-) -> tuple[AgentRunModel, str]:
-    if not client_operation_id:
-        raise RuntimeInputRejected(
-            "client_operation_id is required for a HITL continuation",
+    input_value: Any,
+) -> AgentRunModel:
+    """由原生 reply/tool 身份与受控 root/child Session 绑定唯一定位 Run。"""
+    shape = _continuation_request_shape(input_value)
+    tool_call_ids = _submitted_tool_call_ids(shape.submitted, human=shape.pending_kind == "human")
+    rows = db.execute(
+        select(RuntimePendingActionModel.run_id, RuntimePendingActionModel.session_id, RuntimePendingActionModel.tool_call_id, RuntimePendingActionModel.kind)
+        .join(AgentRunModel, AgentRunModel.run_id == RuntimePendingActionModel.run_id)
+        .where(
+            RuntimePendingActionModel.reply_id == shape.reply_id,
+            RuntimePendingActionModel.tool_call_id.in_(tool_call_ids),
+            RuntimePendingActionModel.status == "pending",
+            AgentRunModel.session_id == binding.root_session_id,
+            AgentRunModel.agent_id == binding.agent_id,
         )
-    if not expected_run_id:
-        raise RuntimeStateConflict(
-            "Decision expected_run_id does not match the active run",
-        )
-    run = db.get(AgentRunModel, expected_run_id)
-    if run is None:
-        raise RuntimeStateConflict(
-            "Decision expected_run_id does not match the active run",
-        )
-    if run.session_id != binding.root_session_id or run.session_id != binding.session_id or run.runtime_agent_id != binding.runtime_agent_id:
-        raise RuntimeStateConflict("Decision does not match the governed root Session")
-    return run, client_operation_id
+    ).all()
+    if len(rows) != len(tool_call_ids) or {row.tool_call_id for row in rows} != set(tool_call_ids):
+        raise RuntimeStateConflict("Decision references an unknown or ambiguous tool call")
+    if any(row.kind != shape.pending_kind for row in rows):
+        raise RuntimeStateConflict("Decision type does not match the pending action kind")
+    run_ids = {row.run_id for row in rows}
+    action_sessions = {row.session_id for row in rows}
+    if len(run_ids) != 1 or len(action_sessions) != 1:
+        raise RuntimeStateConflict("Decision references ambiguous Run or worker Session identities")
+    run = db.get(AgentRunModel, run_ids.pop())
+    action_session_id = action_sessions.pop()
+    if run is None or run.session_id != binding.root_session_id or run.agent_id != binding.agent_id or binding.session_id != action_session_id:
+        raise RuntimeStateConflict("Decision must be submitted to the exact pending action Session")
+    return run
 
 
 def validate_new_continuation(

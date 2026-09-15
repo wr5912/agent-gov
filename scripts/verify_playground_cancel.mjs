@@ -100,10 +100,6 @@ async function runBrowser(engineName, attempt, browserType, binding) {
     if (Object.values(acceptance.result).some((passed) => passed !== true)) {
       throw new Error(`Playground cancellation assertions failed: ${JSON.stringify(acceptance.result)}`);
     }
-    await page.screenshot({
-      path: join(screenshotDir, `${engineName}-${attempt}-playground-cancel.png`),
-      fullPage: true,
-    });
     return { engine: engineName, attempt, result: acceptance.result, runs };
   } finally {
     const streamsSettledBeforeCleanup = await network.settle(config.actionTimeoutMs);

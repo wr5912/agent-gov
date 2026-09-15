@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
-from typing import Self
+import logging
+from collections.abc import Awaitable
+from typing import Protocol, Self, TypeVar
 
 import httpx
-from agentscope.app.storage import AsyncSQLAlchemyStorage
+from agentscope.app.storage import AsyncSQLAlchemyStorage, SessionConfig, SessionOrigin, SessionRecord
 from agentscope.credential import CredentialFactory
 from agentscope.message import Msg
 from agentscope.state import AgentState
@@ -15,6 +18,14 @@ from .context_registry import RuntimeContext, bind_reply_context, discard_reply_
 from .receipt_middleware import AgentGovReceiptDispatcher, RuntimeReceipt, fetch_runtime_context
 from .settings import RUNTIME_USER_ID, RuntimeSettings
 from .team_coordination import AgentGovInMemoryMessageBus, register_team_child_session
+from .workspace_reference_fence import NativeSessionWorkspaceReferences, SessionWorkspaceReferenceFence
+
+logger = logging.getLogger(__name__)
+_OperationResult = TypeVar("_OperationResult")
+
+
+class WorkspaceDeletionReconciler(Protocol):
+    async def reconcile(self, user_id: str) -> None: ...
 
 
 async def provision_runtime_credential(
@@ -65,6 +76,7 @@ class ProvisionedAsyncSQLAlchemyStorage(AsyncSQLAlchemyStorage):
         *,
         receipt_dispatcher: AgentGovReceiptDispatcher,
         message_bus: AgentGovInMemoryMessageBus | None = None,
+        workspace_reference_fence: SessionWorkspaceReferenceFence | None = None,
     ) -> None:
         super().__init__(
             settings.database_url,
@@ -75,7 +87,20 @@ class ProvisionedAsyncSQLAlchemyStorage(AsyncSQLAlchemyStorage):
         self._runtime_settings = settings
         self._receipt_dispatcher = receipt_dispatcher
         self._message_bus = message_bus
+        self._workspace_reference_fence = workspace_reference_fence or SessionWorkspaceReferenceFence()
+        self._workspace_reference_reservations: NativeSessionWorkspaceReferences | None = None
+        self._workspace_deletion_reconciler: WorkspaceDeletionReconciler | None = None
         self._pending_batches: dict[tuple[str, str], dict[str, RuntimeContext]] = {}
+
+    def bind_workspace_deletion_reconciler(self, reconciler: WorkspaceDeletionReconciler) -> None:
+        """Bind post-commit cleanup without coupling SQL transactions to files."""
+
+        self._workspace_deletion_reconciler = reconciler
+
+    def bind_workspace_reference_reservations(self, reservations: NativeSessionWorkspaceReferences) -> None:
+        """Bind the durable discovery index used for hidden Team Sessions."""
+
+        self._workspace_reference_reservations = reservations
 
     async def __aenter__(self) -> Self:
         await super().__aenter__()
@@ -85,6 +110,113 @@ class ProvisionedAsyncSQLAlchemyStorage(AsyncSQLAlchemyStorage):
             await self.aclose()
             raise
         return self
+
+    async def upsert_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        config: SessionConfig,
+        state: AgentState | None = None,
+        session_id: str | None = None,
+        origin: SessionOrigin | None = None,
+        source: str | None = None,
+        source_schedule_id: str | None = None,
+        source_chat_id: str | None = None,
+        source_chat_name: str | None = None,
+        source_channel_id: str | None = None,
+    ) -> SessionRecord:
+        """Serialize public Session references against Workspace retirement."""
+
+        async with self._workspace_reference_fence.hold():
+            if config.workspace_id is not None:
+                self._workspace_reference_fence.require_writable(config.workspace_id)
+            effective_session_id = (
+                session_id
+                or SessionRecord(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    config=config,
+                ).id
+            )
+            reservations = self._workspace_reference_reservations
+            if reservations is not None:
+                await reservations.reserve(
+                    user_id,
+                    agent_id,
+                    effective_session_id,
+                    config.workspace_id,
+                )
+            return await super().upsert_session(
+                user_id,
+                agent_id,
+                config,
+                state,
+                effective_session_id,
+                origin,
+                source,
+                source_schedule_id,
+                source_chat_id,
+                source_chat_name,
+                source_channel_id,
+            )
+
+    async def delete_session(self, user_id: str, agent_id: str, session_id: str) -> bool:
+        return await self._delete_and_reconcile(
+            user_id,
+            super().delete_session(user_id, agent_id, session_id),
+        )
+
+    async def delete_agent(self, user_id: str, agent_id: str) -> bool:
+        return await self._delete_and_reconcile(
+            user_id,
+            super().delete_agent(user_id, agent_id),
+        )
+
+    async def delete_team(self, user_id: str, team_id: str) -> bool:
+        return await self._delete_and_reconcile(
+            user_id,
+            super().delete_team(user_id, team_id),
+        )
+
+    async def delete_schedule(self, user_id: str, schedule_id: str) -> bool:
+        return await self._delete_and_reconcile(
+            user_id,
+            super().delete_schedule(user_id, schedule_id),
+        )
+
+    async def _delete_and_reconcile(self, user_id: str, operation: Awaitable[bool]) -> bool:
+        deleted, cancelled = await self._finish_awaitable_despite_cancellation(operation)
+        reconciler = self._workspace_deletion_reconciler
+        if reconciler is None:
+            if cancelled:
+                raise asyncio.CancelledError
+            return deleted
+        try:
+            _, reconcile_cancelled = await self._finish_awaitable_despite_cancellation(
+                reconciler.reconcile(user_id),
+            )
+            cancelled = cancelled or reconcile_cancelled
+        except Exception as exc:
+            logger.warning(
+                "workspace_reclaim stage=storage_delete result=deferred error_type=%s",
+                type(exc).__name__,
+            )
+        if cancelled:
+            raise asyncio.CancelledError
+        return deleted
+
+    @staticmethod
+    async def _finish_awaitable_despite_cancellation(
+        operation: Awaitable[_OperationResult],
+    ) -> tuple[_OperationResult, bool]:
+        task = asyncio.ensure_future(operation)
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        return task.result(), cancelled
 
     async def upsert_message(
         self,

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 
+import httpx
 from app.runtime.json_types import JsonObject
 
 from scripts.agentscope_live_acceptance_scenarios import GENERIC_RUNTIME_CAPABILITY
@@ -43,6 +46,31 @@ class TerminalEvidence:
 
     reply_ids: tuple[str, ...]
     trace_id: str
+
+
+def summarize_http_failure(error: httpx.HTTPError) -> str:
+    """保留请求边界诊断，不回显 endpoint、响应正文或凭据。"""
+    request = error.request
+    routes = (
+        (r"/api/runtime/chat/", "chat"),
+        (r"/api/runtime/sessions/", "session_create"),
+        (r"/api/runtime/sessions/[^/]+/stream", "session_stream"),
+        (r"/api/runtime/sessions/[^/]+/messages", "session_messages"),
+        (r"/api/runtime/sessions/[^/]+/status", "session_status"),
+        (r"/api/runtime/sessions/[^/]+", "session"),
+        (r"/api/agent-runs/[^/]+/trace", "run_trace"),
+        (r"/api/agent-runs/[^/]+/cancel", "run_cancel"),
+        (r"/api/agent-runs/[^/]+", "run"),
+    )
+    return json.dumps(
+        {
+            "error_type": type(error).__name__,
+            "method": request.method if request.method in {"GET", "POST", "DELETE"} else "unclassified",
+            "request_kind": next((label for pattern, label in routes if re.fullmatch(pattern, request.url.path)), "unclassified"),
+            "http_status": error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None,
+        },
+        sort_keys=True,
+    )
 
 
 def build_live_acceptance_summary(

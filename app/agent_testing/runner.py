@@ -21,6 +21,7 @@ from pydantic.types import JsonValue
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.json_types import JsonObject
 
+from .report_validation import passed_report_errors
 from .store import AgentTestingStore
 from .suite import inspect_agent_test_suite
 
@@ -367,9 +368,23 @@ class AgentTestRunner:
         status = "error" if timed_out and not cancelled else _process_status(process.returncode, cancelled=cancelled)
         report = _redact_report(_read_report(paths.report), redactions)
         items = _report_items(report)
-        invalid_success_report = status == "passed" and (not items or any(item.get("outcome") != "passed" for item in items))
+        run = self._store.get_run(test_run_id) or {}
+        validation_errors = (
+            passed_report_errors(
+                report,
+                actual_exit_code=process.returncode,
+                release_check=run.get("source") == "release_check",
+                attested_invocations=self._store.attested_invocations(test_run_id),
+                test_run_id=test_run_id,
+                commit_sha=str(run.get("commit_sha") or ""),
+            )
+            if status == "passed"
+            else []
+        )
+        invalid_success_report = bool(validation_errors)
         if invalid_success_report:
             status = "error"
+            report["validation_errors"] = validation_errors
         report.update(
             {
                 "duration_seconds": duration_seconds,

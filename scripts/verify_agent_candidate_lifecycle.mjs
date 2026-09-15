@@ -2,6 +2,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 import { requireContainerAcceptance } from "./container_acceptance_guard.mjs";
 import {
@@ -25,13 +26,14 @@ import {
   requireScenario,
 } from "./improvement_ui_e2e/reviewed_scenarios.mjs";
 import { browserExecutionPlan } from "./improvement_ui_e2e/browser_acceptance_contract.mjs";
+import { reviewAndApprovePassedCandidate } from "./improvement_ui_e2e/candidate_review.mjs";
+import { isRuntimeTemplateRestartRequired, restartCandidateRuntime } from "./improvement_ui_e2e/candidate_runtime_restart.mjs";
 
 const TECHNICAL_SCENARIO_AGENT_ID = "runtime-technical-integration-package";
 const TERMINAL_RUN_STATES = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 const TERMINAL_TEST_STATES = new Set(["passed", "failed", "error", "cancelled", "interrupted"]);
 const STREAM_READY_LIMIT_MS = 5_000;
 
-const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 let config;
 let reviewed;
 let scenario;
@@ -47,6 +49,7 @@ function initializeAcceptance() {
   if (process.env.AGENT_GOV_CONTAINER_ACCEPTANCE_PROFILE !== "langfuse") {
     throw new Error("Candidate lifecycle acceptance requires the isolated langfuse profile");
   }
+  const require = createRequire(new URL("../frontend/package.json", import.meta.url));
   ({ chromium, firefox } = require("playwright"));
   browserPlan = browserExecutionPlan(String(process.env.BROWSER || "both"), { formal: false });
   if (browserPlan.length !== 2 || !browserPlan.includes("chromium") || !browserPlan.includes("firefox")) {
@@ -79,14 +82,6 @@ function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
 function requireCondition(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -112,9 +107,14 @@ async function observeJsonAction(page, method, path, action, timeoutMs = config.
     (response) => responseMatches(response, method, path),
     { timeout: timeoutMs },
   );
+  void responsePromise.catch(() => undefined);
   await action();
   const response = await responsePromise;
-  requireCondition(response.ok(), `UI action ${method} ${path} failed with HTTP ${response.status()}`);
+  if (!response.ok()) {
+    const error = new Error(`UI action ${method} ${path} failed with HTTP ${response.status()}`);
+    error.status = response.status();
+    throw error;
+  }
   let payload;
   try {
     payload = await response.json();
@@ -186,7 +186,7 @@ async function fillNativeCandidateDrawer(page, identity, revised) {
     : "你是受 AgentGov 管理的真实技术验收 Agent。直接、简洁地回应用户，不调用工具。");
 }
 
-function assertCandidateReceipt(receipt, identity, expectedAction) {
+export function assertCandidateReceipt(receipt, identity, expectedAction) {
   requireCondition(receipt?.agent?.agent_id === identity.agentId, "Candidate receipt has a different Agent identity");
   requireCondition(receipt?.agent?.status === "draft", "Unpublished candidate Agent must remain draft");
   requireCondition(receipt?.action === expectedAction, "Candidate receipt has an unexpected action");
@@ -197,7 +197,7 @@ function assertCandidateReceipt(receipt, identity, expectedAction) {
   requireCondition(receipt.published === false, "Candidate receipt must not imply publication");
 }
 
-async function assertLiveHead(configValue, identity, expectedCommit) {
+export async function assertLiveHead(configValue, identity, expectedCommit) {
   const ref = await apiJson(
     configValue,
     `/api/agent-repository/current?${new URLSearchParams({ agent_id: identity.agentId })}`,
@@ -253,12 +253,8 @@ async function assertSingleOpenCandidate(agentId, expected) {
   requireCondition(open[0].candidate_commit_sha === expected.candidate_commit_sha, "Open candidate commit changed unexpectedly");
 }
 
-async function verifyCandidateDiff(page, candidate) {
-  const approveButton = page.getByTestId("release-action-approve");
-  requireCondition(await approveButton.isDisabled(), "Candidate approval enabled before the complete file Diff was displayed");
-  await page.getByTestId("release-action-view-changes").click();
-  const summary = page.getByTestId("release-diff-summary");
-  await summary.waitFor({ timeout: config.actionTimeoutMs });
+async function verifyNativeCandidateDiff(candidate) {
+  // Native 表单场景的业务断言；完整 UI Diff 与一次审批由共享 review helper 验证。
   const diff = await apiJson(config, `/api/agent-change-sets/${encodeURIComponent(candidate.change_set_id)}/diff`);
   requireCondition(diff?.from_version_id === candidate.base_commit_sha, "Candidate Diff has a different base commit");
   requireCondition(diff?.to_version_id === candidate.candidate_commit_sha, "Candidate Diff has a different target commit");
@@ -267,51 +263,19 @@ async function verifyCandidateDiff(page, candidate) {
     ...(diff.modified || []).map((entry) => entry.path),
     ...(diff.deleted || []).map((entry) => entry.path),
   ];
-  const fileDiffs = [];
-  for (const path of changedPaths) {
-    const detail = await apiJson(
-      config,
-      `/api/agent-change-sets/${encodeURIComponent(candidate.change_set_id)}/file-diff?${new URLSearchParams({ path })}`,
-    );
-    requireCondition(detail?.from_version_id === candidate.base_commit_sha, `File Diff ${path} has a different base commit`);
-    requireCondition(detail?.to_version_id === candidate.candidate_commit_sha, `File Diff ${path} has a different target commit`);
-    requireCondition(detail?.path === path && detail?.is_text === true && detail?.truncated === false, `File Diff ${path} is not fully reviewable`);
-    const changedLines = String(detail.unified_diff || "").split("\n").filter((line) => (
-      (line.startsWith("+") && !line.startsWith("+++"))
-      || (line.startsWith("-") && !line.startsWith("---"))
-    ));
-    requireCondition(changedLines.length > 0, `File Diff ${path} has no actual changed lines`);
-    const fileSelector = await page.evaluate(
-      (value) => `[data-testid="release-diff-file"][data-path="${CSS.escape(value)}"]`,
-      path,
-    );
-    const uiFile = summary.locator(fileSelector);
-    await uiFile.waitFor({ timeout: config.actionTimeoutMs });
-    const uiUnifiedDiff = await uiFile.getByTestId("release-file-unified-diff").textContent();
-    requireCondition(uiUnifiedDiff === detail.unified_diff, `UI Diff ${path} is not the complete exact backend Diff`);
-    fileDiffs.push(detail);
-  }
-  requireCondition(await summary.getByTestId("release-diff-file").count() === changedPaths.length, "Candidate Diff file count is incomplete");
-  requireCondition(await summary.locator('input[type="checkbox"]').count() === 0, "Candidate review still requires per-file checkboxes");
-  await page.getByTestId("release-approval-confirmation-note")
-    .filter({ hasText: `已审阅 ${changedPaths.length} 个完整文件 Diff` })
-    .waitFor({ timeout: config.actionTimeoutMs });
   for (const requiredPath of ["AGENT.md", "agent.yaml", "tests/README.md", "tests/test_native_agent_harness_contract.py"]) {
     requireCondition(changedPaths.includes(requiredPath), `Candidate Diff is missing ${requiredPath}`);
-    requireCondition((await summary.innerText()).includes(requiredPath), `UI Diff is missing ${requiredPath}`);
   }
-  const promptDiff = fileDiffs.find((item) => item.path === "AGENT.md");
+  const promptDiff = await apiJson(
+    config,
+    `/api/agent-change-sets/${encodeURIComponent(candidate.change_set_id)}/file-diff?${new URLSearchParams({ path: "AGENT.md" })}`,
+  );
+  requireCondition(promptDiff?.from_version_id === candidate.base_commit_sha, "Native prompt Diff has a different base commit");
+  requireCondition(promptDiff?.to_version_id === candidate.candidate_commit_sha, "Native prompt Diff has a different candidate commit");
   requireCondition(String(promptDiff?.unified_diff || "").includes("版本二。"), "AGENT.md Diff is missing the revised prompt line");
-  return {
-    changedFileCount: changedPaths.length,
-    diffDigest: sha256(canonicalJson(diff)),
-    reviewedFiles: fileDiffs
-      .map((detail) => ({ path: detail.path, detail_sha256: sha256(canonicalJson(detail)) }))
-      .sort((left, right) => left.path.localeCompare(right.path)),
-  };
 }
 
-async function waitForTestRun(testRunId) {
+async function waitForTestRun(config, testRunId) {
   return pollValue(
     () => apiJson(config, `/api/agent-test-runs/${encodeURIComponent(testRunId)}`),
     (run) => TERMINAL_TEST_STATES.has(run?.status),
@@ -320,17 +284,46 @@ async function waitForTestRun(testRunId) {
   );
 }
 
-function assertRealCandidateTest(run, candidate, suite) {
+function assertCandidateTestIdentity(run, candidate, suite) {
   requireCondition(run?.agent_id === candidate.agent.agent_id, "Test run belongs to a different Agent");
   requireCondition(run?.change_set_id === candidate.change_set_id, "Test run belongs to a different change set");
   requireCondition(run?.commit_sha === candidate.candidate_commit_sha, "Test run is not pinned to the exact candidate commit");
   requireCondition(run?.suite_digest === suite.suite_digest, "Test run suite digest changed after scheduling");
+}
+
+function assertRealCandidateTest(run, candidate, suite) {
+  assertCandidateTestIdentity(run, candidate, suite);
   requireCondition(run?.status === "passed" && run.exit_code === 0, "Candidate Workspace pytest did not pass");
   requireCondition(Array.isArray(run.command) && run.command.includes("pytest") && run.command.at(-1) === "tests", "Candidate test did not execute the fixed pytest suite command");
   requireCondition(typeof run.started_at === "string" && typeof run.completed_at === "string", "Candidate test has no real process timing evidence");
 }
 
-async function testApproveAndPublish(page, candidate) {
+export function recordCandidateReceiptProgress(progress, candidate, receipt, field) {
+  if (!new Set(["test_run_id", "release_id"]).has(field)) throw new Error("Unsupported candidate receipt field");
+  if (receipt?.agent_id === candidate.agent.agent_id
+      && receipt.change_set_id === candidate.change_set_id
+      && receipt.commit_sha === candidate.candidate_commit_sha
+      && typeof receipt[field] === "string") progress[field] = receipt[field];
+}
+
+async function runCandidateTestThroughUi(page, config, candidate, suite, progress) {
+  const testPath = `/api/agent-change-sets/${encodeURIComponent(candidate.change_set_id)}/test-runs`;
+  const created = await observeJsonAction(
+    page,
+    "POST",
+    testPath,
+    () => page.getByTestId("release-action-run-tests").click(),
+    config.actionTimeoutMs,
+  );
+  requireCondition(created.response.status() === 202, "Candidate test was not accepted asynchronously");
+  recordCandidateReceiptProgress(progress, candidate, created.payload, "test_run_id");
+  const testRun = await waitForTestRun(config, created.payload.test_run_id);
+  assertCandidateTestIdentity(testRun, candidate, suite);
+  return testRun;
+}
+
+export async function testApproveAndPublish(page, config, candidate, progress = {}) {
+  progress.stage = "candidate_test";
   const suite = await apiJson(
     config,
     `/api/agent-registry/${encodeURIComponent(candidate.agent.agent_id)}/test-suite?${new URLSearchParams({ commit_sha: candidate.candidate_commit_sha })}`,
@@ -338,15 +331,12 @@ async function testApproveAndPublish(page, candidate) {
   requireCondition(suite?.commit_sha === candidate.candidate_commit_sha, "Test suite is not pinned to the candidate commit");
   requireCondition(suite?.tests_directory_present === true && suite.test_file_count >= 1, "Candidate has no runnable Workspace pytest suite");
   requireCondition(suite?.readme_present === true && typeof suite.suite_digest === "string", "Candidate test suite lacks governed metadata");
-  const testPath = `/api/agent-change-sets/${encodeURIComponent(candidate.change_set_id)}/test-runs`;
-  const created = await observeJsonAction(
-    page,
-    "POST",
-    testPath,
-    () => page.getByTestId("release-action-run-tests").click(),
-  );
-  requireCondition(created.response.status() === 202, "Candidate test was not accepted asynchronously");
-  const testRun = await waitForTestRun(created.payload.test_run_id);
+  progress.suite_digest = suite.suite_digest;
+  let testRun = await runCandidateTestThroughUi(page, config, candidate, suite, progress);
+  if (testRun.status === "error" && isRuntimeTemplateRestartRequired(testRun.error)) {
+    await restartCandidateRuntime({ signal: testRun.error, stage: "candidate_test", maintenance: config.runtimeMaintenance });
+    testRun = await runCandidateTestThroughUi(page, config, candidate, suite, progress);
+  }
   assertRealCandidateTest(testRun, candidate, suite);
   await pollValue(
     () => page.getByTestId("release-gate-tests").getAttribute("data-state"),
@@ -354,30 +344,23 @@ async function testApproveAndPublish(page, candidate) {
     config.actionTimeoutMs,
     "Workspace pytest UI gate",
   );
-  const diffEvidence = await verifyCandidateDiff(page, candidate);
-
-  const approvePath = `/api/agent-change-sets/${encodeURIComponent(candidate.change_set_id)}/approve`;
-  await waitForEnabled(page.getByTestId("release-action-approve"));
-  const approved = await observeJsonAction(page, "POST", approvePath, () => page.getByTestId("release-action-approve").click());
-  const approvalRequest = approved.response.request().postDataJSON();
-  requireCondition(approvalRequest?.candidate_commit_sha === candidate.candidate_commit_sha, "Approval request omitted the reviewed candidate commit");
-  requireCondition(approvalRequest?.diff_digest === diffEvidence.diffDigest, "Approval request omitted the reviewed Diff digest");
-  requireCondition(approvalRequest?.test_run_id === testRun.test_run_id, "Approval request omitted the reviewed test run");
-  requireCondition(approvalRequest?.suite_digest === suite.suite_digest, "Approval request omitted the reviewed test suite");
-  requireCondition(
-    canonicalJson(approvalRequest?.reviewed_files) === canonicalJson(diffEvidence.reviewedFiles),
-    "Approval request omitted exact per-file review evidence",
-  );
-  requireCondition(approved.payload?.status === "approved", "Explicit candidate approval was not persisted");
-  requireCondition(approved.payload?.approval_evidence?.candidate_commit_sha === candidate.candidate_commit_sha, "Approval evidence is not bound to the candidate commit");
-  requireCondition(approved.payload?.approval_evidence?.test_run_id === testRun.test_run_id, "Approval evidence is not bound to the passed test run");
-  requireCondition(approved.payload?.approval_evidence?.suite_digest === suite.suite_digest, "Approval evidence is not bound to the tested suite");
-  requireCondition(approved.payload?.approval_evidence?.diff_digest === diffEvidence.diffDigest, "Approval evidence is not bound to the reviewed Diff");
-  requireCondition(approved.payload?.approval_evidence?.reviewed_file_count === diffEvidence.changedFileCount, "Approval evidence lost the reviewed file count");
-  requireCondition(typeof approved.payload?.approval_evidence?.review_digest === "string", "Approval evidence lost the file review digest");
+  progress.stage = "candidate_review_approve";
+  const reviewed = await reviewAndApprovePassedCandidate(page, config, {
+    changeSetId: candidate.change_set_id,
+    candidateCommitSha: candidate.candidate_commit_sha,
+    testRunId: testRun.test_run_id,
+    suiteDigest: suite.suite_digest,
+  });
+  progress.diff_digest = reviewed.diffDigest;
+  const diffEvidence = {
+    changedFileCount: reviewed.reviewedFileCount,
+    diffDigest: reviewed.diffDigest,
+    reviewedFiles: reviewed.reviewedFiles,
+  };
 
   const publishPath = `/api/agent-change-sets/${encodeURIComponent(candidate.change_set_id)}/publish`;
-  await waitForEnabled(page.getByTestId("release-action-publish"));
+  progress.stage = "candidate_publish";
+  await waitForEnabled(page.getByTestId("release-action-publish"), config.actionTimeoutMs);
   const published = await observeJsonAction(
     page,
     "POST",
@@ -386,6 +369,7 @@ async function testApproveAndPublish(page, candidate) {
     config.testRunTimeoutMs,
   );
   const release = published.payload;
+  recordCandidateReceiptProgress(progress, candidate, release, "release_id");
   const publicationRequest = published.response.request().postDataJSON();
   requireCondition(publicationRequest?.expected_candidate_commit_sha === candidate.candidate_commit_sha, "Publication request omitted the reviewed candidate commit");
   requireCondition(publicationRequest?.expected_diff_digest === diffEvidence.diffDigest, "Publication request omitted the reviewed Diff digest");
@@ -396,7 +380,9 @@ async function testApproveAndPublish(page, candidate) {
   requireCondition(release?.change_set_id === candidate.change_set_id, "Release belongs to a different change set");
   requireCondition(release?.commit_sha === candidate.candidate_commit_sha, "Release commit differs from the tested candidate");
   requireCondition(release?.force_published === false, "Candidate lifecycle acceptance must not force publication");
+  progress.stage = "candidate_binding";
   const binding = await waitForPublishedBinding(
+    config,
     candidate.agent.agent_id,
     candidate.change_set_id,
     candidate.candidate_commit_sha,
@@ -404,7 +390,7 @@ async function testApproveAndPublish(page, candidate) {
   return { ...diffEvidence, suite, testRun, release, binding };
 }
 
-async function waitForPublishedBinding(agentId, changeSetId, candidateCommit) {
+async function waitForPublishedBinding(config, agentId, changeSetId, candidateCommit) {
   const agent = await pollValue(
     async () => (await apiJson(config, "/api/agent-registry")).find((item) => item.agent_id === agentId),
     (item) => item?.status === "active" && item.provisioned === true && Boolean(item.runtime_agent_id),
@@ -646,7 +632,8 @@ async function runBrowser(engineName, browserType) {
     stage = `${engineName}:candidate_create_and_revision`;
     const candidate = await createAndReviseCandidate(page, identity);
     stage = `${engineName}:candidate_test_approve_publish`;
-    const release = await testApproveAndPublish(page, candidate.revised);
+    await verifyNativeCandidateDiff(candidate.revised);
+    const release = await testApproveAndPublish(page, config, candidate.revised);
     state.runtimeAgentId = release.binding.runtime_agent_id;
     stage = `${engineName}:real_playground_run`;
     const playground = await runPlaygroundMessage(page, network, identity.agentId, release.binding, state);
@@ -739,7 +726,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(JSON.stringify(failureDiagnostic(error, "bootstrap", [])));
-  process.exit(2);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(JSON.stringify(failureDiagnostic(error, "bootstrap", [])));
+    process.exit(2);
+  });
+}

@@ -80,7 +80,6 @@ def _provisioner(
     governance = AgentGovernanceService(
         feedback_store=FeedbackStore(data_dir=tmp_path / "data"),
         agent_version_store=versions,
-        runtime_mode="local-debug",
     )
     provisioner = RuntimeAgentProvisioner(
         client=client,

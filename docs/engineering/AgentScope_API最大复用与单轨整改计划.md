@@ -61,7 +61,11 @@
 本次只读取文档及代码，没有调用创建、删除、安装等业务操作。
 该地址是契约参照，不表示 AgentGov 已连接此实例，也不授权合并两个实例的存储。
 
-| 当前证据 | 结论 | 整改要求 |
+下表固定记录首次评审时的迁移对象，不是当前源码目录。`catalog.py`、`agent_loader.py` 等旧
+入口已删除，运行目录现取自原生 API；当前落地状态以第 6 节及
+[Runtime 实施基线](./AgentGov_AgentScope_Runtime替换实施基线与验收.md) 为准，不恢复历史入口。
+
+| 整改前证据 | 当时结论 | 整改要求 |
 | --- | --- | --- |
 | `app/runtime_gateway/client.py`、`router.py` | 已调用原生 Agent、Session、chat、messages、status、stream | 保留并收口，不重建 Session 服务 |
 | `frontend/src/types/runtime.ts` 的 `AgentScope*` 类型 | 手写上游 Session、消息、事件及输入协议 | 删除，改为上游派生类型 |
@@ -223,7 +227,7 @@ P0 → P1 → P2/P3 → P4 → P5；P2 与 P3 在接口边界冻结后并行收�
 | P1：协议与共用执行收口 | **已实施**：公开模型生成类型；Session、chat、SSE、run admission／cancel 共用执行边界；SSE readiness comment 后按原始字节透传上游未知事件 | 手写同义 wire DTO 与顶层 `session_id` fallback 已退出在线路径；仍须由 P5 真实浏览器检查事件时序与恢复 |
 | P2：Agent 生命周期收口 | **已实施**：原生 schema 表单和 Workspace 包导入写入同一 Git 候选；候选以 change set 与预期 commit 做 CAS；测试、审批和发布 saga 是唯一激活链路 | draft 不可激活，发布以精确 commit 创建不可变原生 Agent 并提交绑定；P5 仍需真实发布旅程复验 |
 | P3：会话与资源接入 | **已实施**：会话创建、列表、重命名、历史、状态、interrupt／delete 读写 AgentScope；MCP、skill 与 Workspace 状态按 Session 独立投影 | 没有 pending Session 或资源成功态的本地伪造；真实 MCP／权限／HITL 效果留给 P5 |
-| P4：删除旧轨与契约迁移 | **已实施**：删除 live Workspace discard/snapshot、release restore/rollback、独立 provision 等旁路及陈旧 DTO；控制库当前 epoch 为 v3 | 精确 v1/v2 迁入请求指纹与 chat operation 关联；v1 删除 `session_name` 正文副本，v2 保留未知历史指纹标记；旧发布 operation 表仅在空且结构精确时删除；HITL 逻辑与物理净化成功后才落 marker，漂移或非空历史 fail closed |
+| P4：删除旧轨与契约迁移 | **已实施**：删除 live Workspace discard/snapshot、release restore/rollback、独立 provision 等旁路及陈旧 DTO；控制库当前 epoch 为 v4 | 精确 v1/v2/v3 先备份再事务迁移；通用 entities/event 与原生 chat 身份单次切换，旧治理关联和证据文件保留；活动 run、漂移或不支持的非空历史拒绝迁移。详细转换和回滚边界见 Runtime 实施基线 |
 | P5：真实验收与原子切换 | **正在进行／待结论**：公共 Make 容器入口、真实浏览器、历史数据、发布恢复及正式部署 | 必须绑定当前源码镜像、真实 provider/MCP、真实 API/SSE/OTLP、浏览器交互与部署数据；本记录不预先声称通过 |
 
 架构阈值在 P1 就处理：手写文件不超过 800 行、函数不超过 80 行、圈复杂度不超过 15、类公开方法
@@ -255,7 +259,7 @@ P0 → P1 → P2/P3 → P4 → P5；P2 与 P3 在接口边界冻结后并行收�
 | 当前整改与本记录 | P0–P4 应用、契约、迁移和文档已进入 4.0.1 工作树；P5 部署、真实容器／浏览器与私有数据验收另以现场证据记账 |
 | 根 AGENTS／Claude 规则、guidance、skill | 核对单轨和 Git 不可变约束；实施若改变操作流程则同步双宿主 skill，不复制 API 清单进根规则 |
 | script／hook／`config/*` | 操作级准入与禁止重复协议交给机器检查；规则单源，不用 docs 豁免新增债 |
-| README／docs | 已同步 P0–P4 真实契约与 v3 迁移边界；P5 未完成项继续明确标注，本文由 docs 索引发现 |
+| README／docs | 已同步 P0–P4 真实契约与 v4 迁移边界；P5 未完成项继续明确标注，本文由 docs 索引发现 |
 | memory | 不写入工程事实或私有数据；本次不更新 memory |
 
 数据迁移先做只读清单和可恢复备份：控制面 SQLite、业务 Agent Git、AgentScope 存储和版本绑定

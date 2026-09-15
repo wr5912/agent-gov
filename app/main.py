@@ -5,7 +5,6 @@ import hmac
 import logging
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from types import MappingProxyType
 
 from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,8 +67,6 @@ from app.services.workspace_execution_applier import WorkspaceExecutionApplier
 from app.version import APP_VERSION
 
 settings = get_settings()
-# Provider 与 MCP 凭据只属于 AgentScope Runtime；API 不读取或保留 Runtime env。
-runtime_env = MappingProxyType({})
 configure_runtime_logging(settings.log_level)
 logger = logging.getLogger("uvicorn.error")
 
@@ -106,8 +103,6 @@ feedback_store.set_langfuse_trace_fetcher(langfuse_client.fetch_trace)
 agent_governance = AgentGovernanceService(
     feedback_store=feedback_store,
     agent_version_store=agent_version_store,
-    runtime_mode=settings.runtime_volume_mode,
-    runtime_env=runtime_env,
 )
 agent_registry_store = AgentRegistryStore(runtime_db_session_factory)
 agent_registry_store.deletion_pending = run_store.agent_deletion_pending

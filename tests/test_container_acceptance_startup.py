@@ -54,7 +54,10 @@ def test_refresh_profile_declares_build_then_published_snapshot_preparation_then
         < source.index(prepare)
         < source.index(start)
         < source.rindex(daemon_boundary)
+        < source.index("docker_monitor.start()")
+        < source.index("for container in containers:")
     )
+    assert source.index("actions.verify_identity") < source.index("docker_monitor.bind(containers)")
     assert '"--rm"' in source and '"--no-deps"' in source and '"--pull",\n            "never"' in source
     assert '"--service-ports"' not in source
     assert acceptance.PROFILES[profile_name].build_services
@@ -297,36 +300,21 @@ def test_make_source_digest_uses_supported_python_and_fails_closed() -> None:
 
 def test_selected_env_wins_over_conflicting_host_value_in_real_compose_process(tmp_path: Path, process_environment) -> None:
     docker = shutil.which("docker")
-    if docker is None:
-        pytest.skip("docker is unavailable")
-    compose_version = subprocess.run([docker, "compose", "version"], check=False, capture_output=True, text=True)
-    if compose_version.returncode != 0:
+    if docker is None or subprocess.run([docker, "compose", "version"], check=False, capture_output=True).returncode != 0:
         pytest.skip("docker compose is unavailable")
-
-    process_environment.set("ACCEPTANCE_SELECTED_VALUE", "from-host")
-    process_environment.set("NO_PROXY", "from-host")
+    for name in ("AGENTSCOPE_MODEL_NAME", "NO_PROXY", "APP_VERSION", "AGENTGOV_RUNTIME_VERSION"):
+        process_environment.set(name, "from-host")
     source = tmp_path / "source.env"
-    source.write_text("ACCEPTANCE_SELECTED_VALUE=from-selected-env\nNO_PROXY=from-selected-env\n", encoding="utf-8")
-    isolation = acceptance.prepare_isolated_environment(source, "1234-compose-env", tmp_path)
-    child_env = acceptance.build_acceptance_env(
-        acceptance.PROFILES["core"],
-        isolation,
-        "1234-compose-env",
-        dict(os.environ),
-    )
-    compose_file = tmp_path / "compose.yml"
-    compose_file.write_text(
-        "services:\n"
-        "  probe:\n"
-        "    image: scratch\n"
-        "    environment:\n"
-        "      SELECTED_VALUE: ${ACCEPTANCE_SELECTED_VALUE:?selected value required}\n"
-        "      RUNNER_NO_PROXY: ${NO_PROXY:?runner no-proxy required}\n",
+    source.write_text(
+        "MODEL_PROVIDER_API_KEY=selected-provider\nAGENTSCOPE_MODEL_NAME=from-selected-env\n"
+        "NO_PROXY=from-selected-env\nAPP_VERSION=from-selected-env\n"
+        "AGENTGOV_RUNTIME_VERSION=from-selected-env\n",
         encoding="utf-8",
     )
-
+    isolation = acceptance.prepare_isolated_environment(source, "1234-compose-env", tmp_path)
+    child_env = acceptance.build_acceptance_env(acceptance.PROFILES["core"], isolation, "1234-compose-env", dict(os.environ))
     result = subprocess.run(
-        [docker, "compose", "--env-file", str(isolation.env_file), "-f", str(compose_file), "config", "--format", "json"],
+        [*acceptance.compose_command(acceptance.PROFILES["core"], isolation.env_file, docker_path=docker), "config", "--format", "json"],
         cwd=acceptance.REPO_ROOT,
         env=child_env,
         check=False,
@@ -335,9 +323,29 @@ def test_selected_env_wins_over_conflicting_host_value_in_real_compose_process(t
     )
 
     assert result.returncode == 0, result.stderr
-    environment = json.loads(result.stdout)["services"]["probe"]["environment"]
-    assert environment["SELECTED_VALUE"] == "from-selected-env"
-    assert environment["RUNNER_NO_PROXY"] == acceptance.LOOPBACK_NO_PROXY
+    services = json.loads(result.stdout)["services"]
+    image_tag = isolation.overrides["APP_VERSION"]
+    runtime = services["agentscope-runtime"]
+    assert image_tag == "acceptance-env"
+    assert runtime["image"] == f"agent-gov-agentscope-runtime:{image_tag}"
+    assert services["agent-gov-api"]["image"] == f"agent-gov-api:{image_tag}"
+    assert services["agent-gov-ui"]["image"] == f"agent-gov-ui:{image_tag}"
+    assert runtime["environment"]["AGENTGOV_RUNTIME_VERSION"] == (acceptance.REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    assert runtime["environment"]["AGENTGOV_RUNTIME_VERSION"] != image_tag
+    assert runtime["environment"]["AGENTSCOPE_MODEL_NAME"] == "from-selected-env"
+    assert services["agent-gov-api"]["environment"]["NO_PROXY"] == acceptance.LOOPBACK_NO_PROXY
+
+
+@pytest.mark.parametrize("version, message", [(None, "缺少产品 VERSION"), ("", "产品 VERSION 无效"), ("bad/version", "产品 VERSION 无效")])
+def test_acceptance_rejects_missing_or_invalid_frozen_version(tmp_path: Path, version: str | None, message: str) -> None:
+    frozen_root = tmp_path / "frozen-source"
+    frozen_root.mkdir()
+    if version is not None:
+        (frozen_root / "VERSION").write_text(version, encoding="utf-8")
+    selected = tmp_path / "source.env"
+    selected.write_text("MODEL_PROVIDER_API_KEY=selected-provider\n", encoding="utf-8")
+    with pytest.raises(acceptance.AcceptanceError, match=message):
+        acceptance.prepare_isolated_environment(selected, "1234-invalid-version", tmp_path, source_root=frozen_root, source_digest="a" * 64)
 
 
 def test_acceptance_fingerprint_covers_selected_and_effective_configuration(tmp_path: Path, monkeypatch) -> None:
@@ -452,6 +460,8 @@ def test_runner_snapshots_scenarios_after_lock_and_fingerprints_all_three_phases
     assert seal.index("verify_sealed_file") < seal.index("验收回执封存前")
     assert verify_result.index("verify_acceptance_context") < verify_result.index("verify_frozen_running_contract")
     assert verify_result.index("verify_frozen_running_contract") < verify_result.index("docker_monitor.verify")
+    assert verify_result.index("_daemon_support(child_env).verify") < verify_result.index("docker_monitor.verify")
+    assert verify_result.index("docker_monitor.verify") < verify_result.index("_verify_daemon_boundary")
     assert prepare.index("pre_freeze_source_sha256 = source_fingerprint") < prepare.index("_freeze_acceptance_source")
     assert prepare.index("_freeze_acceptance_source") < prepare.index("source_fingerprint(env_file) != pre_freeze_source_sha256")
 

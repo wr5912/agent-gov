@@ -5,11 +5,34 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, TypeAlias, cast
 
 from app.runtime.agent_git_errors import AgentGitError
 from app.runtime.json_types import JsonObject
 from app.runtime.workspace_commit_path import WorkspaceCommitPathError, validate_workspace_commit_path
+
+AgentGitFileMode: TypeAlias = Literal["100644", "100755"]
+REGULAR_GIT_FILE_MODES: frozenset[AgentGitFileMode] = frozenset({"100644", "100755"})
+
+
+@dataclass(frozen=True)
+class GitFileSnapshot:
+    """一个 Git tree 中逐字节、逐 mode 固定的普通文件快照。"""
+
+    path: str
+    mode: AgentGitFileMode
+    content: bytes
+
+    def to_entry(self) -> JsonObject:
+        return {
+            "path": self.path,
+            "type": "file",
+            "mode": self.mode,
+            "sha256": hashlib.sha256(self.content).hexdigest(),
+            "size": len(self.content),
+        }
 
 
 def run_git_read_only(args: list[str], *, cwd: Path) -> str:
@@ -19,7 +42,7 @@ def run_git_read_only(args: list[str], *, cwd: Path) -> str:
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_OPTIONAL_LOCKS"] = "0"
     proc = subprocess.run(
-        ["git", *args],
+        ["git", "-c", f"safe.directory={cwd.resolve()}", *args],
         cwd=str(cwd),
         env=env,
         text=True,
@@ -39,7 +62,7 @@ def run_git_read_only_bytes(args: list[str], *, cwd: Path) -> bytes:
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_OPTIONAL_LOCKS"] = "0"
     proc = subprocess.run(
-        ["git", *args],
+        ["git", "-c", f"safe.directory={cwd.resolve()}", *args],
         cwd=str(cwd),
         env=env,
         capture_output=True,
@@ -88,39 +111,57 @@ def safe_relative_path(path: str) -> str | None:
     return relative.as_posix()
 
 
-def read_file_at_ref(repository_dir: Path, ref: str, path: str) -> bytes | None:
+def read_file_snapshot_at_ref(repository_dir: Path, ref: str, path: str) -> GitFileSnapshot | None:
     safe_path = safe_relative_path(path)
     if not safe_path:
         return None
-    proc = subprocess.run(
-        ["git", "show", f"{ref}:{safe_path}"],
-        cwd=str(repository_dir),
-        capture_output=True,
-        check=False,
+    raw_tree = run_git_read_only_bytes(
+        ["ls-tree", "-z", "--full-tree", ref, "--", f":(literal){safe_path}"],
+        cwd=repository_dir,
     )
-    return proc.stdout if proc.returncode == 0 else None
+    if not raw_tree:
+        return None
+    if not raw_tree.endswith(b"\x00") or raw_tree.count(b"\x00") != 1:
+        raise AgentGitError("Git tree output contains an ambiguous file entry")
+    metadata, separator, raw_path = raw_tree[:-1].partition(b"\t")
+    fields = metadata.split()
+    if not separator or len(fields) != 3:
+        raise AgentGitError("Git tree output contains an invalid file entry")
+    raw_mode, object_type, object_id = fields
+    try:
+        resolved_path = validate_workspace_commit_path(raw_path).as_posix()
+        mode = raw_mode.decode("ascii")
+        object_id_text = object_id.decode("ascii")
+    except (UnicodeDecodeError, WorkspaceCommitPathError) as exc:
+        raise AgentGitError("Git tree output contains an invalid file identity") from exc
+    if resolved_path != safe_path:
+        raise AgentGitError("Git tree output returned a different file path")
+    if object_type != b"blob" or mode not in REGULAR_GIT_FILE_MODES:
+        raise AgentGitError("Git tree entry is not a supported regular file")
+    if len(object_id_text) not in {40, 64} or any(character not in "0123456789abcdef" for character in object_id_text):
+        raise AgentGitError("Git tree output contains an invalid object id")
+    content = run_git_read_only_bytes(["cat-file", "blob", object_id_text], cwd=repository_dir)
+    return GitFileSnapshot(path=safe_path, mode=cast(AgentGitFileMode, mode), content=content)
+
+
+def read_file_at_ref(repository_dir: Path, ref: str, path: str) -> bytes | None:
+    snapshot = read_file_snapshot_at_ref(repository_dir, ref, path)
+    return snapshot.content if snapshot is not None else None
 
 
 def file_entry(repository_dir: Path, ref: str, path: str) -> JsonObject | None:
-    data = read_file_at_ref(repository_dir, ref, path)
-    if data is None:
-        return None
-    return {
-        "path": path,
-        "type": "file",
-        "sha256": hashlib.sha256(data).hexdigest(),
-        "size": len(data),
-    }
+    snapshot = read_file_snapshot_at_ref(repository_dir, ref, path)
+    return snapshot.to_entry() if snapshot is not None else None
 
 
-def file_diff_status(before: bytes | None, after: bytes | None) -> str:
+def file_diff_status(before: GitFileSnapshot | None, after: GitFileSnapshot | None) -> str:
     if before is None and after is None:
         return "missing"
     if before is None:
         return "added"
     if after is None:
         return "deleted"
-    return "unchanged" if before == after else "modified"
+    return "unchanged" if (before.content, before.mode) == (after.content, after.mode) else "modified"
 
 
 def sha256_file(path: Path) -> str:

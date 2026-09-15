@@ -433,6 +433,17 @@ def _materialize_artifacts(
     return list(artifacts.values())
 
 
+def _seal_docker_plugin_directories(execution_root: Path, *, error_type: type[_E]) -> None:
+    """拒绝 BuildKit 认证缓存写入，不改变已绑定插件文件的 ctime。"""
+
+    docker_config = execution_root / "docker-config"
+    try:
+        (docker_config / "cli-plugins").chmod(0o500)
+        docker_config.chmod(0o500)
+    except OSError as exc:
+        _fail(error_type, "无法收紧验收 Docker 配置目录权限", exc)
+
+
 def materialize_acceptance_toolchain(
     source: AcceptanceToolchain,
     execution_root: Path,
@@ -461,6 +472,7 @@ def materialize_acceptance_toolchain(
         )
         for name, item in sorted(source_tools.items())
     ]
+    _seal_docker_plugin_directories(execution_root, error_type=error_type)
     artifacts = _materialize_artifacts(
         source_artifacts,
         execution_root,

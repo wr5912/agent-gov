@@ -124,12 +124,27 @@ export function failureDiagnostic(error, stage, events) {
     "RUNTIME_UI_BASE_PORT_OUT_OF_RANGE",
     "UI_DOCUMENT_INVALID",
     "UI_START_TIMEOUT",
+    "CANCELLATION_EVIDENCE_WINDOW_INVALID",
+    "EARLY_CANCEL_WINDOW_NOT_OBSERVED",
+    "EARLY_CANCEL_WINDOW_MISSED",
+    "EARLY_CANCEL_OBSERVER_ALREADY_ACTIVE",
+    "EARLY_CANCEL_ASSERTION_FAILED",
+    "PARTIAL_CANCEL_WINDOW_NOT_OBSERVED",
   ]);
   return {
     status: "failed",
     stage,
     code: codes.has(error?.message) ? error.message : "ACCEPTANCE_FAILED",
     kind: error?.name === "TimeoutError" ? "timeout" : "error",
+    ...(error?.message?.startsWith("EARLY_CANCEL_WINDOW_") ? {
+      window: {
+        assistant_observed: error.window?.assistantObserved === true,
+        stop_observed: Number.isFinite(error.window?.stopAt),
+        text_before_stop: Number.isFinite(error.window?.firstTextAt)
+          && Number.isFinite(error.window?.stopAt)
+          && error.window.firstTextAt <= error.window.stopAt,
+      },
+    } : {}),
     events,
   };
 }

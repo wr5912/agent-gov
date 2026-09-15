@@ -95,12 +95,21 @@ class AssetProvenanceImprovement(BaseModel):
     change_set_ids: list[str] = Field(default_factory=list, description="该改进事项已关联的 Agent 待发布变更。")
 
 
+class AssetProvenanceRelease(BaseModel):
+    release_id: str
+    agent_id: str
+    status: str
+    change_set_id: Optional[str] = None
+    commit_sha: str
+
+
 class AssetProvenanceResponse(BaseModel):
     """某次反馈的资产关系链（AGV-022）：反馈影响了哪个 Agent、进入哪些改进事项和待发布变更。"""
 
     feedback_case_id: str
     agent_ids: list[str] = Field(default_factory=list, description="该反馈归属的 Agent（影响了哪个 Agent）。")
     improvements: list[AssetProvenanceImprovement] = Field(default_factory=list)
+    released_versions: list[AssetProvenanceRelease] = Field(default_factory=list, description="由该反馈归属事项派生的已存在发布记录；不代表当前活动版本。")
 
 
 class AgentLifecycleTransitionRequest(BaseModel):

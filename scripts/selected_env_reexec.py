@@ -11,6 +11,7 @@ from pathlib import Path
 
 from scripts import selected_env_source_snapshot as source_snapshot
 from scripts.agentscope_atomic_cutover_bootstrap import freeze_deployable_source, source_artifact_sha256
+from scripts.agentscope_atomic_cutover_env import verify_stable_env_file
 from scripts.selected_env_operation_contract import DOCKER_BIND_OPERATIONS, OperationEnvironment, SelectedEnvError
 
 STAGE_ENV = "AGENTGOV_SELECTED_ENV_FROZEN_STAGE"
@@ -107,6 +108,7 @@ def frozen_command(
     *,
     no_build: bool,
     force_recreate: bool,
+    require_idle: bool = False,
 ) -> list[str]:
     command = [
         "python",
@@ -122,6 +124,8 @@ def frozen_command(
         command.append("--no-build")
     if force_recreate:
         command.append("--force-recreate")
+    if require_idle:
+        command.append("--require-idle")
     return command
 
 
@@ -132,6 +136,15 @@ def verify_running_from_frozen_source(source_root: Path, runner_file: Path) -> N
             raise SelectedEnvError("selected-env mutation runner 未从冻结 source 执行")
     except OSError as exc:
         raise SelectedEnvError("无法复验冻结 selected-env runner 路径") from exc
+
+
+def verify_stage_postconditions(snapshot: Path, child_env: Mapping[str, str], digest: str) -> None:
+    state = load_frozen_stage(child_env)
+    source_snapshot.verify_command_source(child_env, hash_source=source_artifact_sha256)
+    payload = snapshot.read_bytes()
+    verify_stable_env_file(state.original_env, payload, state.original_identity, error_type=SelectedEnvError)
+    if source_artifact_sha256(state.live_repo_root) != digest:
+        raise SelectedEnvError("deployable source 在部署事务期间发生变化；镜像/容器结果拒绝放行")
 
 
 def resolve_source_base(original_env: Path, configured: Path | None) -> Path:

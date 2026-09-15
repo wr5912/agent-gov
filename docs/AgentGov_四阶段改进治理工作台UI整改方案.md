@@ -601,6 +601,9 @@ AI 友好层与人类友好层必须同源：
 
 测试发布阶段不维护脱离业务 Agent 的测试内容数据库。测试必须和被测 Agent 的 prompt、skill、hook、MCP 配置及代码一起开发、评审、导入、导出和发布。
 
+本节定义 UI 中的测试产物、用户动作和结果呈现；testkit、固定 runner、会话生命周期与恢复的
+工程契约统一以[业务 Agent Workspace 原生 pytest 测试资产实现方案](./engineering/业务AgentWorkspace原生pytest测试资产实现方案.md)为准。
+
 ### 13.1 核心对象
 
 | 对象 | 定位 | 权威来源 |
@@ -662,20 +665,21 @@ workspace/
 
 ### 13.4 agentgov_testkit
 
-开发者可以在 Workspace 测试中使用版本化 Python 包：
+Workspace 测试可使用平台提供的 `agent` fixture：
 
 ```python
-from agentgov_testkit import invoke_agent
-
-
-def test_expected_behavior():
-    result = invoke_agent("输入一个业务问题")
+def test_expected_behavior(agent):
+    result = agent.run("输入一个业务问题")
+    assert not result.errors
     assert "预期业务结论" in result.text
 ```
 
-也可以使用 pytest 的 `agent` fixture。testkit 在一个 pytest session 内只解析一次精确 commit，但为每个
-测试函数创建并关闭独立 Agent 会话，避免历史消息和上下文窗口跨用例污染。testkit 封装被测 Agent 调用，
-不引入必须由开发者理解的平行 Client 类。测试断言在 pytest 进程中执行，平台不接收客户端上传的通过状态。
+testkit 在同一 pytest session 内固定精确 commit；`agent` fixture 是 function scope，只有使用
+该 fixture 的测试函数才由平台创建并关闭独立 AgentScope 会话。同一测试函数内的多轮 `agent.run(...)`
+共享该 fixture 的会话，用于验证连续交互；不能把隔离规则理解为每次调用都新建 Session。
+直接使用 `invoke_agent()` 时，开发者必须提供 `test_session_id` 或 `AGENTGOV_TEST_SESSION_ID`，
+其生命周期不由 pytest fixture 自动管理。详细接口与执行边界见上述 pytest 工程方案，
+测试断言仍在 pytest 进程中执行，平台不接收客户端上传的通过状态。
 
 ### 13.5 平台固定执行
 

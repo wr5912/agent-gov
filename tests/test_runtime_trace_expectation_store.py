@@ -11,7 +11,7 @@ from app.runtime_gateway.contracts import (
     RuntimeTeamInboxDelivery,
 )
 from app.runtime_gateway.models import RuntimeSessionBindingModel
-from app.runtime_gateway.store import RuntimeInputRejected, RuntimeRunStore
+from app.runtime_gateway.store import RuntimeRunStore, RuntimeStateConflict
 
 from runtime_hitl_test_utils import fingerprinted_hitl_payload
 
@@ -62,8 +62,7 @@ def _run_with_worker_facts(store: RuntimeRunStore) -> AgentRunResponse:
         session_id="root-session",
         runtime_agent_id="leader-runtime",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)
@@ -123,6 +122,7 @@ def _record_external_result(store: RuntimeRunStore, run: AgentRunResponse) -> No
         ),
     )
     decision = {
+        "id": "trace-expectation-external-result",
         "type": "EXTERNAL_EXECUTION_RESULT",
         "reply_id": "worker-reply",
         "execution_results": [
@@ -135,26 +135,27 @@ def _record_external_result(store: RuntimeRunStore, run: AgentRunResponse) -> No
             },
         ],
     }
-    with pytest.raises(RuntimeInputRejected, match="client_operation_id is required"):
+    with pytest.raises(RuntimeStateConflict, match="unknown or ambiguous tool call"):
         store.begin_run(
-            session_id="root-session",
-            runtime_agent_id="leader-runtime",
-            input_value=decision,
-            alert_id=None,
-            case_id=None,
+            session_id="worker-session",
+            runtime_agent_id="worker-runtime",
+            input_value={**decision, "reply_id": "unknown-reply"},
+            entities={},
             metadata={},
-            expected_run_id=run.run_id,
         )
-    store.begin_run(
-        session_id="root-session",
-        runtime_agent_id="leader-runtime",
+    admission = store.admit_run(
+        session_id="worker-session",
+        runtime_agent_id="worker-runtime",
         input_value=decision,
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
-        client_operation_id="trace-expectation-external-result",
-        expected_run_id=run.run_id,
     )
+    assert admission.run.run_id == run.run_id
+    assert admission.run.trace_id == run.trace_id
+    operation = store.chat_operation_for_key(admission.operation_key)
+    assert operation.root_session_id == "root-session"
+    assert operation.action_session_id == "worker-session"
+    assert operation.runtime_agent_id == "worker-runtime"
     store.apply_receipt(
         _receipt(
             run,
@@ -207,3 +208,25 @@ def test_trace_expectations_are_derived_from_receipts_actions_and_team_ledger(tm
         assert child is not None
         child.team_id = None
     assert store.trace_expectations(run.run_id).control_integrity_complete is False
+
+
+@pytest.mark.parametrize("state", ["success", "error", "interrupted", "denied", "running"])
+def test_trace_expectations_preserve_each_durable_tool_result_state(tmp_path, state: str) -> None:
+    store = _store(tmp_path)
+    run = _run_with_worker_facts(store)
+    store.apply_receipt(
+        _receipt(
+            run,
+            "TOOL_RESULT_END",
+            session_id="worker-session",
+            reply_id="worker-reply",
+            payload={"tool_call_id": f"call-{state}", "state": state},
+        ),
+    )
+
+    expectations = store.trace_expectations(run.run_id)
+
+    matching = [item for item in expectations.tool_results if item.tool_call_id == f"call-{state}"]
+    assert len(matching) == 1
+    assert matching[0].state == state
+    assert matching[0].source == "tool_result_receipt"

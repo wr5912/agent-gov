@@ -214,7 +214,7 @@ def _read_commit_blob_contents(
         return ()
     with tempfile.TemporaryFile() as stderr_output:
         process = subprocess.Popen(
-            ["git", "cat-file", "--batch"],
+            ["git", "-c", f"safe.directory={repository.resolve()}", "cat-file", "--batch"],
             cwd=str(repository),
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             stdin=subprocess.PIPE,

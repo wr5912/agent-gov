@@ -5,8 +5,6 @@ import {
   getAgentChangeSets,
   getAgentReleases,
   getHealth,
-  getRuntimeSessionMessages,
-  getRuntimeSessionStatus,
   getRuntimeWorkspaceMcps,
   getRuntimeWorkspaceSkills,
   getRuntimeWorkspaceStatus,
@@ -37,7 +35,8 @@ import {
   cancelWaitingExternalExecutionRequests,
   patchExternalExecutionRequest,
 } from "./runtimeExternalExecutionState";
-import { activeAgentGovRun, messagesFromAgentScopeMessages } from "./playgroundHistory";
+import { activeAgentGovRun } from "./playgroundHistory";
+import { loadPlaygroundHistory, recoverPlaygroundHistory } from "./playgroundHistoryLoad";
 import { usePromptSuggestion } from "./hooks/usePromptSuggestion";
 import {
   initialPlaygroundRunState,
@@ -45,8 +44,8 @@ import {
   playgroundRunReducer,
 } from "./playgroundRunState";
 import type { AgentChangeSet, AgentRelease, AgentSummary, ChatMessage, RuntimeClientConfig, RuntimeExternalExecutionRequest, RuntimeHealth, RuntimeUserConfirmRequest, SessionInfo } from "./types/runtime";
-import { getAgentRunPendingActions, getAgentRuns } from "./api/feedback";
 import { defaultLangfuseUrl, makeApiDocsUrl } from "./runtimeUrls";
+import { formatFeedbackEntities } from "./feedbackEntities";
 import "./styles.css";
 
 export default function App() {
@@ -70,8 +69,6 @@ export default function App() {
     claimLocalSession,
     forgetSession,
   } = usePlaygroundSessionScope({ sessions });
-  const [alertId, setAlertId] = useState("");
-  const [caseId, setCaseId] = useState("");
   const [input, setInput] = useState("");
   const [runState, dispatchRun] = useReducer(playgroundRunReducer, initialPlaygroundRunState);
   const streaming = isPlaygroundRunLocked(runState);
@@ -118,8 +115,6 @@ export default function App() {
   const calibrateTrace = usePlaygroundTrace(effectiveClientConfig, setMessagesBySession);
 
   const resetPlaygroundTransientState = useCallback(() => {
-    setAlertId("");
-    setCaseId("");
     setInput("");
     setStreamingAssistantMessageId(undefined);
     setUserInputErrors({});
@@ -326,14 +321,21 @@ export default function App() {
     ) return;
 
     const controller = new AbortController();
-    void loadPlaygroundHistory(
+    let recoveryMessage: string | undefined;
+    void recoverPlaygroundHistory(
       effectiveClientConfig,
       activeRuntimeAgentId,
       activeSessionId,
       controller.signal,
+      (error) => {
+        if (controller.signal.aborted) return;
+        recoveryMessage = `加载历史会话暂时失败：${error.message}；正在继续恢复同一会话。`;
+        setLastError(recoveryMessage);
+      },
     )
       .then(({ history, status, runs, restoredMessages }) => {
         if (controller.signal.aborted) return;
+        if (recoveryMessage) setLastError((current) => current === recoveryMessage ? undefined : current);
         setMessagesBySession((prev) => {
           if ((prev[activeSessionId] || []).length > 0) return prev;
           return { ...prev, [activeSessionId]: restoredMessages };
@@ -475,8 +477,6 @@ export default function App() {
     activeMessagesLoaded,
     selectedBusinessAgentId,
     runtimeAgentId: activeRuntimeAgentId,
-    alertId,
-    caseId,
     promptSuggestion,
     setInput,
     setStreamingAssistantMessageId,
@@ -548,16 +548,13 @@ export default function App() {
   const currentAgentName = selectedBusinessAgent?.name || (selectedBusinessAgentId || "默认业务 Agent");
 
   function openFeedbackDrawer(message?: ChatMessage) {
-    const feedbackAlertId = message?.alertId || alertId.trim() || undefined;
-    const feedbackCaseId = message?.caseId || caseId.trim() || undefined;
     setFeedbackContext({
       runId: message?.runId,
       sessionId: message?.sessionId || activeSessionId,
       agentVersionId: message?.agentVersionId || selectedBusinessAgent?.agent_version_id || undefined,
-      scenario: feedbackCaseId ? `case:${feedbackCaseId}` : feedbackAlertId ? `alert:${feedbackAlertId}` : "playground",
+      scenario: "playground",
       taskId: message?.runId || activeSessionId || undefined,
-      alertId: feedbackAlertId,
-      caseId: feedbackCaseId,
+      entities: message?.entities,
       // selectedBusinessAgentId 已由实际 Agent 列表解析（优先默认业务 Agent，再取首个可用项）。
       agentId: selectedBusinessAgentId,
       agentName: currentAgentName,
@@ -574,8 +571,7 @@ export default function App() {
       `Agent Version: ${message.agentVersionId || selectedBusinessAgent?.agent_version_id || "-"}`,
       `Session: ${message.sessionId || activeSessionId || "-"}`,
       `Run: ${message.runId || "-"}`,
-      `Alert: ${message.alertId || alertId.trim() || "-"}`,
-      `Case: ${message.caseId || caseId.trim() || "-"}`,
+      `业务对象引用: ${formatFeedbackEntities(message.entities)}`,
       "",
       message.content,
     ].join("\n");
@@ -655,6 +651,7 @@ export default function App() {
             agentName={currentAgentName}
             agentPresentation={agentPresentation}
             runtimeReady={Boolean(activeRuntimeAgentId)}
+            error={lastError}
             promptSuggestions={promptSuggestion.suggestions}
             onInputChange={promptSuggestion.handleInputChange}
             onUsePromptSuggestion={promptSuggestion.apply}
@@ -745,27 +742,4 @@ function precedingUserInput(messages: ChatMessage[], messageId: string) {
     if (messages[current].role === "user") return messages[current].content;
   }
   return undefined;
-}
-
-async function loadPlaygroundHistory(
-  config: RuntimeClientConfig,
-  agentId: string,
-  sessionId: string,
-  signal?: AbortSignal,
-) {
-  const [history, status, runs] = await Promise.all([
-    getRuntimeSessionMessages(config, agentId, sessionId, signal),
-    getRuntimeSessionStatus(config, agentId, sessionId, signal),
-    getAgentRuns(config, { session_id: sessionId, limit: 500 }, signal),
-  ]);
-  const waitingRun = runs.find((run) => ["waiting_human", "waiting_external"].includes(String(run.status || "")));
-  const pendingActions = waitingRun?.run_id
-    ? await getAgentRunPendingActions(config, waitingRun.run_id, signal)
-    : [];
-  return {
-    history,
-    status,
-    runs,
-    restoredMessages: await messagesFromAgentScopeMessages(history.messages, sessionId, runs, pendingActions),
-  };
 }

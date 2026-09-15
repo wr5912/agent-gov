@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found
 from app.runtime.json_types import JsonObject
 from app.runtime.records.source_records import (
+    FeedbackEventType,
     FeedbackSignalSourceType,
     FeedbackSourceKind,
-    SocEventType,
 )
 from app.runtime.schemas import (
     AssetProvenanceImprovement,
+    AssetProvenanceRelease,
     AssetProvenanceResponse,
+    FeedbackEventIngestRequest,
+    FeedbackEventIngestResponse,
+    FeedbackEventResponse,
     FeedbackSignalCreateRequest,
     FeedbackSignalReassignRequest,
     FeedbackSignalResponse,
@@ -21,14 +26,12 @@ from app.runtime.schemas import (
     FeedbackSourceUpdateRequest,
     PendingCorrelationResolveRequest,
     PendingCorrelationResponse,
-    SocEventIngestRequest,
-    SocEventIngestResponse,
-    SocEventResponse,
 )
 from app.runtime.state_machines import PendingCorrelationStatus
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.runtime_gateway.contracts import AgentRunResponse
+from app.services.agent_release_provenance import released_versions_for_feedback_case
 
 
 def create_feedback_workbench_router(
@@ -41,7 +44,7 @@ def create_feedback_workbench_router(
     _register_agent_run_list_route(router, feedback_store)
     _register_feedback_signal_routes(router, feedback_store)
     _register_feedback_provenance_route(router, feedback_store, improvement_store)
-    _register_soc_event_routes(router, feedback_store)
+    _register_feedback_event_routes(router, feedback_store)
     _register_pending_correlation_routes(router, feedback_store)
     _register_feedback_source_routes(router, feedback_store)
     return router
@@ -59,13 +62,24 @@ def _register_agent_run_list_route(router: APIRouter, feedback_store: FeedbackSt
     async def list_agent_runs(
         run_id: str | None = None,
         session_id: str | None = None,
-        alert_id: str | None = None,
-        case_id: str | None = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
         agent_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
+        before_created_at: str | None = Query(default=None, min_length=1, max_length=64),
+        before_run_id: str | None = Query(default=None, min_length=1, max_length=128),
         include_messages: bool = Query(default=False, deprecated=True, description="Ignored; messages are owned by AgentScope."),
     ) -> list[JsonObject]:
-        runs = feedback_store.list_runs(run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, agent_id=agent_id, limit=limit)
+        runs = feedback_store.list_runs(
+            run_id=run_id,
+            session_id=session_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            agent_id=agent_id,
+            limit=limit,
+            before_created_at=before_created_at,
+            before_run_id=before_run_id,
+        )
         del include_messages
         return runs
 
@@ -91,8 +105,8 @@ def _register_feedback_signal_routes(
     async def list_feedback_signals(
         run_id: str | None = None,
         session_id: str | None = None,
-        alert_id: str | None = None,
-        case_id: str | None = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
         source_type: FeedbackSignalSourceType | None = None,
         agent_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
@@ -100,8 +114,8 @@ def _register_feedback_signal_routes(
         return feedback_store.list_signals(
             run_id=run_id,
             session_id=session_id,
-            alert_id=alert_id,
-            case_id=case_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
             source_type=source_type,
             agent_id=agent_id,
             limit=limit,
@@ -154,7 +168,8 @@ def _register_feedback_provenance_route(
     )
     async def feedback_asset_provenance(feedback_case_id: str) -> AssetProvenanceResponse:
         case = ensure_found(feedback_store.find_case(feedback_case_id), "Feedback case not found")
-        agent_ids: list[str] = []
+        case_agent_id = case.get("agent_id")
+        agent_ids = [case_agent_id] if isinstance(case_agent_id, str) and case_agent_id else []
         for signal_id in case.get("signal_ids") or []:
             signal = feedback_store.find_signal(signal_id)
             agent_id = (signal or {}).get("agent_id")
@@ -167,49 +182,52 @@ def _register_feedback_provenance_route(
             feedback_case_id=feedback_case_id,
             agent_ids=agent_ids,
             improvements=improvements,
+            released_versions=[
+                AssetProvenanceRelease(**asdict(reference)) for reference in released_versions_for_feedback_case(feedback_store.Session, feedback_case_id)
+            ],
         )
 
 
-def _register_soc_event_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+def _register_feedback_event_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
 
     @router.post(
-        "/soc-events",
-        response_model=SocEventIngestResponse,
-        summary="Collect one SOC event without attribution or proposal generation",
+        "/feedback-events",
+        response_model=FeedbackEventIngestResponse,
+        summary="Collect one business event without attribution or proposal generation",
     )
-    async def ingest_soc_event(req: SocEventIngestRequest) -> SocEventIngestResponse:
-        return SocEventIngestResponse(**feedback_store.ingest_soc_event(req))
+    async def ingest_feedback_event(req: FeedbackEventIngestRequest) -> FeedbackEventIngestResponse:
+        return FeedbackEventIngestResponse.model_validate(feedback_store.ingest_feedback_event(req).to_payload())
 
     @router.get(
-        "/soc-events",
-        response_model=list[SocEventResponse],
-        summary="List collected SOC events",
+        "/feedback-events",
+        response_model=list[FeedbackEventResponse],
+        summary="List collected business events",
     )
-    async def list_soc_events(
+    async def list_feedback_events(
         run_id: str | None = None,
         session_id: str | None = None,
-        alert_id: str | None = None,
-        case_id: str | None = None,
-        event_type: SocEventType | None = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        event_type: FeedbackEventType | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[SocEventResponse]:
+    ) -> list[FeedbackEventResponse]:
         return feedback_store.list_events(
             run_id=run_id,
             session_id=session_id,
-            alert_id=alert_id,
-            case_id=case_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
             event_type=event_type,
             limit=limit,
         )
 
     @router.get(
-        "/soc-events/{event_id}",
-        response_model=SocEventResponse,
-        summary="Get one SOC event",
+        "/feedback-events/{event_id}",
+        response_model=FeedbackEventResponse,
+        summary="Get one business event",
     )
-    async def get_soc_event(event_id: str) -> SocEventResponse:
+    async def get_feedback_event(event_id: str) -> FeedbackEventResponse:
         event = feedback_store.find_event(event_id)
-        return ensure_found(event, "SOC event not found")
+        return ensure_found(event, "business event not found")
 
 
 def _register_pending_correlation_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
@@ -235,8 +253,7 @@ def _register_pending_correlation_routes(router: APIRouter, feedback_store: Feed
             pending_id,
             run_id=req.run_id,
             session_id=req.session_id,
-            alert_id=req.alert_id,
-            case_id=req.case_id,
+            entities=req.entities,
             comment=req.comment,
         )
         return ensure_found(resolved, "Pending correlation not found")

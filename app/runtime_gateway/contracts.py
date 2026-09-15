@@ -5,15 +5,20 @@ from enum import StrEnum
 from typing import Any, Literal, Protocol, TypeAlias
 
 from agentgov_run_permission import is_bounded_run_path_rule
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.runtime.feedback_entities import FeedbackEntities
 from app.runtime.json_types import JsonObject
+
+from .native_chat_input import (
+    GOVERNED_EVIDENCE_ROOT_METADATA_KEY as GOVERNED_EVIDENCE_ROOT_METADATA_KEY,
+)
+from .native_chat_input import RuntimeChatRequest as RuntimeChatRequest
 
 RuntimeReceiptPayload: TypeAlias = JsonObject
 RuntimeToolResultState: TypeAlias = Literal["success", "error", "interrupted", "denied", "running"]
 RuntimeToolCallState: TypeAlias = Literal["pending", "asking", "allowed", "submitted", "finished"]
 RuntimeTraceActionStatus: TypeAlias = Literal["pending", "resolved", "expired"]
-GOVERNED_EVIDENCE_ROOT_METADATA_KEY = "agentgov_governed_evidence_root"
 
 
 class RunStatus(StrEnum):
@@ -106,52 +111,6 @@ class RuntimeCurrentVersionResponse(BaseModel):
     provisioned: bool
 
 
-class RuntimeChatRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    agent_id: str = Field(
-        min_length=1,
-        max_length=128,
-        description="AgentScope runtime_agent_id pinned by the target Session",
-    )
-    session_id: str = Field(min_length=1, max_length=128)
-    client_operation_id: str = Field(
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
-        description="Stable client-side idempotency identity for this logical turn",
-    )
-    input: Any
-    confirmation_scope: ConfirmationScope = ConfirmationScope.ONCE
-    expected_run_id: str | None = Field(default=None, min_length=1, max_length=128)
-    alert_id: str | None = Field(default=None, max_length=256)
-    case_id: str | None = Field(default=None, max_length=256)
-    metadata: JsonObject = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def _scope_only_applies_to_user_confirmation(self) -> RuntimeChatRequest:
-        if _contains_governed_evidence_root(self.input) or _contains_governed_evidence_root(self.metadata):
-            raise ValueError(
-                f"{GOVERNED_EVIDENCE_ROOT_METADATA_KEY} is reserved for trusted backend injection",
-            )
-        confirmation = is_confirmation_input(self.input)
-        if confirmation and self.expected_run_id is None:
-            raise ValueError("expected_run_id is required for a HITL continuation")
-        if not confirmation and self.expected_run_id is not None:
-            raise ValueError("expected_run_id only applies to a HITL continuation")
-        if self.confirmation_scope is ConfirmationScope.RUN and (not isinstance(self.input, dict) or self.input.get("type") != "USER_CONFIRM_RESULT"):
-            raise ValueError("confirmation_scope=run only applies to USER_CONFIRM_RESULT")
-        return self
-
-
-def _contains_governed_evidence_root(value: object) -> bool:
-    if isinstance(value, Mapping):
-        return GOVERNED_EVIDENCE_ROOT_METADATA_KEY in value or any(_contains_governed_evidence_root(item) for item in value.values())
-    if isinstance(value, list):
-        return any(_contains_governed_evidence_root(item) for item in value)
-    return False
-
-
 class RuntimeReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -236,7 +195,6 @@ class RuntimeBootAck(BaseModel):
 class AgentRunResponse(BaseModel):
     run_id: str
     session_id: str
-    client_operation_id: str | None = None
     agent_id: str
     agent_version_id: str
     runtime_agent_id: str
@@ -253,8 +211,7 @@ class AgentRunResponse(BaseModel):
     trace_status: Literal["pending", "complete", "incomplete"] = "pending"
     terminal_reason: str | None = None
     error: JsonObject | None = None
-    alert_id: str | None = None
-    case_id: str | None = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     metadata: JsonObject = Field(default_factory=dict)
     created_at: str
     started_at: str | None = None
@@ -279,6 +236,7 @@ class RuntimePendingActionResponse(RuntimeToolCallFingerprint):
 
     action_id: str
     session_id: str
+    runtime_agent_id: str
     run_id: str
     reply_id: str
     kind: Literal["human", "external"]

@@ -101,10 +101,16 @@ export function MessageBubble({
             {runOutcomeLabel(message)}
           </div>
         ) : null}
+        {message.role === "assistant" && message.executionError ? (
+          <div className="message-run-control-error" role="alert" data-testid="message-execution-error">
+            {message.executionError.type ? <strong>{message.executionError.type}: </strong> : null}
+            {message.executionError.message}
+          </div>
+        ) : null}
         {message.role === "assistant" && message.controlError ? (
           <div className="message-run-control-error" role="status">{message.controlError}</div>
         ) : null}
-        {message.role === "assistant" && !isActiveStreaming && hasContent ? (
+        {message.role === "assistant" && !isActiveStreaming && (hasContent || message.runOutcome || message.executionError) ? (
           <div className="message-detail-actions" data-testid="message-actions">
             <button
               className="message-detail-button"

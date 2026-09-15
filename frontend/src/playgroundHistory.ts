@@ -21,6 +21,8 @@ const ACTIVE_AGENTGOV_RUN_STATUSES = new Set([
   "finalizing",
 ]);
 
+export type CanonicalMessagesBySession = ReadonlyMap<string, readonly AgentScopeMessage[]>;
+
 export function activeAgentGovRun(runs: FeedbackRunRecord[]) {
   return [...runs].reverse().find((run) => {
     const value = typeof run.status === "string" ? run.status : run.turn_status;
@@ -33,34 +35,43 @@ export async function messagesFromAgentScopeMessages(
   sessionId: string,
   runs: FeedbackRunRecord[] = [],
   pendingActions: RuntimePendingAction[] = [],
+  canonicalMessagesBySession?: CanonicalMessagesBySession,
 ): Promise<ChatMessage[]> {
+  const sessionRuns = runs.filter((run) => run.session_id === sessionId);
+  const runsByReply = indexRunsByReply(sessionRuns);
   const messages = items.flatMap((item) => {
     const content = visibleText(item.content);
-    const run = runForMessage(item, runs);
-    const fallback = terminalFallback(item);
-    if (!content && !fallback && item.role !== "assistant") return [];
+    const run = runsByReply.get(item.id);
+    if (!content && item.role !== "assistant") return [];
     const message: ChatMessage = {
       id: item.id,
       role: item.role,
-      content: content || fallback,
+      content,
       createdAt: item.created_at,
       sessionId,
       events: [],
       runOutcome: outcomeFromMessage(item),
       partial: item.finished_reason != null && item.finished_reason !== "completed" && Boolean(content),
+      executionError: executionErrorFromMessage(item)
+        || (run?.status === "failed" ? executionErrorFromRun(run) : undefined),
     };
-    return [mergeChatMessageRunContext(message, run || item.metadata)];
+    return [mergeChatMessageRunContext(message, run)];
   });
-  const humanResolved = await appendPendingConfirmRequests(messages, items, pendingActions, sessionId);
-  const externalResolved = await appendPendingExternalExecutionRequests(messages, items, pendingActions, sessionId);
+  const canonicalMessages = canonicalMessagesBySession || new Map([[sessionId, items]]);
+  const humanResolved = await appendPendingConfirmRequests(
+    messages, canonicalMessages, pendingActions, sessionId, sessionRuns,
+  );
+  const externalResolved = await appendPendingExternalExecutionRequests(
+    messages, canonicalMessages, pendingActions, sessionId, sessionRuns,
+  );
   appendUnavailablePendingActionNotices(
     messages,
-    runs,
+    sessionRuns,
     pendingActions,
     new Set([...humanResolved, ...externalResolved]),
     sessionId,
   );
-  appendUnrepresentedRuns(messages, runs, sessionId);
+  appendUnrepresentedRuns(messages, sessionRuns, sessionId);
   return messages;
 }
 
@@ -78,8 +89,11 @@ export function mergeExactRunEventsIntoCanonicalMessages(
   runId: string,
   fallbackAssistantId?: string,
 ): ChatMessage[] {
+  canonical = preserveCanonicalRunContext(current, canonical);
+  const sessionId = canonical.find((message) => message.runId === runId)?.sessionId;
+  if (!sessionId) return canonical;
   const assistantIds = new Set(canonical.filter((message) => (
-    message.role === "assistant" && message.runId === runId
+    message.role === "assistant" && message.runId === runId && message.sessionId === sessionId
   )).map((message) => message.id));
   const fallbackId = fallbackAssistantId && assistantIds.has(fallbackAssistantId)
     ? fallbackAssistantId
@@ -88,6 +102,7 @@ export function mergeExactRunEventsIntoCanonicalMessages(
 
   const eventsByAssistant = new Map<string, StreamLogEvent[]>();
   for (const message of current) {
+    if (message.sessionId !== sessionId) continue;
     for (const event of message.events || []) {
       if (traceEventRunId(event) !== runId) continue;
       const replyId = traceEventReplyId(event);
@@ -105,6 +120,36 @@ export function mergeExactRunEventsIntoCanonicalMessages(
   });
 }
 
+function preserveCanonicalRunContext(current: ChatMessage[], canonical: ChatMessage[]): ChatMessage[] {
+  const previous = new Map(current.filter((message) => message.sessionId).map((message) => (
+    [JSON.stringify([message.sessionId, message.role, message.id]), message]
+  )));
+  return canonical.map((message) => {
+    const prior = previous.get(JSON.stringify([message.sessionId, message.role, message.id]));
+    if (!prior?.runId || (message.runId && prior.runId !== message.runId)) return message;
+    const runId = message.runId || prior.runId;
+    const events = [...(message.events || [])];
+    const ids = new Set(events.map((event) => event.id));
+    for (const event of prior.events || []) {
+      if (traceEventRunId(event) !== runId || ids.has(event.id)) continue;
+      events.push(event);
+      ids.add(event.id);
+    }
+    return {
+      ...message,
+      runId,
+      agentVersionId: message.agentVersionId || prior.agentVersionId,
+      entities: message.entities ?? prior.entities,
+      langfuseTraceId: message.langfuseTraceId || prior.langfuseTraceId,
+      langfuseTraceUrl: message.langfuseTraceUrl || prior.langfuseTraceUrl,
+      langfuseTraceStatus: message.langfuseTraceStatus || prior.langfuseTraceStatus,
+      traceState: prior.traceState,
+      traceError: prior.traceError,
+      events,
+    };
+  });
+}
+
 function traceEventRunId(event: StreamLogEvent): string | undefined {
   return isRecord(event.data) && typeof event.data.run_id === "string" ? event.data.run_id : undefined;
 }
@@ -118,6 +163,7 @@ interface PendingActionGroup {
   key: string;
   runId: string;
   sessionId: string;
+  runtimeAgentId: string;
   replyId: string;
   kind: "human" | "external";
   actions: RuntimePendingAction[];
@@ -125,22 +171,24 @@ interface PendingActionGroup {
 
 async function appendPendingExternalExecutionRequests(
   messages: ChatMessage[],
-  sourceMessages: AgentScopeMessage[],
+  canonicalMessages: CanonicalMessagesBySession,
   actions: RuntimePendingAction[],
   sessionId: string,
+  runs: FeedbackRunRecord[],
 ) {
   const resolved = new Set<string>();
   for (const group of pendingActionGroups(actions, "external")) {
-    const toolCalls = await canonicalToolCalls(sourceMessages, group, sessionId);
+    const toolCalls = await canonicalToolCalls(canonicalMessages, group);
     if (!toolCalls) continue;
     const request: RuntimeExternalExecutionRequest = {
       requestId: `pending-external:${group.key}`,
       replyId: group.replyId,
       workerSessionId: group.sessionId === sessionId ? undefined : group.sessionId,
+      workerRuntimeAgentId: group.sessionId === sessionId ? undefined : group.runtimeAgentId,
       toolCalls,
       status: "waiting",
     };
-    const target = messages.find((message) => message.role === "assistant" && message.id === group.replyId && message.runId === group.runId);
+    const target = pendingActionTarget(messages, group, sessionId, runs);
     if (target) {
       target.externalExecutionRequests = mergeExternalRequests(target.externalExecutionRequests, request);
       resolved.add(group.key);
@@ -159,22 +207,24 @@ function mergeExternalRequests(
 
 async function appendPendingConfirmRequests(
   messages: ChatMessage[],
-  sourceMessages: AgentScopeMessage[],
+  canonicalMessages: CanonicalMessagesBySession,
   actions: RuntimePendingAction[],
   sessionId: string,
+  runs: FeedbackRunRecord[],
 ) {
   const resolved = new Set<string>();
   for (const group of pendingActionGroups(actions, "human")) {
-    const toolCalls = await canonicalToolCalls(sourceMessages, group, sessionId);
+    const toolCalls = await canonicalToolCalls(canonicalMessages, group);
     if (!toolCalls) continue;
     const request: RuntimeUserConfirmRequest = {
       requestId: `pending:${group.key}`,
       replyId: group.replyId,
       workerSessionId: group.sessionId === sessionId ? undefined : group.sessionId,
+      workerRuntimeAgentId: group.sessionId === sessionId ? undefined : group.runtimeAgentId,
       toolCalls,
       status: "waiting",
     };
-    const target = messages.find((message) => message.role === "assistant" && message.id === group.replyId && message.runId === group.runId);
+    const target = pendingActionTarget(messages, group, sessionId, runs);
     if (target) {
       target.userConfirmRequests = mergeUserConfirmRequests(target.userConfirmRequests, [request]);
       resolved.add(group.key);
@@ -197,6 +247,7 @@ function pendingActionGroups(
       key,
       runId: action.run_id,
       sessionId: action.session_id,
+      runtimeAgentId: action.runtime_agent_id,
       replyId: action.reply_id,
       kind,
       actions: [action],
@@ -206,11 +257,12 @@ function pendingActionGroups(
 }
 
 async function canonicalToolCalls(
-  messages: AgentScopeMessage[],
+  messagesBySession: CanonicalMessagesBySession,
   group: PendingActionGroup,
-  sessionId: string,
 ): Promise<AgentScopeToolCallBlock[] | undefined> {
-  if (group.sessionId !== sessionId) return undefined;
+  const messages = messagesBySession.get(group.sessionId);
+  if (!messages) return undefined;
+  if (group.actions.some((action) => action.runtime_agent_id !== group.runtimeAgentId)) return undefined;
   const message = messages.find((item) => item.role === "assistant" && !item.finished_reason && item.id === group.replyId);
   if (!message) return undefined;
   const available = message.content.filter((block): block is AgentScopeToolCallBlock => (
@@ -231,6 +283,39 @@ async function canonicalToolCalls(
     selected.push(toolCall);
   }
   return selected;
+}
+
+function pendingActionTarget(
+  messages: ChatMessage[],
+  group: PendingActionGroup,
+  rootSessionId: string,
+  runs: FeedbackRunRecord[],
+): ChatMessage | undefined {
+  const exact = messages.find((message) => (
+    message.role === "assistant" && message.id === group.replyId && message.runId === group.runId
+  ));
+  if (exact || group.sessionId === rootSessionId) return exact;
+
+  const existing = messages.find((message) => (
+    message.role === "assistant" && message.id === pendingActionAnchorId(group) && message.runId === group.runId
+  ));
+  if (existing) return existing;
+  const run = runs.find((item) => item.run_id === group.runId && item.session_id === rootSessionId);
+  if (!run) return undefined;
+  const anchor = mergeChatMessageRunContext({
+    id: pendingActionAnchorId(group),
+    role: "assistant",
+    content: "",
+    createdAt: String(group.actions[0]?.created_at || run.updated_at || run.created_at || ""),
+    sessionId: rootSessionId,
+    events: [],
+  }, run);
+  messages.push(anchor);
+  return anchor;
+}
+
+function pendingActionAnchorId(group: PendingActionGroup) {
+  return `history_pending_${group.key}`;
 }
 
 export async function toolCallMatchesPendingAction(
@@ -284,13 +369,15 @@ function visibleText(blocks: AgentScopeContentBlock[]): string {
   }).join("\n\n");
 }
 
-function runForMessage(message: AgentScopeMessage, runs: FeedbackRunRecord[]) {
-  const metadataRunId = typeof message.metadata.run_id === "string" ? message.metadata.run_id : undefined;
-  if (metadataRunId) return runs.find((run) => run.run_id === metadataRunId) || message.metadata;
-  return runs.find((run) => (
-    Array.isArray(run.reply_ids)
-    && run.reply_ids.some((replyId) => replyId === message.id)
-  ));
+function indexRunsByReply(runs: FeedbackRunRecord[]): Map<string, FeedbackRunRecord | null> {
+  const indexed = new Map<string, FeedbackRunRecord | null>();
+  for (const run of runs) {
+    for (const replyId of run.reply_ids || []) {
+      const previous = indexed.get(replyId);
+      indexed.set(replyId, previous === undefined || previous?.run_id === run.run_id ? run : null);
+    }
+  }
+  return indexed;
 }
 
 function outcomeFromMessage(message: AgentScopeMessage): ChatMessage["runOutcome"] {
@@ -300,12 +387,17 @@ function outcomeFromMessage(message: AgentScopeMessage): ChatMessage["runOutcome
   return undefined;
 }
 
-function terminalFallback(message: AgentScopeMessage): string {
-  if (message.error?.message) return `运行失败：\n${message.error.message}`;
-  if (message.finished_reason === "interrupted") return "运行被中断。";
-  if (message.finished_reason === "exceed_max_iters") return "运行达到最大迭代次数。";
-  if (message.finished_reason === "error") return "运行失败，未返回文本结果。";
-  return "";
+function executionErrorFromMessage(message: AgentScopeMessage): ChatMessage["executionError"] {
+  if (message.error) {
+    return { ...message.error, message: message.error.message || "运行失败，Runtime 未提供错误详情。" };
+  }
+  if (message.finished_reason === "exceed_max_iters") {
+    return { message: "运行达到最大迭代次数。" };
+  }
+  if (message.finished_reason === "error") {
+    return { message: "运行失败，Runtime 未提供错误详情。" };
+  }
+  return undefined;
 }
 
 function appendUnrepresentedRuns(
@@ -318,37 +410,28 @@ function appendUnrepresentedRuns(
   for (const run of ordered) {
     if (!run.run_id || represented.has(run.run_id)) continue;
     const status = typeof run.status === "string" ? run.status : String(run.turn_status || "");
-    const failedWithoutMessage = ["failed", "cancelled", "interrupted"].includes(status)
-      || (Array.isArray(run.errors) && run.errors.length > 0);
-    if (!failedWithoutMessage) continue;
-    if (typeof run.message === "string" && run.message.trim()) {
-      messages.push({
-        id: `history_${run.run_id}_user`,
-        role: "user",
-        content: run.message,
-        createdAt: String(run.created_at || ""),
-        sessionId,
-      });
-    }
+    if (status !== "failed" && status !== "cancelled" && status !== "interrupted") continue;
     messages.push(mergeChatMessageRunContext({
       id: `history_${run.run_id}_assistant`,
       role: "assistant",
-      content: runDisplayText(run, status),
+      content: "",
       createdAt: String(run.completed_at || run.created_at || ""),
       sessionId,
       events: [],
       traceState: "calibrating",
+      executionError: status === "failed" ? executionErrorFromRun(run) : undefined,
     }, run));
     represented.add(run.run_id);
   }
 }
 
-function runDisplayText(run: FeedbackRunRecord, status: string): string {
-  if (typeof run.answer === "string" && run.answer.trim()) return run.answer;
-  if (typeof run.answer_summary === "string" && run.answer_summary.trim()) return run.answer_summary;
-  if (status === "cancelled") return "运行已取消。";
-  if (status === "interrupted") return "运行被中断。";
-  if (Array.isArray(run.errors) && run.errors.length) return `运行失败：\n${run.errors.map(String).join("\n")}`;
-  if (isRecord(run.error) && typeof run.error.message === "string") return `运行失败：\n${run.error.message}`;
-  return "运行失败，未返回文本结果。";
+function executionErrorFromRun(run: FeedbackRunRecord): ChatMessage["executionError"] {
+  const error = isRecord(run.error) ? run.error : undefined;
+  const type = typeof error?.type === "string" && error.type.trim() ? error.type : undefined;
+  const message = typeof error?.message === "string" && error.message.trim()
+    ? error.message
+    : typeof run.terminal_reason === "string" && run.terminal_reason
+      ? run.terminal_reason
+      : "运行失败，Runtime 未提供错误详情。";
+  return { ...(type ? { type } : {}), message };
 }

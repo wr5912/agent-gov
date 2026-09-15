@@ -54,7 +54,6 @@ def _governance_for_versions(tmp_path: Path, versions: GitAgentVersionStore) -> 
     return AgentGovernanceService(
         feedback_store=FeedbackStore(data_dir=tmp_path / "data"),
         agent_version_store=versions,
-        runtime_mode="local-debug",
     )
 
 
@@ -216,7 +215,6 @@ def test_production_read_store_provider_does_not_bootstrap_or_create_version_dir
     governance = AgentGovernanceService(
         feedback_store=feedback,
         agent_version_store=default_store,
-        runtime_mode="local-debug",
     )
     registry = AgentRegistryStore(feedback.Session)
     registry.create_business_agent(name="SOC", agent_id="soc", workspace_dir=str(workspace))

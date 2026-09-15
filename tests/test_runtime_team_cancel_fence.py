@@ -28,8 +28,7 @@ def test_cancellation_freezes_team_topology_but_keeps_idempotent_replays(tmp_pat
         session_id="leader-session",
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": [{"type": "text", "text": "start"}]},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)

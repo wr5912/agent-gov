@@ -39,7 +39,7 @@ ProblemType = Literal[
     "skill_gap",
     "mcp_description_gap",
     "runtime_error",
-    "external_soc_process_issue",
+    "external_business_process_issue",
     "user_misunderstanding",
     "insufficient_information",
 ]
@@ -54,7 +54,7 @@ OptimizationObjectType = Literal[
     "tests",
     "runtime_code",
     "external_mcp_service",
-    "soc_process",
+    "business_process",
     "not_actionable",
 ]
 

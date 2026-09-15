@@ -15,8 +15,8 @@ from scripts.no_test_doubles_contract import (
     CANONICAL_FORMAL_MAKE_BINDINGS,
     CANONICAL_FORMAL_PREREQUISITES,
     CANONICAL_PRIVATE_RECIPE_SHA256,
-    DEPLOYED_FORMAL_TARGETS,
     DYNAMIC_MAKE_RULES,
+    FORMAL_TARGET_ENTRYPOINT_MARKERS,
     INTERPRETER_INVOCATION,
     LOCAL_SOURCE_REFERENCE,
     LOCAL_SOURCE_SUFFIXES,
@@ -516,6 +516,8 @@ def _formal_make_manifest_findings(makefile_path: str) -> set[Finding]:
         *CANONICAL_FORMAL_PREREQUISITES.values()
     ):
         findings.add(Finding(makefile_path, 1, "public formal Make prerequisite manifest is incomplete or stale"))
+    if set(FORMAL_TARGET_ENTRYPOINT_MARKERS) != set(REQUIRED_FORMAL_TARGET_FILES):
+        findings.add(Finding(makefile_path, 1, "formal Make entrypoint marker manifest is incomplete or stale"))
     return findings
 
 
@@ -602,13 +604,9 @@ def _formal_target_action_findings(
             )
         )
     recipe_text = "\n".join(recipe for selected_target in target_inspection.targets for _line, recipe in parsed.rules[selected_target].recipes)
-    required_marker = (
-        "run_selected_env_operation.py --env-file"
-        if target in DEPLOYED_FORMAL_TARGETS
-        else "REQUIRE_CONTAINER_ACCEPTANCE"
-        if target.startswith("_")
-        else "CONTAINER_ACCEPTANCE"
-    )
+    required_marker = FORMAL_TARGET_ENTRYPOINT_MARKERS.get(target)
+    if required_marker is None:
+        return findings | {Finding(f"{relative.as_posix()}#{target}", 1, "formal Make action has no audited entrypoint marker")}
     if required_marker not in recipe_text:
         findings.add(
             Finding(

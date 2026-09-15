@@ -128,7 +128,7 @@ def test_real_container_acceptance_retries_only_governor_generated_writable_plan
     assert 'response.request().method() === "POST"' in source
     assert "/optimization-plan/generate" in source
     assert "attempt <= MAX_GOVERNOR_PLAN_ATTEMPTS" in source
-    assert "governor did not produce a writable execution plan" in source
+    assert 'throw acceptanceError("GOVERNOR_WRITABLE_PLAN_MISSING")' in source
     assert 'method: "PUT"' not in source
     assert "config.testRunTimeoutMs" in source
     assert "Date.now() + config.actionTimeoutMs" not in source
@@ -136,8 +136,10 @@ def test_real_container_acceptance_retries_only_governor_generated_writable_plan
     assert "authorizedTargetPaths" in runtime_client
     assert "requiredTestLiterals" in runtime_client
     assert "assertExecutionTargetScope(seed, execution)" in source
-    assert "execution modified paths outside the confirmed feedback scope" in source
-    assert "business Agent invocation evidence is incomplete or contains runtime errors" in source
+    assert "if (unexpected.length)" in source
+    assert 'throw acceptanceError("EXECUTION_OUTSIDE_APPROVED_SCOPE")' in source
+    assert "if (!(run.invocations || []).length" in source
+    assert 'throw acceptanceError("PLATFORM_TEST_INVOCATION_INCOMPLETE")' in source
 
 
 def test_real_container_acceptance_reviews_exact_file_diffs_before_approval_and_publish() -> None:
@@ -153,11 +155,11 @@ def test_real_container_acceptance_reviews_exact_file_diffs_before_approval_and_
     assert "[data-path=" in review_source
     assert "hasText: entry.path" not in review_source
     lifecycle_source = (ROOT / "scripts/verify_agent_candidate_lifecycle.mjs").read_text(encoding="utf-8")
-    assert "CSS.escape(value)" in lifecycle_source
+    assert "reviewAndApprovePassedCandidate(page, config, {" in lifecycle_source
     assert "hasText: path" not in lifecycle_source
     assert "detail.truncated !== false" in review_source
     assert "candidate approval unexpectedly opened a second confirmation dialog" in review_source
-    assert 'summary.locator(\'input[type="checkbox"]\').count()' in review_source
+    assert "summary.locator('input[type=\"checkbox\"]').count()" in review_source
     assert 'getByTestId("release-action-approve")' in review_source
     assert "approval.candidate_commit_sha !== evidence.candidateCommitSha" in review_source
     assert "approval.test_run_id !== evidence.testRunId" in review_source

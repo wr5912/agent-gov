@@ -38,6 +38,8 @@ from .models import (
     RuntimeSessionBindingModel,
     RuntimeTeamDeliveryModel,
 )
+from .native_chat_input import native_operation_key
+from .operation_identity import RuntimeChatOperationKind
 
 
 class RuntimeRunQueryStoreMixin:
@@ -59,41 +61,35 @@ class RuntimeRunQueryStoreMixin:
         with self.Session() as db:
             return _run_response(_require_run(db, run_id))
 
-    def run_for_client_operation(
+    def run_for_input_identity(
         self,
         *,
+        runtime_agent_id: str,
         session_id: str,
-        client_operation_id: str,
+        operation_kind: RuntimeChatOperationKind,
+        input_ids: tuple[str, ...],
     ) -> AgentRunResponse:
+        if not input_ids:
+            raise RuntimeObjectNotFound("Unkeyed native input has no retry lookup identity")
+        operation_key = native_operation_key(
+            runtime_agent_id=runtime_agent_id,
+            session_id=session_id,
+            operation_kind=operation_kind,
+            input_ids=input_ids,
+        )
         with self.Session() as db:
-            operation_run_ids = set(
-                db.scalars(
-                    select(RuntimeChatOperationModel.run_id).where(
-                        RuntimeChatOperationModel.root_session_id == session_id,
-                        RuntimeChatOperationModel.client_operation_id == client_operation_id,
-                    ),
-                ).all(),
-            )
-            origin_run_ids = set(
-                db.scalars(
-                    select(AgentRunModel.run_id).where(
-                        AgentRunModel.session_id == session_id,
-                        AgentRunModel.client_operation_id == client_operation_id,
-                    ),
-                ).all(),
-            )
-            run_ids = operation_run_ids | origin_run_ids
-            if not run_ids:
-                raise RuntimeObjectNotFound("Agent run not found for client operation")
-            if len(run_ids) > 1:
-                raise RuntimeStateConflict(
-                    "client_operation_id has multiple AgentGov runs",
-                )
-            if not operation_run_ids:
-                raise RuntimeStateConflict(
-                    "client_operation_id run exists without its durable operation ledger",
-                )
-            return _run_response(_require_run(db, run_ids.pop()))
+            operation = db.get(RuntimeChatOperationModel, operation_key)
+            if operation is None:
+                raise RuntimeObjectNotFound("Agent run not found for native input identity")
+            if operation.runtime_agent_id != runtime_agent_id or operation.operation_kind != operation_kind.value:
+                raise RuntimeStateConflict("Native input identity does not match its operation ledger")
+            run = _require_run(db, operation.run_id)
+            if run.session_id != operation.root_session_id:
+                raise RuntimeStateConflict("Native input operation does not match its AgentGov run")
+            binding = db.get(RuntimeSessionBindingModel, session_id)
+            if binding is None or binding.runtime_agent_id != runtime_agent_id or binding.root_session_id != run.session_id:
+                raise RuntimeStateConflict("Native input operation is not bound to the requested Session")
+            return _run_response(run)
 
     def active_run_for_session(self, session_id: str) -> AgentRunResponse | None:
         with self.Session() as db:
@@ -105,7 +101,7 @@ class RuntimeRunQueryStoreMixin:
 
     def pending_actions_for_run(self, run_id: str) -> list[RuntimePendingActionResponse]:
         with self.Session() as db:
-            _require_run(db, run_id)
+            run = _require_run(db, run_id)
             rows = db.scalars(
                 select(RuntimePendingActionModel)
                 .where(
@@ -117,7 +113,18 @@ class RuntimeRunQueryStoreMixin:
                     RuntimePendingActionModel.action_id,
                 ),
             ).all()
-            return [_pending_action_response(row) for row in rows]
+            session_ids = {row.session_id for row in rows}
+            bindings = (
+                {
+                    binding.session_id: binding
+                    for binding in db.scalars(
+                        select(RuntimeSessionBindingModel).where(RuntimeSessionBindingModel.session_id.in_(session_ids)),
+                    ).all()
+                }
+                if session_ids
+                else {}
+            )
+            return [_pending_action_response(row, run=run, binding=bindings.get(row.session_id)) for row in rows]
 
     def trace_expectations(self, run_id: str) -> RuntimeTraceExpectations:
         """只用 durable control-plane facts 生成 Trace 验收预期。"""
@@ -228,9 +235,23 @@ class RuntimeRunQueryStoreMixin:
 
 def _pending_action_response(
     row: RuntimePendingActionModel,
+    *,
+    run: AgentRunModel,
+    binding: RuntimeSessionBindingModel | None,
 ) -> RuntimePendingActionResponse:
     if row.kind not in {"human", "external"}:
         raise RuntimeStateConflict("Pending action kind is invalid")
+    if (
+        binding is None
+        or binding.root_session_id != run.session_id
+        or binding.active_run_id != run.run_id
+        or binding.agent_id != run.agent_id
+        or binding.agent_version_id != run.agent_version_id
+        or binding.harness_digest != run.harness_digest
+        or (binding.session_id == run.session_id and binding.runtime_agent_id != run.runtime_agent_id)
+        or (binding.session_id != run.session_id and not binding.team_id)
+    ):
+        raise RuntimeStateConflict("Pending action Session binding does not match its governed run")
     try:
         fingerprint = parse_tool_call_fingerprint(
             row.tool_call_json,
@@ -242,6 +263,7 @@ def _pending_action_response(
     return RuntimePendingActionResponse(
         action_id=row.action_id,
         session_id=row.session_id,
+        runtime_agent_id=binding.runtime_agent_id,
         run_id=row.run_id,
         reply_id=row.reply_id,
         kind="human" if row.kind == "human" else "external",

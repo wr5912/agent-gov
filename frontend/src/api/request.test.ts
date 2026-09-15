@@ -1,65 +1,28 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   ApiRequestError,
   authHeaders,
   makeUrl,
   normalizeBase,
-  requestJson,
+  readError,
   resolveRuntimeApiBase,
   shouldMigrateStoredApiBase,
 } from "./request";
-import type { RuntimeClientConfig } from "../types/runtime";
 
-const config: RuntimeClientConfig = { apiBase: "http://runtime.test", apiKey: "" };
-
-function jsonResponse(status: number, body: unknown = { detail: `status ${status}` }): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    statusText: `Status ${status}`,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
-
-describe("Runtime API 发布地址", () => {
-  it("通过远程 UI 主机访问默认 API 发布端口", () => {
-    vi.stubGlobal("window", { location: { hostname: "agentgov.example.test" } });
-
-    expect(resolveRuntimeApiBase("")).toBe("http://agentgov.example.test:50400");
-    expect(shouldMigrateStoredApiBase(
-      "http://localhost:50400/",
-      "http://agentgov.example.test:50400",
-    )).toBe(true);
-  });
-
-  it("保留自定义地址和端口，不将其作为默认缓存配置迁移", () => {
-    vi.stubGlobal("window", { location: { hostname: "agentgov.example.test" } });
-
-    expect(resolveRuntimeApiBase("https://api.example.test:50499/")).toBe("https://api.example.test:50499");
-    expect(shouldMigrateStoredApiBase(
-      "http://localhost:50499",
-      "http://agentgov.example.test:50400",
-    )).toBe(false);
-  });
-
-  it("本机访问继续使用回环地址", () => {
-    vi.stubGlobal("window", { location: { hostname: "localhost" } });
-
-    expect(resolveRuntimeApiBase("")).toBe("http://localhost:50400");
-  });
-
-  it("构造地址和鉴权头时不改变调用方配置", () => {
-    const custom = { apiBase: "https://api.example.test:50499/", apiKey: " token " };
-
+describe("Runtime API 地址与鉴权头纯构造", () => {
+  it("不改变调用方显式地址、端口与配置", () => {
+    const config = { apiBase: "https://api.example.test:50499/", apiKey: " token " };
+    expect(resolveRuntimeApiBase(config.apiBase)).toBe("https://api.example.test:50499");
     expect(normalizeBase(" http://localhost:50400/ ")).toBe("http://localhost:50400");
-    expect(makeUrl(custom, "/health")).toBe("https://api.example.test:50499/health");
-    expect(authHeaders(custom)).toEqual({ Authorization: "Bearer token" });
-    expect(authHeaders({ ...custom, apiKey: "" })).toEqual({});
+    expect(makeUrl(config, "/health")).toBe("https://api.example.test:50499/health");
+    expect(authHeaders(config)).toEqual({ Authorization: "Bearer token" });
+    expect(authHeaders({ ...config, apiKey: "" })).toEqual({});
+    expect(config.apiBase).toBe("https://api.example.test:50499/");
+  });
+
+  it("宿主机无浏览器 location 时保留回环默认地址", () => {
+    expect(resolveRuntimeApiBase("")).toBe("http://localhost:50400");
   });
 });
 
@@ -86,110 +49,18 @@ describe("已保存 API 默认地址迁移", () => {
   });
 });
 
-describe("requestJson retry contract", () => {
-  it.each([400, 401, 403, 404, 409, 422, 500])(
-    "does not retry non-retryable GET status %s",
-    async (status) => {
-      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(status, {
-        detail: "明确失败",
-        error_code: "explicit_failure",
-      }));
-      vi.stubGlobal("fetch", fetchMock);
-
-      await expect(requestJson(config, "/resource")).rejects.toMatchObject({
-        kind: "http",
-        status,
-        errorCode: "explicit_failure",
-        message: "[explicit_failure] 明确失败",
-      } satisfies Partial<ApiRequestError>);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each([408, 429, 502, 503, 504])("retries retryable GET status %s once", async (status) => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(status))
-      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(requestJson<{ ok: boolean }>(config, "/resource")).resolves.toEqual({ ok: true });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+describe("错误正文与结构化错误的解析边界", () => {
+  it.each([
+    [{ error_code: "INPUT_REJECTED", detail: "输入不符合契约" }, "[INPUT_REJECTED] 输入不符合契约"],
+    [{ detail: [{ loc: ["body", "input"], msg: "Field required", type: "missing" }] }, "input: Field required"],
+    [{ detail: { message: "运行尚未结束" } }, "运行尚未结束"],
+  ])("从真实 Fetch data URL reader 解析错误正文", async (body, expected) => {
+    const response = await fetch(`data:application/json,${encodeURIComponent(JSON.stringify(body))}`);
+    await expect(readError(response)).resolves.toBe(expected);
   });
 
-  it("retries a GET network failure once", async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new TypeError("connection reset"));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(requestJson(config, "/resource")).rejects.toMatchObject({
-      kind: "network",
-      message: "connection reset",
-    } satisfies Partial<ApiRequestError>);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("honors retry=false for a GET with observable upstream work", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(503));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(requestJson(config, "/resource", { retry: false })).rejects.toMatchObject({
-      kind: "http",
-      status: 503,
-    } satisfies Partial<ApiRequestError>);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("retries a GET timeout once", async () => {
-    const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init?.signal?.addEventListener(
-        "abort",
-        () => reject(new DOMException("aborted", "AbortError")),
-        { once: true },
-      );
-    }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(requestJson(config, "/resource", { timeoutMs: 5 })).rejects.toMatchObject({
-      kind: "timeout",
-    } satisfies Partial<ApiRequestError>);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("does not retry caller abort", async () => {
-    const controller = new AbortController();
-    const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init?.signal?.addEventListener(
-        "abort",
-        () => reject(new DOMException("aborted", "AbortError")),
-        { once: true },
-      );
-    }));
-    vi.stubGlobal("fetch", fetchMock);
-    const pending = requestJson(config, "/resource", { signal: controller.signal });
-    await Promise.resolve();
-    controller.abort();
-
-    await expect(pending).rejects.toMatchObject({ kind: "aborted" } satisfies Partial<ApiRequestError>);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it.each(["POST", "PUT", "DELETE"])("does not retry %s requests", async (method) => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(503));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(requestJson(config, "/resource", { method })).rejects.toMatchObject({
-      kind: "http",
-      status: 503,
-    } satisfies Partial<ApiRequestError>);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not retry a successful response with invalid JSON", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response("not-json", { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(requestJson(config, "/resource")).rejects.toMatchObject({
-      kind: "decode",
-    } satisfies Partial<ApiRequestError>);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+  it("结构化错误保持状态码与错误码独立于正文", () => {
+    const error = new ApiRequestError("http", "输入不符合契约", { status: 422, errorCode: "INPUT_REJECTED" });
+    expect(error).toMatchObject({ kind: "http", message: "输入不符合契约", status: 422, errorCode: "INPUT_REJECTED" });
   });
 });

@@ -10,7 +10,7 @@ import stat
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, TypedDict
+from typing import TypedDict
 from urllib.parse import urlsplit
 
 import yaml
@@ -59,30 +59,8 @@ def _forbidden_mcp_header(name: str) -> bool:
     return normalized in _FORBIDDEN_MCP_HEADERS or normalized.startswith("x-forwarded-")
 
 
-def managed_workspace_policy_paths(agent_id: str) -> tuple[str, ...]:
-    del agent_id
-    return (_MANIFEST_PATH.as_posix(), _PROMPT_PATH.as_posix())
-
-
 class ManagedAgentPolicyError(RuntimeError):
     """Harness 无法被 AgentScope Runtime 安全执行。"""
-
-
-class RuntimeWorkspaceProfile(Protocol):
-    @property
-    def category(self) -> str: ...
-
-    @property
-    def name(self) -> str: ...
-
-    @property
-    def workspace_dir(self) -> Path: ...
-
-    @property
-    def data_dir(self) -> Path: ...
-
-    @property
-    def langfuse_observation_name(self) -> str: ...
 
 
 class _PolicyProjectionEntry(TypedDict):
@@ -279,20 +257,8 @@ def validate_managed_mcp_content(
     content: str,
     *,
     agent_id: str,
-    runtime_mode: str,
-    env: Mapping[str, str],
-    runtime_root: Path,
-    bootstrap_dir: Path | None = None,
 ) -> tuple[PolicyViolation, ...]:
-    del runtime_mode, env, runtime_root, bootstrap_dir
     return validate_mcp_content(content, agent_id=agent_id)
-
-
-def referenced_workspace_hook_paths(settings_content: str) -> tuple[str, ...]:
-    """旧 hook 不属于新 Harness；保留空结果以兼容版本校验调用点。"""
-
-    del settings_content
-    return ()
 
 
 def plan_workspace_policy(*, workspace: Path, agent_id: str) -> WorkspacePolicyPlan:
@@ -466,12 +432,7 @@ def runtime_workspace_policy_violations(
     *,
     workspace: Path,
     agent_id: str,
-    runtime_mode: str,
-    env: Mapping[str, str],
-    runtime_root: Path,
-    bootstrap_dir: Path | None = None,
 ) -> tuple[PolicyViolation, ...]:
-    del runtime_mode, env, runtime_root, bootstrap_dir
     return plan_workspace_policy(workspace=workspace, agent_id=agent_id).violations
 
 
@@ -479,35 +440,10 @@ def require_runtime_workspace_policy(
     *,
     workspace: Path,
     agent_id: str,
-    runtime_mode: str,
-    env: Mapping[str, str],
-    runtime_root: Path,
-    bootstrap_dir: Path | None = None,
 ) -> None:
     raise_for_policy_violations(
         runtime_workspace_policy_violations(
             workspace=workspace,
             agent_id=agent_id,
-            runtime_mode=runtime_mode,
-            env=env,
-            runtime_root=runtime_root,
-            bootstrap_dir=bootstrap_dir,
         )
-    )
-
-
-def require_profile_runtime_workspace_policy(
-    profile: RuntimeWorkspaceProfile,
-    *,
-    runtime_mode: str,
-    env: Mapping[str, str],
-) -> None:
-    if profile.category != "business":
-        return
-    require_runtime_workspace_policy(
-        workspace=profile.workspace_dir,
-        agent_id=profile.name,
-        runtime_mode=runtime_mode,
-        env=env,
-        runtime_root=profile.data_dir.resolve().parent,
     )

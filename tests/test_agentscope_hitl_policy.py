@@ -10,7 +10,7 @@ import pytest
 import yaml
 from agentscope.permission import PermissionBehavior, PermissionContext, PermissionMode, PermissionRule
 from agentscope.state import AgentState
-from agentscope.tool import Bash, FunctionTool, Read, ToolBase, Write
+from agentscope.tool import Bash, Edit, FunctionTool, Read, ToolBase, Write
 from agentscope_runtime.context_registry import RuntimeContext
 from agentscope_runtime.policy_middleware import AgentGovPolicyMiddleware
 from agentscope_runtime.receipt_middleware import CURRENT_RUNTIME_CONTEXT
@@ -210,6 +210,25 @@ def test_unlisted_tool_remains_denied_when_ask_tools_is_omitted(tmp_path: Path) 
     assert decision.suggested_rules is None
 
 
+@pytest.mark.parametrize("file_path", ["references/guide.md", "./references/guide.md", "outputs/../references/guide.md"])
+def test_reference_assets_are_readable_but_never_writable_with_broad_allow(tmp_path: Path, file_path: str) -> None:
+    manifest = _manifest(allowed_tools=["Read(./references/**)", "Write", "Edit"], ask_tools=["Write(outputs/**)"])
+    manifest["workspace_policy"]["writable_paths"] = ["**"]
+    manifest["workspace_policy"]["immutable_paths"].append("references/**")
+    _write_workspace(tmp_path, manifest)
+    reference = tmp_path / "references/guide.md"
+    reference.parent.mkdir()
+    reference.write_text("固定版本参考资料", encoding="utf-8")
+    middleware = AgentGovPolicyMiddleware(tmp_path)
+    agent = _agent(PermissionMode.DEFAULT)
+    assert _decide(middleware, agent, Read(), {"file_path": file_path}).behavior is PermissionBehavior.ALLOW
+    for tool in (Write(), Edit()):
+        decision = _decide(middleware, agent, tool, {"file_path": file_path, "content": "must not overwrite"})
+        assert decision.behavior is PermissionBehavior.DENY
+        assert decision.decision_reason == "AgentGov Harness assets are immutable"
+    assert _decide(middleware, agent, Write(), {"file_path": "outputs/summary.md", "content": "requires confirmation"}).behavior is PermissionBehavior.ASK
+
+
 def test_missing_permission_context_fails_closed_even_for_static_allow(tmp_path: Path) -> None:
     _write_workspace(tmp_path, _manifest(allowed_tools=["Read(outputs/**)"]))
     decision = _decide(
@@ -294,6 +313,107 @@ def test_run_scoped_path_rule_rejects_traversal_to_sibling(tmp_path: Path, tool:
     assert nested.behavior is PermissionBehavior.ALLOW
     assert nested.decision_reason == "agentgov.allow_for_run"
     assert traversal.behavior is not PermissionBehavior.ALLOW
+
+
+@pytest.mark.parametrize("tool", [Read(), Write(), Edit()])
+@pytest.mark.parametrize("behavior", [PermissionBehavior.DENY, PermissionBehavior.ASK])
+@pytest.mark.parametrize("path_form", ["relative", "dot", "parent", "absolute", "link"])
+def test_static_file_rules_match_the_resolved_target(
+    tmp_path: Path,
+    tool: ToolBase,
+    behavior: PermissionBehavior,
+    path_form: str,
+) -> None:
+    narrow_rule = f"{tool.name}(outputs/review/**)"
+    _write_workspace(
+        tmp_path,
+        _manifest(
+            allowed_tools=[f"{tool.name}(outputs/**)"],
+            ask_tools=[narrow_rule] if behavior is PermissionBehavior.ASK else [],
+            denied_tools=[narrow_rule] if behavior is PermissionBehavior.DENY else [],
+        ),
+    )
+    (tmp_path / "outputs/review").mkdir(parents=True)
+    (tmp_path / "outputs/ordinary").mkdir()
+    (tmp_path / "outputs/alias").symlink_to("review", target_is_directory=True)
+    paths = {
+        "relative": "outputs/review/finding.md",
+        "dot": "./outputs/review/finding.md",
+        "parent": "outputs/ordinary/../review/finding.md",
+        "absolute": str(tmp_path / "outputs/ordinary/../review/finding.md"),
+        "link": "outputs/alias/finding.md",
+    }
+    tool_input = {"file_path": paths[path_form], "content": "review"}
+
+    decision = _decide(AgentGovPolicyMiddleware(tmp_path), _agent(PermissionMode.DEFAULT), tool, tool_input)
+
+    assert decision.behavior is behavior
+    assert tool_input["file_path"] == paths[path_form]
+
+
+@pytest.mark.parametrize("absolute_rule", [False, True])
+def test_resolved_parent_path_remains_allowed_within_its_run_scope(tmp_path: Path, absolute_rule: bool) -> None:
+    path_rule = str(tmp_path / "outputs/review/**") if absolute_rule else "outputs/review/**"
+    _write_workspace(tmp_path, _manifest(ask_tools=[f"Write({path_rule})"]))
+    (tmp_path / "outputs/review/nested").mkdir(parents=True)
+    middleware = AgentGovPolicyMiddleware(tmp_path)
+    tool_input = {"file_path": "outputs/review/nested/../finding.md", "content": "review"}
+    agent = _agent(PermissionMode.DEFAULT)
+    assert _decide(middleware, agent, Write(), tool_input).behavior is PermissionBehavior.ASK
+    agent.state.permission_context.allow_rules = {
+        "Write": [PermissionRule(tool_name="Write", rule_content=path_rule, behavior=PermissionBehavior.ALLOW, source="agentgov-run:run-1")],
+    }
+
+    decision = _decide(middleware, agent, Write(), tool_input, runtime_context=_runtime_context("run-1"))
+
+    assert decision.behavior is PermissionBehavior.ALLOW
+    assert decision.decision_reason == "agentgov.allow_for_run"
+
+
+def test_static_allow_accepts_a_parent_path_resolving_inside_its_scope(tmp_path: Path) -> None:
+    _write_workspace(tmp_path, _manifest(allowed_tools=["Write(outputs/**)"]))
+    (tmp_path / "ordinary").mkdir()
+    (tmp_path / "outputs").mkdir()
+
+    decision = _decide(
+        AgentGovPolicyMiddleware(tmp_path),
+        _agent(PermissionMode.DEFAULT),
+        Write(),
+        {"file_path": "ordinary/../outputs/finding.md", "content": "review"},
+    )
+
+    assert decision.behavior is PermissionBehavior.ALLOW
+
+
+@pytest.mark.parametrize("tool", [Read(), Write(), Edit()])
+def test_worker_deny_matches_resolved_target_before_broader_allow(tmp_path: Path, tool: ToolBase) -> None:
+    _write_workspace(tmp_path, _manifest(allowed_tools=[f"{tool.name}(outputs/**)"]))
+    (tmp_path / "outputs/review").mkdir(parents=True)
+    (tmp_path / "outputs/ordinary").mkdir()
+    agent = _agent(PermissionMode.DEFAULT)
+    agent.state.permission_context.allow_rules = {
+        tool.name: [PermissionRule(tool_name=tool.name, rule_content="outputs/**", behavior=PermissionBehavior.ALLOW, source="agentgov-subagent:worker")],
+    }
+    agent.state.permission_context.deny_rules = {
+        tool.name: [PermissionRule(tool_name=tool.name, rule_content="outputs/review/**", behavior=PermissionBehavior.DENY, source="agentgov-subagent:worker")],
+    }
+
+    decision = _decide(
+        AgentGovPolicyMiddleware(tmp_path),
+        agent,
+        tool,
+        {"file_path": "outputs/ordinary/../review/finding.md", "content": "review"},
+        runtime_context=_runtime_context("run-1").model_copy(update={"role": "worker"}),
+    )
+
+    assert decision.behavior is PermissionBehavior.DENY
+
+
+@pytest.mark.parametrize("raw_path", [None, "", "outputs/\0file"])
+def test_invalid_file_path_is_denied_without_permission_error(tmp_path: Path, raw_path: str | None) -> None:
+    _write_workspace(tmp_path, _manifest(allowed_tools=["Write(outputs/**)"]))
+    decision = _decide(AgentGovPolicyMiddleware(tmp_path), _agent(PermissionMode.DEFAULT), Write(), {"file_path": raw_path})
+    assert decision.behavior is PermissionBehavior.DENY
 
 
 def test_run_scoped_bash_rule_is_never_honored(tmp_path: Path) -> None:

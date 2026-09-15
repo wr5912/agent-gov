@@ -19,6 +19,7 @@ from app.runtime_gateway.store import RuntimeObjectNotFound, RuntimeStateConflic
 def _settings(tmp_path: Path) -> AppSettings:
     return AppSettings(
         _env_file=None,
+        AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret",
         DATA_DIR=tmp_path / "data",
         GOVERNOR_WORKSPACE_DIR=tmp_path / "governor",
         RUNTIME_CANDIDATES_DIR=tmp_path / "candidates",
@@ -160,6 +161,27 @@ def test_deleted_or_incomplete_registry_agent_is_not_revived(tmp_path: Path, del
     assert preparation.prepare_published_harnesses(settings) == 0
 
     assert not (workspace / ".git").exists()
+    assert not settings.runtime_candidates_dir.exists()
+    assert settings.runtime_db_path.read_bytes() == original_db
+
+
+def test_unpublished_draft_with_incomplete_live_workspace_is_not_prepared(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    workspace = business_agent_layout(settings.data_dir, "draft-business").workspace
+    (workspace / ".git").mkdir(parents=True)
+    with sqlite3.connect(settings.runtime_db_path) as connection:
+        connection.execute(
+            "CREATE TABLE agent_registry (agent_id TEXT, deleted_at TEXT, provision_state TEXT, status TEXT)",
+        )
+        connection.execute(
+            "INSERT INTO agent_registry VALUES (?, ?, ?, ?)",
+            ("draft-business", None, "ready", "draft"),
+        )
+    original_db = settings.runtime_db_path.read_bytes()
+
+    assert preparation.prepare_published_harnesses(settings) == 0
+
+    assert list(workspace.iterdir()) == [workspace / ".git"]
     assert not settings.runtime_candidates_dir.exists()
     assert settings.runtime_db_path.read_bytes() == original_db
 

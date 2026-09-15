@@ -329,6 +329,7 @@ def _refresh_actions() -> RefreshActions:
         validate_isolated_mounts=_validate_isolated_mounts,
         inspect_api_image=_inspect_api_image,
         verify_daemon=_verify_daemon_boundary,
+        verify_identity=lambda env, expected: _daemon_support(env).verify(env, expected),
         verify_container=_verify_container,
     )
 
@@ -504,8 +505,7 @@ def _verify_refreshed_result(
         run_output=contract_output,
         error_type=AcceptanceError,
     )
-    probe_image = _inspect_api_image(child_env, "验收后 daemon probe")
-    _verify_daemon_boundary(child_env, daemon_identity, isolation.runtime_root.parent, probe_image)
+    _daemon_support(child_env).verify(child_env, daemon_identity)
     current = acceptance_fingerprint(
         env_file,
         isolation.env_file,
@@ -519,6 +519,8 @@ def _verify_refreshed_result(
     if source_artifact_sha256(live_root) != frozen_source_sha256:
         raise AcceptanceError("容器验收期间 deployable source 已变化，结果无效")
     docker_monitor.verify()
+    probe_image = _inspect_api_image(child_env, "验收后 daemon probe")
+    _verify_daemon_boundary(child_env, daemon_identity, isolation.runtime_root.parent, probe_image)
 
 
 def _run_refreshed_acceptance(
@@ -571,9 +573,8 @@ def _run_refreshed_acceptance(
         live_root=live_root,
         git_path=git_path,
     )
-    formal_root = Path(child_env[FORMAL_SOURCE_ROOT_ENV])
     bound_command = [child_env[TOOL_PATH_ENV_KEYS["make"]], *command[1:]]
-    returncode = _run_child(bound_command, child_env, cwd=formal_root)
+    returncode = _run_child(bound_command, child_env, cwd=Path(child_env[FORMAL_SOURCE_ROOT_ENV]))
     _verify_refreshed_result(
         profile,
         env_file,
@@ -700,6 +701,7 @@ def _prepare_frozen_acceptance(
         source_env_payload=source_env_payload,
         source_root=source_root,
         source_digest=source_digest,
+        allocated_ports=_allocate_loopback_ports(5),
     )
     return isolation, toolchain, snapshots, pre_freeze_source_sha256, source_env_identity, run_id
 
@@ -786,13 +788,7 @@ def run_acceptance(profile: AcceptanceProfile, env_file: Path, command: list[str
 
 
 def main(argv: list[str] | None = None) -> int:
-    return run_cli(
-        argv,
-        dict(os.environ),
-        resume=_resume_frozen_acceptance,
-        run=run_acceptance,
-        error_type=AcceptanceError,
-    )
+    return run_cli(argv, dict(os.environ), resume=_resume_frozen_acceptance, run=run_acceptance, error_type=AcceptanceError)
 
 
 if __name__ == "__main__":

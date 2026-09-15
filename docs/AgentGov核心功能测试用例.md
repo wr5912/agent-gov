@@ -884,7 +884,12 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：attribution output 和 evidence references。
 
-自动化回归证据（部分）：`tests/test_feedback_case_agent_ownership.py::test_concurrent_ensure_case_for_source_is_idempotent` 证明并发归并同一反馈来源时保持幂等。仍缺 matched/duplicate/pending 三分类响应、证据链与人工复核提示的联合验收。
+自动化回归证据（部分）：`tests/test_feedback_case_agent_ownership.py::test_concurrent_ensure_case_for_source_is_idempotent`
+证明并发归并同一反馈来源时保持幂等；`tests/test_feedback_entities.py` 与
+`tests/test_improvement_core_workflow.py::test_pending_soc_event_resolves_into_queryable_feedback_case`、
+`tests/test_api_error_handlers.py` 覆盖 matched、duplicate、pending、历史事件首次兼容绑定、敏感词实体类型、
+空白身份、非有限 JSON 数值和同 ID 不同请求的 409 冲突，且冲突不覆盖原事件。证据链与人工复核提示
+的联合效果仍以真实容器/浏览器验收为准，不能由这些存储与 API 契约测试替代。
 
 ### AGV-034 优化形成可执行资产而非一次性建议
 
@@ -934,7 +939,7 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 
 证据要求：Workspace suite、`AgentTestRun`、发布阻塞原因和 release 审计。
 
-自动化回归证据：`tests/test_agent_testing.py::test_test_run_store_uses_independent_lifecycle_and_exact_commit_gate`、`test_test_run_cancel_and_restart_recovery_are_explicit`、`tests/test_agent_governance_publish.py::test_publish_requires_passed_platform_test_for_exact_candidate_commit` 和 `test_feedback_publication_cannot_force_bypass_complete_agent_test_suite`。
+自动化回归证据：`tests/test_agent_testing.py::test_test_run_store_does_not_promote_unattested_passed_row_to_release_evidence`、`test_test_run_cancel_and_restart_recovery_are_explicit`、`tests/test_agent_governance_publish.py::test_publish_rejects_missing_or_failed_platform_test_for_exact_candidate_commit` 和 `test_feedback_publication_cannot_force_bypass_complete_agent_test_suite`。发布检查必须包含完整 pytest 收集结果及服务端确认的真实 Agent 调用；纯宿主断言不能代替真实对话，也不代表候选效果更好。
 ### AGV-036 版本治理提供 diff、发布、重入恢复和补偿
 
 状态：`current`
@@ -1211,9 +1216,13 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
 - 平台核心概念不依赖 SOC、SIEM、SOAR 才成立。
 - 替换为客服、研发助手或知识管理时，治理模型仍适用。
 
-证据要求：文档和内置业务 Agent Workspace 说明。
+证据要求：文档说明只证明定位表述；平台能力还需通用 API/records/实际 SQLite 契约以及真实
+非 SOC Agent 的运行、反馈、候选测试与发布闭环，不能只读文档就判本项产品能力通过。
 
-自动化回归证据：`tests/test_agv_acceptance.py::test_agv_046_security_ops_is_replaceable_example_scenario`。
+文档回归：`tests/test_agv_documentation_contract.py::test_agv_046_documentation_lists_replaceable_example_scenarios`，
+在质量政策中归为文档/架构契约；通用输入与持久化行为见 `tests/test_feedback_entities.py`、
+`tests/test_runtime_v4_migration.py`。真实非 SOC 闭环由 `make ui-self-use-governance-smoke`
+执行，实际结果单独记账，测试文件或入口存在不代表验收通过。
 
 ### AGV-047 AgentGov 职责边界不侵入外部业务系统
 
@@ -1321,7 +1330,8 @@ Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`�
    版本和 Harness 映射可追溯；只有 terminal run 且匹配的 `agentgov.run` 根 observation 已结束时
    `trace_status=complete`。
 10. 验证 Langfuse trace 的安全语义：精确根名 `agentgov.run`，子 span 名为 `invoke_agent`、
-    `chat` 和按实际调用出现的 `execute_tool`，不在名称或属性中泄露 prompt、模型、Agent 或工具正文。
+    `chat` 和按实际执行出现的 `execute_tool`，被拒绝的 tool call 没有执行 span；不在名称或属性中
+    泄露 prompt、模型、Agent 或工具正文。
 11. 断开 AgentScope Runtime，确认 `/health/live` 仍可用、`/health/ready` 返回 `503` 且不泄露内部
     地址或响应正文；恢复后 readiness 重新通过。
 12. 通过公开 Make 入口生成临时 Runtime 根、唯一 Compose project/容器前缀、随机回环端口和全部

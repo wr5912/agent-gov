@@ -4,6 +4,7 @@ import type { RuntimeClientConfig } from "../types/runtime";
 import { DrawerShell } from "./DrawerShell";
 import { ImprovementAddFeedbackFlow } from "./ImprovementAddFeedbackFlow";
 import { SOURCE_LABEL } from "./improvementWorkbench.helpers";
+import { formatFeedbackEntities } from "../feedbackEntities";
 
 interface ImprovementSourceManagementDrawerProps {
   clientConfig: RuntimeClientConfig;
@@ -81,34 +82,7 @@ export function ImprovementSourceManagementDrawer({
             <section className="iw-stage-card" data-testid="source-feedback-table">
               <div className="iw-stage-card-head"><h4>来源反馈（{rows.length || 0}）</h4></div>
               {rows.length ? (
-                <table className="iw-feedback-table">
-                  <thead><tr><th>#</th><th>反馈摘要</th><th>来源</th><th>版本 / 场景</th><th>操作</th></tr></thead>
-                  <tbody>
-                    {rows.map((row, index) => (
-                      <tr key={row.key} data-testid="source-feedback-row">
-                        <td>{index + 1}</td>
-                        <td>{row.feedback?.summary || row.sourceRef}</td>
-                        <td>{row.feedback ? SOURCE_LABEL[row.feedback.source] ?? row.feedback.source : "引用 ID"}</td>
-                        <td>{row.feedback ? [row.feedback.agent_version_id, row.feedback.scenario].filter(Boolean).join(" / ") || "-" : "仅有引用 ID，无反馈记录"}</td>
-                        <td>
-                          <button
-                            className="iw-link-button"
-                            type="button"
-                            data-testid={row.feedback ? "source-feedback-detail-open" : "source-feedback-ref-detail-open"}
-                            onClick={() => setDetail(row)}
-                          >
-                            查看详情
-                          </button>
-                          {row.sourceRef && refs.length > 1 && !readOnly && item.improvement_status !== "archived" ? (
-                            <button className="iw-link-button" type="button" data-testid="split-ref" disabled={busy} onClick={() => onSplit(row.sourceRef)}>
-                              移出当前事项
-                            </button>
-                          ) : null}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <SourceFeedbackTable rows={rows} canSplit={refs.length > 1 && !readOnly && item.improvement_status !== "archived"} busy={busy} onDetail={setDetail} onSplit={onSplit} />
               ) : (
                 <div className="iw-source-refs" data-testid="improvement-source-refs">
                   <span className="iw-ref">暂无来源反馈</span>
@@ -123,7 +97,36 @@ export function ImprovementSourceManagementDrawer({
   );
 }
 
-function buildSourceRows(refs: string[], feedbacks: ImprovementFeedback[]): SourceFeedbackRow[] {
+function SourceFeedbackTable({ rows, canSplit, busy, onDetail, onSplit }: {
+  rows: SourceFeedbackRow[];
+  canSplit: boolean;
+  busy: boolean;
+  onDetail: (row: SourceFeedbackRow) => void;
+  onSplit: (ref: string) => void;
+}) {
+  return (
+    <table className="iw-feedback-table">
+      <thead><tr><th>#</th><th>反馈摘要</th><th>来源 / 事件</th><th>业务对象引用</th><th>版本 / 场景</th><th>操作</th></tr></thead>
+      <tbody>{rows.map((row, index) => (
+        <tr key={row.key} data-testid="source-feedback-row">
+          <td>{index + 1}</td>
+          <td>{row.feedback?.summary || row.sourceRef}</td>
+          <td>{row.feedback ? SOURCE_LABEL[row.feedback.source] ?? row.feedback.source : "引用 ID"}
+            {row.feedback?.source_events?.map((event) => <div key={event.event_id}>{event.source_system} / {event.event_type}</div>)}
+          </td>
+          <td>{formatFeedbackEntities(row.feedback?.entities)}</td>
+          <td>{row.feedback ? [row.feedback.agent_version_id, row.feedback.scenario].filter(Boolean).join(" / ") || "-" : "仅有引用 ID，无反馈记录"}</td>
+          <td>
+            <button className="iw-link-button" type="button" data-testid={row.feedback ? "source-feedback-detail-open" : "source-feedback-ref-detail-open"} onClick={() => onDetail(row)}>查看详情</button>
+            {row.sourceRef && canSplit ? <button className="iw-link-button" type="button" data-testid="split-ref" disabled={busy} onClick={() => onSplit(row.sourceRef)}>移出当前事项</button> : null}
+          </td>
+        </tr>
+      ))}</tbody>
+    </table>
+  );
+}
+
+export function buildSourceRows(refs: string[], feedbacks: ImprovementFeedback[]): SourceFeedbackRow[] {
   const rows: SourceFeedbackRow[] = [];
   const matched = new Set<string>();
   for (const ref of refs) {
@@ -152,7 +155,31 @@ function matchingFeedbackRef(feedback: ImprovementFeedback, refs: string[]): str
 }
 
 function feedbackRefCandidates(feedback: ImprovementFeedback): string[] {
-  return [feedback.feedback_id, feedback.case_id, feedback.run_id, feedback.session_id, feedback.task_id, feedback.alert_id].filter(Boolean);
+  return [feedback.feedback_id, feedback.feedback_case_id, feedback.run_id].filter((ref): ref is string => Boolean(ref));
+}
+
+export function SourceFeedbackFacts({ feedback, sourceRef }: { feedback: ImprovementFeedback; sourceRef: string }) {
+  return (
+    <dl className="iw-compact-dl">
+      <div><dt>反馈 ID</dt><dd>{feedback.feedback_id}</dd></div>
+      <div><dt>来源引用</dt><dd>{sourceRef || "-"}</dd></div>
+      <div><dt>治理 FeedbackCase</dt><dd>{feedback.feedback_case_id || "-"}</dd></div>
+      <div><dt>摘要</dt><dd>{feedback.summary}</dd></div>
+      <div><dt>来源</dt><dd>{SOURCE_LABEL[feedback.source] ?? feedback.source}</dd></div>
+      <div><dt>来源系统 / 事件类型</dt><dd data-testid="source-feedback-events">{feedback.source_events?.length
+        ? feedback.source_events.map((event) => <div key={event.event_id}>{event.source_system} / {event.event_type}（{event.event_id}）</div>)
+        : "无关联事件"}</dd></div>
+      <div><dt>业务对象引用</dt><dd data-testid="source-feedback-entities">{formatFeedbackEntities(feedback.entities)}</dd></div>
+      <div><dt>状态</dt><dd>{feedback.status}</dd></div>
+      <div><dt>原文</dt><dd>{feedback.raw_text || "-"}</dd></div>
+      <div><dt>Run</dt><dd>{feedback.run_id || "-"}</dd></div>
+      <div><dt>Session</dt><dd>{feedback.session_id || "-"}</dd></div>
+      <div><dt>Agent 版本</dt><dd>{feedback.agent_version_id || "-"}</dd></div>
+      <div><dt>场景</dt><dd>{feedback.scenario || "-"}</dd></div>
+      <div><dt>Task</dt><dd>{feedback.task_id || "-"}</dd></div>
+      <div><dt>创建时间</dt><dd>{feedback.created_at || "-"}</dd></div>
+    </dl>
+  );
 }
 
 function SourceFeedbackDetailDrawer({ row, item, onClose }: { row: SourceFeedbackRow; item: ImprovementItem; onClose: () => void }) {
@@ -166,22 +193,7 @@ function SourceFeedbackDetailDrawer({ row, item, onClose }: { row: SourceFeedbac
       onClose={onClose}
     >
       {feedback ? (
-        <dl className="iw-compact-dl">
-          <div><dt>反馈 ID</dt><dd>{feedback.feedback_id}</dd></div>
-          <div><dt>来源引用</dt><dd>{row.sourceRef || "-"}</dd></div>
-          <div><dt>摘要</dt><dd>{feedback.summary}</dd></div>
-          <div><dt>来源</dt><dd>{SOURCE_LABEL[feedback.source] ?? feedback.source}</dd></div>
-          <div><dt>状态</dt><dd>{feedback.status}</dd></div>
-          <div><dt>原文</dt><dd>{feedback.raw_text || "-"}</dd></div>
-          <div><dt>Run</dt><dd>{feedback.run_id || "-"}</dd></div>
-          <div><dt>Session</dt><dd>{feedback.session_id || "-"}</dd></div>
-          <div><dt>Agent 版本</dt><dd>{feedback.agent_version_id || "-"}</dd></div>
-          <div><dt>场景</dt><dd>{feedback.scenario || "-"}</dd></div>
-          <div><dt>Task</dt><dd>{feedback.task_id || "-"}</dd></div>
-          <div><dt>Alert</dt><dd>{feedback.alert_id || "-"}</dd></div>
-          <div><dt>Case</dt><dd>{feedback.case_id || "-"}</dd></div>
-          <div><dt>创建时间</dt><dd>{feedback.created_at || "-"}</dd></div>
-        </dl>
+        <SourceFeedbackFacts feedback={feedback} sourceRef={row.sourceRef} />
       ) : (
         <dl className="iw-compact-dl">
           <div><dt>来源引用 ID</dt><dd>{row.sourceRef}</dd></div>

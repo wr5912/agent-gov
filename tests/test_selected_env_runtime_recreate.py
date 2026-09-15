@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +15,8 @@ from scripts import (
 from scripts import (
     selected_env_source_snapshot as source_snapshot,
 )
+from scripts.container_acceptance_toolchain import _resolve_node
+from scripts.selected_env_reexec import frozen_command
 
 _SOURCE_DIGEST = "a" * 64
 _IMAGE_ID = "sha256:" + "b" * 64
@@ -47,15 +52,10 @@ def test_runtime_recreate_requires_current_selected_env_epoch(tmp_path: Path) ->
         contract.require_current_epoch_env(selected, "runtime-recreate")
 
 
-def test_runtime_recreate_preflights_and_never_bootstraps_or_starts_api(tmp_path: Path, monkeypatch) -> None:
+def test_runtime_recreate_rejects_unverified_idle_state_before_starting_commands(tmp_path: Path) -> None:
     selected = tmp_path / "selected.env"
-    calls: list[object] = []
-    monkeypatch.setattr(runner, "_preflight", lambda *_args: calls.append("preflight"))
-    monkeypatch.setattr(runner, "_bootstrap", lambda *_args: pytest.fail("Runtime-only operation must not bootstrap"))
-    monkeypatch.setattr(runner, "_prepare_harnesses", lambda *_args: pytest.fail("Runtime-only operation must not run API"))
-    monkeypatch.setattr(runner, "_run", lambda command, _env: calls.append(command) or 0)
-
-    assert (
+    selected.write_text("AGENTGOV_API_MODE=open\n", encoding="utf-8")
+    with pytest.raises(contract.SelectedEnvError, match="无法只读核验部署环境活动任务"):
         runner._execute_operation(
             "runtime-recreate",
             selected,
@@ -64,23 +64,37 @@ def test_runtime_recreate_preflights_and_never_bootstraps_or_starts_api(tmp_path
             {},
             no_build=False,
             force_recreate=False,
+            require_idle=True,
         )
-        == 0
-    )
 
-    assert calls[0] == "preflight"
-    assert calls[1] == [
-        *runner._compose(selected, tmp_path),
-        "up",
-        "-d",
-        "--no-deps",
-        "--force-recreate",
-        "--wait",
-        "--pull",
-        "never",
-        "--no-build",
-        "agentscope-runtime",
-    ]
+
+def test_runtime_recreate_idle_opt_in_is_preserved_by_frozen_cli_and_rejected_for_other_operations(tmp_path: Path) -> None:
+    args = (tmp_path, tmp_path / "selected.env", tmp_path, "runtime-recreate")
+    assert "--require-idle" not in frozen_command(*args, no_build=False, force_recreate=False)
+    assert frozen_command(*args, no_build=False, force_recreate=False, require_idle=True)[-1] == "--require-idle"
+    result = subprocess.run(
+        [sys.executable, "scripts/run_selected_env_operation.py", "--env-file", str(tmp_path / "absent.env"), "--operation", "up", "--require-idle"],
+        cwd=runner.REPO_ROOT,
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 2
+    assert "--require-idle 只允许用于 runtime-recreate" in result.stderr
+
+
+def test_candidate_runtime_restart_rejects_unsafe_signals_in_real_node_process() -> None:
+    node, _version = _resolve_node(dict(os.environ), error_type=contract.SelectedEnvError)
+    result = subprocess.run(
+        [str(node), "--test", "tests/candidate_runtime_restart.test.mjs"],
+        cwd=runner.REPO_ROOT,
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_runtime_recreate_attests_only_current_runtime_image_before_compose(tmp_path: Path, monkeypatch) -> None:
@@ -175,5 +189,7 @@ def test_runtime_recreate_attests_running_runtime_without_deleting_api_cas(tmp_p
 
 def test_public_runtime_recreate_target_uses_selected_env_runner() -> None:
     makefile = (runner.REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-    assert "runtime-recreate:" in makefile
-    assert "\t$(SELECTED_ENV_RUNNER) --operation runtime-recreate\n" in makefile
+    recipe = makefile.split("\nruntime-recreate:\n", 1)[1].split("\n\n", 1)[0]
+    assert "\t$(SELECTED_ENV_RUNNER) --operation runtime-recreate " in recipe
+    assert "$(if $(filter 1,$(RUNTIME_RECREATE_REQUIRE_IDLE)),--require-idle,)" in recipe
+    assert '""|0|1)' in recipe and "exit 2" in recipe

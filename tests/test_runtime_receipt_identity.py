@@ -34,8 +34,7 @@ def _begin(store: RuntimeRunStore):
         session_id="session-a",
         runtime_agent_id="runtime-a",
         input_value={"role": "user", "content": [{"type": "text", "text": "identity boundary"}]},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
 

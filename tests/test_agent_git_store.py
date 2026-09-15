@@ -70,6 +70,100 @@ def test_git_store_file_diff_returns_unified_diff(tmp_path):
     assert "+two" in str(diff["unified_diff"])
 
 
+def test_git_store_mode_only_diff_is_modified_and_exposes_exact_tree_modes(tmp_path):
+    repo = tmp_path / "workspace"
+    repo.mkdir()
+    tool = repo / "hooks" / "tool"
+    tool.parent.mkdir()
+    tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    tool.chmod(0o644)
+    store = GitAgentVersionStore(
+        repository_dir=repo,
+        worktrees_dir=tmp_path / "worktrees",
+        releases_dir=tmp_path / "releases",
+    )
+    base = str(store.ensure_bootstrap()["agent_version_id"])
+    worktree = store.create_worktree("mode-only", base_ref=base)
+    worktree.worktree_path.joinpath("hooks", "tool").chmod(0o755)
+    candidate = store.commit_worktree(worktree.worktree_path, message="mode only")
+
+    summary = store.diff_versions(base, candidate)
+    detail = store.diff_version_file(base, candidate, "hooks/tool")
+
+    assert summary is not None and detail is not None
+    assert [entry["path"] for entry in summary["modified"]] == ["hooks/tool"]
+    summary_entry = summary["modified"][0]
+    assert summary_entry["before"]["mode"] == "100644"
+    assert summary_entry["after"]["mode"] == "100755"
+    assert summary_entry["before"]["sha256"] == summary_entry["after"]["sha256"]
+    assert detail["status"] == "modified"
+    assert detail["before"] == summary_entry["before"]
+    assert detail["after"] == summary_entry["after"]
+    assert detail["is_text"] is True and detail["truncated"] is False
+    assert "(git mode)" in str(detail["unified_diff"])
+    assert "-100644" in str(detail["unified_diff"])
+    assert "+100755" in str(detail["unified_diff"])
+
+
+def test_git_store_combined_content_and_mode_diff_displays_both_changes(tmp_path):
+    repo = tmp_path / "workspace"
+    repo.mkdir()
+    tool = repo / "tool.sh"
+    tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    tool.chmod(0o644)
+    store = GitAgentVersionStore(
+        repository_dir=repo,
+        worktrees_dir=tmp_path / "worktrees",
+        releases_dir=tmp_path / "releases",
+    )
+    base = str(store.ensure_bootstrap()["agent_version_id"])
+    worktree = store.create_worktree("content-and-mode", base_ref=base)
+    candidate_tool = worktree.worktree_path / "tool.sh"
+    candidate_tool.write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+    candidate_tool.chmod(0o755)
+    candidate = store.commit_worktree(worktree.worktree_path, message="content and mode")
+
+    detail = store.diff_version_file(base, candidate, "tool.sh")
+
+    assert detail is not None
+    assert detail["status"] == "modified"
+    assert detail["before"]["mode"] == "100644"
+    assert detail["after"]["mode"] == "100755"
+    assert "-100644" in str(detail["unified_diff"])
+    assert "+100755" in str(detail["unified_diff"])
+    assert "+echo changed" in str(detail["unified_diff"])
+
+
+def test_git_store_empty_file_add_and_delete_have_reviewable_mode_diff(tmp_path):
+    repo = tmp_path / "workspace"
+    repo.mkdir()
+    repo.joinpath("deleted-empty.txt").write_bytes(b"")
+    store = GitAgentVersionStore(
+        repository_dir=repo,
+        worktrees_dir=tmp_path / "worktrees",
+        releases_dir=tmp_path / "releases",
+    )
+    base = str(store.ensure_bootstrap()["agent_version_id"])
+    worktree = store.create_worktree("empty-files", base_ref=base)
+    worktree.worktree_path.joinpath("deleted-empty.txt").unlink()
+    worktree.worktree_path.joinpath("added-empty.txt").write_bytes(b"")
+    candidate = store.commit_worktree(worktree.worktree_path, message="empty files")
+
+    summary = store.diff_versions(base, candidate)
+    added = store.diff_version_file(base, candidate, "added-empty.txt")
+    deleted = store.diff_version_file(base, candidate, "deleted-empty.txt")
+
+    assert summary is not None and added is not None and deleted is not None
+    assert summary["added"][0]["mode"] == "100644"
+    assert summary["deleted"][0]["mode"] == "100644"
+    assert added["status"] == "added" and added["is_text"] is True
+    assert added["before"] is None and added["after"] == summary["added"][0]
+    assert "+100644" in str(added["unified_diff"])
+    assert deleted["status"] == "deleted" and deleted["is_text"] is True
+    assert deleted["before"] == summary["deleted"][0] and deleted["after"] is None
+    assert "-100644" in str(deleted["unified_diff"])
+
+
 def test_version_diff_preserves_utf8_and_pathological_git_paths_without_c_quoting(tmp_path) -> None:
     repo = tmp_path / "workspace"
     repo.mkdir()

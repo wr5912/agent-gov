@@ -101,7 +101,7 @@
 | `feedback case` | 当前后端单反馈处理容器 | 可关联到 `ImprovementItem` 的证据与归因上下文 | 不作为四阶段改进治理用户一级对象。 |
 | `feedback_intake / triage / attribution / optimization / execution / regression / release` | 当前或历史更细阶段/状态 | 投影为四阶段：反馈整理 / 归因分析 / 优化执行 / 测试发布 | 不作为改进治理工作台顶部阶段条。 |
 | `optimization batch` / `优化批次` | 当前多条反馈合并生成方案的容器 | 由 `ImprovementItem` 聚合和阶段推进承接 | 不得把 `Batch` 继续当作四阶段改进治理用户主对象。 |
-| `proposal` / `optimization proposal` | 当前方案生成 job 的输出命名 | `OptimizationPlan` | 当前代码/API 名可保留；用户主流程改为“优化方案”。 |
+| `proposal` / `optimization proposal` | 已退出活跃链路的旧方案 job 与输出命名 | `OptimizationPlan` | 仅作历史记录解释；当前 job、API、输出和用户主流程统一为“优化方案”，不恢复旧 proposal 入口。 |
 | `RegressionAssessment` / `regression-assessment` | 已删除的四阶段测试候选名称 | `RegressionTestDesign` / `regression-test-design` | 只允许出现在历史迁移、归档材料和旧入口不存在的负向断言中。 |
 | `TestDataset` / `test_dataset` / 测试数据集 | 已删除的数据库测试内容副本和生命周期 | Workspace `tests/test_*.py` | 不作为当前资产、API、状态机或 UI 对象；历史 migration 可保留原名。 |
 | `EvalRun` / `eval_run` / 评估运行 | 已删除的数据库数据集评估链 | 当前执行证据使用 `AgentTestRun`；长期中立概念使用 `EvaluationExecution` | 不恢复旧表、旧 API、数据集正文副本或逐 case review 链；新逻辑对象只能按新的协议权威和升级条件建立。 |

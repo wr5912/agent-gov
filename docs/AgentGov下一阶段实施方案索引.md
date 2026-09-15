@@ -6,6 +6,10 @@
 >
 > 文档角色：连接长期产品目标、平台能力地图、单项产品能力目标方案与下一轮工程实施的唯一阶段索引。
 > 本文和下列阶段方案不表示对应能力已经进入当前 OpenAPI、数据库、UI 或运行态。
+>
+> 2026-09 自用工具范围说明：本文保留长期能力地图和 2026-08 历史取证，不是当前必做清单。
+> 当前整改仅处理已确认的开放 Issue、真实功能与维护问题，不建设多租户、安全平台、风险评分、
+> 多级审批或统一 EvalOps。旧 P0/Claude 测试数字及模拟 MCP 回执均不证明当前 AgentScope 可用。
 
 ## 1. 阶段结论
 
@@ -43,9 +47,13 @@
 阶段方案只把已选切片落实为可执行边界，不复制完整长期正文。已归档的旧《AgentGov 目标达成
 分阶段执行计划》继续只承担历史审计价值，不恢复为活跃入口。
 
-## 3. 当前准入证据
+## 3. 历史准入证据与当前替代入口
 
-截至评审基准日：
+以下测试数字和 Workspace 结论仅属于 2026-08-05 评审基准，不是当前验收结果；当前质量门、
+公开契约及部署路径以根 README、`tests/quality_policy.json` 和
+[Runtime 实施基线](./engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md) 为准。
+
+截至历史评审基准日：
 
 - `make codex-guard`、`make typecheck`、`make main-flow-test` 通过；
 - 根质量策略能收集 1351 个 pytest leaf；按测试资产权威契约，它不静态收集任何业务 Agent
@@ -102,10 +110,7 @@ P0-MCP 不改变上表的业务治理对象。其被验对象是 AgentGov Runtim
 ## 6. 总体闭环与依赖
 
 ```text
-历史 P0 准入收口（已归档）
-  ├─ 精确 commit 的 Workspace 全量测试零未分类失败（29 仅为当前快照）
-  └─ P0-MCP capability slice（历史验收切片）
-  ↓
+当前 AgentScope 公共契约与真实质量门（历史 P0 不参与准入）
   ├─ P1 安全协议化回归/发布准入 → ImprovementItem → candidate → paired evidence → Release
   └─ AgentScope Runtime Gateway（当前已落地的执行基线）
        ↓

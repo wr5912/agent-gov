@@ -7,12 +7,14 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import tarfile
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
 import yaml
@@ -121,12 +123,16 @@ def build_seed_package(agent_id: str) -> bytes:
         "tests/test_runtime_harness.py": (
             "from pathlib import Path\n\n"
             "WORKSPACE = Path(__file__).resolve().parents[1]\n\n"
-            "def test_minimal_runtime_harness_is_complete():\n"
+            "def test_minimal_runtime_harness_is_complete(agent):\n"
             "    manifest = (WORKSPACE / 'agent.yaml').read_text(encoding='utf-8')\n"
             "    instructions = (WORKSPACE / 'AGENT.md').read_text(encoding='utf-8')\n"
             "    assert 'runtime: agentscope' in manifest\n"
             "    assert 'immutable_harness: true' in manifest\n"
             "    assert '不调用任何工具' in instructions\n"
+            "    result = agent.run('请只输出七加七的十进制计算结果，不使用工具。')\n"
+            "    assert not result.errors\n"
+            "    assert result.text.strip() == '14'\n"
+            "    assert result.raw['agent_activity']['tool_calls'] == []\n"
         ).encode(),
     }
     return _package_bytes(entries)
@@ -165,7 +171,7 @@ import yaml
 WORKSPACE = Path(__file__).resolve().parents[1]
 
 
-def test_mcp_readonly_harness_contract():
+def test_mcp_readonly_harness_contract(agent):
     manifest = yaml.safe_load((WORKSPACE / "agent.yaml").read_text(encoding="utf-8"))
     declaration = json.loads((WORKSPACE / "mcp/sec-ops.json").read_text(encoding="utf-8"))
     assert manifest["workspace_policy"]["allowed_tools"] == {list(MCP_TECHNICAL_TOOL_NAMES)!r}
@@ -176,6 +182,10 @@ def test_mcp_readonly_harness_contract():
     assert declaration["enable_tools"] == [{MCP_TECHNICAL_RAW_TOOL_NAME!r}]
     assert declaration["enable_resources"] == [{MCP_TECHNICAL_RESOURCE_URI!r}]
     assert declaration["enable_resource_templates"] == [{MCP_TECHNICAL_RESOURCE_TEMPLATE!r}]
+    result = agent.run("请执行声明的真实 MCP 只读技术验收，并仅在全部调用成功后返回规定完成标记。")
+    assert not result.errors
+    assert result.text.strip() == {MCP_TECHNICAL_COMPLETION_TEXT!r}
+    assert result.raw["agent_activity"]["tool_calls"]
 """
     return _package_bytes(
         {
@@ -287,8 +297,66 @@ async def _pass_candidate_test_gate(client: httpx.AsyncClient, imported: Workspa
         or test_run.commit_sha != imported.candidate_commit_sha
         or not test_run.suite_digest
     ):
-        raise TechnicalIntegrationSeedError("技术集成 Agent 候选未通过精确 commit 平台测试门禁")
+        raise TechnicalIntegrationSeedError(
+            _candidate_test_failure(
+                test_run,
+                agent_id=imported.agent.agent_id,
+                change_set_id=imported.change_set_id,
+                commit_sha=imported.candidate_commit_sha,
+            )
+        )
     return test_run
+
+
+def _candidate_test_failure(test_run: AgentTestRunResponse, *, agent_id: str, change_set_id: str, commit_sha: str) -> str:
+    """只投影失败元数据；不把 pytest 原文或参数化 nodeid 带入验收日志。"""
+
+    item = next((item for item in test_run.items if item.outcome != "passed"), None)
+    known_nodes = {
+        "tests/test_runtime_harness.py::test_minimal_runtime_harness_is_complete",
+        "tests/test_mcp_readonly_harness.py::test_mcp_readonly_harness_contract",
+    }
+    error_code = test_run.error.get("error_code")
+    payload = {
+        "status": test_run.status,
+        "failure_reason": "pending_timeout" if test_run.status in {"queued", "running"} else "gate_rejected",
+        "exit_code": test_run.exit_code,
+        "suite_digest_present": bool(test_run.suite_digest),
+        "agent_match": test_run.agent_id == agent_id,
+        "change_set_match": test_run.change_set_id == change_set_id,
+        "commit_match": test_run.commit_sha == commit_sha,
+        "error_code": error_code if isinstance(error_code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", error_code) else "unclassified",
+        "http_status": _pytest_http_status(item.detail or "") if item is not None else None,
+        "http_error_code": _pytest_http_error_code(item.detail or "") if item is not None else None,
+        "first_nonpass_item": (
+            {
+                "nodeid": item.nodeid if item.nodeid in known_nodes else "unclassified",
+                "outcome": item.outcome if item.outcome in {"failed", "skipped", "incomplete", "error"} else "unclassified",
+                "phase": item.phase if item.phase in {"setup", "call", "teardown"} else "unclassified",
+                "failure_kind": _pytest_failure_kind(item.detail or ""),
+            }
+            if item is not None
+            else None
+        ),
+    }
+    return "技术集成 Agent 候选未通过精确 commit 平台测试门禁: " + json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _pytest_failure_kind(detail: str) -> str:
+    for kind in ("AssertionError", "HTTPStatusError", "RuntimeError"):
+        if re.search(rf"(?m)^E\s+(?:[\w.]+\.)?{kind}(?::|\s|$)", detail):
+            return kind
+    return "AssertionError" if re.search(r"(?m)^E\s+assert(?:\s|$)", detail) else "other"
+
+
+def _pytest_http_status(detail: str) -> int | None:
+    match = re.search(r"(?m)^E\s+.*AgentGov test invocation failed: HTTP ([45][0-9]{2}) error_code=", detail)
+    return int(match.group(1)) if match else None
+
+
+def _pytest_http_error_code(detail: str) -> str | None:
+    match = re.search(r"(?m)^E\s+.*AgentGov test invocation failed: HTTP [45][0-9]{2} error_code=([A-Z][A-Z0-9_]{0,127})(?:\s|$)", detail)
+    return match.group(1) if match else None
 
 
 async def _verify_candidate_diff(
@@ -473,6 +541,13 @@ async def _abandon_unpublished_candidate(client: httpx.AsyncClient, change_set_i
         raise TechnicalIntegrationSeedError(f"技术集成 Agent 候选清理失败（{type(exc).__name__}）") from None
 
 
+def _cleanup_failure(stage: Literal["abandon", "delete"], exc: Exception, *, primary_failed: bool) -> None:
+    detail = f"stage={stage}; error_type={type(exc).__name__}; isolated runner cleanup required"
+    if not primary_failed:
+        raise TechnicalIntegrationSeedError(f"技术集成 Agent 清理失败: {detail}") from None
+    print(f"AGENTSCOPE_TECHNICAL_SEED_CLEANUP_FAIL: {detail}", file=sys.stderr)
+
+
 @asynccontextmanager
 async def temporary_technical_integration_agent(
     client: httpx.AsyncClient,
@@ -504,14 +579,11 @@ async def temporary_technical_integration_agent(
         primary_failed = True
         raise
     finally:
+        cleanup_stage: Literal["abandon", "delete"] = "abandon"
         try:
             if imported is not None and activated is None:
                 await _abandon_unpublished_candidate(client, imported.change_set_id)
+            cleanup_stage = "delete"
             await _delete_seed(client, agent_id)
         except Exception as exc:
-            if not primary_failed:
-                raise TechnicalIntegrationSeedError(f"技术集成 Agent 清理失败（{type(exc).__name__}）；隔离 runner 仍需回收临时卷") from None
-            print(
-                f"AGENTSCOPE_TECHNICAL_SEED_CLEANUP_FAIL: {type(exc).__name__}; isolated runner cleanup required",
-                file=sys.stderr,
-            )
+            _cleanup_failure(cleanup_stage, exc, primary_failed=primary_failed)

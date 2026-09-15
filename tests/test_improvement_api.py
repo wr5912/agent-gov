@@ -6,9 +6,26 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
+import pytest
+from app.runtime.improvement_db import (
+    ImprovementIdempotencyOperationModel,
+    ImprovementItemModel,
+)
+from app.runtime.improvement_idempotency_migration import (
+    IDEMPOTENCY_TABLE,
+    IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION,
+    PRE_IDEMPOTENCY_V4_SCHEMA_CONTRACT_SHA256,
+)
+from app.runtime.runtime_db import ensure_schema, make_engine, make_session_factory
+from app.runtime.sqlite_schema_contract import CURRENT_SCHEMA_EPOCH, physical_schema_contract_sha256
+from app.runtime.stores.improvement_store import ImprovementStore
 from fastapi.testclient import TestClient
+from sqlalchemy import inspect, text
+from sqlalchemy.engine import Engine
 
 from app_test_utils import load_test_app as _load_app
 
@@ -108,6 +125,156 @@ def test_list_scoped_by_agent_and_global(process_environment, tmp_path: Path) ->
         allitems = {i["improvement_id"] for i in client.get("/api/improvements").json()}
     assert only_a == {a}
     assert {a, b}.issubset(allitems)
+
+
+def test_create_retry_key_replays_one_improvement_and_rejects_changed_input(process_environment, tmp_path: Path) -> None:
+    """服务端提交后响应丢失时，同一公开重试键不得创建第二个事项。"""
+    module = _load_app(process_environment, tmp_path)
+    headers = {"Idempotency-Key": "feedback-drawer-create-1"}
+    payload = {
+        "agent_id": "soc-ops",
+        "title": "响应丢失重试",
+        "summary": "同一请求",
+        "source_feedback_refs": ["run-1"],
+    }
+    with TestClient(module.app) as client:
+        first = client.post("/api/improvements", headers=headers, json=payload)
+        replay = client.post("/api/improvements", headers=headers, json=payload)
+        conflict = client.post("/api/improvements", headers=headers, json={**payload, "title": "不同请求"})
+        listed = client.get("/api/improvements", params={"agent_id": "soc-ops"}).json()
+
+    assert first.status_code == replay.status_code == 201
+    assert replay.json()["improvement_id"] == first.json()["improvement_id"]
+    assert [item["improvement_id"] for item in listed] == [first.json()["improvement_id"]]
+    assert conflict.status_code == 409
+    assert conflict.json()["error_code"] == "IDEMPOTENCY_KEY_CONFLICT"
+
+
+def test_retry_key_replays_mutated_resource_and_tombstone_blocks_recreation(process_environment, tmp_path: Path) -> None:
+    """账本绑定原始请求与资源引用；资源正文变化不误判，硬删后不复活。"""
+    module = _load_app(process_environment, tmp_path)
+    headers = {"Idempotency-Key": "feedback-drawer-durable-result"}
+    payload = {"agent_id": "soc-ops", "title": "初始标题", "summary": "原始请求"}
+    with TestClient(module.app) as client:
+        first = client.post("/api/improvements", headers=headers, json=payload)
+        improvement_id = first.json()["improvement_id"]
+        module.improvement_store.update_title(improvement_id, title="后续编辑标题")
+        replay = client.post("/api/improvements", headers=headers, json=payload)
+        deleted = client.delete(f"/api/improvements/{improvement_id}")
+        stale_retry = client.post("/api/improvements", headers=headers, json=payload)
+        listed = client.get("/api/improvements", params={"agent_id": "soc-ops"}).json()
+
+    assert replay.status_code == 201
+    assert replay.json()["improvement_id"] == improvement_id
+    assert replay.json()["title"] == "后续编辑标题"
+    assert deleted.status_code == 204
+    assert stale_retry.status_code == 409
+    assert listed == []
+    with module.runtime_db_session_factory() as db:
+        ledger = db.query(ImprovementIdempotencyOperationModel).one()
+        assert ledger.result_resource_id == improvement_id
+        assert ledger.request_fingerprint
+        assert ledger.tombstoned is True
+
+
+def test_same_retry_key_is_atomic_under_concurrent_store_calls(tmp_path: Path) -> None:
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    store = ImprovementStore(factory)
+    barrier = Barrier(8)
+
+    def create_once(_: int) -> str:
+        barrier.wait(timeout=5)
+        return store.create_improvement(
+            agent_id="soc-ops",
+            title="并发响应丢失",
+            summary="完全相同的请求",
+            idempotency_key="concurrent-create-key",
+        ).improvement_id
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        result_ids = list(pool.map(create_once, range(8)))
+
+    assert len(set(result_ids)) == 1
+    with factory() as db:
+        assert db.query(ImprovementItemModel).count() == 1
+        assert db.query(ImprovementIdempotencyOperationModel).count() == 1
+
+
+def _pre_idempotency_v4_engine(tmp_path: Path) -> Engine:
+    db_path = tmp_path / "runtime.sqlite3"
+    make_session_factory(db_path)
+    engine = make_engine(db_path)
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f'DROP TABLE "{IDEMPOTENCY_TABLE}"')
+        connection.execute(
+            text("DELETE FROM schema_migrations WHERE version = :version"),
+            {"version": IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION},
+        )
+    with engine.connect() as connection:
+        assert physical_schema_contract_sha256(connection.connection.driver_connection) == PRE_IDEMPOTENCY_V4_SCHEMA_CONTRACT_SHA256
+    return engine
+
+
+def test_exact_pre_idempotency_v4_schema_is_migrated_in_place(tmp_path: Path) -> None:
+    engine = _pre_idempotency_v4_engine(tmp_path)
+
+    ensure_schema(engine)
+
+    assert IDEMPOTENCY_TABLE in set(inspect(engine).get_table_names())
+    with engine.connect() as connection:
+        versions = set(connection.execute(text("SELECT version FROM schema_migrations")).scalars())
+        assert IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION in versions
+
+
+@pytest.mark.parametrize("retain_known_marker", [False, True])
+def test_pre_idempotency_v4_migration_rejects_every_unknown_marker_without_mutation(
+    tmp_path: Path,
+    retain_known_marker: bool,
+) -> None:
+    engine = _pre_idempotency_v4_engine(tmp_path)
+    with engine.begin() as connection:
+        if not retain_known_marker:
+            connection.execute(
+                text("DELETE FROM schema_migrations WHERE version != :epoch"),
+                {"epoch": CURRENT_SCHEMA_EPOCH},
+            )
+        connection.execute(
+            text("INSERT INTO schema_migrations(version, applied_at) VALUES (:version, :applied_at)"),
+            {"version": "unknown-v4-migration", "applied_at": "now"},
+        )
+    db_path = tmp_path / "runtime.sqlite3"
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+        tables_before = set(inspect(connection).get_table_names())
+        versions_before = set(connection.execute(text("SELECT version FROM schema_migrations")).scalars())
+    bytes_before = db_path.read_bytes()
+
+    with pytest.raises(RuntimeError):
+        ensure_schema(engine)
+
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+        tables_after = set(inspect(connection).get_table_names())
+        versions_after = set(connection.execute(text("SELECT version FROM schema_migrations")).scalars())
+    assert db_path.read_bytes() == bytes_before
+    assert tables_after == tables_before
+    assert versions_after == versions_before
+    assert IDEMPOTENCY_TABLE not in tables_after
+    assert IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION not in versions_after
+
+
+def test_pre_idempotency_v4_migration_rejects_partial_schema_without_mutation(tmp_path: Path) -> None:
+    engine = _pre_idempotency_v4_engine(tmp_path)
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE partial_unknown (id TEXT PRIMARY KEY)")
+
+    with pytest.raises(RuntimeError):
+        ensure_schema(engine)
+
+    assert IDEMPOTENCY_TABLE not in set(inspect(engine).get_table_names())
+    with engine.connect() as connection:
+        versions = set(connection.execute(text("SELECT version FROM schema_migrations")).scalars())
+        assert IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION not in versions
 
 
 def test_create_rejects_empty_and_unknown_is_404(process_environment, tmp_path: Path) -> None:
@@ -212,18 +379,39 @@ def test_merge_split_and_similar_api(process_environment, tmp_path: Path) -> Non
 
 
 def test_auto_merge_on_create(process_environment, tmp_path: Path) -> None:
-    """W2-b：auto_merge 创建时把来源反馈并入相似开放事项，而非新建。"""
+    """auto_merge 首次绑定结果；候选漂移时重放原结果，异请求无副作用。"""
     module = _load_app(process_environment, tmp_path)
+    headers = {"Idempotency-Key": "auto-merge-retry-key"}
+    payload = {
+        "agent_id": "soc-ops",
+        "title": "数据时间窗口不可靠导致误判",
+        "source_feedback_refs": ["fb"],
+        "auto_merge": True,
+    }
     with TestClient(module.app) as client:
         base = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "数据时间窗口不可靠导致误判", "source_feedback_refs": ["fa"]}).json()
-        merged = client.post(
+        merged = client.post("/api/improvements", headers=headers, json=payload)
+        # 首次完成后增加一个更新、同分的候选，使重试时相似度选择发生漂移。
+        newer = client.post(
             "/api/improvements",
-            json={"agent_id": "soc-ops", "title": "数据时间窗口不可靠导致误判", "source_feedback_refs": ["fb"], "auto_merge": True},
+            json={"agent_id": "soc-ops", "title": payload["title"], "source_feedback_refs": ["fc"]},
         ).json()
-        # 并入既有事项（同一 improvement_id），refs 合并，未新建。
-        assert merged["improvement_id"] == base["improvement_id"]
-        assert set(merged["source_feedback_refs"]) == {"fa", "fb"}
-        assert len(client.get("/api/improvements", params={"agent_id": "soc-ops"}).json()) == 1
+        replay = client.post("/api/improvements", headers=headers, json=payload)
+        conflict = client.post(
+            "/api/improvements",
+            headers=headers,
+            json={**payload, "source_feedback_refs": ["fd"]},
+        )
+        newer_after = client.get(f"/api/improvements/{newer['improvement_id']}").json()
+        base_after = client.get(f"/api/improvements/{base['improvement_id']}").json()
+
+    assert merged.status_code == replay.status_code == 201
+    assert merged.json()["improvement_id"] == base["improvement_id"]
+    assert replay.json()["improvement_id"] == base["improvement_id"]
+    assert set(base_after["source_feedback_refs"]) == {"fa", "fb"}
+    assert newer_after["source_feedback_refs"] == ["fc"]
+    assert conflict.status_code == 409
+    assert conflict.json()["error_code"] == "IDEMPOTENCY_KEY_CONFLICT"
 
 
 def test_closed_loop_links_api_is_read_only(process_environment, tmp_path: Path) -> None:

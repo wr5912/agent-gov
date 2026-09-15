@@ -91,6 +91,8 @@ OTLP endpoint/header 也不初始化 exporter。Provider 的 flush/shutdown 由 
 
 - span 名归一化为 `agentgov.run`、`agentgov.run.stage`、`invoke_agent`、`chat`、`execute_tool`
   等受控名称，名称不拼接 Agent、模型或业务正文。
+- Langfuse 查询视图可能把 OTel 工具 span 投影为具体工具标签或空名。内部校验视图丢弃具体标签，
+  只使用一致且在允许集中的 `gen_ai.operation.name` 归一化；安全名称与 operation 冲突时整个视图失败。
 - 允许属性包括 run/session/reply/版本关联、模型与 provider 标识、usage、工具调用 ID 和终态等。
 - prompt、模型输出、工具定义、参数和结果原文不导出，只生成对应 UTF-8 字节长度和 SHA-256。
 - 未知属性、span events、links 和错误描述不进入该安全副本；Resource 也按允许列表过滤。
@@ -150,7 +152,9 @@ allowlist 做第二次正向投影；因此不能把上游 `fields` 参数当成
 2. 恰好一个已结束的 `agentgov.run` 根；全部 observation 已结束，父子图连通且没有跨 trace 混入。
 3. 根的 Agent、发布版本、Harness digest、Runtime 版本、session 与 terminal reason 匹配。
 4. 根会话 stage 的 reply 集合与持久化 `reply_ids` 精确一致，不能把 worker reply 混入根回复。
-5. 每个 durable Team 子会话有对应 stage 与 invoke；每个 durable 工具终态有匹配的工具 span。
+5. 每个 durable Team 子会话有对应 stage 与 invoke；实际执行的 durable 工具终态必须有唯一的已结束
+   `execute_tool` span，并通过 session、tool call ID 和父 `invoke_agent` 的 reply 精确关联。
+   `denied` 代表未执行，反而必须没有该 tool call 的执行 span；工具 state 以 AgentGov durable receipt 为准。
 6. HITL/外部执行 action 有对应 request 身份；已 resolved action 还必须有续跑决策证据。
 7. 存在根 invoke、模型调用及 model/provider 标识，并有合法 input/output 长度与 SHA-256 指纹。
 

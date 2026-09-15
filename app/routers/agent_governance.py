@@ -22,6 +22,7 @@ from app.runtime.response_schemas.agent_governance_response_schemas import (
 )
 from app.runtime.state_machines import AgentChangeSetStatus, AgentReleaseStatus
 from app.services.agent_governance import AgentGovernanceService
+from app.services.agent_release_provenance import source_feedback_case_ids_by_release
 
 
 def create_agent_governance_router(
@@ -164,7 +165,7 @@ def _register_change_set_action_routes(
         summary="发布已批准的 Agent 待发布变更",
     )
     async def publish_agent_change_set(change_set_id: str, req: AgentChangeSetPublishRequest) -> AgentReleaseResponse:
-        return await agent_governance.publish_change_set_async(
+        release = await agent_governance.publish_change_set_async(
             change_set_id,
             operator=req.operator,
             tag_name=req.tag_name,
@@ -175,6 +176,8 @@ def _register_change_set_action_routes(
             expected_test_run_id=req.expected_test_run_id,
             expected_suite_digest=req.expected_suite_digest,
         )
+        sources = source_feedback_case_ids_by_release(agent_governance.feedback_store.Session, [release])
+        return AgentReleaseResponse.model_validate({**release, "source_feedback_case_ids": sources.for_release(str(release["release_id"]))})
 
     @router.post(
         "/agent-change-sets/{change_set_id}/worktree-cleanup/retry",
@@ -202,7 +205,12 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
         status: AgentReleaseStatus | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[AgentReleaseResponse]:
-        return agent_governance.list_releases(status=status, limit=limit)
+        releases = agent_governance.list_releases(status=status, limit=limit)
+        sources = source_feedback_case_ids_by_release(agent_governance.feedback_store.Session, releases)
+        return [
+            AgentReleaseResponse.model_validate({**release, "source_feedback_case_ids": sources.for_release(str(release["release_id"]))})
+            for release in releases
+        ]
 
     @router.get(
         "/agent-releases/{release_id}",
@@ -210,7 +218,9 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
         summary="Get one Agent release",
     )
     def get_agent_release(release_id: str) -> AgentReleaseResponse:
-        return ensure_found(agent_governance.get_release(release_id), "Agent release not found")
+        release = ensure_found(agent_governance.get_release(release_id), "Agent release not found")
+        sources = source_feedback_case_ids_by_release(agent_governance.feedback_store.Session, [release])
+        return AgentReleaseResponse.model_validate({**release, "source_feedback_case_ids": sources.for_release(str(release["release_id"]))})
 
 
 def _require_candidate_commit(change_set: JsonObject) -> str:

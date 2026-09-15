@@ -10,6 +10,13 @@ from typing import TypeAlias
 from scripts.agentscope_atomic_cutover_env import parse_selected_env_bindings
 from scripts.agentscope_atomic_cutover_types import DockerDaemonIdentity
 
+WORKSPACE_GC_APPLY_OPERATION = "runtime-workspace-gc-apply"
+WORKSPACE_GC_OPERATIONS = ("runtime-workspace-gc", WORKSPACE_GC_APPLY_OPERATION)
+DEPLOYED_BROWSER_OPERATIONS = {
+    "ui-playground-deployed-smoke": ("deployed_playground_two_turn_refresh", "scripts/verify_playground_deployed.mjs"),
+    "ui-playground-deployed-recovery-smoke": ("deployed_playground_receipt_disconnect_refresh", "scripts/verify_playground_recovery.mjs"),
+}
+
 OPERATIONS = (
     "all-up",
     "build",
@@ -29,9 +36,10 @@ OPERATIONS = (
     "runtime-prepare-harnesses",
     "runtime-recreate",
     "runtime-validate",
+    *WORKSPACE_GC_OPERATIONS,
     "ui-build",
     "ui-logs",
-    "ui-playground-deployed-smoke",
+    *DEPLOYED_BROWSER_OPERATIONS,
     "ui-recreate",
     "ui-stop",
     "ui-up",
@@ -40,7 +48,7 @@ OPERATIONS = (
 START_OPERATIONS = frozenset(
     {
         "all-up",
-        "ui-playground-deployed-smoke",
+        *DEPLOYED_BROWSER_OPERATIONS,
         "langfuse-up",
         "runtime-bootstrap",
         "runtime-prepare-harnesses",
@@ -53,7 +61,7 @@ START_OPERATIONS = frozenset(
 DOCKER_BIND_OPERATIONS = frozenset(
     {
         "all-up",
-        "ui-playground-deployed-smoke",
+        *DEPLOYED_BROWSER_OPERATIONS,
         "langfuse-up",
         "runtime-prepare-harnesses",
         "runtime-recreate",
@@ -72,6 +80,7 @@ DOCKER_MUTATING_OPERATIONS = frozenset(
         "ui-build",
         "ui-up",
         "ui-stop",
+        *WORKSPACE_GC_OPERATIONS,
     },
 )
 HOST_MUTATING_OPERATIONS = frozenset(
@@ -82,7 +91,7 @@ HOST_MUTATING_OPERATIONS = frozenset(
     }
 )
 MUTATING_OPERATIONS = DOCKER_MUTATING_OPERATIONS | HOST_MUTATING_OPERATIONS
-BUILD_OPERATIONS = frozenset({"build", "ui-build", "ui-playground-deployed-smoke"})
+BUILD_OPERATIONS = frozenset({"build", "ui-build", *DEPLOYED_BROWSER_OPERATIONS})
 SOURCE_FREEZE_OPERATIONS = frozenset(OPERATIONS)
 PREFLIGHT_OPERATIONS = frozenset(
     {

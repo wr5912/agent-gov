@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from contextlib import suppress
 from typing import cast
 
@@ -31,11 +32,25 @@ def post_message(
             )
         response.raise_for_status()
         payload: object = response.json()
+    except httpx.HTTPStatusError as exc:
+        error_code = _response_error_code(exc.response)
+        raise AgentGovTestkitError(f"AgentGov test invocation failed: HTTP {exc.response.status_code} error_code={error_code}") from None
     except (httpx.HTTPError, ValueError) as exc:
         raise AgentGovTestkitError(f"AgentGov test invocation failed: {exc}") from exc
     if not isinstance(payload, dict) or not all(isinstance(key, str) for key in payload):
         raise AgentGovTestkitError("AgentGov test invocation returned a non-object response")
     return cast(JsonObject, payload)
+
+
+def _response_error_code(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return "UNCLASSIFIED"
+    if not isinstance(payload, dict):
+        return "UNCLASSIFIED"
+    code = payload.get("error_code")
+    return code if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", code) else "UNCLASSIFIED"
 
 
 def delete_session(*, api_base: str, test_session_id: str, api_key: str | None) -> None:

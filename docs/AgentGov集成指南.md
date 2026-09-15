@@ -90,6 +90,12 @@ business Agent + immutable version/Harness
 `POST /api/agent-change-sets/{change_set_id}/publish`。发布命令负责创建并验证原生 Agent、提交版本绑定
 和活动 Git 指针；不存在独立 Runtime 启用步骤。
 
+Workspace 导出只读取已发布活动仓库的 Git HEAD：请求开始时固定完整 commit SHA，再从 Git
+对象库打包；不快照 live 文件、不暂存或提交修改，也不包含未发布候选、dirty 或 untracked 文件。
+未发布的 `draft` Agent 返回 `409 WORKSPACE_NOT_PUBLISHED`，不得用导出来隐式完成首次发布。
+响应头 `X-Agent-Commit-SHA`、`X-Workspace-Package-SHA256` 和 `X-Workspace-Tree-SHA256`
+分别标识精确提交、下载包字节及 Workspace 内容树，调用方应保留这些版本证据。
+
 ### 3.2 创建版本固定的会话
 
 先调用 `GET /api/runtime/agents/{agent_id}/current` 查询业务 Agent 的当前发布绑定，并要求
@@ -102,7 +108,7 @@ POST /api/runtime/sessions/
 Idempotency-Key: <由调用方生成且仅用于本 Agent 的稳定键>
 Content-Type: application/json
 
-{"agent_id":"<runtime_agent_id>","name":"告警复核"}
+{"agent_id":"<runtime_agent_id>","name":"业务复核"}
 ```
 
 成功返回 `session_id`，并在 `X-AgentGov-Session-Id` 响应头再次给出。重试相同
@@ -129,31 +135,41 @@ Content-Type: application/json
 {
   "agent_id":"<runtime_agent_id>",
   "session_id":"<session_id>",
-  "client_operation_id":"client-generated-stable-id",
   "input":{
+    "id":"<本次用户动作生成的稳定原生消息ID>",
     "name":"user",
     "role":"user",
-    "content":[{"type":"text","text":"请核查当前告警并给出处置建议"}]
-  },
-  "alert_id":"optional-alert-id",
-  "case_id":"optional-case-id",
-  "metadata":{"source":"soc"}
+    "content":[{"type":"text","text":"请复核已提供的业务材料并说明依据"}]
+  }
 }
 ```
 
+chat JSON 仅有原生 `agent_id`、`session_id`、`input` 三个字段；业务关联通过反馈接口的
+`entities` 提交，不向 chat body 增加 AgentGov 治理字段。`input` 使用 AgentScope 原生消息、
+消息列表或事件结构；客户端在一次用户动作建立时生成显式 `id`，同一动作重试复用这些 ID。
+新的用户动作必须使用新的 ID，即使文本相同也不能按文本去重。
+
 响应头 `X-AgentGov-Run-Id` 是本次运行的权威 `run_id`；
-`X-AgentGov-Session-Id` 必须与请求会话一致。Gateway 建连后先发送一个无业务语义的
+`X-AgentGov-Session-Id` 必须与请求的根会话一致。响应 body 保留 AgentScope 原生结构与额外字段，
+其中 `session_id` 在子执行恢复时可以是 worker Session，不能改写成根 Session，也不能据此判断归属错误。
+Gateway 建连后先发送一个无业务语义的
 SSE comment `:\n\n`，使浏览器在上游空闲心跳前即可确认事件流已经建立；其后才是 AgentScope
 `AgentEvent` 的原始字节代理。除这一前导 readiness comment 外，Gateway 不插入、重命名或重编码事件：
 调用方应按 `type` 做前向兼容分派，保留事件顺序和未知事件，业务展示可以跳过不认识的类型，
 原始事件面板仍应可查看；不能把未知事件当成成功终态。最终消息事实以 messages API 为准，
 不应从浏览器气泡另建一份权威 transcript。
 
-`client_operation_id` 标识一次逻辑提交，网络失败后重试必须复用原值。若初次响应是否送达不确定，
-调用 `GET /api/agent-runs/by-client-operation?session_id=...&client_operation_id=...` 定位精确 run，
-暂未找到时只能用完全相同的 input、上下文和操作 ID 幂等重试，不得换 ID 或改变 payload。chat
-明确返回不会启动执行的 4xx 且精确 operation 不存在时，可判定该次消息未提交并刷新会话；其他
-网络、超时、解码或 5xx 结果仍保持待核对。刷新后通过
+若初次响应是否送达不确定，先通过原生输入身份查询：
+
+```http
+GET /api/agent-runs/by-input-identity?agent_id={runtime_agent_id}&session_id={root_session_id}&operation_kind=initial&input_id={native_message_id}
+```
+
+身份由 Runtime Agent、根 Session、操作种类和有序原生输入 ID 共同确定；消息列表以重复的
+`input_id` 查询参数保持原顺序。已找回 run 时只恢复该 run 的查询和 SSE 监控，不重发初始输入。
+尚未找到时，只有全部输入都有显式 ID 才能使用完全相同的请求重试；同一身份携带不同内容会被拒绝。
+没有显式 ID 的原生输入可以单次提交，但不能自动重试，也没有上述身份查询的恢复保障。
+网络、超时、解码或 5xx 结果不能直接判失败或另起运行；必须保持待核对。刷新后通过
 `GET /api/agent-runs/{run_id}/pending-actions` 恢复仍在等待的人工确认或外部执行项。
 
 ### 3.4 读取消息、状态和运行终态
@@ -176,9 +192,16 @@ AgentScope 需要人工确认或外部执行时，会在同一 SSE 中发出原�
 原生 `USER_CONFIRM_RESULT` 或 `EXTERNAL_EXECUTION_RESULT` 输入，再次提交到
 `POST /api/runtime/chat/`，继续同一个 run。
 
-续跑必须提供该次操作的 `client_operation_id` 和当前 `expected_run_id`，重试复用同一操作 ID。
-普通批准默认 `confirmation_scope=once`；`run` 仅适用于 `USER_CONFIRM_RESULT`，由后端
-管理本次 run 内的临时授权，不能用它替代已发布 Harness 的权限边界。
+续跑仍只提交上述三个原生字段。根暂停事件使用根 Runtime Agent 和根 Session；
+worker 暂停事件必须使用 pending action 返回且经后端绑定校验的
+`runtime_agent_id` 与 `session_id`，不得回退到 leader 或由客户端猜测。原生事件的 `id`
+标识本次决策，`reply_id` 和逐项 action/tool ID 由暂停事件提供。该操作的身份查询
+也使用同一执行 Session/Runtime Agent，种类分别是 `user_confirmation` 或
+`external_execution`；响应不确定时复用原事件 ID 查询，不能另造一个决策。
+
+单次允许和拒绝都不附带权限范围头。只有用户明确选择“本次运行允许”时，才对
+`USER_CONFIRM_RESULT` 发送 `X-AgentGov-Confirmation-Scope: run`。后端管理本次 run 内的临时授权，
+其他输入不得携带该头；它不能替代已发布 Harness 的权限边界。
 
 浏览器只能提交本次决策，不得附带或修改持久化 permission rules。允许的工具、MCP 和授权策略由
 已发布 Harness 控制；AgentGov 不维护 Claude SDK/HITL 兼容入口。
@@ -208,7 +231,9 @@ Trace 只能从已授权的 AgentGov run 调用 `GET /api/agent-runs/{run_id}/tr
 `trace_id` 读取 Langfuse payload 的通用路由，前端也不得持有 Langfuse secret。公开响应只包含
 `run_id`、`trace_id`、`trace_url` 与 `trace_status`，完整性校验使用的 observation 瞬时视图不会返回
 浏览器。标准安全语义 trace 包含精确根名 `agentgov.run`，AgentScope 子 span 名归一化为
-`invoke_agent`、`chat` 和按实际调用出现的 `execute_tool`；名称不携带 Agent、模型或正文。
+`invoke_agent`、`chat` 和按实际执行出现的 `execute_tool`；被拒绝的 tool call 不会伪造执行 span。
+名称不携带 Agent、模型或正文。工具终态以 AgentGov durable receipt 为准，Trace 使用 session、
+tool call ID 和父 `invoke_agent` 的 reply 证明实际执行归属。
 根 observation 携带 run、Agent 版本、Harness 与根 session；reply 关联由 stage 和
 `invoke_agent` observation 承载。原始输入输出及 tool/MCP 参数不进入观测持久层，出口保留
 受控语义属性、精确 UTF-8 长度与 SHA-256。反馈可先提交，自动改进需等待 run terminal 且
@@ -217,7 +242,27 @@ Trace 只能从已授权的 AgentGov run 调用 `GET /api/agent-runs/{run_id}/tr
 
 ## 5. 反馈、改进与发布闭环
 
-上层系统以 `run_id`、`session_id`、`alert_id` 或 `case_id` 提交反馈来源，随后进入受控改进：
+上层系统通过 `POST /api/feedback-signals` 提交反馈信号，通过 `POST /api/feedback-events`
+提交通用业务事件；事件类型 `event_type` 是非空开放字符串，不是 SOC 固定枚举。
+`source_system` 标识业务来源系统，SOC 只是其中一种业务来源，不另设平行事件 API。
+事件重试必须复用相同 `event_id` 与规范化后的不可变请求；精确重试返回 `duplicate`。若同一
+`event_id` 携带不同内容，API 返回 HTTP 409、`error_code=FEEDBACK_EVENT_ID_CONFLICT`，且原事件
+和原待关联记录保持不变。等价 RFC 3339 时区写法及实体顺序不会制造伪冲突。
+旧版本已补齐关联字段而尚无请求指纹的事件，只在首次不冲突重试时绑定该请求；后续与新事件一样
+执行严格比较。`event_id`、`source_system` 必须含非空白字符，自由 JSON 不接受 `NaN` 或
+`Infinity`；这些输入在 HTTP 422 边界被拒绝且不落库。
+
+来源、事件、信号、Run 和反馈 Case 的业务对象引用统一为 `entities: Record<string, string[]>`，
+例如 `{"document":["document-1"],"case":["business-case-1"]}`。查询业务对象时成对传入
+`entity_type` 与 `entity_id`；`entities.case` 表示业务系统自己的 case，绝不能填治理事项 ID。
+`feedback_case_id` 则是 AgentGov 治理反馈 Case 的身份，和业务对象引用分开保存、查询与展示。
+事件输入中的 `run_id`、`session_id` 是关联线索；`agent_id`、`matched_run_id` 由后端解析，
+同一 Session 有多轮运行时不能猜测“最近一次 run”。
+
+改进事项来源响应中的 `feedback_case_id` 只从已有归属关系派生；`source_events` 是该反馈批次
+已有事件的只读列表，每项包含 `event_id`、`source_system`、`event_type`。一个来源可以关联多个事件，
+前端应保留全部来源，不把它们压成单个事件，也不让用户或模型伪造这些派生字段。
+现有 `source` 字段仍描述反馈来源类别，不替代事件的来源系统与类型。随后进入受控改进：
 
 1. `POST /api/feedback-signals` 收集反馈，`POST /api/feedback-cases` 形成处置对象。
 2. `POST /api/feedback-cases/{feedback_case_id}/evidence-packages` 固化不可变证据。
@@ -246,7 +291,8 @@ Trace 只能从已授权的 AgentGov run 调用 `GET /api/agent-runs/{run_id}/tr
 
 聊天输入不能修改 model、credential、权限模式、工作目录或活动 Harness。受控改进在隔离候选
 worktree 中修改资产，经静态策略、回归、人工确认后原子发布；旧会话继续使用旧 digest。
-导出的 live Workspace 可能包含敏感业务配置，应按敏感资产保管，不得写入公开仓库或日志。
+已发布 Git 版本的导出包仍可能包含敏感业务配置，应按敏感资产保管，不得写入公开仓库或日志；
+只读导出不会采集当前 live Workspace 中未提交的内容。
 
 旧 Claude Workspace 只能通过 `scripts/convert_claude_harness.py` 做一次性离线迁移；转换器不在
 生产启动或运行链路中调用。MCP 迁移与凭据格式见

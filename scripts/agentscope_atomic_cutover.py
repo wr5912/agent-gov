@@ -192,7 +192,7 @@ def classify_runtime_epoch(db_path: Path) -> RuntimeEpoch:
             inspection = schema_contract.inspect_sqlite_schema_epoch(
                 connection,
                 known_data_migration_markers=frozenset(
-                    {HITL_FINGERPRINT_DATA_MIGRATION},
+                    {HITL_FINGERPRINT_DATA_MIGRATION, schema_contract.IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION},
                 ),
             )
             tables = list(inspection.tables)
@@ -306,7 +306,9 @@ def command_inspect(args: argparse.Namespace) -> int:
     allowed = {
         "empty",
         "agentscope",
+        "agentscope-v4-idempotency-migratable",
         "agentscope-v2-migratable",
+        "agentscope-v3-migratable",
         "agentscope-v1-migratable",
     }
     if args.require_current_or_empty and result["classification"] not in allowed:

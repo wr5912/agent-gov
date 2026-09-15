@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 
 from sqlalchemy import select, update
@@ -73,16 +72,12 @@ class AgentGovernanceService:
         *,
         feedback_store: FeedbackStore,
         agent_version_store: GitAgentVersionStore,
-        runtime_mode: str = "container",
-        runtime_env: Mapping[str, str] | None = None,
     ) -> None:
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
         self.version_maintenance = AgentVersionMaintenanceCoordinator(feedback_store.Session)
         # 每个业务 Agent 独立缓存版本链；不可预置可删除的 main-agent，避免留下悬空 store。
         self._agent_stores: dict[str, GitAgentVersionStore] = {}
-        self._runtime_mode = runtime_mode
-        self._runtime_env = dict(runtime_env or os.environ)
         # 业务 Agent 必须在注册表中存在才允许建/取其版本库，杜绝幽灵 Agent。
         self.agent_exists: Callable[[str], bool] | None = None
         self.latest_passed_test_run: Callable[..., JsonObject | None] | None = None
@@ -270,6 +265,7 @@ class AgentGovernanceService:
             "latest_test_run": None,
             "approval_note": None,
             "approval_evidence": None,
+            "publication_error": None,
             "candidate_evidence_epoch": CANDIDATE_EVIDENCE_EPOCH,
             "evidence_not_before": None,
         }
@@ -451,21 +447,13 @@ class AgentGovernanceService:
         return build_ref_policy_validator(
             store,
             agent_id,
-            data_dir=self.feedback_store.data_dir,
-            runtime_mode=self._runtime_mode,
-            runtime_env=self._runtime_env,
         )
 
     def require_workspace_policy(self, workspace: Path, agent_id: str) -> None:
-        data_dir = self.feedback_store.data_dir.resolve()
-        runtime_root = Path("/") if data_dir == Path("/data") else data_dir.parent
         try:
             require_runtime_workspace_policy(
                 workspace=workspace,
                 agent_id=self._normalize_agent_id(agent_id),
-                runtime_mode=self._runtime_mode,
-                env=self._runtime_env,
-                runtime_root=runtime_root,
             )
         except ManagedAgentPolicyError as exc:
             raise ConflictError(f"Managed Agent policy rejected workspace: {exc}") from exc

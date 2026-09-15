@@ -5,6 +5,7 @@ docker/.env.mockllm
 docker/.env.local
 docker/.env.local-debug
 docker/.env.bak*
+docker/.env.rotation.lock
 .venv/
 __pycache__/
 *.pyc

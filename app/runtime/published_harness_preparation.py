@@ -17,7 +17,7 @@ from app.runtime_gateway.store import RuntimeStateConflict, harness_digest
 
 
 def _excluded_registry_agent_ids(db_path: Path) -> set[str]:
-    """只读已有 tombstone；空卷不创建数据库，也不恢复未完成的 Agent 创建。"""
+    """只读 tombstone 与未发布身份；空卷不创建数据库或恢复草稿。"""
 
     if db_path.is_symlink():
         raise RuntimeStateConflict("Agent registry database must not be a symlink")
@@ -32,6 +32,8 @@ def _excluded_registry_agent_ids(db_path: Path) -> set[str]:
             clauses.append("deleted_at IS NOT NULL")
         if "provision_state" in columns:
             clauses.append("provision_state IS NOT NULL AND provision_state != 'ready'")
+        if "status" in columns:
+            clauses.append("status = 'draft'")
         if not clauses:
             return set()
         rows = connection.execute("SELECT agent_id FROM agent_registry WHERE " + " OR ".join(clauses))

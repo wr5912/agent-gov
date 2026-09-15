@@ -7,7 +7,7 @@ import {
 } from "./api/runtime";
 import { mergeChatMessageRunContext } from "./chatMessageRunContext";
 import type { PlaygroundRunAction, PlaygroundRunState } from "./playgroundRunState";
-import type { ChatMessage, RuntimeClientConfig } from "./types/runtime";
+import type { AgentScopeExternalExecutionResult, AgentScopeUserConfirmResult, ChatMessage, RuntimeClientConfig } from "./types/runtime";
 import { newId } from "./utils/ids";
 
 export interface PlaygroundActiveTurn {
@@ -16,6 +16,7 @@ export interface PlaygroundActiveTurn {
   userMessageId?: string;
   assistantMessageId: string;
   inputText?: string;
+  continuationInputs?: Map<string, AgentScopeUserConfirmResult | AgentScopeExternalExecutionResult>;
   operationId: string;
   controller: AbortController;
   connection?: AgentScopeStreamConnection;
@@ -30,6 +31,7 @@ export interface PlaygroundActiveTurn {
   streamReconnect?: Promise<void>;
   streamError?: unknown;
   monitorError?: string;
+  pendingProjectionError?: string;
   observedPendingActionIds?: Set<string>;
   lastPendingRecoveryAt?: number;
   lastStreamReconnectAt?: number;

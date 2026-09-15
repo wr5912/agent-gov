@@ -24,6 +24,7 @@ def _settings(tmp_path: Path, *, initialize_workspace: bool = True) -> AppSettin
     root = tmp_path / "runtime"
     settings = AppSettings(
         _env_file=None,
+        AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret",
         DATA_DIR=root / "data",
         GOVERNOR_WORKSPACE_DIR=root / "governor-workspace",
         RUNTIME_VOLUME_MODE="local-debug",

@@ -3,14 +3,17 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from tests.runtime_v3_fixture_utils import restore_empty_current_to_v3
+
 V3_EPOCH = "agentscope-runtime-v3"
 V2_EPOCH = "agentscope-runtime-v2"
 V1_EPOCH = "agentscope-runtime-v1"
 
 
 def convert_current_to_v2(db_path: Path) -> None:
-    """Reverse a fresh v3 fixture into the frozen, exact v2 physical shape."""
+    """把当前空库还原为冻结的真实 v2 物理格式，供迁移契约测试。"""
 
+    restore_empty_current_to_v3(db_path)
     with sqlite3.connect(db_path) as connection:
         connection.execute("PRAGMA foreign_keys = OFF")
         connection.execute("DROP TABLE runtime_chat_operations")

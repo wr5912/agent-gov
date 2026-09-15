@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.runtime.feedback_entities import FeedbackEntities
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db_base import begin_sqlite_write_transaction, utc_now
 
@@ -30,9 +31,6 @@ from .models import (
 from .operation_identity import (
     RuntimeChatOperationKind,
     canonical_request_fingerprint,
-    chat_request_fingerprint,
-    continuation_operation_key,
-    initial_operation_key,
 )
 
 
@@ -49,6 +47,7 @@ class RuntimeContinuationIdentity:
     operation_key: str
     operation_kind: RuntimeChatOperationKind
     request_fingerprint: str
+    request_runtime_agent_id: str
     reply_id: str
     action_session_id: str
     action_ids: list[str]
@@ -148,19 +147,25 @@ def governed_run_metadata(metadata: JsonObject) -> JsonObject:
     return {key: value for key, value in metadata.items() if key not in backend_keys}
 
 
-def initial_request_fingerprint(
+def native_request_fingerprint(
     *,
     input_value: Any,
     metadata: JsonObject,
     session_id: str,
     runtime_agent_id: str,
-    alert_id: str | None,
-    case_id: str | None,
+    entities: FeedbackEntities,
+    confirmation_scope: ConfirmationScope,
 ) -> str:
-    del session_id, runtime_agent_id, alert_id, case_id
     try:
         return canonical_request_fingerprint(
-            {"input": input_value, "metadata": metadata},
+            {
+                "input": input_value,
+                "metadata": metadata,
+                "session_id": session_id,
+                "runtime_agent_id": runtime_agent_id,
+                "entities": entities,
+                "confirmation_scope": confirmation_scope.value,
+            },
         )
     except (TypeError, ValueError) as exc:
         raise RuntimeInputRejected(
@@ -168,29 +173,16 @@ def initial_request_fingerprint(
         ) from exc
 
 
-def find_initial_operation(
-    db: Session,
-    client_operation_id: str | None,
-) -> RuntimeChatOperationModel | None:
-    if client_operation_id is None:
-        return None
-    return db.get(RuntimeChatOperationModel, initial_operation_key(client_operation_id))
-
-
 def add_initial_operation(
     db: Session,
     *,
     run: AgentRunModel,
-    client_operation_id: str | None,
+    operation_key: str,
     request_fingerprint: str,
-) -> str | None:
-    if client_operation_id is None:
-        return None
-    operation_key = initial_operation_key(client_operation_id)
+) -> None:
     db.add(
         RuntimeChatOperationModel(
             operation_key=operation_key,
-            client_operation_id=client_operation_id,
             operation_kind=RuntimeChatOperationKind.INITIAL.value,
             request_fingerprint=request_fingerprint,
             run_id=run.run_id,
@@ -203,20 +195,19 @@ def add_initial_operation(
             confirmation_scope=None,
         ),
     )
-    return operation_key
 
 
 def validate_initial_operation(
     operation: RuntimeChatOperationModel,
     *,
-    client_operation_id: str,
+    operation_key: str,
     request_fingerprint: str,
     session_id: str,
     runtime_agent_id: str,
 ) -> None:
     expected = (
         RuntimeChatOperationKind.INITIAL.value,
-        client_operation_id,
+        operation_key,
         request_fingerprint,
         session_id,
         session_id,
@@ -228,7 +219,7 @@ def validate_initial_operation(
     )
     actual = (
         operation.operation_kind,
-        operation.client_operation_id,
+        operation.operation_key,
         operation.request_fingerprint,
         operation.root_session_id,
         operation.action_session_id,
@@ -240,7 +231,7 @@ def validate_initial_operation(
     )
     if actual != expected:
         raise RuntimeStateConflict(
-            "client_operation_id is bound to another immutable chat request",
+            "Native input identity is bound to another immutable chat request",
         )
 
 
@@ -252,39 +243,34 @@ def resolve_continuation_identity(
     metadata: JsonObject,
     session_id: str,
     runtime_agent_id: str,
-    alert_id: str | None,
-    case_id: str | None,
-    client_operation_id: str,
+    entities: FeedbackEntities,
+    operation_key: str,
     confirmation_scope: ConfirmationScope,
 ) -> RuntimeContinuationIdentity:
     shape = _continuation_request_shape(input_value)
     actions = _continuation_actions(db, run=run, shape=shape)
+    if session_id != actions.action_session_id:
+        raise RuntimeStateConflict(
+            "Continuation request Session does not match the pending action Session",
+        )
     try:
-        request_fingerprint = chat_request_fingerprint(
+        request_fingerprint = native_request_fingerprint(
             input_value=input_value,
             metadata=metadata,
             session_id=session_id,
             runtime_agent_id=runtime_agent_id,
-            alert_id=alert_id,
-            case_id=case_id,
-            expected_run_id=run.run_id,
-            confirmation_scope=confirmation_scope.value,
+            entities=entities,
+            confirmation_scope=confirmation_scope,
         )
     except (TypeError, ValueError) as exc:
         raise RuntimeInputRejected(
             "Runtime chat input and metadata must be canonical JSON",
         ) from exc
     return RuntimeContinuationIdentity(
-        operation_key=continuation_operation_key(
-            client_operation_id=client_operation_id,
-            operation_kind=shape.operation_kind,
-            action_session_id=actions.action_session_id,
-            reply_id=shape.reply_id,
-            action_ids=actions.action_ids,
-            tool_call_ids=actions.tool_call_ids,
-        ),
+        operation_key=operation_key,
         operation_kind=shape.operation_kind,
         request_fingerprint=request_fingerprint,
+        request_runtime_agent_id=runtime_agent_id,
         reply_id=shape.reply_id,
         action_session_id=actions.action_session_id,
         action_ids=actions.action_ids,
@@ -296,20 +282,18 @@ def add_continuation_operation(
     db: Session,
     *,
     run: AgentRunModel,
-    client_operation_id: str,
     confirmation_scope: ConfirmationScope,
     identity: RuntimeContinuationIdentity,
 ) -> None:
     db.add(
         RuntimeChatOperationModel(
             operation_key=identity.operation_key,
-            client_operation_id=client_operation_id,
             operation_kind=identity.operation_kind.value,
             request_fingerprint=identity.request_fingerprint,
             run_id=run.run_id,
             root_session_id=run.session_id,
             action_session_id=identity.action_session_id,
-            runtime_agent_id=run.runtime_agent_id,
+            runtime_agent_id=identity.request_runtime_agent_id,
             reply_id=identity.reply_id,
             action_ids_json=identity.action_ids,
             tool_call_ids_json=identity.tool_call_ids,
@@ -322,25 +306,24 @@ def validate_continuation_operation(
     operation: RuntimeChatOperationModel,
     *,
     run: AgentRunModel,
-    client_operation_id: str,
     confirmation_scope: ConfirmationScope,
     identity: RuntimeContinuationIdentity,
 ) -> None:
     expected = (
-        client_operation_id,
+        identity.operation_key,
         identity.operation_kind.value,
         identity.request_fingerprint,
         run.run_id,
         run.session_id,
         identity.action_session_id,
-        run.runtime_agent_id,
+        identity.request_runtime_agent_id,
         identity.reply_id,
         identity.action_ids,
         identity.tool_call_ids,
         confirmation_scope.value,
     )
     actual = (
-        operation.client_operation_id,
+        operation.operation_key,
         operation.operation_kind,
         operation.request_fingerprint,
         operation.run_id,
@@ -354,7 +337,7 @@ def validate_continuation_operation(
     )
     if actual != expected:
         raise RuntimeStateConflict(
-            "client_operation_id is bound to another immutable continuation request",
+            "Native input identity is bound to another immutable continuation request",
         )
 
 

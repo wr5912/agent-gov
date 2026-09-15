@@ -12,8 +12,10 @@ from sqlalchemy.orm import aliased, sessionmaker
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db_base import begin_sqlite_write_transaction, utc_now
 from app.runtime.state_machines import validate_transition
+from app.runtime_gateway.store import RuntimeTemplateRestartRequired
 
 from .models import AgentTestRunItemModel, AgentTestRunModel, AgentWorkspaceImportRecordModel
+from .report_validation import passed_report_errors
 
 
 class AgentTestRunNotFound(LookupError):
@@ -259,6 +261,10 @@ class AgentTestingStore:
                 raise AgentTestRunNotFound(test_run_id)
             if row.status != "running":
                 return _run_payload(row, ())
+            runtime_error = dict(row.error_json or {})
+            restart_required = runtime_error.get("error_code") == RuntimeTemplateRestartRequired.error_code
+            if restart_required and status != "cancelled":
+                status = "error"
             validate_transition("agent_test_run", row.status, status)
             attested_invocations = _attested_invocations(row.report_json)
             final_report = dict(report)
@@ -269,7 +275,7 @@ class AgentTestingStore:
             row.report_json = final_report
             row.stdout_text = stdout
             row.stderr_text = stderr
-            row.error_json = error or {}
+            row.error_json = runtime_error if restart_required and status != "cancelled" else error or {}
             db.execute(delete(AgentTestRunItemModel).where(AgentTestRunItemModel.test_run_id == test_run_id))
             for item in items:
                 db.add(
@@ -284,6 +290,20 @@ class AgentTestingStore:
                     )
                 )
         return self.get_run(test_run_id) or {}
+
+    def record_runtime_restart_required(self, test_run_id: str, *, commit_sha: str) -> None:
+        """只由当前测试的服务端执行异常写入，不采信 pytest 自报错误码。"""
+        with self.Session.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
+            row = db.get(AgentTestRunModel, test_run_id)
+            if row is None:
+                raise AgentTestRunNotFound(test_run_id)
+            if row.status != "running" or row.commit_sha != commit_sha:
+                raise RuntimeError("Runtime restart error does not belong to the active tested commit")
+            row.error_json = {
+                "error_code": RuntimeTemplateRestartRequired.error_code,
+                "message": "候选 subagent 模板已准备；请重启 AgentScope Runtime 后，对同一候选重新运行测试。",
+            }
 
     def record_attested_invocation(self, test_run_id: str, invocation: JsonObject) -> None:
         with self.Session.begin() as db:
@@ -300,6 +320,14 @@ class AgentTestingStore:
                 invocations.append(dict(invocation))
             report["_attested_invocations"] = invocations
             row.report_json = report
+
+    def attested_invocations(self, test_run_id: str) -> list[JsonObject]:
+        """仅供 runner 终态校验，不读取 pytest 自报的 invocation 列表。"""
+        with self.Session() as db:
+            row = db.get(AgentTestRunModel, test_run_id)
+            if row is None:
+                raise AgentTestRunNotFound(test_run_id)
+            return _attested_invocations(row.report_json)
 
     def reconcile_interrupted_runs(self) -> list[str]:
         now = utc_now()
@@ -336,26 +364,45 @@ class AgentTestingStore:
                     AgentTestRunItemModel.outcome != "passed",
                 )
             )
-            row = db.scalar(
+            rows = db.scalars(
                 select(AgentTestRunModel)
                 .where(
                     AgentTestRunModel.agent_id == agent_id,
                     AgentTestRunModel.commit_sha == commit_sha,
                     AgentTestRunModel.status == "passed",
+                    AgentTestRunModel.source == "release_check",
                     has_item,
                     ~has_nonpassing_item,
                 )
                 .order_by(AgentTestRunModel.completed_at.desc(), AgentTestRunModel.test_run_id.desc())
-                .limit(1)
-            )
-            if row is None:
-                return None
-            items = list(
-                db.scalars(
-                    select(AgentTestRunItemModel).where(AgentTestRunItemModel.test_run_id == row.test_run_id).order_by(AgentTestRunItemModel.nodeid)
-                ).all()
-            )
-            return _run_payload(row, items)
+            ).all()
+            for row in rows:
+                items = list(
+                    db.scalars(
+                        select(AgentTestRunItemModel).where(AgentTestRunItemModel.test_run_id == row.test_run_id).order_by(AgentTestRunItemModel.nodeid)
+                    ).all()
+                )
+                payload = _run_payload(row, items)
+                report = payload.get("report")
+                invocations = report.get("invocations") if isinstance(report, dict) else None
+                if not isinstance(report, dict) or not isinstance(invocations, list) or any(not isinstance(item, dict) for item in invocations):
+                    continue
+                if passed_report_errors(
+                    report,
+                    actual_exit_code=0,
+                    release_check=True,
+                    attested_invocations=invocations,
+                    test_run_id=row.test_run_id,
+                    commit_sha=commit_sha,
+                ):
+                    continue
+                reported_items = report.get("items")
+                if not isinstance(reported_items, list) or sorted(str(item.get("nodeid")) for item in reported_items if isinstance(item, dict)) != sorted(
+                    item.nodeid for item in items
+                ):
+                    continue
+                return payload
+            return None
 
     def latest_for_candidate(
         self,

@@ -47,8 +47,7 @@ def _bind_waiting_run(
         session_id=session_id,
         runtime_agent_id=runtime_agent_id,
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)
@@ -153,6 +152,7 @@ def test_real_sqlite_and_asgi_pending_action_never_expose_tool_body(
     assert response.status_code == 200, response.text
     payload = response.json()
     assert len(payload) == 1
+    assert payload[0]["runtime_agent_id"] == run.runtime_agent_id
     assert payload[0]["tool_call_id"] == "tool-private"
     assert payload[0]["tool_call_name"] == "Write"
     assert payload[0]["tool_call_state"] == "asking"

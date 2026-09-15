@@ -85,11 +85,13 @@ make setup
 
 ```dotenv
 API_KEY=replace-with-api-key
-AGENTGOV_RUNTIME_SHARED_SECRET=replace-with-at-least-32-random-characters
 MODEL_PROVIDER_API_KEY=replace-with-private-provider-key
 MODEL_PROVIDER_API_URL=https://api.deepseek.com
 AGENTSCOPE_MODEL_NAME=deepseek-chat
 ```
+
+`AGENTGOV_RUNTIME_SHARED_SECRET` 由 `make setup` 或首次启动自动初始化，并写回所选私有 env；
+已有有效值不轮换。已有运行数据但该值丢失时，必须恢复原值，不能用新密钥代替恢复。
 
 以上使用 DeepSeek 的 OpenAI 兼容接口，`AGENTSCOPE_MODEL_TYPE` 与
 `AGENTSCOPE_CREDENTIAL_TYPE` 均为 `openai_credential`。若选择 Anthropic 兼容接口，
@@ -139,7 +141,10 @@ Langfuse，也避免非空模板 key 被当作可用凭据。已有私有 `docke
 存储加密参数；`make langfuse-env` 只补齐空值或 `replace-with-*`，不轮换已有值。
 
 `make up` / `make all-up` 会先只读检查现有 Runtime 数据库。空库创建当前
-`agentscope-runtime-v3`；精确匹配的 `agentscope-runtime-v1` / `agentscope-runtime-v2` 可在启动锁内迁移到 v3，
+`agentscope-runtime-v4`；精确匹配的 v1/v2/v3 先拒绝已知不可迁移状态，再在启动锁内以内容寻址的一致
+备份和单个事务迁移到 v4；相同源状态重试复用备份。已部署旧 v4 若仅缺
+`improvement_idempotency_operations`，按精确物理摘要和已知标记放行，在事务内补建空账本并写入
+`improvement-idempotency-ledger-v1` 标记；升级前仍应对真实库做 SQLite 一致备份，
 其余旧 Claude、未知或漂移 schema 均在初始化与重建前拒绝，不自动清空。服务启动后必须
 通过 Runtime readiness，否则命令失败。
 
@@ -178,6 +183,38 @@ make ui-recreate          # 已构建当前源码镜像后，只重建 UI；保�
 `make COMPOSE_ENV_FILE=docker/.env runtime-recreate`，再重试真实候选对话；该命令不发布候选，
 也不替代最终的整栈重建与 Playground 验收。
 
+本机调试可运行 `make local-debug-run`，终端会打印实际 API 与 UI URL，并将 API 实际地址传给
+Vite。默认端口自动选择；固定端口使用 `LOCAL_DEBUG_API_PORT`、`LOCAL_DEBUG_UI_PORT`，被占用时
+明确报错。Ctrl-C 只停止本次启动的子进程。该入口不启动独立 Runtime、不改 env、不代表容器验收；
+宿主机调试自动端口不受容器映射的 50400–50499 约束。
+
+Runtime Workspace 手工维护：`make runtime-workspace-gc` 默认只列清单；
+`make runtime-workspace-gc-apply` 要求无活动任务，暂停 API、停止 Runtime 后重新核对引用，
+仅将已完成清理且无引用的候选临时 Workspace 移入 `.quarantine`，随后恢复原服务。
+普通业务 Session、已发布版本和不明引用均保留。固定 SDK 不支持全局 Session 枚举，因此此入口
+不是全局垃圾回收；隔离可恢复但不释放磁盘，脚本不删除隔离区，也不共享可写 `.venv`。
+
+普通 Session 的 Runtime Workspace 由在线删除链单独管理。Session upsert 与回收共用外层
+reference fence；原生存储提交前先持久化引用 hint，Workspace、references 与 MCP 完整物化后
+才把该 Workspace 加入可回收白名单。AgentScope `DELETE /sessions/{id}` 返回 204/404 后，Runtime
+通过公共 Storage 清单与引用日志共同证明 user Agent 和 Team 成员引用；日志缺失、损坏、扫描不完整
+或引用有歧义时停止 orphan sweep。只有白名单内的精确 `session-intent` Workspace 已零引用、路径位于
+配置根、不是符号链接且 marker 与 Harness digest 完全相符时，才先关闭 Bubblewrap，在 manager 锁内
+原子移入带 sidecar 的 tombstone。rename 后再次检查引用；出现竞争则恢复，恢复失败则退休该 Workspace
+身份。内容和 `.venv` 在锁外删除，中断由下次删除或 Runtime 启动幂等恢复；异常 record、sidecar、
+tombstone、版本 Workspace、仍被任一活动 Session 引用的目录及发布/候选 Harness 源均 defer/fail closed。
+
+正式所选部署的破坏性回收验收使用：
+
+```bash
+REQUIRE_LIVE_RUNTIME=1 COMPOSE_ENV_FILE=docker/.env \
+  make runtime-workspace-reclaim-live-smoke
+```
+
+该入口会重建正式所选部署，创建真实 Session 并调用真实模型，验证并发删除、存活 Session 双轮对话、
+Runtime `SIGSTOP`/`SIGKILL` 后恢复、重复删除幂等、Workspace/`.venv` 回收和 watchdog 收尾。只有同轮
+报告中 `crash_recovery=passed`、cleanup 通过且源码、env、镜像和容器身份一致，才能称 live 验收通过。
+
 ## AgentScope Runtime 公共契约
 
 外部客户端通过 AgentGov API 使用 Runtime：
@@ -197,13 +234,25 @@ make ui-recreate          # 已构建当前源码镜像后，只重建 UI；保�
 - `POST /api/runtime/sessions/{session_id}/interrupt`：中断会话中的运行。
 - `DELETE /api/runtime/sessions/{session_id}`：删除无活动运行的会话。
 - `GET /api/agent-runs/{run_id}`：读取 AgentGov 运行映射。
-- `GET /api/agent-runs/by-client-operation`：在 POST 响应不确定时按会话和操作 ID 定位唯一 run。
+- `GET /api/agent-runs/by-input-identity`：在 POST 响应不确定时按根会话和原生输入身份定位唯一 run。
 - `GET /api/agent-runs/{run_id}/pending-actions`：恢复当前 run 的待处理 HITL/外部执行项。
 - `GET /api/agent-runs/{run_id}/trace`：按运行解析 OTel trace。
 - `POST /api/agent-runs/{run_id}/cancel`：取消精确运行。
 
 除健康检查外，公共 API 使用 `Authorization: Bearer <API_KEY>`。内部
 `/internal/*` 只用于 Runtime receipt 回调，并由独立共享密钥保护。
+
+chat body 只包含原生 `agent_id`、`session_id`、`input`，不再接收 `client_operation_id`、
+`expected_run_id` 或顶层治理 metadata。发送前显式生成并保留原生 input 的 `id`；
+POST 回执丢失时按 Runtime Agent、根 Session、操作种类及有序 input ID 查询，
+不能绑定最近的其他 run 或重新生成身份重发。消息 `name` 保持原生语义，不是查询键。
+响应保留上游正文，根 Session/run 关联在响应头中；worker Session 不被改写成根 Session。
+“本次运行允许”的确认使用 `X-AgentGov-Confirmation-Scope: run`；缺省只允许本次工具调用，
+不写回 Harness 权限。
+
+API 镜像固定安装 `agentscope==2.0.8`，仅复用公开消息和事件数据模型；不启动第二套 Agent
+执行循环，也不安装 service/storage/full extras。镜像构建内检查实际请求模型可导入，避免
+宿主机开发依赖齐全而容器缺包。模型调用与 Provider 凭据仍仅属于独立 Runtime。
 
 ### 标识符关系
 
@@ -231,6 +280,7 @@ Session 创建、chat 和会话读写请求中的 `agent_id` 使用该会话绑�
 - `subagents/<name>/agent.yaml`、`subagents/<name>/AGENT.md`：子智能体定义。
 - `mcp/*.json`：MCP 配置，敏感值只通过 `credential_refs` 引用。
 - `tests/`：与该 Agent 版本绑定的回归测试。
+- `references/`：同版本的业务参考资料，物化到工具可读的 `/workspace/references`，由策略禁止修改。
 
 Bash 的允许规则仍受安全子集约束：`date` 仅查询当前时间；`jq` 仅接受 `--null-input` / `-n`
 与 JSON 字面量或 `.`、受控输出格式选项，不接受文件、stdin、环境读取、模块或任意 jq 程序；
@@ -247,6 +297,21 @@ Bash 的允许规则仍受安全子集约束：`date` 仅查询当前时间；`j
 
 转换器只用于迁移输入，不在生产启动或运行链路中调用。MCP 格式和凭据边界见
 [`docker/MCP_REPLACEMENT_GUIDE.md`](docker/MCP_REPLACEMENT_GUIDE.md)。
+
+当前版与候选版的效果对照复用真实测试 Session，可运行：
+
+```bash
+make agent-candidate-compare COMPOSE_ENV_FILE=docker/.env \
+  COMPARE_AGENT_ID=<业务AgentID> COMPARE_CHANGE_SET_ID=<变更集ID> \
+  COMPARE_SCENARIOS=/outside/private/cases.jsonl COMPARE_REPORT=/outside/private/comparison.json
+```
+
+该命令会先按当前工作树重建镜像、force-recreate 所选服务，再对两个精确 Git 提交使用同一场景集。
+场景文件每行只含 `case_id`、`message`，文件权限为 `0600`；新报告的父目录须为当前用户的私有目录，
+不得覆盖旧报告。报告记录版本、run/trace、回答长度和摘要；`complete` 只表示证据齐全，
+不表示候选更好。人工判断可通过 CLI 的 `--interactive` 查看真实回答，默认 `inconclusive`。
+对照不写新评测账本、不生成发布通过记录，也不代替 Workspace 完整测试与一次“确认审批”。
+发布来源从已有改进 Assignment、FeedbackCase 和 Release 关联派生，不建立资产正文副本。
 
 ## 健康、验收与质量门禁
 
@@ -276,6 +341,12 @@ make test
 make typecheck
 ```
 
+通用 Runtime 容量验证可使用现有 `container-technical-live-smoke`：缺省仍执行 1 条/1 并发；
+显式设置 `LIVE_ACCEPTANCE_RUNS=50 LIVE_ACCEPTANCE_CONCURRENCY=10` 时，必须提供至少 50 条
+实质不同且经过质量复核的 `TECHNICAL_SCENARIO_FILE`，场景集合 ID 为
+`runtime-technical-integration-package`。该入口公开导入、真实测试并发布临时最小 Harness，
+随后逐场景运行；证据只覆盖通用传输、身份与 Trace，不冒充业务、工具、HITL 或改进效果。
+
 上述隔离 Compose 验收由 `scripts/run_container_acceptance.py` 在锁内执行。runner 只从所选
 `COMPOSE_ENV_FILE` 读取模型、MCP、Langfuse 凭据和非宿主配置；每轮生成只用于该隔离栈的
 一次性 API 密钥并同步前端，不修改所选文件中的正式身份。另建临时 Runtime 根、唯一 Compose project/
@@ -285,6 +356,10 @@ make typecheck
 容器回收目录权限；不会更改正式卷权限。清理失败会报错并保留临时目录，不宣告验收成功。因此公开
 隔离验收不会重建既有项目，也不会读写 `${HOME}/volume-agent-gov`。`make smoke` 和浏览器验收只访问
 AgentGov 的公开端口，不暴露 Runtime 管理面。
+
+镜像 tag 与 Runtime 协议版本是两回事。正式公共部署以根 `VERSION` 作为 API/Runtime 握手版本；
+隔离验收把镜像的 `APP_VERSION` 设为一次性的 `acceptance-<token>`，但仍从冻结源码的根 `VERSION`
+注入 `AGENTGOV_RUNTIME_VERSION`。隔离镜像 tag 不能冒充产品协议版本；缺失或非法的 `VERSION` 会拒绝验收。
 
 现场验证既有部署的 Playground 使用独立公开入口：
 
@@ -305,6 +380,27 @@ Chromium、Firefox 各执行一次双轮对话及刷新恢复。使用已发布�
 仓库外的私有目录；不保存对话正文、截图或 HAR。失败时检查报告中的阶段，不绕过门禁启动内部脚本。
 此入口只证明现场双轮对话与刷新恢复，不替代 50-run、并发、HITL、业务 MCP 或完整候选发布门。
 
+断网恢复使用独立的 `REQUIRE_LIVE_RUNTIME=1 make ui-playground-deployed-recovery-smoke
+COMPOSE_ENV_FILE=docker/.env` 入口，沿用上述重建与配置选择。它在真实浏览器中切换离线状态，
+核对已知 run、历史初载和初始回执丢失后的恢复，不拦截或替换 API 响应。回执丢失竞态未实际
+命中时必须记为 `not_proven`，不得用普通刷新通过代替；此入口同样保留本次真实 Session。
+
+自用双 Agent 治理闭环使用 `make ui-self-use-governance-smoke`。显式设置
+`REQUIRE_LIVE_RUNTIME=1`，并提供 `SELF_USE_WORKSPACE_PACKAGE`、
+`SELF_USE_DOCS_SCENARIOS`、`SELF_USE_SOC_SCENARIOS`、`SELF_USE_REPORT` 四个仓库外私有文件路径。
+入口先检查无在途工作，再基于当前源码和所选 `COMPOSE_ENV_FILE` 构建、强制重建；通过真实 UI
+导入文档助手，并对文档助手及 `security-operations-expert` 分别执行真实反馈、候选测试、一次
+确认审批和发布，核对双向来源、发布后新旧 Session 版本及同输入回答。原有 Agent、Session、
+发布记录和私有参数保留，候选不直接覆盖活动 Harness。文档助手已发布时，仅允许显式提供
+`SELF_USE_EXISTING_DOCS_COMMIT` 并与当前发布精确匹配后复用；不把复用记作本次导入。
+报告只含标识、摘要与检查结果；回答结构检查不等于人类质量评分，也不替代并发、断网或 HITL 专项。
+该入口另做文档助手真实工具确认与 SOC 同时对话，分别记录允许一次、本次运行允许、拒绝、取消、
+刷新及重复确认；它不是 worker ASK 或全面隔离验收。候选测试只有收到服务端明确的
+`RUNTIME_TEMPLATE_RESTART_REQUIRED` 时，才调用既有 `make runtime-recreate
+RUNTIME_RECREATE_REQUIRE_IDLE=1` 一次，并对同一候选重新测试；不会自动重启发布中任务或强制发布。
+此维护允许 Runtime 容器 ID 变化，但镜像、源码、所选 env 和 API/UI 容器必须保持一致。
+执行范围与失败处理见 [Runtime 验收基线](docs/engineering/AgentGov_AgentScope_Runtime替换实施基线与验收.md)。
+
 OpenAPI 离线导出始终使用独立临时环境，不沿用容器或宿主机的运行卷。
 
 普通启动和隔离验收都在 Runtime 启动前，使用 API 镜像初始化合法业务 Git 并物化
@@ -314,6 +410,8 @@ clean HEAD 的不可变 Harness 快照；Runtime 仍只读加载快照中的 sub
 模板；控制面保留精确快照和重试定位信息。发布等待重启时也保留审批证据与发布意图，处理在途运行并
 执行受控 Runtime 重启后重试同一发布命令。详见[发布激活契约](docs/业务AgentWorkspace包导入与热加载产品工程方案.md#5-测试审批和发布激活)；
 首次启动通过不代表候选测试与发布后的重载已经验收。
+候选测试的正常 teardown 会保留 `awaiting_restart` 模板源供下次启动加载；该保留仍受既有 TTL
+回收约束，不永久积累。测试结果中的重启错误来自服务端执行事实，不采信测试文件自行填写的错误码。
 
 Runtime 镜像在构建期封存沙箱 gateway 的依赖与工具；运行时只使用镜像内的离线 wheel，
 每个 Workspace 仍有独立的可写环境，不共享 gateway venv。缺少离线资产时明确失败，
@@ -324,8 +422,8 @@ Playground 为建连保留 60 秒预算并显示连接中状态。Gateway 只立
 SSE readiness comment `:\n\n`，使 Firefox 不必与 AgentScope 约 30 秒的空闲心跳竞态；随后使用
 `aiter_raw()` 原样透传上游字节。Vite 不再注入额外前导帧，两层都不伪造业务事件或改写事件正文。
 Playground 在初始 chat 尚未提交时建连失败，应保留具体错误并允许重试；请求已提交但结果
-不确定时仍须按 `session_id/client_operation_id` 核对精确 run。暂时查询 `404` 时只用完全相同的
-input、上下文和操作 ID 幂等重试，不能生成新意图；只有 chat 明确返回不会启动执行的 4xx 且
+不确定时仍须按原生输入身份核对精确 run。暂时查询 `404` 时，只有全部输入都有显式 ID 才能以
+完全相同的 body 与 ID 幂等重试，不能生成新意图；只有 chat 明确返回不会启动执行的 4xx 且
 精确 operation 不存在时，才回滚 optimistic turn。恢复失败的具体原因不得被通用“等待终态”提示覆盖。
 精确 run 终态确认后，还需通过 Runtime 公共 Session 状态确认执行槽已释放，才恢复发送；
 例如 Runtime 的会话标题生成可能晚于治理 run 终态，不能在这段收尾期间提前提交下一轮。
@@ -493,12 +591,34 @@ DEPLOY_REF=<已提交且本机可解析的commit或tag> scripts/deploy_agent_gov
 普通部署脚本先校验本机与远端 Docker 架构一致，再用临时只读检查器校验远端 Runtime DB epoch，通过后才允许 rsync 覆盖远端
 源码；它在停服前还会校验必需配置和 Compose 契约，随后加载
 `agent-gov-agentscope-runtime`、`agent-gov-api`、`agent-gov-ui` 三个镜像，启动可选
-Langfuse profile，并通过 `/health/ready` 验收。私有 `docker/.env` 会被保留。空卷、精确
-`agentscope-runtime-v3` 或可迁移的精确 v1/v2 才允许普通部署；迁移重建 Session intent 与 run 表，
-使用请求指纹并迁入 chat operation 关联。v1 会从 `session_name` 计算指纹后删除正文副本，v2 使用未知历史指纹标记；
+Langfuse profile，并通过 `/health/ready` 验收。私有 `docker/.env` 和远端既有 `.venv` 会被保留；
+全新空卷的共享密钥在冻结部署 env 前由同一本地初始化器写入私有 `docker/.env`，已有有效值保持原字节，
+已有数据却丢失密钥仍会拒绝启动。空卷、精确
+`agentscope-runtime-v4`、仅缺改进幂等账本的精确旧 v4 或可迁移的精确 v1/v2/v3 才允许普通部署；旧活动 run 必须先收尾。
+迁移先只读拒绝确定性不支持状态，再创建权限为 `0600` 的内容寻址 SQLite 一致备份，并以一个事务
+更新必要表和 epoch；失败完整回滚，同一源状态反复失败不重复堆积备份。
+v4 将业务 `alert_id/case_id` 迁为通用 `entities`、`soc_event` 迁为 `event`，独立保留治理
+`feedback_case_id`、发布/来源关联及历史证据文件字节；原生输入身份取代在线 client operation 协议，
+历史操作字段只作历史读取。v1 会从 `session_name` 计算指纹后删除正文副本，v2 使用未知历史指纹标记；
 并且只在旧 `agent_release_operations` 表结构、索引和外键均
 精确且表为空时删除该表。非空旧操作记录或结构漂移会拒绝迁移；发现旧 Claude/未知 schema 时会在停服前 fail closed，
 绝不自动清空或静默丢弃。
+
+远程源码部署以 guardian 的 owner 排他锁标识当前部署；每个 `remote_run` 和 rsync server 在整个动作期间
+持有 activity 共享锁并核对 owner/token。新部署必须先取得 activity 排他屏障，再取得 owner 锁并原子换 token；
+因此 guardian 在长动作中断开后，新部署仍不能与已启动的旧动作并发写，旧客户端后续动作则 fail closed。
+cleanup 只有在持锁查询明确证明事务不存在时才删除 stage，断连或查询不确定均保留恢复材料。源码/env 激活、保留目录搬迁以及
+success/rollback finalize 都先持久化事务阶段；即使进程终止在目录已改名或已删除、事务记录尚存的
+窗口，冻结 recovery runner 也能只依赖已归档工具链和身份记录继续或回滚，不调用损坏的 live/stage
+脚本。镜像查询只有 Docker 明确返回 not found 才视为不存在；fresh 部署还必须证明旧 Compose
+容器、网络和卷均不存在。部署及恢复链禁止调用 `docker compose config`。
+
+以上是部署脚本契约，不是完整远程故障验收结论。本机 loopback SSH 边界只证明不同镜像身份的
+archive/load、Compose recreate、health 失败探针及原语级恢复；宿主专项还以真实临时 sshd 证明了长命令和限速 rsync
+中断 guardian 后，第二部署在原动作结束前被屏障且零写入。边界报告仍固定标记
+`scope=primitives_only`、`transaction_execute_recover=false`。独立 fresh host 上的生产脚本全链部署、
+双部署竞争，以及 image/Compose/health/finalize 各窗口进程终止后的真实恢复仍是明确未验收项，
+不得用 loopback 结果或 HTTP 200 冒充。
 
 同一启动锁内还执行一次 HITL 隐私迁移：先把历史 tool call payload 收敛为指纹，再启用
 SQLite `secure_delete`、截断 WAL、`VACUUM` 并再次截断 WAL；只有逻辑迁移和物理净化都成功，

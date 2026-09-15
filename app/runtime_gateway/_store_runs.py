@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.runtime.agent_admission import AgentMaintenanceActiveError, claim_runtime_admission
 from app.runtime.errors import RuntimeUnavailableError
+from app.runtime.feedback_entities import FeedbackEntities
 from app.runtime.runtime_db_base import begin_sqlite_write_transaction, utc_now
 
 from ._store_continuations import require_continuation_run, validate_new_continuation
@@ -16,9 +17,8 @@ from ._store_operations import (
     RuntimeChatReplayResponse,
     add_continuation_operation,
     add_initial_operation,
-    find_initial_operation,
     governed_run_metadata,
-    initial_request_fingerprint,
+    native_request_fingerprint,
     operation_replay_response,
     resolve_continuation_identity,
     validate_continuation_operation,
@@ -66,6 +66,7 @@ from .models import (
     RuntimeReceiptModel,
     RuntimeSessionBindingModel,
 )
+from .native_chat_input import explicit_native_input_ids, native_operation_key, native_operation_kind
 
 
 @dataclass(frozen=True)
@@ -85,23 +86,17 @@ class RuntimeRunStoreMixin:
         session_id: str,
         runtime_agent_id: str,
         input_value: Any,
-        alert_id: str | None,
-        case_id: str | None,
+        entities: FeedbackEntities,
         metadata: dict[str, object],
-        client_operation_id: str | None = None,
         confirmation_scope: ConfirmationScope = ConfirmationScope.ONCE,
-        expected_run_id: str | None = None,
     ) -> AgentRunResponse:
         return self.admit_run(
             session_id=session_id,
             runtime_agent_id=runtime_agent_id,
             input_value=input_value,
-            alert_id=alert_id,
-            case_id=case_id,
+            entities=entities,
             metadata=metadata,
-            client_operation_id=client_operation_id,
             confirmation_scope=confirmation_scope,
-            expected_run_id=expected_run_id,
         ).run
 
     def admit_run(
@@ -110,12 +105,9 @@ class RuntimeRunStoreMixin:
         session_id: str,
         runtime_agent_id: str,
         input_value: Any,
-        alert_id: str | None,
-        case_id: str | None,
+        entities: FeedbackEntities,
         metadata: dict[str, object],
-        client_operation_id: str | None,
         confirmation_scope: ConfirmationScope = ConfirmationScope.ONCE,
-        expected_run_id: str | None = None,
     ) -> RuntimeRunAdmission:
         _validate_run_input(input_value)
 
@@ -127,61 +119,59 @@ class RuntimeRunStoreMixin:
                 runtime_agent_id=runtime_agent_id,
             )
             governed_metadata = governed_run_metadata(metadata)
+            input_ids = explicit_native_input_ids(input_value)
+            operation_kind = native_operation_kind(input_value)
+            operation_key = (
+                native_operation_key(
+                    runtime_agent_id=runtime_agent_id,
+                    session_id=session_id,
+                    operation_kind=operation_kind,
+                    input_ids=input_ids,
+                )
+                if input_ids is not None
+                else f"native-unkeyed:{uuid.uuid4()}"
+            )
+            existing_operation = db.get(RuntimeChatOperationModel, operation_key) if input_ids is not None else None
             if is_confirmation_input(input_value):
                 return self._resume_run(
                     db,
                     binding=binding,
                     input_value=input_value,
                     metadata=governed_metadata,
-                    alert_id=alert_id,
-                    case_id=case_id,
-                    client_operation_id=client_operation_id,
+                    entities=entities,
                     confirmation_scope=confirmation_scope,
-                    expected_run_id=expected_run_id,
+                    operation_key=operation_key,
+                    existing_operation=existing_operation,
                 )
-            input_fingerprint = initial_request_fingerprint(
+            request_fingerprint = native_request_fingerprint(
                 input_value=input_value,
                 metadata=governed_metadata,
                 session_id=session_id,
                 runtime_agent_id=runtime_agent_id,
-                alert_id=alert_id,
-                case_id=case_id,
+                entities=entities,
+                confirmation_scope=confirmation_scope,
             )
-            existing_operation = find_initial_operation(db, client_operation_id)
             if existing_operation is not None:
                 existing = _require_run(db, existing_operation.run_id)
                 validate_initial_operation(
                     existing_operation,
-                    client_operation_id=client_operation_id or "",
-                    request_fingerprint=input_fingerprint,
+                    operation_key=operation_key,
+                    request_fingerprint=request_fingerprint,
                     session_id=session_id,
                     runtime_agent_id=runtime_agent_id,
                 )
-                if (
-                    existing.client_operation_id != client_operation_id
-                    or existing.input_fingerprint != input_fingerprint
-                    or existing.alert_id != alert_id
-                    or existing.case_id != case_id
-                ):
-                    raise RuntimeStateConflict("client_operation_id is bound to another immutable chat request")
                 return RuntimeRunAdmission(
                     _run_response(existing),
                     False,
                     existing_operation.operation_key,
                     operation_replay_response(existing_operation),
                 )
-            existing_run = _operation_run(db, client_operation_id)
-            if existing_run is not None:
-                raise RuntimeStateConflict(
-                    "client_operation_id run exists without its durable operation ledger",
-                )
             return self._create_initial_run(
                 db,
                 binding=binding,
-                input_fingerprint=input_fingerprint,
-                client_operation_id=client_operation_id,
-                alert_id=alert_id,
-                case_id=case_id,
+                request_fingerprint=request_fingerprint,
+                operation_key=operation_key,
+                entities=entities,
                 metadata=governed_metadata,
             )
 
@@ -190,10 +180,9 @@ class RuntimeRunStoreMixin:
         db: Session,
         *,
         binding: RuntimeSessionBindingModel,
-        input_fingerprint: str,
-        client_operation_id: str | None,
-        alert_id: str | None,
-        case_id: str | None,
+        request_fingerprint: str,
+        operation_key: str,
+        entities: FeedbackEntities,
         metadata: dict[str, object],
     ) -> RuntimeRunAdmission:
         if binding.active_run_id:
@@ -209,23 +198,20 @@ class RuntimeRunStoreMixin:
             agent_version_id=binding.agent_version_id,
             runtime_agent_id=binding.runtime_agent_id,
             harness_digest=binding.harness_digest,
-            client_operation_id=client_operation_id,
-            input_fingerprint=input_fingerprint,
             status=RunStatus.QUEUED.value,
             trace_id=_new_trace_id(),
-            alert_id=alert_id,
-            case_id=case_id,
+            entities_json=entities,
             metadata_json=metadata,
             created_at=now,
             updated_at=now,
         )
         db.add(run)
         db.flush()
-        operation_key = add_initial_operation(
+        add_initial_operation(
             db,
             run=run,
-            client_operation_id=client_operation_id,
-            request_fingerprint=input_fingerprint,
+            operation_key=operation_key,
+            request_fingerprint=request_fingerprint,
         )
         binding.active_run_id = run.run_id
         binding.updated_at = now
@@ -242,18 +228,18 @@ class RuntimeRunStoreMixin:
         binding: RuntimeSessionBindingModel,
         input_value: Any,
         metadata: dict[str, object],
-        alert_id: str | None,
-        case_id: str | None,
-        client_operation_id: str | None,
+        entities: FeedbackEntities,
         confirmation_scope: ConfirmationScope,
-        expected_run_id: str | None,
+        operation_key: str,
+        existing_operation: RuntimeChatOperationModel | None,
     ) -> RuntimeRunAdmission:
-        run, operation_id = require_continuation_run(
-            db,
-            binding=binding,
-            client_operation_id=client_operation_id,
-            expected_run_id=expected_run_id,
+        run = (
+            _require_run(db, existing_operation.run_id)
+            if existing_operation is not None
+            else require_continuation_run(db, binding=binding, input_value=input_value)
         )
+        if run.session_id != binding.root_session_id or run.agent_id != binding.agent_id:
+            raise RuntimeStateConflict("Decision does not match the governed root Session")
         identity = resolve_continuation_identity(
             db,
             run=run,
@@ -261,20 +247,14 @@ class RuntimeRunStoreMixin:
             metadata=metadata,
             session_id=binding.session_id,
             runtime_agent_id=binding.runtime_agent_id,
-            alert_id=alert_id,
-            case_id=case_id,
-            client_operation_id=operation_id,
+            entities=entities,
+            operation_key=operation_key,
             confirmation_scope=confirmation_scope,
-        )
-        existing_operation = db.get(
-            RuntimeChatOperationModel,
-            identity.operation_key,
         )
         if existing_operation is not None:
             validate_continuation_operation(
                 existing_operation,
                 run=run,
-                client_operation_id=operation_id,
                 confirmation_scope=confirmation_scope,
                 identity=identity,
             )
@@ -297,7 +277,6 @@ class RuntimeRunStoreMixin:
         add_continuation_operation(
             db,
             run=run,
-            client_operation_id=operation_id,
             confirmation_scope=confirmation_scope,
             identity=identity,
         )
@@ -727,21 +706,3 @@ def _validate_run_input(input_value: Any) -> None:
 def _recovery_blocks_terminal(run: AgentRunModel) -> bool:
     metadata = run.metadata_json or {}
     return metadata.get("recovery_required") is True or metadata.get("cancellation_requested") is True
-
-
-def _operation_run(
-    db: Session,
-    client_operation_id: str | None,
-) -> AgentRunModel | None:
-    if client_operation_id is None:
-        return None
-    rows = list(
-        db.scalars(
-            select(AgentRunModel).where(
-                AgentRunModel.client_operation_id == client_operation_id,
-            ),
-        ).all(),
-    )
-    if len(rows) > 1:
-        raise RuntimeStateConflict("client_operation_id has multiple AgentGov runs")
-    return rows[0] if rows else None

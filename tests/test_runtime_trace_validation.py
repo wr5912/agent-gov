@@ -272,47 +272,127 @@ def test_every_durable_team_child_requires_stage_and_invoke(missing_index: int) 
     assert not trace_has_complete_governed_run(trace, _run(), _team_expectations())  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize(
-    ("attribute", "wrong_value"),
-    [
-        ("gen_ai.conversation.id", "wrong-session"),
-        ("agentscope.agent.reply_id", "wrong-reply"),
-        ("gen_ai.tool.call.id", "wrong-call"),
-        ("agentscope.tool.result.state", "error"),
-    ],
-)
-def test_tool_result_receipt_requires_exact_execute_tool_span(attribute: str, wrong_value: str) -> None:
-    trace = _complete_trace()
-    _observations(trace).append(
-        {
-            "id": "tool-span",
-            "name": "execute_tool",
-            "traceId": _run().trace_id,
-            "parentObservationId": "invoke-span",
-            "endTime": "2026-09-10T00:00:01Z",
-            "attributes": {
-                "gen_ai.conversation.id": _run().session_id,
-                "agentscope.agent.reply_id": "reply-1",
-                "gen_ai.tool.call.id": "call-1",
-                "agentscope.tool.result.state": "success",
-            },
+def _add_tool_span(trace: dict[str, object], *, span_id: str = "tool-span") -> dict[str, object]:
+    span: dict[str, object] = {
+        "id": span_id,
+        "name": "execute_tool",
+        "traceId": _run().trace_id,
+        "parentObservationId": "invoke-span",
+        "endTime": "2026-09-10T00:00:01Z",
+        "attributes": {
+            "gen_ai.conversation.id": _run().session_id,
+            "gen_ai.tool.call.id": "call-1",
         },
-    )
-    expectations = _expectations().model_copy(
+    }
+    _observations(trace).append(span)
+    return span
+
+
+def _tool_expectations(state: str = "success") -> RuntimeTraceExpectations:
+    return _expectations().model_copy(
         update={
             "tool_results": [
                 RuntimeTraceToolExpectation(
                     session_id=_run().session_id,
                     reply_id="reply-1",
                     tool_call_id="call-1",
-                    state="success",
+                    state=state,
                     source="tool_result_receipt",
                 ),
             ],
         },
     )
+
+
+@pytest.mark.parametrize("state", ["success", "error", "interrupted", "running"])
+def test_non_denied_tool_receipt_requires_one_closed_span_linked_by_parent_invoke(state: str) -> None:
+    trace = _complete_trace()
+    _add_tool_span(trace)
+
+    assert trace_has_complete_governed_run(trace, _run(), _tool_expectations(state))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("external_marker", ["true", 1, 0, [], {}])
+def test_ordinary_tool_receipt_rejects_malformed_external_execution_marker(external_marker: object) -> None:
+    trace = _complete_trace()
+    span = _add_tool_span(trace)
+    attributes = span["attributes"]
+    assert isinstance(attributes, dict)
+    attributes["agentscope.agent.is_external_execution"] = external_marker
+
+    assert not trace_has_complete_governed_run(trace, _run(), _tool_expectations())  # type: ignore[arg-type]
+
+
+def test_ordinary_tool_receipt_accepts_explicit_false_external_execution_marker() -> None:
+    trace = _complete_trace()
+    span = _add_tool_span(trace)
+    attributes = span["attributes"]
+    assert isinstance(attributes, dict)
+    attributes["agentscope.agent.is_external_execution"] = False
+
+    assert trace_has_complete_governed_run(trace, _run(), _tool_expectations())  # type: ignore[arg-type]
+
+
+def test_denied_tool_receipt_requires_no_execute_span() -> None:
+    expectations = _tool_expectations("denied")
+    trace = _complete_trace()
     assert trace_has_complete_governed_run(trace, _run(), expectations)  # type: ignore[arg-type]
-    _attributes(trace, 4)[attribute] = wrong_value
+
+    _add_tool_span(trace)
+    assert not trace_has_complete_governed_run(trace, _run(), expectations)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("target", "attribute", "wrong_value"),
+    [
+        ("tool", "gen_ai.conversation.id", "wrong-session"),
+        ("tool", "agentscope.agent.reply_id", "wrong-reply"),
+        ("tool", "gen_ai.tool.call.id", "wrong-call"),
+        ("invoke", "gen_ai.conversation.id", "wrong-session"),
+        ("invoke", "agentscope.agent.reply_id", "wrong-reply"),
+    ],
+)
+def test_tool_receipt_rejects_wrong_span_or_parent_identity(
+    target: str,
+    attribute: str,
+    wrong_value: str,
+) -> None:
+    trace = _complete_trace()
+    _add_tool_span(trace)
+    index = 4 if target == "tool" else 2
+    _attributes(trace, index)[attribute] = wrong_value
+
+    assert not trace_has_complete_governed_run(trace, _run(), _tool_expectations())  # type: ignore[arg-type]
+
+
+def test_tool_receipt_rejects_missing_parent_invoke_duplicate_and_extra_span() -> None:
+    missing_parent = _complete_trace()
+    span = _add_tool_span(missing_parent)
+    span["parentObservationId"] = "stage-span"
+    assert not trace_has_complete_governed_run(missing_parent, _run(), _tool_expectations())  # type: ignore[arg-type]
+
+    duplicate = _complete_trace()
+    _add_tool_span(duplicate)
+    _add_tool_span(duplicate, span_id="duplicate-tool-span")
+    assert not trace_has_complete_governed_run(duplicate, _run(), _tool_expectations())  # type: ignore[arg-type]
+
+    extra = _complete_trace()
+    _add_tool_span(extra)
+    extra_span = _add_tool_span(extra, span_id="extra-tool-span")
+    extra_attributes = extra_span["attributes"]
+    assert isinstance(extra_attributes, dict)
+    extra_attributes["gen_ai.tool.call.id"] = "unexpected-call"
+    assert not trace_has_complete_governed_run(extra, _run(), _tool_expectations())  # type: ignore[arg-type]
+
+
+def test_tool_receipt_rejects_duplicate_durable_expectations() -> None:
+    trace = _complete_trace()
+    _add_tool_span(trace)
+    expectation = _tool_expectations().tool_results[0]
+    expectations = _expectations().model_copy(
+        update={"tool_results": [expectation, expectation]},
+    )
+
     assert not trace_has_complete_governed_run(trace, _run(), expectations)  # type: ignore[arg-type]
 
 
@@ -520,3 +600,27 @@ def test_langfuse_positive_projection_retains_the_complete_validation_contract()
     projected = project_validation_trace(_langfuse_otel_trace())
 
     assert trace_has_complete_governed_run(projected, _run(), _expectations())
+
+
+def test_langfuse_projection_recovers_real_execute_tool_shape_without_reply_or_state() -> None:
+    trace = _langfuse_otel_trace()
+    _observations(trace).append(
+        {
+            "id": "tool-span",
+            "name": None,
+            "traceId": _run().trace_id,
+            "parentObservationId": "invoke-span",
+            "endTime": "2026-09-10T00:00:01Z",
+            "metadata": {
+                "attributes": {
+                    "gen_ai.operation.name": "execute_tool",
+                    "gen_ai.conversation.id": _run().session_id,
+                    "gen_ai.tool.call.id": "call-1",
+                }
+            },
+        },
+    )
+
+    projected = project_validation_trace(trace)
+
+    assert trace_has_complete_governed_run(projected, _run(), _tool_expectations("error"))

@@ -19,7 +19,7 @@ from business_agent_test_utils import LEGACY_MAIN_AGENT_ID
 
 
 def _settings() -> AppSettings:
-    return AppSettings(_env_file=None)
+    return AppSettings(_env_file=None, AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret")
 
 
 def test_agent_roles_are_single_source_of_truth() -> None:

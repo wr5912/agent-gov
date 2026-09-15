@@ -135,45 +135,62 @@ export async function startRuntimeChat(
   agentId: string,
   sessionId: string,
   input: AgentScopeChatInput,
-  context: {
-    alertId?: string;
-    caseId?: string;
+  options: {
     confirmationScope?: "once" | "run";
-    expectedRunId?: string;
-    clientOperationId: string;
-  },
+    /** AgentGov run always belongs to this root Session, even when native input targets a Team worker. */
+    expectedRootSessionId?: string;
+  } = {},
   signal?: AbortSignal,
 ): Promise<AgentScopeChatReceipt> {
   const response = await fetchRuntime(
     config,
     "/api/runtime/chat/",
     {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        agent_id: agentId,
-        session_id: sessionId,
-        client_operation_id: context.clientOperationId,
-        input,
-        confirmation_scope: context.confirmationScope ?? "once",
-        expected_run_id: context.expectedRunId,
-        alert_id: context.alertId,
-        case_id: context.caseId,
-        metadata: {
-          client: "agent-gov-ui",
-        },
-      }),
+      ...nativeRuntimeChatRequest(agentId, sessionId, input, options.confirmationScope),
       signal,
     },
   );
   const data = await decodeRuntimeJson<AgentScopeChatResponse>(response);
   const runId = response.headers.get("X-AgentGov-Run-Id")?.trim() || "";
   const responseSessionId = response.headers.get("X-AgentGov-Session-Id")?.trim() || "";
+  return nativeRuntimeChatReceipt(
+    data,
+    options.expectedRootSessionId || sessionId,
+    runId,
+    responseSessionId,
+  );
+}
+
+export function nativeRuntimeChatRequest(
+  agentId: string,
+  sessionId: string,
+  input: AgentScopeChatInput,
+  confirmationScope?: "once" | "run",
+): RequestInit {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (confirmationScope === "run") {
+    if (!input || Array.isArray(input) || !("type" in input) || input.type !== "USER_CONFIRM_RESULT") {
+      throw new Error("运行期权限只允许用于原生用户确认结果。");
+    }
+    headers["X-AgentGov-Confirmation-Scope"] = "run";
+  }
+  return { method: "POST", headers, body: JSON.stringify({ agent_id: agentId, session_id: sessionId, input }) };
+}
+
+export function nativeRuntimeChatReceipt(
+  data: AgentScopeChatResponse,
+  sessionId: string,
+  runId: string,
+  responseSessionId: string,
+): AgentScopeChatReceipt {
   if (!runId || !responseSessionId) {
     throw new ApiRequestError("decode", "Runtime chat 响应缺少 AgentGov 运行标识头。");
   }
-  if (responseSessionId !== sessionId || data.session_id !== sessionId) {
-    throw new ApiRequestError("decode", "Runtime chat 响应的 session_id 与当前会话不一致。");
+  if (responseSessionId !== sessionId) {
+    throw new ApiRequestError("decode", "Runtime chat 响应的根 session_id 与当前会话不一致。");
+  }
+  if (data.status !== "started" || typeof data.session_id !== "string" || !data.session_id.trim()) {
+    throw new ApiRequestError("decode", "Runtime chat 未返回有效的原生 started 回执。");
   }
   return { ...data, runId };
 }

@@ -52,6 +52,7 @@ _HOST_CAPABILITY_ENV_KEYS = {
 _TRUSTED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 _SAFE_EXPLICIT_KEYS = {
     "AGENTGOV_SOURCE_ARTIFACT_SHA256",
+    "AGENTGOV_RUNTIME_VERSION",
     "AGENT_GOV_ACCEPTANCE_RUN_ID",
     "APP_VERSION",
     "COMPOSE_PROJECT_NAME",
@@ -96,7 +97,11 @@ def selected_compose_child_env(repo_root: Path, env_file: Path, compose_files: S
     version = (repo_root / "VERSION").read_text(encoding="utf-8").strip()
     if not version:
         raise ValueError("VERSION 不得为空")
-    return selected_env_child_env(env_file, explicit={"APP_VERSION": version}, compose_files=compose_files)
+    return selected_env_child_env(
+        env_file,
+        explicit={"APP_VERSION": version, "AGENTGOV_RUNTIME_VERSION": version},
+        compose_files=compose_files,
+    )
 
 
 class CutoverImageSupport:

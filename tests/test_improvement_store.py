@@ -6,17 +6,25 @@ status 派生、非法转移与未知 id 的领域错误。
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from app.runtime.errors import BusinessRuleViolation, ConflictError, NotFoundError
 from app.runtime.improvement_db import (
     AttributionModel,
     ExecutionRecordModel,
+    ImprovementFeedbackModel,
+    ImprovementIdempotencyOperationModel,
     ImprovementItemModel,
     NormalizedFeedbackModel,
     OptimizationPlanModel,
     RegressionTestDesignModel,
+)
+from app.runtime.improvement_idempotency import (
+    CREATE_IMPROVEMENT_FEEDBACK_OPERATION,
+    CREATE_IMPROVEMENT_OPERATION,
 )
 from app.runtime.runtime_db import AgentChangeSetModel, make_session_factory, utc_now
 from app.runtime.state_machines import StateTransitionError
@@ -54,6 +62,116 @@ def test_create_cleans_source_feedback_refs(tmp_path: Path) -> None:
     store = _store(tmp_path)
     record = store.create_improvement(agent_id="soc-ops", title="t", source_feedback_refs=[" fbs-1 ", "", "fbs-2", "   "])
     assert record.source_feedback_refs == ["fbs-1", "fbs-2"]
+
+
+def test_create_feedback_same_idempotency_key_is_atomic_under_concurrency(tmp_path: Path) -> None:
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    items = ImprovementStore(factory)
+    content = ImprovementContentStore(factory)
+    improvement = items.create_improvement(agent_id="soc-ops", title="并发反馈")
+    barrier = Barrier(8)
+
+    def create_once(_: int) -> str:
+        barrier.wait(timeout=5)
+        return content.create_feedback(
+            improvement.improvement_id,
+            agent_id="soc-ops",
+            summary="同一条真实反馈",
+            raw_text="响应丢失后的并发重试",
+            idempotency_key="concurrent-feedback-key",
+        ).feedback_id
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        feedback_ids = list(pool.map(create_once, range(8)))
+
+    assert len(set(feedback_ids)) == 1
+    with factory() as db:
+        assert db.query(ImprovementFeedbackModel).count() == 1
+        ledgers = (
+            db.query(ImprovementIdempotencyOperationModel)
+            .filter(ImprovementIdempotencyOperationModel.operation_kind == CREATE_IMPROVEMENT_FEEDBACK_OPERATION)
+            .all()
+        )
+        assert len(ledgers) == 1
+        assert ledgers[0].result_resource_id == feedback_ids[0]
+
+
+def test_auto_merge_failure_rolls_back_ledger_claim_and_same_key_can_retry(tmp_path: Path) -> None:
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    items = ImprovementStore(factory)
+    content = ImprovementContentStore(factory)
+    target = items.create_improvement(agent_id="soc-ops", title="自动归并目标")
+    content.upsert_normalized_feedback(target.improvement_id, problem="暂时进入下一阶段", advance_to_stage="triage")
+
+    create_args = {
+        "agent_id": "soc-ops",
+        "title": "待自动归并事项",
+        "source_feedback_refs": ["feedback-retry"],
+        "idempotency_key": "auto-merge-rollback-key",
+        "auto_merge": True,
+        "auto_merge_target_id": target.improvement_id,
+    }
+    with pytest.raises(ConflictError, match="feedback_intake"):
+        items.create_improvement(**create_args)
+
+    with factory() as db:
+        assert (
+            db.query(ImprovementIdempotencyOperationModel).filter(ImprovementIdempotencyOperationModel.operation_kind == CREATE_IMPROVEMENT_OPERATION).count()
+            == 0
+        )
+    assert items.get_improvement(target.improvement_id).source_feedback_refs == []
+
+    items.refine_stage(target.improvement_id, stage="feedback_intake")
+    retried = items.create_improvement(**create_args)
+
+    assert retried.improvement_id == target.improvement_id
+    assert retried.source_feedback_refs == ["feedback-retry"]
+    with factory() as db:
+        ledgers = (
+            db.query(ImprovementIdempotencyOperationModel).filter(ImprovementIdempotencyOperationModel.operation_kind == CREATE_IMPROVEMENT_OPERATION).all()
+        )
+        assert len(ledgers) == 1
+        assert ledgers[0].result_resource_id == target.improvement_id
+        assert db.query(ImprovementItemModel).count() == 1
+
+
+def test_create_feedback_failure_rolls_back_ledger_claim_and_same_key_can_retry(tmp_path: Path) -> None:
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    items = ImprovementStore(factory)
+    content = ImprovementContentStore(factory)
+    improvement = items.create_improvement(agent_id="soc-ops", title="反馈重试")
+    content.upsert_normalized_feedback(improvement.improvement_id, problem="暂时进入下一阶段", advance_to_stage="triage")
+
+    create_args = {
+        "agent_id": "soc-ops",
+        "summary": "事务失败后重试",
+        "raw_text": "相同请求正文",
+        "idempotency_key": "feedback-rollback-key",
+    }
+    with pytest.raises(ConflictError, match="feedback_intake"):
+        content.create_feedback(improvement.improvement_id, **create_args)
+
+    with factory() as db:
+        assert db.query(ImprovementFeedbackModel).count() == 0
+        assert (
+            db.query(ImprovementIdempotencyOperationModel)
+            .filter(ImprovementIdempotencyOperationModel.operation_kind == CREATE_IMPROVEMENT_FEEDBACK_OPERATION)
+            .count()
+            == 0
+        )
+
+    items.refine_stage(improvement.improvement_id, stage="feedback_intake")
+    retried = content.create_feedback(improvement.improvement_id, **create_args)
+
+    with factory() as db:
+        assert db.query(ImprovementFeedbackModel).count() == 1
+        ledgers = (
+            db.query(ImprovementIdempotencyOperationModel)
+            .filter(ImprovementIdempotencyOperationModel.operation_kind == CREATE_IMPROVEMENT_FEEDBACK_OPERATION)
+            .all()
+        )
+        assert len(ledgers) == 1
+        assert ledgers[0].result_resource_id == retried.feedback_id
 
 
 def test_list_is_scoped_by_agent(tmp_path: Path) -> None:

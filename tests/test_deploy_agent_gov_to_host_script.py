@@ -4,8 +4,6 @@ import importlib.util
 import json
 import os
 import pwd
-import re
-import shutil
 import sqlite3
 import stat
 import subprocess
@@ -15,9 +13,12 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from scripts.prepare_remote_preflight import PREFLIGHT_SOURCE_FILES, prepare_bundle
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "deploy_agent_gov_to_host"
+TOOLCHAIN_SCRIPT = REPO_ROOT / "scripts" / "remote_deploy_python_toolchain.py"
+RUNTIME_SCRIPT = REPO_ROOT / "scripts" / "remote_deploy_runtime.py"
 CUTOVER_SCRIPT = REPO_ROOT / "scripts" / "agentscope_atomic_cutover.py"
 
 
@@ -59,9 +60,11 @@ def test_deploy_script_defaults_and_preserves_private_remote_env() -> None:
     assert 'DEFAULT_REMOTE_DIR="~/work/agent-gov"' in text
     assert 'DEPLOY_USER="${DEPLOY_USER:-root}"' in text
     assert 'REMOTE_DIR="${REMOTE_DIR:-$DEFAULT_REMOTE_DIR}"' in text
-    assert "cp -n docker/.env.example docker/.env" in text
+    assert '"$stage/scripts/remote_deploy_python_toolchain.py" prepare-candidate' in text
+    assert '"$stage/scripts/remote_deploy_python_toolchain.py" activate-candidate' in text
 
     for excluded in (
+        "--exclude='/.venv/'",
         "--exclude='/images/'",
         "--exclude='/docker/.env'",
         "--exclude='/docker/.env.bak-*'",
@@ -71,22 +74,24 @@ def test_deploy_script_defaults_and_preserves_private_remote_env() -> None:
         assert excluded in text
 
 
-def test_deploy_fails_before_sync_when_remote_python_is_older_than_311() -> None:
+def test_deploy_uses_remote_python_only_as_a_stdlib_verifier() -> None:
     text = _script_text()
 
-    assert "sys.version_info < (3, 11)" in text
-    assert "remote Python >=3.11 is required" in text
-    assert text.index("sys.version_info < (3, 11)") < text.index("Syncing ${DEPLOY_REF} tracked code")
+    assert "sys.version_info < (3, 10)" in text
+    assert "remote stdlib verifier requires Python >=3.10" in text
+    assert "system Python ABI/platform" not in TOOLCHAIN_SCRIPT.read_text(encoding="utf-8")
+    assert text.index("sys.version_info < (3, 10)") < text.index("Uploading ${DEPLOY_REF} tracked code")
 
 
 def test_deploy_rejects_legacy_epoch_before_overwriting_remote_source() -> None:
     text = _script_text()
 
     preflight = "Preflighting remote Runtime epoch before source sync"
-    sync = "Syncing ${DEPLOY_REF} tracked code"
+    sync = "Uploading ${DEPLOY_REF} tracked code"
     assert preflight in text
     assert ".agentscope-cutover-preflight.XXXXXX" in text
-    assert "./app/runtime/sqlite_schema_contract.py" in text
+    assert "app/runtime/sqlite_schema_contract.py" in PREFLIGHT_SOURCE_FILES
+    assert '"$TMP_DIR/scripts/prepare_remote_preflight.py"' in text
     assert "--require-current-or-empty" in text
     assert "trap 'rm -rf -- \"$preflight_root\"' EXIT" in text
     assert text.index(preflight) < text.index(sync)
@@ -94,7 +99,7 @@ def test_deploy_rejects_legacy_epoch_before_overwriting_remote_source() -> None:
 
 def test_deploy_script_packages_project_and_langfuse_dependency_images() -> None:
     text = _script_text()
-
+    runtime = RUNTIME_SCRIPT.read_text(encoding="utf-8")
     for image in (
         "agent-gov-agentscope-runtime:${VERSION}",
         "agent-gov-api:${VERSION}",
@@ -113,7 +118,7 @@ def test_deploy_script_packages_project_and_langfuse_dependency_images() -> None
         assert env_key in text
 
     assert "docker save" in text
-    assert '"${docker_cmd[@]}" load' in text
+    assert "_load_archive(binding, state.project_archive)" in runtime
     assert "sha256sum" in text
     assert "agent-gov-${VERSION}-images.tar.gz" in text
     assert "agent-gov-${VERSION}-langfuse-deps-images.tar.gz" in text
@@ -121,32 +126,33 @@ def test_deploy_script_packages_project_and_langfuse_dependency_images() -> None
 
 def test_deploy_validates_every_remote_archive_before_first_docker_load() -> None:
     text = _script_text()
-    validation = "python3 scripts/agentscope_atomic_cutover_archive.py"
-    load = '"${docker_cmd[@]}" load'
-
-    assert text.count(validation) == 2
-    assert text.rindex(validation) < text.index(load)
+    runtime = RUNTIME_SCRIPT.read_text(encoding="utf-8")
+    validation = "_validate_archives("
+    load = "_load_archive(binding, state.project_archive)"
+    assert runtime.count(validation) >= 2
+    assert runtime.index(validation, runtime.index("def execute_transaction")) < runtime.index(load)
+    assert text.index('remote_deploy_runtime.py" prepare') < text.index('remote_deploy_python_toolchain.py" activate-candidate')
     assert "LOCAL_DOCKER=(env -i" in text
-    assert 'DOCKER_HOST=unix:///var/run/docker.sock "$LOCAL_DOCKER_BIN")' in text
-    assert 'DOCKER_HOST=unix:///var/run/docker.sock "$docker_boundary/docker")' in text
+    assert 'DOCKER_HOST=unix:///var/run/docker.sock APP_VERSION="$VERSION" "$LOCAL_DOCKER_BIN")' in text
+    assert '"DOCKER_HOST": "unix:///var/run/docker.sock"' in runtime
     assert "prepare_docker_toolchain" in text
-    assert 'install -m 0500 "$source_cli" "$docker_boundary/docker"' in text
+    assert "shutil.copyfile(source_cli, bound_cli)" in runtime
 
 
 def test_deploy_script_uses_loaded_images_for_full_compose_stack() -> None:
     text = _script_text()
-
+    runtime = RUNTIME_SCRIPT.read_text(encoding="utf-8")
     assert "git fetch origin master" in text
     assert 'DEPLOY_REF="${DEPLOY_REF:-origin/master}"' in text
     assert 'git show "${TARGET_COMMIT}:VERSION"' in text
     assert 'git archive "$TARGET_COMMIT"' in text
     assert "the running deploy script differs from DEPLOY_REF" in text
     assert "working tree must be clean" not in text
-    assert "scripts/run_selected_env_operation.py" in text
-    assert "--operation all-up --no-build --force-recreate" in text
-    assert "--operation up --no-build --force-recreate" in text
+    assert "--operation images-prepare" not in text
+    assert '_compose_operation(state, "up")' in runtime
+    assert '"--no-build", "--force-recreate"' in runtime
     assert "compose=(" not in text
-    assert '"$docker_boundary/docker"' in text
+    assert "yield DockerBinding(command=[bound_cli.as_posix()]" in runtime
     assert "COMPOSE_UP_FLAGS" not in text
     assert "make --no-print-directory all-up" not in text
     assert 'docker ps -aq --filter "name=agent-gov"' not in text
@@ -158,51 +164,52 @@ def test_deploy_script_uses_loaded_images_for_full_compose_stack() -> None:
 
 def test_deploy_script_rejects_cross_architecture_image_archives_before_sync_or_stop() -> None:
     text = _script_text()
+    runtime = RUNTIME_SCRIPT.read_text(encoding="utf-8")
     mismatch = '[[ "$LOCAL_DOCKER_ARCH" = "$REMOTE_DOCKER_ARCH" ]]'
-
     assert "normalize_architecture" in text
     assert mismatch in text
-    assert text.index(mismatch) < text.index('log "Syncing ${DEPLOY_REF} tracked code"')
+    assert text.index(mismatch) < text.index('log "Uploading ${DEPLOY_REF} tracked code')
     assert "image platform mismatch before transfer" in text
-    assert '--architecture "$remote_arch"' in text
-    assert text.index('--architecture "$remote_arch"') < text.index("--operation all-up --no-build --force-recreate")
+    assert "architecture=architecture" in runtime
+    execute = runtime.index("def execute_transaction")
+    assert runtime.index("_validate_archives(", execute) < runtime.index('_compose_operation(state, "up")', execute)
 
 
 def test_normal_deploy_checks_fresh_epoch_before_sync_and_activation() -> None:
     text = _script_text()
-    inspect = 'python3 "$preflight_script" inspect'
-    sync = 'log "Syncing ${DEPLOY_REF} tracked code"'
-    activation = "--operation all-up --no-build --force-recreate"
+    inspect = 'PYTHONPATH="$preflight_root" python3 -S "$preflight_script" inspect'
+    sync = 'log "Uploading ${DEPLOY_REF} tracked code'
+    activation = 'remote_deploy_runtime.py" execute'
 
     assert inspect in text
     assert "--require-current-or-empty" in text
     assert text.index(inspect) < text.index(sync) < text.index(activation)
-    assert "普通部署" in text
-    assert "destructive cutover" in text
+    assert "prepare-candidate" in text
+    assert "activate-candidate" in text
     assert "agentscope_atomic_cutover.py execute" not in text
 
 
 def test_deploy_script_uses_python_health_checks_without_remote_curl_dependency() -> None:
     text = _script_text()
-
-    assert "from urllib.request import ProxyHandler, Request, build_opener" in text
-    assert "direct_http = build_opener(ProxyHandler({}))" in text
-    assert "direct_http.open(request" in text
-    assert '("API and AgentScope Runtime readiness", "http://127.0.0.1:${host_port}/health/ready", 60, True)' in text
-    assert '("UI", "http://127.0.0.1:${frontend_port}", 60, False)' in text
-    assert '("Langfuse", "http://127.0.0.1:${langfuse_port}", 90, False)' in text
-    assert 'last_error = RuntimeError(f"HTTP {exc.code}' in text
-    assert 'print(f"{name} OK: {url} status={exc.code}")' not in text
-    assert "curl " not in text
+    runtime = RUNTIME_SCRIPT.read_text(encoding="utf-8")
+    assert "from urllib.request import ProxyHandler, Request, build_opener" in runtime
+    assert "opener = build_opener(ProxyHandler({}))" in runtime
+    assert "opener.open(request" in runtime
+    assert '"api", f"http://127.0.0.1:{_port(values, \'HOST_PORT\', 50400)}/health/ready", 60' in runtime
+    assert '"ui", f"http://127.0.0.1:{_port(values, \'FRONTEND_HOST_PORT\', 50401)}", 60' in runtime
+    assert '"langfuse", f"http://127.0.0.1:{_port(values, \'LANGFUSE_HOST_PORT\', 50402)}", 90' in runtime
+    assert "response.read(1)" in runtime
+    assert "curl " not in text + runtime
 
 
 def test_deploy_script_preflights_agentscope_secrets_and_service_set_before_cutover() -> None:
     text = _script_text()
-
+    helper = TOOLCHAIN_SCRIPT.read_text(encoding="utf-8")
+    runtime = RUNTIME_SCRIPT.read_text(encoding="utf-8")
     for key in ("API_KEY", "AGENTGOV_RUNTIME_SHARED_SECRET", "MODEL_PROVIDER_API_KEY"):
-        assert key in text
-    assert "placeholder private env value is forbidden" in text
-    assert "change-me|replace-with-*" in text
+        assert key in helper
+    assert "候选 env 缺少有效私有配置" in helper
+    assert 'value.startswith("replace-with-")' in helper
     for key in (
         "LANGFUSE_SALT",
         "LANGFUSE_ENCRYPTION_KEY",
@@ -212,15 +219,14 @@ def test_deploy_script_preflights_agentscope_secrets_and_service_set_before_cuto
         "LANGFUSE_REDIS_AUTH",
         "LANGFUSE_MINIO_ROOT_PASSWORD",
     ):
-        assert key in text
-    assert "64 nonzero lowercase hex characters" in text
-    assert "LANGFUSE_ALLOW_PUBLIC_BIND=1" in text
-    assert 'require_public_bind_opt_in "AgentGov API" API_BIND_IP API_ALLOW_PUBLIC_BIND' in text
-    assert 'require_public_bind_opt_in "AgentGov UI" FRONTEND_BIND_IP FRONTEND_ALLOW_PUBLIC_BIND' in text
-    assert "single-tenant operator control plane without cross-user isolation" in text
-    assert "scripts/run_selected_env_operation.py" in text
-    assert "--operation all-up --no-build --force-recreate" in text
+        assert key in helper
+    assert 'encryption_key == "0" * 64' in helper
+    assert '"--operation", "runtime-validate"' in helper
+    assert '"--operation", "runtime-validate"' in helper
+    assert '_compose_operation(state, "up")' in runtime
     assert "compose=(" not in text
+    assert "config --services" not in text
+    assert '"config", "--services"' not in helper + runtime
 
 
 def test_cutover_epoch_inspection_refuses_legacy_database_without_mutation(tmp_path) -> None:
@@ -276,12 +282,11 @@ def test_remote_preflight_bundle_inspect_remains_read_only_and_self_contained(tm
     data_root = runtime_root / f".preflight-unused-{uuid.uuid4().hex}"
     assert not data_root.exists()
     preflight_root = tmp_path / "remote/images/.agentscope-cutover-preflight.fixture"
-    # 消费实际上传清单，防止测试自己补齐文件后掩盖真实远端 bundle 漏包。
-    upload = _script_text().split('log "Preflighting remote Runtime epoch before source sync"', 1)[1].split("); then", 1)[0]
-    for relative in re.findall(r"(?m)^    \./(\S+\.py) \\\s*$", upload):
-        destination = preflight_root / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(REPO_ROOT / relative, destination)
+    # 部署与测试调用同一个实际 bundle 构造器；远端不依赖 site-packages。
+    preflight_root.parent.mkdir(parents=True)
+    prepare_bundle(REPO_ROOT, preflight_root)
+    assert '"$PREFLIGHT_BUNDLE/" "$(rsync_remote_target "$PREFLIGHT_ROOT")"' in _script_text()
+    assert 'PYTHONPATH="$preflight_root" python3 -S "$preflight_script" inspect' in _script_text()
     standalone = preflight_root / "scripts/agentscope_atomic_cutover.py"
     env_file = tmp_path / "remote/docker.env"
     env_file.write_text(f"HOST_RUNTIME_VOLUME_ROOT={runtime_root}\nHOST_DATA_MOUNT={data_root}\n", encoding="utf-8")
@@ -293,7 +298,7 @@ def test_remote_preflight_bundle_inspect_remains_read_only_and_self_contained(tm
     }
 
     result = subprocess.run(
-        [sys.executable, str(standalone), "inspect", "--env-file", str(env_file), "--require-current-or-empty"],
+        [sys.executable, "-S", str(standalone), "inspect", "--env-file", str(env_file), "--require-current-or-empty"],
         cwd=tmp_path,
         env=env,
         check=False,
@@ -310,6 +315,16 @@ def test_remote_preflight_bundle_inspect_remains_read_only_and_self_contained(tm
         assert result_metadata["classification"] == "empty"
         assert result_metadata["database"] == str(data_root / "runtime.sqlite3")
     assert not data_root.exists()
+
+
+def test_remote_preflight_rejects_an_uninstalled_dotenv_pin_before_creating_bundle(tmp_path) -> None:
+    (tmp_path / "requirements-api.txt").write_text("python-dotenv==0.0.0\n", encoding="utf-8")
+    destination = tmp_path / "bundle"
+
+    with pytest.raises(ValueError, match="精确锁不一致"):
+        prepare_bundle(tmp_path, destination)
+
+    assert not destination.exists()
 
 
 @pytest.mark.parametrize(
@@ -405,7 +420,7 @@ def test_cutover_epoch_inspection_accepts_exact_current_agentscope_schema(tmp_pa
     factory = make_session_factory(db_path)
     factory.kw["bind"].dispose()
 
-    assert cutover.SCHEMA_EPOCH == "agentscope-runtime-v3"
+    assert cutover.SCHEMA_EPOCH == "agentscope-runtime-v4"
     assert cutover.classify_runtime_epoch(db_path)["classification"] == "agentscope"
 
 

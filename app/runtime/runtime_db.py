@@ -14,13 +14,14 @@ from sqlalchemy.pool import QueuePool
 
 from .json_types import JsonObject
 from .protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
-from .runtime_db_base import Base, begin_sqlite_write_transaction, utc_now
+from .runtime_db_base import Base, utc_now
 from .sqlite_schema_contract import (
     CURRENT_SCHEMA_CONTRACT_SHA256,
     CURRENT_SCHEMA_EPOCH,
     LEGACY_SCHEMA_EPOCH,
     PREVIOUS_SCHEMA_EPOCH,
     REMOVED_RELEASE_OPERATION_TABLE,
+    V3_SCHEMA_EPOCH,
     SqliteReader,
     SqliteSchemaEpochClassification,
     SqliteSchemaEpochInspection,
@@ -53,7 +54,6 @@ from app.runtime_gateway.models import (  # noqa: E402,F401
 from app.runtime_gateway.operation_identity import (  # noqa: E402
     LEGACY_UNKNOWN_SESSION_REQUEST_FINGERPRINT,
     RuntimeChatOperationKind,
-    initial_operation_key,
     session_creation_request_fingerprint,
 )
 
@@ -111,14 +111,12 @@ class FeedbackSignalModel(Base):
     run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     matched_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    alert_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
-    case_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
-class SocEventModel(Base):
-    __tablename__ = "soc_events"
+class FeedbackEventModel(Base):
+    __tablename__ = "feedback_events"
 
     event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(128), index=True)
@@ -127,8 +125,6 @@ class SocEventModel(Base):
     run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     matched_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    alert_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
-    case_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
@@ -177,8 +173,7 @@ class FeedbackCaseModel(Base):
     pending_correlation_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     run_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     session_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
-    alert_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
-    case_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    entities_json: Mapped[dict[str, list[str]]] = mapped_column(JSON, default=dict)
 
 
 class FeedbackCaseSourceModel(Base):
@@ -407,11 +402,19 @@ def make_session_factory(db_path: Path) -> sessionmaker:
 
 
 def _known_data_migration_markers() -> frozenset[str]:
+    from .improvement_idempotency_migration import (
+        IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION,
+    )
     from app.runtime_gateway.hitl_migration import (
         HITL_FINGERPRINT_DATA_MIGRATION,
     )
 
-    return frozenset({HITL_FINGERPRINT_DATA_MIGRATION})
+    return frozenset(
+        {
+            HITL_FINGERPRINT_DATA_MIGRATION,
+            IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION,
+        }
+    )
 
 
 def _schema_versions(engine: Engine) -> set[str]:
@@ -440,6 +443,7 @@ def _require_marker_table_contract(engine: Engine, existing_tables: set[str]) ->
         _LEGACY_SCHEMA_EPOCH,
         _PREVIOUS_SCHEMA_EPOCH,
         _SCHEMA_EPOCH,
+        V3_SCHEMA_EPOCH,
         *_known_data_migration_markers(),
     }
     unknown = sorted(versions - known)
@@ -499,7 +503,7 @@ def _validate_current_schema(engine: Engine) -> None:
     actual_sha256 = _physical_contract_sha256(engine)
     if actual_sha256 != CURRENT_SCHEMA_CONTRACT_SHA256:
         raise RuntimeError(
-            "Runtime database physical schema contract mismatch for the AgentScope v3 epoch",
+            "Runtime database physical schema contract mismatch for the current AgentScope epoch",
         )
 
 
@@ -508,7 +512,9 @@ def _validate_source_schema_shape(
     *,
     source_epoch: str,
 ) -> bool:
-    if source_epoch == _PREVIOUS_SCHEMA_EPOCH:
+    if source_epoch == V3_SCHEMA_EPOCH:
+        expected = {SqliteSchemaEpochClassification.V3_MIGRATABLE}
+    elif source_epoch == _PREVIOUS_SCHEMA_EPOCH:
         expected = {SqliteSchemaEpochClassification.PREVIOUS_MIGRATABLE}
     elif source_epoch == _LEGACY_SCHEMA_EPOCH:
         expected = {
@@ -609,7 +615,7 @@ def _legacy_chat_operations(connection: Connection) -> list[_LegacyChatOperation
             raise RuntimeError("Runtime run has an invalid trigger response ledger")
         operations.append(
             {
-                "operation_key": initial_operation_key(client_operation_id),
+                "operation_key": f"initial:{client_operation_id}",
                 "client_operation_id": client_operation_id,
                 "operation_kind": RuntimeChatOperationKind.INITIAL.value,
                 "request_fingerprint": request_fingerprint,
@@ -632,37 +638,16 @@ def _legacy_chat_operations(connection: Connection) -> list[_LegacyChatOperation
     return operations
 
 
-def _rebuild_agent_runs(connection: Connection) -> None:
-    table_name = AgentRunModel.__tablename__
-    table = Base.metadata.tables[table_name]
-    backup_table = f"{table_name}__migration_source"
-    previous_count = connection.exec_driver_sql(
-        f'SELECT COUNT(*) FROM "{table_name}"',
-    ).scalar_one()
-    connection.exec_driver_sql(
-        f'ALTER TABLE "{table_name}" RENAME TO "{backup_table}"',
-    )
-    _drop_named_indexes(connection, backup_table)
-    table.create(connection)
-    quoted_columns = ", ".join(connection.dialect.identifier_preparer.quote(column.name) for column in table.columns)
-    connection.exec_driver_sql(
-        f'INSERT INTO "{table_name}" ({quoted_columns}) SELECT {quoted_columns} FROM "{backup_table}"',
-    )
-    migrated_count = connection.exec_driver_sql(
-        f'SELECT COUNT(*) FROM "{table_name}"',
-    ).scalar_one()
-    if migrated_count != previous_count:
-        raise RuntimeError("Runtime run migration did not preserve every row")
-    connection.exec_driver_sql(f'DROP TABLE "{backup_table}"')
-
-
 def _migrate_source_schema(engine: Engine, *, source_epoch: str) -> None:
-    with engine.begin() as connection:
-        begin_sqlite_write_transaction(connection)
-        has_removed_release_table = _validate_source_schema_shape(
-            connection,
-            source_epoch=source_epoch,
-        )
+    from .feedback_v4_migration import migrate_feedback_schema
+    from .runtime_v4_migration import (
+        backup_before_v4_migration,
+        migrate_v3_control_schema,
+        require_v3_migration_ready,
+        v4_migration_transaction,
+    )
+
+    def require_supported_source_data(connection: Connection, *, has_removed_release_table: bool) -> None:
         if has_removed_release_table:
             operation_count = connection.exec_driver_sql(
                 f'SELECT COUNT(*) FROM "{_REMOVED_RELEASE_OPERATION_TABLE}"',
@@ -671,17 +656,53 @@ def _migrate_source_schema(engine: Engine, *, source_epoch: str) -> None:
                 raise RuntimeError(
                     "Runtime database has non-empty removed release operations; refusing to discard governance history",
                 )
-        operations = _legacy_chat_operations(connection)
-        _rebuild_session_creation_intents(connection, source_epoch=source_epoch)
-        _rebuild_agent_runs(connection)
-        operation_table = Base.metadata.tables[RuntimeChatOperationModel.__tablename__]
-        operation_table.create(connection)
-        if operations:
-            connection.execute(operation_table.insert(), operations)
+        if source_epoch == V3_SCHEMA_EPOCH:
+            require_v3_migration_ready(connection)
+
+    # 已知且确定的拒绝条件先只读核验，避免 Compose 重启循环为同一个
+    # 不可迁移状态反复复制整库；事务内仍重复核验以封住并发变化。
+    with engine.connect() as connection:
+        has_removed_release_table = _validate_source_schema_shape(
+            connection,
+            source_epoch=source_epoch,
+        )
+        require_supported_source_data(
+            connection,
+            has_removed_release_table=has_removed_release_table,
+        )
+
+    with v4_migration_transaction(engine) as connection:
+        has_removed_release_table = _validate_source_schema_shape(
+            connection,
+            source_epoch=source_epoch,
+        )
+        require_supported_source_data(
+            connection,
+            has_removed_release_table=has_removed_release_table,
+        )
+        # BEGIN IMMEDIATE 已阻断后续 writer；独立只读连接在同一窗口内取得
+        # 锁前全部已提交状态，完成备份后才允许任何 DDL/数据改写。
+        backup_before_v4_migration(connection)
+        if source_epoch == V3_SCHEMA_EPOCH:
+            migrate_feedback_schema(connection)
+            migrate_v3_control_schema(connection)
+        else:
+            operations = _legacy_chat_operations(connection)
+            _rebuild_session_creation_intents(connection, source_epoch=source_epoch)
+            migrate_feedback_schema(connection)
+            operation_table = Base.metadata.tables[RuntimeChatOperationModel.__tablename__]
+            operation_table.create(connection)
+            if operations:
+                connection.execute(operation_table.insert(), operations)
         if has_removed_release_table:
             connection.exec_driver_sql(
                 f'DROP TABLE "{_REMOVED_RELEASE_OPERATION_TABLE}"',
             )
+        Base.metadata.tables[
+            _improvement_db.ImprovementIdempotencyOperationModel.__tablename__
+        ].create(connection)
+        if _physical_contract_sha256(connection) != CURRENT_SCHEMA_CONTRACT_SHA256:
+            raise RuntimeError("Runtime schema migration did not produce the current physical contract")
         connection.execute(
             text("DELETE FROM schema_migrations WHERE version = :version"),
             {"version": source_epoch},
@@ -695,13 +716,24 @@ def _migrate_source_schema(engine: Engine, *, source_epoch: str) -> None:
 
 
 def ensure_schema(engine: Engine) -> None:
-    """Create/validate v3 and migrate only exact v1/v2 control schemas."""
+    """建立/校验当前 epoch，仅迁移精确匹配的历史控制库。"""
 
     existing_tables = set(inspect(engine).get_table_names())
     if existing_tables:
+        from .improvement_idempotency_migration import (
+            IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION,
+            migrate_current_v4_idempotency_schema,
+        )
+
+        migrate_current_v4_idempotency_schema(
+            engine,
+            known_markers=_known_data_migration_markers()
+            - {IMPROVEMENT_IDEMPOTENCY_SCHEMA_MIGRATION},
+        )
+        existing_tables = set(inspect(engine).get_table_names())
         versions = _require_marker_table_contract(engine, existing_tables)
         epoch_markers = versions.intersection(
-            {_LEGACY_SCHEMA_EPOCH, _PREVIOUS_SCHEMA_EPOCH, _SCHEMA_EPOCH},
+            {_LEGACY_SCHEMA_EPOCH, _PREVIOUS_SCHEMA_EPOCH, V3_SCHEMA_EPOCH, _SCHEMA_EPOCH},
         )
         if len(epoch_markers) != 1:
             raise RuntimeError("Runtime database has missing or conflicting schema epoch markers")
@@ -709,6 +741,7 @@ def ensure_schema(engine: Engine) -> None:
         inspection = _inspect_schema_epoch(engine)
         classified_epoch = {
             SqliteSchemaEpochClassification.CURRENT: _SCHEMA_EPOCH,
+            SqliteSchemaEpochClassification.V3_MIGRATABLE: V3_SCHEMA_EPOCH,
             SqliteSchemaEpochClassification.PREVIOUS_MIGRATABLE: _PREVIOUS_SCHEMA_EPOCH,
             SqliteSchemaEpochClassification.LEGACY_MIGRATABLE: _LEGACY_SCHEMA_EPOCH,
             SqliteSchemaEpochClassification.LEGACY_UNSAFE_HISTORY: _LEGACY_SCHEMA_EPOCH,
@@ -723,7 +756,7 @@ def ensure_schema(engine: Engine) -> None:
         _validate_current_schema(engine)
         if _SCHEMA_EPOCH not in versions:
             raise RuntimeError("Runtime database is missing the AgentScope schema epoch marker")
-        if versions.intersection({_LEGACY_SCHEMA_EPOCH, _PREVIOUS_SCHEMA_EPOCH}):
+        if versions.intersection({_LEGACY_SCHEMA_EPOCH, _PREVIOUS_SCHEMA_EPOCH, V3_SCHEMA_EPOCH}):
             raise RuntimeError("Runtime database retained an earlier AgentScope schema epoch marker")
         return
 

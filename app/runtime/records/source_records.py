@@ -1,37 +1,29 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, Optional, TypeAlias
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import Field, field_validator, model_validator
 
 from app.runtime.runtime_db import (
     AgentRunModel,
+    FeedbackEventModel,
     FeedbackSignalModel,
     FeedbackSourceAnnotationModel,
     PendingCorrelationModel,
-    SocEventModel,
 )
 from app.runtime.state_machines import PENDING_CORRELATION_STATES, PendingCorrelationStatus, validate_transition
 
+from ..feedback_entities import FeedbackEntities, merge_entities
 from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
 
-FeedbackSourceKind = Literal["signal", "soc_event", "pending_correlation"]
+FeedbackSourceKind = Literal["signal", "event", "pending_correlation"]
 FeedbackSourceAnnotationStatus = Literal["new", "triaged", "in_batch", "resolved", "archived"]
 FeedbackPriority = Literal["high", "medium", "low"]
 FeedbackSignalSourceType = Literal["explicit_feedback", "implicit_feedback", "analyst_annotation"]
 FeedbackConfidence = Literal["low", "medium", "high"]
-SocEventType = Literal[
-    "case.verdict_changed",
-    "case.severity_changed",
-    "recommendation.accepted",
-    "recommendation.rejected",
-    "recommendation.modified",
-    "evidence.added",
-    "tool.manual_query_after_agent",
-]
-SocEventEntities: TypeAlias = dict[str, list[str]]
+FeedbackEventType = Annotated[str, Field(min_length=1, max_length=128, pattern=r"\S")]
 
 
 class AgentRunRecord(StrictRuntimeRecord):
@@ -51,8 +43,7 @@ class AgentRunRecord(StrictRuntimeRecord):
     trace_status: str = "pending"
     terminal_reason: Optional[str] = None
     error_json: JsonObject | None = Field(default=None, alias="error", serialization_alias="error")
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     metadata: JsonObject = Field(default_factory=dict)
     started_at: Optional[str] = None
     updated_at: str
@@ -90,8 +81,7 @@ class AgentRunRecord(StrictRuntimeRecord):
                 "trace_status": row.trace_status,
                 "terminal_reason": row.terminal_reason,
                 "error": dict(row.error_json) if row.error_json else None,
-                "alert_id": row.alert_id,
-                "case_id": row.case_id,
+                "entities": row.entities_json or {},
                 "metadata": dict(row.metadata_json or {}),
                 "created_at": row.created_at,
                 "started_at": row.started_at,
@@ -116,8 +106,7 @@ def upsert_agent_run_record(db: Any, record: AgentRunRecord) -> None:
         "trace_status": record.trace_status,
         "terminal_reason": record.terminal_reason,
         "error_json": record.error_json,
-        "alert_id": record.alert_id,
-        "case_id": record.case_id,
+        "entities_json": record.entities,
         "metadata_json": record.metadata,
         "created_at": record.created_at,
         "started_at": record.started_at,
@@ -143,8 +132,7 @@ class FeedbackSignalRecord(StrictRuntimeRecord):
     run_id: Optional[str] = None
     matched_run_id: Optional[str] = None
     session_id: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     labels: list[str] = Field(default_factory=list)
     comment: Optional[str] = None
     confidence: Optional[FeedbackConfidence] = None
@@ -163,8 +151,10 @@ class FeedbackSignalRecord(StrictRuntimeRecord):
             raise ValueError("signal_id cannot be empty")
         if not self.created_at.strip():
             raise ValueError("created_at cannot be empty")
-        if not any((self.run_id, self.session_id, self.alert_id, self.case_id)):
-            raise ValueError("feedback signal requires run_id, session_id, alert_id, or case_id")
+        corrections = self.metadata.get("attribution_corrections")
+        is_manually_reassigned = bool(self.agent_id and isinstance(corrections, list) and corrections)
+        if not any((self.run_id, self.session_id, self.entities, is_manually_reassigned)):
+            raise ValueError("feedback signal requires run_id, session_id, or entities")
         return self
 
     def to_payload(self) -> JsonObject:
@@ -181,45 +171,37 @@ class FeedbackSignalRecord(StrictRuntimeRecord):
                 "run_id": row.run_id,
                 "matched_run_id": row.matched_run_id,
                 "session_id": row.session_id,
-                "alert_id": row.alert_id,
-                "case_id": row.case_id,
                 "created_at": row.created_at,
             }
         )
         return cls.model_validate(payload)
 
 
-class SocEventRecord(StrictRuntimeRecord):
-    """Internal source of truth for one SOC event row."""
+class FeedbackEventRecord(StrictRuntimeRecord):
+    """通用业务事件的持久化记录。"""
 
     event_id: str
     source_system: str
-    event_type: SocEventType
+    event_type: FeedbackEventType
     timestamp: str
     created_at: str
     agent_id: Optional[str] = None
     matched_run_id: Optional[str] = None
     run_id: Optional[str] = None
     session_id: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
     actor_id: Optional[str] = None
     before: Optional[JsonObject] = None
     after: Optional[JsonObject] = None
-    entities: SocEventEntities = Field(default_factory=dict)
+    entities: FeedbackEntities = Field(default_factory=dict)
     auto_captured: bool = True
     confidence: Optional[FeedbackConfidence] = "medium"
     requires_review: bool = True
     comment: Optional[str] = None
     metadata: JsonObject = Field(default_factory=dict)
-
-    @field_validator("entities")
-    @classmethod
-    def validate_entities(cls, value: SocEventEntities) -> SocEventEntities:
-        return {str(key): [str(item) for item in items if item] for key, items in value.items() if isinstance(items, list)}
+    ingestion_request_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", exclude=True)
 
     @model_validator(mode="after")
-    def validate_shape(self) -> SocEventRecord:
+    def validate_shape(self) -> FeedbackEventRecord:
         for key, value in (
             ("event_id", self.event_id),
             ("source_system", self.source_system),
@@ -233,8 +215,14 @@ class SocEventRecord(StrictRuntimeRecord):
     def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
+    def to_persistence_payload(self) -> JsonObject:
+        payload = self.to_payload()
+        if self.ingestion_request_sha256 is not None:
+            payload["ingestion_request_sha256"] = self.ingestion_request_sha256
+        return payload
+
     @classmethod
-    def from_row(cls, row: SocEventModel) -> SocEventRecord:
+    def from_row(cls, row: FeedbackEventModel) -> FeedbackEventRecord:
         payload = dict(row.payload_json or {})
         payload.update(
             {
@@ -245,8 +233,6 @@ class SocEventRecord(StrictRuntimeRecord):
                 "run_id": row.run_id,
                 "matched_run_id": row.matched_run_id,
                 "session_id": row.session_id,
-                "alert_id": row.alert_id,
-                "case_id": row.case_id,
                 "created_at": row.created_at,
             }
         )
@@ -265,8 +251,7 @@ class PendingCorrelationRecord(StrictRuntimeRecord):
     event_type: str
     source_system: str
     session_id: Optional[str] = None
-    alert_id: Optional[str] = None
-    case_id: Optional[str] = None
+    entities: FeedbackEntities = Field(default_factory=dict)
     resolved_run_id: Optional[str] = None
     comment: Optional[str] = None
 
@@ -298,8 +283,7 @@ class PendingCorrelationRecord(StrictRuntimeRecord):
         updated_at: str,
         run_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        alert_id: Optional[str] = None,
-        case_id: Optional[str] = None,
+        entities: FeedbackEntities | None = None,
         comment: Optional[str] = None,
     ) -> PendingCorrelationRecord:
         validate_transition("pending_correlation", self.status, "resolved")
@@ -310,8 +294,7 @@ class PendingCorrelationRecord(StrictRuntimeRecord):
                 "status": "resolved",
                 "resolved_run_id": run_id or self.resolved_run_id,
                 "session_id": session_id or self.session_id,
-                "alert_id": alert_id or self.alert_id,
-                "case_id": case_id or self.case_id,
+                "entities": merge_entities([self.entities, entities or {}]),
                 "comment": comment,
             }
         )
@@ -339,6 +322,16 @@ def apply_pending_correlation_record(row: PendingCorrelationModel, record: Pendi
     row.status = record.status
     row.updated_at = record.updated_at
     row.payload_json = record.to_payload()
+
+
+class FeedbackEventIngestionRecord(StrictRuntimeRecord):
+    event: FeedbackEventRecord
+    correlation_status: Literal["matched", "pending_correlation", "duplicate"]
+    matched_run_id: str | None = None
+    pending_correlation: PendingCorrelationRecord | None = None
+
+    def to_payload(self) -> JsonObject:
+        return self.model_dump(mode="json")
 
 
 class FeedbackSourceAnnotationRecord(StrictRuntimeRecord):

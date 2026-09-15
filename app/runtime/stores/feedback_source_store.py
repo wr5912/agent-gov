@@ -3,19 +3,25 @@ from __future__ import annotations
 import uuid
 from typing import Any, Optional
 
-from sqlalchemy import or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, or_, select
 
-from ..errors import BusinessRuleViolation, ConflictError, NotFoundError
+from ..errors import BusinessRuleViolation, ConflictError, FeedbackEventIdConflictError, NotFoundError
+from ..feedback_entities import FeedbackEntities, entity_filter, merge_entities, parse_entities
+from ..feedback_event_identity import (
+    feedback_event_request_fingerprint,
+    legacy_feedback_event_request_compatible,
+    persisted_feedback_event_request_fingerprint,
+)
 from ..json_types import JsonObject
 from ..records.agent_job_records import AgentJobRecord
 from ..records.case_records import FeedbackCaseRecord
 from ..records.source_records import (
     AgentRunRecord,
+    FeedbackEventIngestionRecord,
+    FeedbackEventRecord,
     FeedbackSignalRecord,
     FeedbackSourceAnnotationRecord,
     PendingCorrelationRecord,
-    SocEventRecord,
     apply_feedback_source_annotation_record,
     apply_pending_correlation_record,
     upsert_agent_run_record,
@@ -25,13 +31,14 @@ from ..runtime_db import (
     AgentRunModel,
     FeedbackCaseModel,
     FeedbackCaseSourceModel,
+    FeedbackEventModel,
     FeedbackSignalModel,
     FeedbackSourceAnnotationModel,
     PendingCorrelationModel,
-    SocEventModel,
     utc_now,
 )
-from ..schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
+from ..schemas import FeedbackEventIngestRequest, FeedbackSignalCreateRequest
+from .feedback_source_correlation import find_source_run
 from .store_projection_maps import (
     AgentJobsById,
     FeedbackCasesBySourceRef,
@@ -43,7 +50,7 @@ class FeedbackSourceStoreMixin:
     """Store operations for runs, feedback sources, annotations, and ownership."""
 
     def prepare_run_record(self, record: JsonObject) -> AgentRunRecord:
-        payload = record if self.enable_debug_evidence else self._scrub_record(record)
+        payload = record if self.enable_debug_evidence else self._scrub_source_record(record)
         run_id = self._string(payload.get("run_id")) or f"run-{uuid.uuid4()}"
         payload = {**payload, "run_id": run_id, "created_at": payload.get("created_at") or utc_now()}
         return AgentRunRecord.from_payload(payload)
@@ -59,22 +66,30 @@ class FeedbackSourceStoreMixin:
         *,
         run_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        alert_id: Optional[str] = None,
-        case_id: Optional[str] = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
         agent_id: Optional[str] = None,
         limit: int = 100,
+        before_created_at: str | None = None,
+        before_run_id: str | None = None,
     ) -> list[JsonObject]:
-        stmt = select(AgentRunModel).order_by(AgentRunModel.created_at.desc()).limit(limit)
+        if (before_created_at is None) != (before_run_id is None):
+            raise BusinessRuleViolation("Run 分页游标必须同时提供 created_at 与 run_id。")
+        stmt = select(AgentRunModel).order_by(AgentRunModel.created_at.desc(), AgentRunModel.run_id.desc()).limit(limit)
+        if before_created_at is not None:
+            stmt = stmt.where(
+                or_(
+                    AgentRunModel.created_at < before_created_at,
+                    and_(AgentRunModel.created_at == before_created_at, AgentRunModel.run_id < before_run_id),
+                )
+            )
         if agent_id:
             stmt = stmt.where(AgentRunModel.agent_id == agent_id)
         if run_id:
             stmt = stmt.where(AgentRunModel.run_id == run_id)
         if session_id:
             stmt = stmt.where(AgentRunModel.session_id == session_id)
-        if alert_id:
-            stmt = stmt.where(AgentRunModel.alert_id == alert_id)
-        if case_id:
-            stmt = stmt.where(AgentRunModel.case_id == case_id)
+        stmt = stmt.where(entity_filter(AgentRunModel.entities_json, entity_type, entity_id))
         with self.Session() as db:
             return [self._run_payload(row) for row in db.scalars(stmt).all()]
 
@@ -95,23 +110,13 @@ class FeedbackSourceStoreMixin:
             return AgentRunRecord.from_row(row).to_payload() if row else None
 
     def _find_run_row_for_source(self, db: Any, source: JsonObject) -> AgentRunModel | None:
-        run_id = self._string(source.get("run_id"))
-        if run_id:
-            return db.get(AgentRunModel, run_id)
-        runs = db.scalars(select(AgentRunModel).order_by(AgentRunModel.created_at.desc())).all()
-        payloads = [(row, AgentRunRecord.from_row(row).to_payload()) for row in runs]
-        session_id = self._string(source.get("session_id"))
-        alert_id = self._string(source.get("alert_id"))
-        case_id = self._string(source.get("case_id"))
-        for row, run in payloads:
-            same_incident = not (alert_id or case_id) or self._same_case_or_alert(run, alert_id, case_id)
-            if session_id and run.get("session_id") == session_id and same_incident:
-                return row
-        if alert_id or case_id:
-            for row, run in payloads:
-                if self._same_case_or_alert(run, alert_id, case_id):
-                    return row
-        return None
+        return find_source_run(db, source)
+
+    def _scrub_source_record(self, record: JsonObject) -> JsonObject:
+        """Scrub free-form content while preserving the typed entity map shape."""
+        payload = dict(self._scrub_record(record))
+        payload["entities"] = parse_entities(record.get("entities"))
+        return payload
 
     def create_signal(self, req: FeedbackSignalCreateRequest) -> JsonObject:
         with self.Session() as db:
@@ -138,19 +143,18 @@ class FeedbackSourceStoreMixin:
         db: Any,
         request: FeedbackSignalCreateRequest,
     ) -> FeedbackSignalRecord:
-        payload = self._scrub_record(request.model_dump(mode="json"))
+        payload = self._scrub_source_record(request.model_dump(mode="json"))
         if payload.get("source_type") == "implicit_feedback":
             payload["auto_captured"] = True
             payload["requires_review"] = True
-        if not payload.get("run_id") and not (payload.get("session_id") or payload.get("alert_id") or payload.get("case_id")):
-            raise BusinessRuleViolation("Feedback signal requires run_id, session_id, alert_id, or case_id")
+        if not (payload.get("run_id") or payload.get("session_id") or payload.get("entities")):
+            raise BusinessRuleViolation("Feedback signal requires run_id, session_id, or entities")
         run_row = self._find_run_row_for_source(db, payload)
         run = AgentRunRecord.from_row(run_row).to_payload() if run_row is not None else None
         normalized = dict(payload)
         if run:
             normalized["session_id"] = normalized.get("session_id") or run.get("session_id")
-            normalized["alert_id"] = normalized.get("alert_id") or run.get("alert_id")
-            normalized["case_id"] = normalized.get("case_id") or run.get("case_id")
+            normalized["entities"] = merge_entities([parse_entities(run.get("entities")), request.entities])
         agent_id = self._string((run or {}).get("agent_id"))
         metadata = dict(normalized.get("metadata") or {})
         if not agent_id:
@@ -176,8 +180,6 @@ class FeedbackSourceStoreMixin:
             run_id=record.run_id,
             matched_run_id=record.matched_run_id,
             session_id=record.session_id,
-            alert_id=record.alert_id,
-            case_id=record.case_id,
             created_at=record.created_at,
             payload_json=record.to_payload(),
         )
@@ -211,13 +213,21 @@ class FeedbackSourceStoreMixin:
                         "to": target,
                         "operator": operator,
                         "reason": reason,
+                        "detached_run_id": row.matched_run_id or row.run_id,
+                        "detached_session_id": row.session_id,
                         "at": utc_now(),
                     }
                 )
                 metadata["attribution_corrections"] = corrections
                 payload["metadata"] = metadata
                 payload["agent_id"] = target
+                payload["run_id"] = None
+                payload["matched_run_id"] = None
+                payload["session_id"] = None
                 row.agent_id = target
+                row.run_id = None
+                row.matched_run_id = None
+                row.session_id = None
                 row.payload_json = payload
                 db.commit()
                 return FeedbackSignalRecord.from_row(row)
@@ -230,8 +240,8 @@ class FeedbackSourceStoreMixin:
         *,
         run_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        alert_id: Optional[str] = None,
-        case_id: Optional[str] = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
         source_type: Optional[str] = None,
         agent_id: Optional[str] = None,
         limit: int = 100,
@@ -244,10 +254,7 @@ class FeedbackSourceStoreMixin:
             stmt = stmt.where(or_(FeedbackSignalModel.run_id == run_id, FeedbackSignalModel.matched_run_id == run_id))
         if session_id:
             stmt = stmt.where(FeedbackSignalModel.session_id == session_id)
-        if alert_id:
-            stmt = stmt.where(FeedbackSignalModel.alert_id == alert_id)
-        if case_id:
-            stmt = stmt.where(FeedbackSignalModel.case_id == case_id)
+        stmt = stmt.where(entity_filter(FeedbackSignalModel.payload_json["entities"], entity_type, entity_id))
         if source_type:
             stmt = stmt.where(FeedbackSignalModel.source_type == source_type)
         with self.Session() as db:
@@ -260,68 +267,124 @@ class FeedbackSourceStoreMixin:
             record = db.get(FeedbackSignalModel, signal_id)
             return FeedbackSignalRecord.from_row(record).to_payload() if record else None
 
-    def ingest_soc_event(self, req: SocEventIngestRequest) -> JsonObject:
-        payload = self._scrub_record(req.model_dump(mode="json"))
+    def ingest_feedback_event(self, req: FeedbackEventIngestRequest) -> FeedbackEventIngestionRecord:
+        payload = self._scrub_source_record(req.model_dump(mode="json"))
         payload["auto_captured"] = True
         payload["requires_review"] = True if payload.get("requires_review") is None else payload.get("requires_review")
-        run = self.find_run_for_event(payload)
-        event = {
-            "created_at": utc_now(),
-            **payload,
-            "matched_run_id": run.get("run_id") if run else None,
-            "agent_id": self._string((run or {}).get("agent_id")),
-        }
-        event_record = SocEventRecord.model_validate(event)
-        event = event_record.to_payload()
-
-        pending = None
-        status = "matched"
-        duplicate_event = None
-        try:
-            with self.Session.begin() as db:
-                existing = db.get(SocEventModel, req.event_id)
-                if existing:
-                    duplicate_event = SocEventRecord.from_row(existing).to_payload()
+        normalized_request = FeedbackEventIngestRequest.model_validate(payload)
+        request_sha256 = feedback_event_request_fingerprint(normalized_request.model_dump(mode="json"))
+        with self.Session() as db:
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            try:
+                existing = db.get(FeedbackEventModel, req.event_id)
+                if existing is not None:
+                    result = self._duplicate_feedback_event(db, existing, normalized_request, request_sha256)
                 else:
-                    db.add(
-                        SocEventModel(
-                            event_id=event_record.event_id,
-                            event_type=event_record.event_type,
-                            source_system=event_record.source_system,
-                            agent_id=event_record.agent_id,
-                            run_id=event_record.run_id,
-                            matched_run_id=event_record.matched_run_id,
-                            session_id=event_record.session_id,
-                            alert_id=event_record.alert_id,
-                            case_id=event_record.case_id,
-                            created_at=event_record.created_at,
-                            payload_json=event,
-                        )
-                    )
-                    if not run:
-                        status = "pending_correlation"
-                        pending_record = self._add_pending_correlation_row(db, event_record)
-                        pending = pending_record.to_payload()
-        except IntegrityError:
-            duplicate_event = self.find_event(req.event_id)
+                    result = self._insert_feedback_event(db, normalized_request, request_sha256)
+                db.commit()
+                return result
+            except Exception:
+                db.rollback()
+                raise
 
-        if duplicate_event:
-            return {
-                "event": duplicate_event,
-                "correlation_status": "duplicate",
-                "matched_run_id": duplicate_event.get("matched_run_id"),
-                "pending_correlation": None,
+    def _insert_feedback_event(
+        self,
+        db: Any,
+        request: FeedbackEventIngestRequest,
+        request_sha256: str,
+    ) -> FeedbackEventIngestionRecord:
+        payload = request.model_dump(mode="json")
+        run_row = self._find_run_row_for_source(db, payload)
+        run = AgentRunRecord.from_row(run_row).to_payload() if run_row is not None else None
+        event_record = FeedbackEventRecord.model_validate(
+            {
+                "created_at": utc_now(),
+                **payload,
+                "matched_run_id": run.get("run_id") if run else None,
+                "agent_id": self._string((run or {}).get("agent_id")),
+                "ingestion_request_sha256": request_sha256,
             }
+        )
+        db.add(self._feedback_event_model(event_record))
+        pending = self._add_pending_correlation_row(db, event_record) if run is None else None
+        return FeedbackEventIngestionRecord(
+            event=event_record,
+            correlation_status="pending_correlation" if pending is not None else "matched",
+            matched_run_id=event_record.matched_run_id,
+            pending_correlation=pending,
+        )
 
-        return {
-            "event": event,
-            "correlation_status": status,
-            "matched_run_id": event.get("matched_run_id"),
-            "pending_correlation": pending,
-        }
+    def _duplicate_feedback_event(
+        self,
+        db: Any,
+        existing: FeedbackEventModel,
+        request: FeedbackEventIngestRequest,
+        request_sha256: str,
+    ) -> FeedbackEventIngestionRecord:
+        existing_record, existing_sha256 = self._feedback_event_record_with_request_sha256(existing)
+        if existing_sha256 is None:
+            incoming = request.model_dump(mode="json")
+            persisted_sha256 = persisted_feedback_event_request_fingerprint(existing_record.to_payload())
+            resolved_pending_exists = (
+                db.scalar(
+                    select(PendingCorrelationModel.pending_id)
+                    .where(
+                        PendingCorrelationModel.event_id == existing.event_id,
+                        PendingCorrelationModel.status == "resolved",
+                    )
+                    .limit(1)
+                )
+                is not None
+            )
+            if persisted_sha256 != request_sha256 and not (
+                resolved_pending_exists and legacy_feedback_event_request_compatible(existing_record.to_payload(), incoming)
+            ):
+                raise FeedbackEventIdConflictError(existing.event_id)
+            existing_sha256 = request_sha256
+            payload = dict(existing.payload_json or {})
+            payload["ingestion_request_sha256"] = existing_sha256
+            existing.payload_json = payload
+            existing_record = existing_record.model_copy(update={"ingestion_request_sha256": existing_sha256})
+        if existing_sha256 != request_sha256:
+            raise FeedbackEventIdConflictError(existing.event_id)
+        return FeedbackEventIngestionRecord(
+            event=existing_record,
+            correlation_status="duplicate",
+            matched_run_id=existing_record.matched_run_id,
+        )
 
     @staticmethod
-    def _add_pending_correlation_row(db: Any, event: SocEventRecord) -> PendingCorrelationRecord:
+    def _feedback_event_record_with_request_sha256(
+        row: FeedbackEventModel,
+        *,
+        bind_current: bool = False,
+    ) -> tuple[FeedbackEventRecord, str | None]:
+        record = FeedbackEventRecord.from_row(row)
+        request_sha256 = record.ingestion_request_sha256
+        if request_sha256 is None and bind_current:
+            request_sha256 = persisted_feedback_event_request_fingerprint(record.to_payload())
+            payload = dict(row.payload_json or {})
+            payload["ingestion_request_sha256"] = request_sha256
+            row.payload_json = payload
+            record = record.model_copy(update={"ingestion_request_sha256": request_sha256})
+        return record, request_sha256
+
+    @staticmethod
+    def _feedback_event_model(record: FeedbackEventRecord) -> FeedbackEventModel:
+        return FeedbackEventModel(
+            event_id=record.event_id,
+            event_type=record.event_type,
+            source_system=record.source_system,
+            agent_id=record.agent_id,
+            run_id=record.run_id,
+            matched_run_id=record.matched_run_id,
+            session_id=record.session_id,
+            created_at=record.created_at,
+            payload_json=record.to_persistence_payload(),
+        )
+
+    @staticmethod
+    def _add_pending_correlation_row(db: Any, event: FeedbackEventRecord) -> PendingCorrelationRecord:
         pending = PendingCorrelationRecord.model_validate(
             {
                 "pending_id": f"pc-{uuid.uuid4()}",
@@ -333,8 +396,7 @@ class FeedbackSourceStoreMixin:
                 "event_type": event.event_type,
                 "source_system": event.source_system,
                 "session_id": event.session_id,
-                "alert_id": event.alert_id,
-                "case_id": event.case_id,
+                "entities": event.entities,
             }
         )
         db.add(
@@ -354,31 +416,28 @@ class FeedbackSourceStoreMixin:
         *,
         run_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        alert_id: Optional[str] = None,
-        case_id: Optional[str] = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
         event_type: Optional[str] = None,
         limit: int = 100,
     ) -> list[JsonObject]:
-        stmt = select(SocEventModel).order_by(SocEventModel.created_at.desc()).limit(limit)
+        stmt = select(FeedbackEventModel).order_by(FeedbackEventModel.created_at.desc()).limit(limit)
         if run_id:
-            stmt = stmt.where(or_(SocEventModel.run_id == run_id, SocEventModel.matched_run_id == run_id))
+            stmt = stmt.where(or_(FeedbackEventModel.run_id == run_id, FeedbackEventModel.matched_run_id == run_id))
         if session_id:
-            stmt = stmt.where(SocEventModel.session_id == session_id)
-        if alert_id:
-            stmt = stmt.where(SocEventModel.alert_id == alert_id)
-        if case_id:
-            stmt = stmt.where(SocEventModel.case_id == case_id)
+            stmt = stmt.where(FeedbackEventModel.session_id == session_id)
+        stmt = stmt.where(entity_filter(FeedbackEventModel.payload_json["entities"], entity_type, entity_id))
         if event_type:
-            stmt = stmt.where(SocEventModel.event_type == event_type)
+            stmt = stmt.where(FeedbackEventModel.event_type == event_type)
         with self.Session() as db:
-            return [SocEventRecord.from_row(row).to_payload() for row in db.scalars(stmt).all()]
+            return [FeedbackEventRecord.from_row(row).to_payload() for row in db.scalars(stmt).all()]
 
     def find_event(self, event_id: str) -> Optional[JsonObject]:
         if not event_id:
             return None
         with self.Session() as db:
-            record = db.get(SocEventModel, event_id)
-            return SocEventRecord.from_row(record).to_payload() if record else None
+            record = db.get(FeedbackEventModel, event_id)
+            return FeedbackEventRecord.from_row(record).to_payload() if record else None
 
     def list_pending(self, *, status: Optional[str] = None, limit: int = 100) -> list[JsonObject]:
         stmt = select(PendingCorrelationModel).order_by(PendingCorrelationModel.updated_at.desc()).limit(limit)
@@ -400,8 +459,7 @@ class FeedbackSourceStoreMixin:
         *,
         run_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        alert_id: Optional[str] = None,
-        case_id: Optional[str] = None,
+        entities: FeedbackEntities | None = None,
         comment: Optional[str] = None,
     ) -> Optional[JsonObject]:
         with self.Session.begin() as db:
@@ -412,8 +470,7 @@ class FeedbackSourceStoreMixin:
             locator = {
                 "run_id": run_id,
                 "session_id": session_id or pending_payload.get("session_id"),
-                "alert_id": alert_id or pending_payload.get("alert_id"),
-                "case_id": case_id or pending_payload.get("case_id"),
+                "entities": merge_entities([parse_entities(pending_payload.get("entities")), entities or {}]),
             }
             run_row = self._find_run_row_for_source(db, locator)
             if run_row is None:
@@ -423,29 +480,26 @@ class FeedbackSourceStoreMixin:
                 updated_at=utc_now(),
                 run_id=run_row.run_id,
                 session_id=session_id or self._string(run_payload.get("session_id")),
-                alert_id=alert_id or self._string(run_payload.get("alert_id")),
-                case_id=case_id or self._string(run_payload.get("case_id")),
+                entities=merge_entities([parse_entities(run_payload.get("entities")), entities or {}]),
                 comment=comment,
             )
             apply_pending_correlation_record(record, resolved)
-            event_row = db.get(SocEventModel, resolved.event_id)
+            event_row = db.get(FeedbackEventModel, resolved.event_id)
             if event_row is None:
                 raise BusinessRuleViolation("Pending correlation source event no longer exists")
+            self._feedback_event_record_with_request_sha256(event_row, bind_current=True)
             event_payload = dict(event_row.payload_json or {})
             event_payload.update(
                 {
                     "agent_id": self._string(run_payload.get("agent_id")),
                     "matched_run_id": run_row.run_id,
                     "session_id": resolved.session_id,
-                    "alert_id": resolved.alert_id,
-                    "case_id": resolved.case_id,
+                    "entities": resolved.entities,
                 }
             )
             event_row.agent_id = self._string(run_payload.get("agent_id"))
             event_row.matched_run_id = run_row.run_id
             event_row.session_id = resolved.session_id
-            event_row.alert_id = resolved.alert_id
-            event_row.case_id = resolved.case_id
             event_row.payload_json = event_payload
         return resolved.to_payload()
 
@@ -468,11 +522,11 @@ class FeedbackSourceStoreMixin:
         )
         rows.extend(
             self._source_row(
-                source_kind="soc_event",
+                source_kind="event",
                 source_id=str(item["event_id"]),
                 raw=item,
-                annotation=annotations.get(("soc_event", str(item["event_id"]))),
-                feedback_case=cases_by_source_ref.get(("soc_event", str(item["event_id"]))),
+                annotation=annotations.get(("event", str(item["event_id"]))),
+                feedback_case=cases_by_source_ref.get(("event", str(item["event_id"]))),
                 attribution_jobs_by_id=attribution_jobs_by_id,
             )
             for item in self.list_events(limit=limit)
@@ -507,6 +561,8 @@ class FeedbackSourceStoreMixin:
         )
 
     def update_feedback_source_annotation(self, source_kind: str, source_id: str, fields: JsonObject) -> Optional[JsonObject]:
+        if not fields:
+            raise BusinessRuleViolation("At least one feedback source annotation field is required")
         kind = self._normalize_source_kind(source_kind)
         raw = self._find_source_record(kind, source_id)
         if not raw:
@@ -574,7 +630,7 @@ class FeedbackSourceStoreMixin:
 
     def _normalize_source_kind(self, source_kind: str) -> str:
         normalized = str(source_kind or "").strip()
-        if normalized not in {"signal", "soc_event", "pending_correlation"}:
+        if normalized not in {"signal", "event", "pending_correlation"}:
             raise BusinessRuleViolation(f"Unsupported feedback source kind: {source_kind}")
         return normalized
 
@@ -582,7 +638,7 @@ class FeedbackSourceStoreMixin:
         kind = self._normalize_source_kind(source_kind)
         if kind == "signal":
             return self.find_signal(source_id)
-        if kind == "soc_event":
+        if kind == "event":
             return self.find_event(source_id)
         return self.find_pending(source_id)
 
@@ -678,8 +734,7 @@ class FeedbackSourceStoreMixin:
             "metadata": annotation_payload.get("metadata") if isinstance(annotation_payload.get("metadata"), dict) else {},
             "run_id": run_id,
             "session_id": self._string(raw.get("session_id")),
-            "alert_id": self._string(raw.get("alert_id")),
-            "case_id": self._string(raw.get("case_id")),
+            "entities": parse_entities(raw.get("entities")),
             "feedback_case_id": feedback_case_id,
             "latest_attribution_job_id": attribution_job_id,
             "latest_attribution_status": self._string((attribution_job or {}).get("status")),
@@ -690,7 +745,7 @@ class FeedbackSourceStoreMixin:
         kind = self._normalize_source_kind(source_kind)
         if kind == "signal":
             return "needs_review" if raw.get("requires_review") else "collected"
-        if kind == "soc_event":
+        if kind == "event":
             return "matched" if raw.get("matched_run_id") or raw.get("run_id") else "pending_correlation"
         return self._string(raw.get("status")) or "pending"
 
@@ -711,6 +766,3 @@ class FeedbackSourceStoreMixin:
             or self._string(source.get("label"))
             or f"{source.get('source_kind') or 'feedback'} {source.get('source_id') or ''}"
         )[:120]
-
-    def _same_case_or_alert(self, run: JsonObject, alert_id: Optional[str], case_id: Optional[str]) -> bool:
-        return bool((alert_id and run.get("alert_id") == alert_id) or (case_id and run.get("case_id") == case_id))

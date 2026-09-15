@@ -71,8 +71,7 @@ def _runtime_store(tmp_path: Path):
         session_id="session-mode-gate",
         runtime_agent_id="runtime-agent-mode-gate",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)

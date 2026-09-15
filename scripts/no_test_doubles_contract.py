@@ -144,7 +144,14 @@ AUDITED_MAKE_SHELL_LINES: Final = frozenset(
         "export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)",
     }
 )
-DEPLOYED_FORMAL_TARGETS: Final = frozenset({"ui-playground-deployed-smoke"})
+DEPLOYED_FORMAL_TARGETS: Final = frozenset(
+    {
+        "runtime-workspace-reclaim-live-smoke",
+        "ui-playground-deployed-smoke",
+        "ui-playground-deployed-recovery-smoke",
+        "ui-self-use-governance-smoke",
+    }
+)
 CANONICAL_FORMAL_MAKE_BINDINGS: Final = {
     "ACCEPTANCE_PYTHON": "override ACCEPTANCE_PYTHON := $(abspath .venv/bin/python)",
     "COMPOSE": "COMPOSE ?= docker compose --env-file $(COMPOSE_ENV_FILE) -f docker/docker-compose.yml",
@@ -163,6 +170,16 @@ CANONICAL_FORMAL_MAKE_BINDINGS: Final = {
     "VENV": "VENV ?= .venv",
 }
 CANONICAL_FORMAL_DISPATCHES: Final = {
+    "runtime-workspace-reclaim-live-smoke": ('@$(ACCEPTANCE_PYTHON) scripts/run_workspace_reclaim_acceptance.py --env-file "$(COMPOSE_ENV_FILE)"'),
+    "ui-playground-deployed-recovery-smoke": (
+        '@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation ui-playground-deployed-recovery-smoke'
+    ),
+    "ui-self-use-governance-smoke": (
+        '@$(ACCEPTANCE_PYTHON) scripts/run_self_use_acceptance.py --env-file "$(COMPOSE_ENV_FILE)" '
+        '--workspace-package "$(SELF_USE_WORKSPACE_PACKAGE)" --docs-scenarios "$(SELF_USE_DOCS_SCENARIOS)" '
+        '--soc-scenarios "$(SELF_USE_SOC_SCENARIOS)" --report "$(SELF_USE_REPORT)" '
+        '--existing-docs-commit "$(SELF_USE_EXISTING_DOCS_COMMIT)"'
+    ),
     "ui-playground-deployed-smoke": (
         '@$(ACCEPTANCE_PYTHON) scripts/run_selected_env_operation.py --env-file "$(COMPOSE_ENV_FILE)" --operation ui-playground-deployed-smoke'
     ),
@@ -193,6 +210,9 @@ CANONICAL_FORMAL_DISPATCHES: Final = {
     "langfuse-smoke": "$(CONTAINER_ACCEPTANCE) --profile langfuse -- $(MAKE) --no-print-directory _langfuse-smoke",
 }
 CANONICAL_FORMAL_PREREQUISITES: Final = {
+    "runtime-workspace-reclaim-live-smoke": frozenset(),
+    "ui-playground-deployed-recovery-smoke": frozenset(),
+    "ui-self-use-governance-smoke": frozenset(),
     "ui-playground-deployed-smoke": frozenset(),
     "smoke": frozenset(),
     "ui-smoke": frozenset(),
@@ -210,7 +230,7 @@ CANONICAL_FORMAL_PREREQUISITES: Final = {
     "langfuse-smoke": frozenset({"live-acceptance-preflight"}),
 }
 CANONICAL_AUXILIARY_RECIPE_SHA256: Final = {
-    "live-acceptance-preflight": "4cb54a358c26dbdfe90ff89d9ede2f6e5e157db7abfb4fad2ef7b2b190bca019",
+    "live-acceptance-preflight": "b8400498b7aea8231e0324573de678492b171feef90e41b637a592defa51c0f1",
     "technical-live-preflight": "25249463aff5ef58a8ad0ffa7db7ad49c9fd57cfc4f4a4f900f70f14b20adee4",
     "mcp-technical-live-preflight": "452e0a0eee4b3e7fc5a1115a5deb95d4cf3afcc75fe5257d9b62d6c10a89aaa8",
     "browser-technical-live-preflight": "2ab62ba7842a58bc221d42bbff9e2d5f256fce38523de6a93220152ab009ee62",
@@ -221,7 +241,7 @@ CANONICAL_PRIVATE_RECIPE_SHA256: Final = {
     "_container-core-smoke": "498dbe122e9c79f554f31763fe60f723134c469c4439a0d4264b1d33bdf37616",
     "_container-openapi-check": "68427368aa41276221b9d70d433bfb71dd23a3aa2938d2cf2a8145971515493f",
     "_container-live-test": "01affab30f4862709d550c70e6c64bd194e83f7366d098cffda6ec89a4aa4fad",
-    "_container-technical-live-smoke": "9bac6458bce120bd03ec84ec877e08b0f83a684f1718f45659ffcc1c840b317c",
+    "_container-technical-live-smoke": "e2c00c519e341e1e9fea7f3af15bc1de95b20b1d861280e1465f88b57ed92136",
     "_container-mcp-technical-smoke": "736f7b89853b6ee14c78b01fdaa73d0f20db35bd90822a45fc926053f30a4677",
     "_container-release-candidate": "f29b32fae420fe010d20fbeb030496740aa1eba24872ef78c5bf7f14aba55f65",
     "_main-flow-live-test": "1f78ce7c109117b68c832a58be2f2d4392cf5766afe8f8734536ba8c1322614d",
@@ -234,6 +254,9 @@ _VERIFY_CONTEXT = "scripts/verify_container_acceptance_context.py"
 _RUNNER = "scripts/run_container_acceptance.py"
 _VALIDATE_SCENARIOS = "scripts/validate_live_acceptance_scenarios.py"
 REQUIRED_FORMAL_TARGET_FILES: Final = {
+    "runtime-workspace-reclaim-live-smoke": frozenset({"scripts/run_workspace_reclaim_acceptance.py"}),
+    "ui-playground-deployed-recovery-smoke": frozenset({"scripts/run_selected_env_operation.py"}),
+    "ui-self-use-governance-smoke": frozenset({"scripts/run_self_use_acceptance.py"}),
     "ui-playground-deployed-smoke": frozenset({"scripts/run_selected_env_operation.py"}),
     "smoke": frozenset({_RUNNER, _VERIFY_CONTEXT, "scripts/diagnose_runtime_health.py"}),
     "_smoke": frozenset({_VERIFY_CONTEXT, "scripts/diagnose_runtime_health.py"}),
@@ -284,6 +307,17 @@ REQUIRED_FORMAL_TARGET_FILES: Final = {
     "_ui-agent-candidate-technical-smoke": frozenset({_VERIFY_CONTEXT, "scripts/verify_agent_candidate_lifecycle.mjs"}),
     "langfuse-smoke": frozenset({_RUNNER, _VERIFY_CONTEXT, _VALIDATE_SCENARIOS, "scripts/langfuse_smoke.py"}),
     "_langfuse-smoke": frozenset({_VERIFY_CONTEXT, "scripts/langfuse_smoke.py"}),
+}
+DEPLOYED_FORMAL_ENTRYPOINT_MARKERS: Final = {
+    "runtime-workspace-reclaim-live-smoke": "scripts/run_workspace_reclaim_acceptance.py --env-file",
+    "ui-playground-deployed-recovery-smoke": "scripts/run_selected_env_operation.py --env-file",
+    "ui-playground-deployed-smoke": "scripts/run_selected_env_operation.py --env-file",
+    "ui-self-use-governance-smoke": "scripts/run_self_use_acceptance.py --env-file",
+}
+FORMAL_TARGET_ENTRYPOINT_MARKERS: Final = {
+    **{target: "REQUIRE_CONTAINER_ACCEPTANCE" for target in CANONICAL_PRIVATE_RECIPE_SHA256},
+    **{target: "CONTAINER_ACCEPTANCE" for target in CANONICAL_FORMAL_DISPATCHES if target not in DEPLOYED_FORMAL_ENTRYPOINT_MARKERS},
+    **DEPLOYED_FORMAL_ENTRYPOINT_MARKERS,
 }
 DOUBLE_CLASS_PREFIXES: Final = ("Fake", "Mock", "Stub")
 DOUBLE_FUNCTION_PREFIXES: Final = ("fake_", "mock_", "stub_")

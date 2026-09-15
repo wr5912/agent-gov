@@ -4,25 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
-import shutil
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
-from urllib.parse import urlsplit
+from typing import Any, TypeVar
 
-import yaml
-from agentgov_agentscope_contract import RuntimeTemplateRestartRequired, version_workspace_id
-from agentgov_harness_digest import harness_content_digest
+from agentgov_agentscope_contract import version_workspace_id
+from agentgov_harness_digest import harness_content_digest as harness_digest
 from agentscope.app import SubAgentTemplate
 from agentscope.app.storage import StorageBase
 from agentscope.app.workspace_manager import WorkspaceManagerBase
 from agentscope.mcp import MCPClient
-from agentscope.skill import LocalSkillLoader, Skill
 from agentscope.workspace import BubblewrapWorkspace
 
+from .local_workspace import AgentGovLocalWorkspace
 from .mcp_config_validation import (
     HTTP_HEADER_NAME,
     explicit_mcp_tools,
@@ -31,9 +29,20 @@ from .mcp_config_validation import (
     validated_http_mcp_config,
 )
 from .mcp_resource_middleware import MCPResourcePolicy, parse_mcp_resource_policy
-from .offline_gateway import WorkspacePreparation, offline_gateway_env, validate_runtime_state_links
-from .subagent_templates import load_subagent_templates
+from .offline_gateway import WorkspacePreparation, validate_runtime_state_links
+from .reference_materialization import materialize_runtime_references, remove_private_staging_tree
 from .types import JsonObject
+from .workspace_reference_fence import (
+    NativeSessionWorkspaceReferences,
+    SessionWorkspaceReferenceFence,
+    WorkspaceQuarantineStateError,
+)
+from .workspace_runtime_helpers import (
+    load_network_hosts,
+    register_subagent_templates,
+    sandbox_proxy_env,
+    validate_live_mcp_tools,
+)
 
 _SAFE_AGENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,126}")
 _HARNESS_DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -45,56 +54,8 @@ _CACHE_DIR = ".agentgov-runtime-cache"
 _ENV_PLACEHOLDER = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 _ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]*")
 _REFERENCE_PATH = re.compile(r"mcp_config(?:\.[A-Za-z0-9_-]+)+")
-
-
-def harness_digest(workspace: Path) -> str:
-    """按 AgentGov 控制面的同一全树算法计算运行版本摘要。"""
-
-    return harness_content_digest(workspace)
-
-
-class AgentGovLocalWorkspace(BubblewrapWorkspace):
-    """Bubblewrap 隔离的可写状态；Harness 只由可信 Runtime 进程读取。"""
-
-    def __init__(
-        self,
-        *,
-        harness_root: Path,
-        expected_digest: str,
-        sandbox_env: dict[str, str] | None = None,
-        default_mcps: list[MCPClient] | None = None,
-        mcp_resource_policies: tuple[MCPResourcePolicy, ...] = (),
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            skill_paths=[],
-            default_mcps=default_mcps,
-            share_net=True,
-            gateway_port=None,
-            env={
-                **(sandbox_env or {}),
-                **offline_gateway_env(),
-            },
-            extra_pip=["agentscope==2.0.8"],
-            **kwargs,
-        )
-        self.harness_root = str(harness_root)
-        self._expected_digest = expected_digest
-        self.mcp_resource_policies = mcp_resource_policies
-        self._skill_loader = LocalSkillLoader(str(harness_root / "skills"), scan_subdir=True)
-
-    async def list_skills(self, *, agent_id: str | None = None) -> list[Skill]:
-        """Load governed skills from the read-only source, never a writable seed copy."""
-
-        del agent_id
-        self._validate_source_digest()
-        skills = await self._skill_loader.list_skills()
-        self._validate_source_digest()
-        return skills
-
-    def _validate_source_digest(self) -> None:
-        if harness_digest(Path(self.harness_root)) != self._expected_digest:
-            raise ValueError("Harness tree digest changed after workspace binding")
+_TaskResult = TypeVar("_TaskResult")
+logger = logging.getLogger(__name__)
 
 
 class AgentGovWorkspaceManager(WorkspaceManagerBase):
@@ -109,6 +70,7 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
         environ: Mapping[str, str] | None = None,
         require_read_only_sources: bool = False,
         subagent_templates: Mapping[str, SubAgentTemplate] | None = None,
+        workspace_reference_fence: SessionWorkspaceReferenceFence | None = None,
     ) -> None:
         super().__init__()
         self._business_agents_root = business_agents_root
@@ -120,14 +82,18 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
         self._session_workspaces: dict[tuple[str, str, str], str] = {}
         self._validated_mcp_bindings: set[tuple[str, str, str]] = set()
         self._subagent_templates = dict(subagent_templates or {})
-        self._bound_storage: StorageBase | None = None
+        self._native_session_references = NativeSessionWorkspaceReferences(workspaces_root)
+        self._workspace_reference_fence = workspace_reference_fence or SessionWorkspaceReferenceFence()
         self._lock = asyncio.Lock()
 
     def bind_storage(self, storage: StorageBase) -> None:
         """Bind AgentScope storage for durable Workspace reference checks."""
 
         super().bind_storage(storage)
-        self._bound_storage = storage
+        self._native_session_references.bind_storage(storage)
+        bind_reservations = getattr(storage, "bind_workspace_reference_reservations", None)
+        if callable(bind_reservations):
+            bind_reservations(self._native_session_references)
 
     async def assign_workspace_id(
         self,
@@ -149,67 +115,64 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
         workspace_id: str | None = None,
     ) -> BubblewrapWorkspace:
         parsed_id, _, digest = self._parse_workspace_binding(workspace_id)
-        async with self._lock:
-            preparation = WorkspacePreparation()
-            harness_root, state_root = await asyncio.to_thread(self._materialize, parsed_id)
-            # 在初始化可写状态、MCP 或离线 gateway 之前拒绝不合规的旧 Harness。
-            # 启动时隔离单个旧模板不得变成该版本 Session 的运行时降级。
-            self._register_subagent_templates(harness_root, digest)
-            cached = self._cache.get(parsed_id)
-            created = cached is None
-            if cached is None:
-                default_mcps, resource_policies = self._load_mcp_bindings(harness_root)
-                cached = AgentGovLocalWorkspace(
-                    workspace_id=parsed_id,
-                    host_workdir=str(state_root / _STATE_DIR),
-                    host_cache_dir=str(state_root / _CACHE_DIR),
-                    harness_root=harness_root,
-                    expected_digest=digest,
-                    sandbox_env=self._sandbox_proxy_env(),
-                    default_mcps=default_mcps,
-                    mcp_resource_policies=resource_policies,
-                )
-                await preparation.initialize(cached)
-            elif Path(cached.harness_root) != harness_root:
-                raise ValueError("Harness source changed after workspace binding")
-            harness_root = Path(cached.harness_root)
+        stage = "reference_fence"
+        logger.info("runtime_workspace_setup stage=begin source_kind=%s", "candidate" if parsed_id.startswith("candidate-") else "published")
+        async with self._workspace_reference_fence.hold():
             try:
-                binding = (parsed_id, agent_id, session_id)
-                if binding not in self._validated_mcp_bindings:
-                    await preparation.validate_mcp(
-                        self._validate_live_mcp_tools(cached, agent_id=agent_id, session_id=session_id),
+                self._workspace_reference_fence.require_writable(parsed_id)
+                async with self._lock:
+                    stage = "native_session_binding"
+                    await self._native_session_references.require_binding(
+                        user_id, agent_id, session_id, parsed_id,
                     )
-                    self._validated_mcp_bindings.add(binding)
-            except BaseException:
-                if created:
-                    await cached.close()
+                    preparation = WorkspacePreparation()
+                    stage = "harness_materialization"
+                    harness_root, state_root = await asyncio.to_thread(self._materialize, parsed_id)
+                    stage = "subagent_templates"
+                    register_subagent_templates(harness_root, digest, self._subagent_templates)
+                    cached = self._cache.get(parsed_id)
+                    created = cached is None
+                    if cached is None:
+                        stage = "mcp_bindings"
+                        default_mcps, resource_policies = self._load_mcp_bindings(harness_root)
+                        cached = AgentGovLocalWorkspace(
+                            workspace_id=parsed_id,
+                            host_workdir=str(state_root / _STATE_DIR),
+                            host_cache_dir=str(state_root / _CACHE_DIR),
+                            harness_root=harness_root,
+                            expected_digest=digest,
+                            sandbox_env=sandbox_proxy_env(self._environ),
+                            default_mcps=default_mcps,
+                            mcp_resource_policies=resource_policies,
+                        )
+                        stage = "initialize"
+                        await preparation.initialize(cached)
+                    elif Path(cached.harness_root) != harness_root:
+                        raise ValueError("Harness source changed after workspace binding")
+                    try:
+                        binding = (parsed_id, agent_id, session_id)
+                        stage = "mcp_roster"
+                        if binding not in self._validated_mcp_bindings:
+                            await preparation.validate_mcp(
+                                validate_live_mcp_tools(cached, agent_id=agent_id, session_id=session_id),
+                            )
+                            self._validated_mcp_bindings.add(binding)
+                        stage = "native_session_confirm"
+                        if version_workspace_id(parsed_id) != parsed_id:
+                            await self._native_session_references.confirm_reclaimable_binding(
+                                user_id, agent_id, session_id, parsed_id,
+                            )
+                    except BaseException:
+                        if created:
+                            await cached.close()
+                        raise
+                    if created:
+                        self._cache[parsed_id] = cached
+                    self._session_workspaces[(user_id, agent_id, session_id)] = parsed_id
+                    return cached
+            except Exception as exc:
+                logger.warning("runtime_workspace_setup stage=%s result=failed error_type=%s", stage, type(exc).__name__)
                 raise
-            if created:
-                self._cache[parsed_id] = cached
-            self._session_workspaces[(user_id, agent_id, session_id)] = parsed_id
-            return cached
-
-    def _sandbox_proxy_env(self) -> dict[str, str]:
-        proxies: dict[str, str] = {}
-        for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "no_proxy"):
-            value = self._environ.get(name)
-            if not value:
-                continue
-            if name.lower() in {"http_proxy", "https_proxy"}:
-                parsed = urlsplit(value)
-                if parsed.username is not None or parsed.password is not None:
-                    raise ValueError("Credential-bearing sandbox proxy URLs are forbidden")
-            proxies[name] = value
-        return proxies
-
-    def _register_subagent_templates(self, workspace: Path, digest: str) -> None:
-        incoming = load_subagent_templates(workspace, digest)
-        for template_type, template in incoming.items():
-            existing = self._subagent_templates.get(template_type)
-            if existing is None:
-                raise RuntimeTemplateRestartRequired()
-            if existing != template:
-                raise ValueError(f"Subagent template changed after Runtime startup: {template_type}")
 
     async def close(self, workspace_id: str) -> None:
         async with self._lock:
@@ -230,93 +193,207 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
             self._validated_mcp_bindings.clear()
             await asyncio.gather(*(workspace.close() for workspace in workspaces))
 
-    async def resolve_session_workspace_id(
+    @property
+    def workspaces_root(self) -> Path:
+        """Return the configured Runtime state root, never a Harness source."""
+
+        return self._workspaces_root
+
+    async def snapshot_native_session_workspaces(
         self,
         user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> str | None:
-        """Resolve a Session binding from cache, then durable public storage."""
+    ) -> dict[tuple[str, str], str]:
+        """Read all publicly discoverable Session-to-Workspace bindings."""
 
-        async with self._lock:
-            binding = (user_id, agent_id, session_id)
-            workspace_id = self._session_workspaces.get(binding)
-            if workspace_id is not None:
-                return workspace_id
-            storage = self._bound_storage
-            if storage is None:
-                return None
-            for session in await storage.list_sessions(user_id, agent_id):
-                if session.id == session_id and session.config.workspace_id:
-                    return session.config.workspace_id
-            return None
+        async with self._workspace_reference_fence.hold():
+            async with self._lock:
+                return await self._snapshot_native_session_workspaces_locked(user_id)
 
-    async def release_session_workspace_if_unreferenced(
+    async def reclaimable_workspace_ids(self) -> frozenset[str]:
+        """Return only Workspaces created under the complete reference ledger."""
+
+        return await self._native_session_references.reclaimable_workspace_ids()
+
+    async def quarantine_session_workspace_if_unreferenced(
         self,
         user_id: str,
-        agent_id: str,
-        session_id: str,
+        workspace_id: str,
         *,
-        workspace_id: str | None = None,
-    ) -> bool:
-        """Close a cached Workspace only after durable zero-reference proof.
+        ignored_bindings: frozenset[tuple[str, str]],
+        quarantine: Callable[[str], Path],
+        restore: Callable[[str], None],
+    ) -> Path | None:
+        """Close and atomically quarantine one proven-unreferenced Workspace.
 
-        The persistent AgentScope Session records are authoritative. Local
-        Session mappings are only candidates, so stale team-cascade entries
-        can never keep a Workspace alive.
+        The rename callback runs while the manager lock excludes a concurrent
+        ``get_workspace`` materialization. Recursive deletion happens later,
+        outside this lock and outside AgentScope storage operations.
         """
 
-        async with self._lock:
-            binding = (user_id, agent_id, session_id)
-            candidate = workspace_id or self._session_workspaces.get(binding)
-            if candidate is None:
-                return False
-            storage = self._bound_storage
-            if storage is None:
-                return False
+        async with self._workspace_reference_fence.hold():
+            async with self._lock:
+                # Session upserts use the same outer fence, so one durable
+                # check remains authoritative through close and rename.
+                if await self._workspace_is_referenced_locked(user_id, workspace_id, ignored_bindings):
+                    return None
+                workspace = self._cache.get(workspace_id)
+                close_cancelled = False
+                if workspace is not None:
+                    _, close_cancelled = await self._finish_task_despite_cancellation(
+                        asyncio.create_task(workspace.close()),
+                    )
+                    self._cache.pop(workspace_id, None)
+                    self._validated_mcp_bindings = {binding for binding in self._validated_mcp_bindings if binding[0] != workspace_id}
+                if close_cancelled:
+                    raise asyncio.CancelledError
+                try:
+                    tombstone, cancelled = await self._finish_task_despite_cancellation(
+                        asyncio.create_task(asyncio.to_thread(quarantine, workspace_id)),
+                    )
+                except WorkspaceQuarantineStateError:
+                    await self._restore_or_retire_locked(workspace_id, restore)
+                    raise
+                # A non-project StorageBase does not participate in the
+                # reference fence. Preserve the public extension boundary by
+                # checking once more after rename and restoring on a late
+                # durable Session. Provisioned storage cannot race here.
+                try:
+                    referenced_after_quarantine = await self._workspace_is_referenced_locked(
+                        user_id,
+                        workspace_id,
+                        ignored_bindings,
+                    )
+                except BaseException:
+                    restore_cancelled = await self._restore_or_retire_locked(
+                        workspace_id,
+                        restore,
+                    )
+                    if restore_cancelled:
+                        raise asyncio.CancelledError from None
+                    raise
+                if referenced_after_quarantine:
+                    cancelled = await self._restore_or_retire_locked(workspace_id, restore) or cancelled
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    return None
+                self._workspace_reference_fence.retire(workspace_id)
+                self._session_workspaces = {
+                    binding: bound_workspace_id for binding, bound_workspace_id in self._session_workspaces.items() if bound_workspace_id != workspace_id
+                }
+                self._validated_mcp_bindings = {binding for binding in self._validated_mcp_bindings if binding[0] != workspace_id}
+                if cancelled:
+                    raise asyncio.CancelledError
+                return tombstone
 
-            referenced_workspace_ids: set[str] = set()
-            for agent in await storage.list_agents(user_id):
-                for session in await storage.list_sessions(user_id, agent.id):
-                    if session.config.workspace_id:
-                        referenced_workspace_ids.add(session.config.workspace_id)
+    async def prepare_quarantined_workspace_finalization(
+        self,
+        user_id: str,
+        workspace_id: str,
+        restore: Callable[[str], None],
+    ) -> bool:
+        """Restore referenced state, otherwise retire it before deletion."""
 
-            if candidate in referenced_workspace_ids:
-                self._session_workspaces.pop(binding, None)
-                return False
+        async with self._workspace_reference_fence.hold():
+            async with self._lock:
+                if await self._workspace_is_referenced_locked(user_id, workspace_id, frozenset()):
+                    try:
+                        _, cancelled = await self._finish_task_despite_cancellation(
+                            asyncio.create_task(asyncio.to_thread(restore, workspace_id)),
+                        )
+                    except Exception:
+                        self._workspace_reference_fence.retire(workspace_id)
+                        raise
+                    self._workspace_reference_fence.activate(workspace_id)
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    return False
+                self._workspace_reference_fence.retire(workspace_id)
+                return True
 
-            workspace = self._cache.get(candidate)
-            if workspace is not None:
-                await workspace.close()
-                self._cache.pop(candidate, None)
-            self._session_workspaces = {
-                cached_binding: bound_workspace_id for cached_binding, bound_workspace_id in self._session_workspaces.items() if bound_workspace_id != candidate
-            }
-            self._validated_mcp_bindings = {validated_binding for validated_binding in self._validated_mcp_bindings if validated_binding[0] != candidate}
-            return workspace is not None
+    async def clear_restored_record_if_referenced(
+        self,
+        user_id: str,
+        workspace_id: str,
+        validate: Callable[[str], None],
+    ) -> bool:
+        """Validate and reactivate a restored target that still has a Session."""
+
+        async with self._workspace_reference_fence.hold():
+            async with self._lock:
+                if not await self._workspace_is_referenced_locked(user_id, workspace_id, frozenset()):
+                    return False
+                try:
+                    _, cancelled = await self._finish_task_despite_cancellation(
+                        asyncio.create_task(asyncio.to_thread(validate, workspace_id)),
+                    )
+                except Exception:
+                    self._workspace_reference_fence.retire(workspace_id)
+                    raise
+                self._workspace_reference_fence.activate(workspace_id)
+                if cancelled:
+                    raise asyncio.CancelledError
+                return True
+
+    async def complete_session_workspace_reclamation(self, workspace_id: str) -> None:
+        """Forget a transient retirement only after its exact tree is gone."""
+
+        async with self._workspace_reference_fence.hold():
+            self._workspace_reference_fence.activate(workspace_id)
+
+    async def block_workspace_identity(self, workspace_id: str | None) -> None:
+        async with self._workspace_reference_fence.hold():
+            self._workspace_reference_fence.block(workspace_id)
+
+    async def _restore_or_retire_locked(
+        self,
+        workspace_id: str,
+        restore: Callable[[str], None],
+    ) -> bool:
+        try:
+            _, cancelled = await self._finish_task_despite_cancellation(
+                asyncio.create_task(asyncio.to_thread(restore, workspace_id)),
+            )
+        except BaseException:
+            self._workspace_reference_fence.retire(workspace_id)
+            raise
+        self._workspace_reference_fence.activate(workspace_id)
+        return cancelled
 
     @staticmethod
-    async def _validate_live_mcp_tools(
-        workspace: AgentGovLocalWorkspace,
-        *,
-        agent_id: str,
-        session_id: str,
-    ) -> None:
-        clients = await workspace.list_mcps(
-            agent_id=agent_id,
-            session_id=session_id,
+    async def _finish_task_despite_cancellation(
+        task: asyncio.Task[_TaskResult],
+    ) -> tuple[_TaskResult, bool]:
+        """Keep the reference fence held until a filesystem step settles."""
+
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        return task.result(), cancelled
+
+    async def _workspace_is_referenced_locked(
+        self,
+        user_id: str,
+        workspace_id: str,
+        ignored_bindings: frozenset[tuple[str, str]],
+    ) -> bool:
+        del ignored_bindings
+        if workspace_id not in await self._native_session_references.reclaimable_workspace_ids():
+            return True
+        durable = await self._snapshot_native_session_workspaces_locked(user_id)
+        return workspace_id in durable.values()
+
+    async def _snapshot_native_session_workspaces_locked(
+        self,
+        user_id: str,
+    ) -> dict[tuple[str, str], str]:
+        bindings, self._session_workspaces = await self._native_session_references.snapshot(
+            user_id,
+            self._session_workspaces,
         )
-        expected_servers = {client.name for client in workspace.default_mcps}
-        if {client.name for client in clients} != expected_servers:
-            raise RuntimeError("MCP server roster does not match the versioned Harness")
-        for client in clients:
-            expected_tools = client.enable_tools
-            if expected_tools is None:
-                raise RuntimeError("MCP exact tool allowlist is missing")
-            raw_tools = await client.list_raw_tools()
-            actual = [tool.name for tool in raw_tools]
-            if len(actual) != len(set(actual)) or set(actual) != set(expected_tools):
-                raise RuntimeError("MCP tool roster does not match the versioned Harness")
+        return bindings
 
     def _load_mcp_bindings(
         self,
@@ -329,7 +406,7 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
         clients: list[MCPClient] = []
         resource_policies: list[MCPResourcePolicy] = []
         names: set[str] = set()
-        allowed_hosts = self._load_network_hosts(workspace)
+        allowed_hosts = load_network_hosts(workspace, self._environ)
         for path in sorted(declaration_root.glob("*.json")):
             if path.is_symlink() or not path.is_file():
                 raise ValueError("MCP declaration must be a regular JSON file")
@@ -361,31 +438,6 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
         """为离线准入和测试返回已解析 client；生产构造同时读取 resource policy。"""
 
         return self._load_mcp_bindings(workspace)[0]
-
-    def _load_network_hosts(self, workspace: Path) -> frozenset[str]:
-        manifest = workspace / "agent.yaml"
-        try:
-            payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            raise ValueError("agent.yaml network policy is unreadable") from exc
-        policy = payload.get("workspace_policy") if isinstance(payload, dict) else None
-        declarations = policy.get("allowed_network_domains") if isinstance(policy, dict) else None
-        if not isinstance(declarations, list) or any(not isinstance(item, str) or not item for item in declarations):
-            raise ValueError("workspace_policy.allowed_network_domains must be a string list")
-        hosts: set[str] = set()
-        for declaration in declarations:
-            resolved = declaration
-            if declaration.startswith("${") and declaration.endswith("}"):
-                resolved = self._environ.get(declaration[2:-1], "")
-                if not resolved:
-                    raise ValueError(f"Network policy environment is missing: {declaration[2:-1]}")
-            parsed = urlsplit(resolved if "://" in resolved else f"https://{resolved}")
-            if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or not parsed.hostname:
-                raise ValueError("workspace_policy.allowed_network_domains contains an unsafe target")
-            if any(character in parsed.hostname for character in "*?[]"):
-                raise ValueError("workspace_policy.allowed_network_domains cannot contain wildcards")
-            hosts.add(parsed.hostname.lower())
-        return frozenset(hosts)
 
     @staticmethod
     def _load_mcp_record(path: Path) -> JsonObject:
@@ -557,8 +609,9 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
         self._require_real_directory(self._workspaces_root, "Runtime workspace root")
         if target.exists() or target.is_symlink():
             self._validate_existing_target(target, workspace_id, digest)
+            self._materialize_references(source, target / _STATE_DIR, digest)
             return source, target
-        self._create_state_atomically(target, workspace_id, digest)
+        self._create_state_atomically(target, workspace_id, digest, source)
         return source, target
 
     @staticmethod
@@ -657,6 +710,7 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
         target: Path,
         workspace_id: str,
         digest: str,
+        source: Path,
     ) -> None:
         staging_root = Path(
             tempfile.mkdtemp(prefix=f".{workspace_id}.", dir=self._workspaces_root),
@@ -666,18 +720,24 @@ class AgentGovWorkspaceManager(WorkspaceManagerBase):
             temporary.mkdir(mode=0o700)
             (temporary / _STATE_DIR).mkdir(mode=0o700)
             (temporary / _CACHE_DIR).mkdir(mode=0o700)
+            self._materialize_references(source, temporary / _STATE_DIR, digest)
             self._write_marker(temporary, workspace_id, digest)
             self._fsync_directory(temporary)
             try:
                 os.rename(temporary, target)
-                self._fsync_directory(self._workspaces_root)
             except OSError:
                 if not target.exists():
                     raise
                 self._validate_existing_target(target, workspace_id, digest)
+                self._materialize_references(source, target / _STATE_DIR, digest)
+            else:
+                self._fsync_directory(self._workspaces_root)
         finally:
             if staging_root.exists() or staging_root.is_symlink():
-                shutil.rmtree(staging_root, ignore_errors=True)
+                remove_private_staging_tree(staging_root)
+
+    def _materialize_references(self, source: Path, state: Path, digest: str) -> None:
+        materialize_runtime_references(source, state, digest)
 
     @staticmethod
     def _reject_symlinks(root: Path) -> None:

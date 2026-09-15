@@ -86,6 +86,12 @@ class FeedbackStore(
                 return agent_id
         return DEFAULT_BUSINESS_AGENT_ID
 
+    def _workspace_dir_for(self, agent_id: Optional[str]) -> Path:
+        normalized = (agent_id or DEFAULT_BUSINESS_AGENT_ID).strip()
+        if normalized == DEFAULT_BUSINESS_AGENT_ID:
+            return self.default_workspace_dir
+        return business_agent_layout(self.data_dir, normalized).workspace
+
     def _agent_git_paths_context(self, agent_id: Optional[str] = None) -> JsonObject:
         # 执行 prompt 的仓库/worktrees/releases 路径按归属业务 Agent 解析。
         normalized = (agent_id or DEFAULT_BUSINESS_AGENT_ID).strip()

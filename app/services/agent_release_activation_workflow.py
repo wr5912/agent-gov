@@ -312,7 +312,7 @@ async def _handle_activation_failure(
             detail=str(error),
             updated_at=utc_now(),
         )
-        raise _error(409, str(error)) from error
+        raise _error(409, str(error), error_code=error.error_code) from error
     if isinstance(error, RuntimeActivationCleanupPending):
         _record_pending_cleanup(service, intent, error)
     try:
@@ -400,7 +400,7 @@ def _finalize_activation(
         ) from exc
 
 
-def _error(status_code: int, detail: str) -> Exception:
+def _error(status_code: int, detail: str, *, error_code: str | None = None) -> Exception:
     from app.services.agent_governance import AgentGovernanceError
 
-    return AgentGovernanceError(status_code, detail)
+    return AgentGovernanceError(status_code, detail, error_code=error_code)

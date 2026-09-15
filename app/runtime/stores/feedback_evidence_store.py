@@ -10,9 +10,9 @@ from typing import Any, Optional
 
 import yaml
 
+from ..feedback_entities import parse_entities
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
 from ..json_types import JsonObject
-from ..protected_business_agents import DEFAULT_BUSINESS_AGENT_ID
 from ..records.evidence_records import EvidenceIncludedFileRecord, EvidencePackageFileRecord, EvidencePackageRecord
 from ..runtime_db import EvidenceFileModel, EvidencePackageModel, utc_now
 
@@ -28,6 +28,7 @@ _PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 _PLACEHOLDER_SCAN_EXTENSIONS = {".json", ".md", ".sh", ".txt", ".yaml", ".yml"}
 _PLACEHOLDER_SCAN_SKIP_PARTS = {".git", ".env", "secrets", "node_modules", "dist", "__pycache__"}
 _PLACEHOLDER_SCAN_MAX_BYTES = 512_000
+_TYPED_ENTITY_RECORD_FILES = frozenset({"feedback.json", "runs.json", "events.json"})
 _TRACE_ATTRIBUTE_ALLOWLIST = {
     "agentgov.run.id",
     "agentgov.agent.id",
@@ -61,9 +62,11 @@ class FeedbackEvidenceStoreMixin:
                 return existing
 
         evidence_id = f"evp-{uuid.uuid4()}"
-        context = self._collect_evidence_context(feedback_case)
+        agent_id = self._resolve_task_agent_id(feedback_case_id=feedback_case_id)
+        workspace_dir = self._workspace_dir_for(agent_id)
+        context = self._collect_evidence_context(feedback_case, agent_id=agent_id, workspace_dir=workspace_dir)
         business_agent_version: JsonObject = {
-            "business_agent_version_id": self._current_agent_version_id(self._resolve_task_agent_id(feedback_case_id=feedback_case_id)),
+            "business_agent_version_id": self._current_agent_version_id(agent_id),
             "captured_at": utc_now(),
         }
         redaction_report: JsonObject = {
@@ -97,7 +100,7 @@ class FeedbackEvidenceStoreMixin:
                 raise RuntimeError("Feedback case disappeared during evidence package creation.")
         return manifest
 
-    def _collect_evidence_context(self, feedback_case: JsonObject) -> JsonObject:
+    def _collect_evidence_context(self, feedback_case: JsonObject, *, agent_id: str, workspace_dir: Path) -> JsonObject:
         raw_signal_ids = feedback_case.get("signal_ids")
         raw_event_ids = feedback_case.get("event_ids")
         raw_run_ids = feedback_case.get("run_ids")
@@ -108,7 +111,7 @@ class FeedbackEvidenceStoreMixin:
         session_ids = raw_session_ids if isinstance(raw_session_ids, list) else []
         signals_clean = [item for item in (self.find_signal(str(source_id)) for source_id in signal_ids) if item]
         events_clean = [item for item in (self.find_event(str(source_id)) for source_id in event_ids) if item]
-        runs_clean = [item for item in (self.find_run(run_id=str(run_id)) for run_id in run_ids) if item]
+        runs_clean = [item for item in (self.find_run(run_id=str(run_id)) for run_id in run_ids) if item and str(item.get("agent_id") or "") == agent_id]
         sessions = [
             {
                 "session_id": session_id,
@@ -121,7 +124,7 @@ class FeedbackEvidenceStoreMixin:
         tool_calls = self._tool_call_summaries(langfuse_trace_details)
         trace_summary = self._trace_summaries(langfuse_trace_details)
         runtime_env_snapshot = self._runtime_env_snapshot()
-        effective_mcp_config = self._effective_mcp_config()
+        effective_mcp_config = self._effective_mcp_config(agent_id, workspace_dir)
         return {
             "signals_clean": signals_clean,
             "events_clean": events_clean,
@@ -131,11 +134,11 @@ class FeedbackEvidenceStoreMixin:
             "langfuse_trace_refs": langfuse_trace_refs,
             "langfuse_trace_details": langfuse_trace_details,
             "trace_summary": trace_summary,
-            "runtime_config_summary": self._runtime_config_summary(effective_mcp_config),
+            "runtime_config_summary": self._runtime_config_summary(agent_id, workspace_dir, effective_mcp_config),
             "effective_mcp_config": effective_mcp_config,
             "mcp_connection_summary": self._mcp_connection_summary(langfuse_trace_details),
             "runtime_env_snapshot": runtime_env_snapshot,
-            "workspace_placeholder_summary": self._workspace_placeholder_summary(),
+            "workspace_placeholder_summary": self._workspace_placeholder_summary(workspace_dir),
         }
 
     def _build_evidence_files(
@@ -149,7 +152,7 @@ class FeedbackEvidenceStoreMixin:
             "runs.json": context["runs_clean"],
             "sessions.json": context["sessions"],
             "tool_calls.json": context["tool_calls"],
-            "soc_events.json": context["events_clean"],
+            "events.json": context["events_clean"],
             "trace_summary.json": context["trace_summary"],
             "runtime_config_summary.json": context["runtime_config_summary"],
             "effective_mcp_config.json": context["effective_mcp_config"],
@@ -166,7 +169,12 @@ class FeedbackEvidenceStoreMixin:
         return [
             EvidenceIncludedFileRecord(
                 path=name,
-                sha256=self._sha256_json(self._evidence_payload(payload)),
+                sha256=self._sha256_json(
+                    self._evidence_payload(
+                        payload,
+                        preserve_source_entities=name in _TYPED_ENTITY_RECORD_FILES,
+                    )
+                ),
                 type=name.removesuffix(".json"),
             ).to_payload()
             for name, payload in files.items()
@@ -202,8 +210,7 @@ class FeedbackEvidenceStoreMixin:
                     "run_ids": feedback_case.get("run_ids", []),
                     "session_ids": feedback_case.get("session_ids", []),
                     "trace_ids": trace_ids,
-                    "alert_ids": feedback_case.get("alert_ids", []),
-                    "case_ids": feedback_case.get("case_ids", []),
+                    "entities": feedback_case.get("entities", {}),
                     "event_ids": feedback_case.get("event_ids", []),
                 },
                 "included_files": included_files,
@@ -230,8 +237,8 @@ class FeedbackEvidenceStoreMixin:
         )
         return record.to_payload()
 
-    def _runtime_config_summary(self, effective_mcp_config: JsonObject) -> JsonObject:
-        manifest_path = self.default_workspace_dir / "agent.yaml"
+    def _runtime_config_summary(self, agent_id: str, workspace_dir: Path, effective_mcp_config: JsonObject) -> JsonObject:
+        manifest_path = workspace_dir / "agent.yaml"
         try:
             manifest_bytes = manifest_path.read_bytes()
         except OSError:
@@ -250,7 +257,8 @@ class FeedbackEvidenceStoreMixin:
         session = manifest.get("session") if isinstance(manifest.get("session"), dict) else {}
         workspace_policy = manifest.get("workspace_policy") if isinstance(manifest.get("workspace_policy"), dict) else {}
         return {
-            "default_workspace_dir": str(self.default_workspace_dir),
+            "business_agent_id": agent_id,
+            "workspace_dir": str(workspace_dir),
             "data_dir": str(self.data_dir),
             "report_output_dir": str(self.data_dir / "outputs" / "reports"),
             "agent_manifest": {
@@ -258,6 +266,7 @@ class FeedbackEvidenceStoreMixin:
                 "exists": manifest_bytes is not None,
                 "sha256": hashlib.sha256(manifest_bytes).hexdigest() if manifest_bytes is not None else None,
                 "error": manifest_error,
+                "agent_id": agent.get("id"),
                 "runtime": agent.get("runtime"),
                 "runtime_contract": agent.get("runtime_contract"),
                 "permission_mode": session.get("permission_mode"),
@@ -269,8 +278,8 @@ class FeedbackEvidenceStoreMixin:
             "effective_mcp_config_path": effective_mcp_config.get("path"),
         }
 
-    def _effective_mcp_config(self) -> JsonObject:
-        mcp_root = self.default_workspace_dir / "mcp"
+    def _effective_mcp_config(self, agent_id: str, workspace_dir: Path) -> JsonObject:
+        mcp_root = workspace_dir / "mcp"
         configs: list[JsonObject] = []
         errors: list[JsonObject] = []
         if mcp_root.is_dir() and not mcp_root.is_symlink():
@@ -287,7 +296,7 @@ class FeedbackEvidenceStoreMixin:
                     configs.append(
                         {
                             "name": path.stem,
-                            "path": path.relative_to(self.default_workspace_dir).as_posix(),
+                            "path": path.relative_to(workspace_dir).as_posix(),
                             "sha256": hashlib.sha256(raw).hexdigest(),
                             "type": config.get("type"),
                             "credential_ref_count": len(credential_refs) if isinstance(credential_refs, list) else 0,
@@ -297,12 +306,12 @@ class FeedbackEvidenceStoreMixin:
                 except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                     errors.append(
                         {
-                            "path": path.relative_to(self.default_workspace_dir).as_posix(),
+                            "path": path.relative_to(workspace_dir).as_posix(),
                             "error": exc.__class__.__name__,
                         }
                     )
         return {
-            "profile": DEFAULT_BUSINESS_AGENT_ID,
+            "profile": agent_id,
             "source": "workspace_mcp_directory",
             "path": str(mcp_root),
             "exists": mcp_root.is_dir() and not mcp_root.is_symlink(),
@@ -384,12 +393,12 @@ class FeedbackEvidenceStoreMixin:
             return sorted({name for item in value.values() for name in cls._unresolved_placeholder_names(item)})
         return []
 
-    def _workspace_placeholder_summary(self) -> JsonObject:
+    def _workspace_placeholder_summary(self, workspace_dir: Path) -> JsonObject:
         items: list[JsonObject] = []
-        if not self.default_workspace_dir.exists():
-            return {"workspace_dir": str(self.default_workspace_dir), "exists": False, "items": items}
-        for path in sorted(self.default_workspace_dir.rglob("*")):
-            if not self._placeholder_scan_allowed(path):
+        if not workspace_dir.exists():
+            return {"workspace_dir": str(workspace_dir), "exists": False, "items": items}
+        for path in sorted(workspace_dir.rglob("*")):
+            if not self._placeholder_scan_allowed(path, workspace_dir):
                 continue
             try:
                 text = path.read_text(encoding="utf-8")
@@ -398,7 +407,7 @@ class FeedbackEvidenceStoreMixin:
             matches = sorted({match.group(1) for match in _PLACEHOLDER_RE.finditer(text)})
             if not matches:
                 continue
-            rel = path.relative_to(self.default_workspace_dir).as_posix()
+            rel = path.relative_to(workspace_dir).as_posix()
             items.append(
                 {
                     "path": rel,
@@ -407,12 +416,12 @@ class FeedbackEvidenceStoreMixin:
                     "attribution_hint": self._placeholder_attribution_hint(rel),
                 }
             )
-        return {"workspace_dir": str(self.default_workspace_dir), "exists": True, "items": items}
+        return {"workspace_dir": str(workspace_dir), "exists": True, "items": items}
 
-    def _placeholder_scan_allowed(self, path: Path) -> bool:
+    def _placeholder_scan_allowed(self, path: Path, workspace_dir: Path) -> bool:
         if not path.is_file() or path.suffix not in _PLACEHOLDER_SCAN_EXTENSIONS:
             return False
-        rel_parts = set(path.relative_to(self.default_workspace_dir).parts)
+        rel_parts = set(path.relative_to(workspace_dir).parts)
         if rel_parts & _PLACEHOLDER_SCAN_SKIP_PARTS:
             return False
         try:
@@ -465,7 +474,10 @@ class FeedbackEvidenceStoreMixin:
         )
         db.flush()
         for item in record.included_files:
-            content = self._evidence_payload(files[item.path])
+            content = self._evidence_payload(
+                files[item.path],
+                preserve_source_entities=item.path in _TYPED_ENTITY_RECORD_FILES,
+            )
             db.add(
                 EvidenceFileModel(
                     evidence_package_id=record.evidence_package_id,
@@ -492,10 +504,20 @@ class FeedbackEvidenceStoreMixin:
                 return None
             return EvidencePackageFileRecord.from_row(record).to_payload()
 
-    def _evidence_payload(self, value: Any) -> Any:
+    def _evidence_payload(self, value: Any, *, preserve_source_entities: bool = False) -> Any:
         if self.enable_debug_evidence:
             return value
+        if preserve_source_entities and isinstance(value, list):
+            return [self._scrub_source_record(record) for record in value]
         return self._scrub_record(value)
+
+    def _scrub_source_record(self, value: Any) -> Any:
+        """只恢复来源 record 顶层的 typed entities；嵌套开放内容仍按通用规则清洗。"""
+        scrubbed = self._scrub_record(value)
+        if not isinstance(value, dict) or not isinstance(scrubbed, dict) or "entities" not in value:
+            return scrubbed
+        scrubbed["entities"] = parse_entities(value["entities"])
+        return scrubbed
 
     def _langfuse_trace_refs(self, runs: list[JsonObject]) -> list[JsonObject]:
         refs: list[JsonObject] = []

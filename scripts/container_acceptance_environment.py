@@ -11,7 +11,7 @@ import secrets
 import socket
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, TypedDict
 
 from scripts.agentscope_atomic_cutover_bootstrap import source_artifact_sha256
 from scripts.agentscope_atomic_cutover_env import parse_selected_env_payload, read_stable_env_file
@@ -35,6 +35,7 @@ from scripts.container_acceptance_toolchain import (
     capture_acceptance_toolchain,
     toolchain_environment,
 )
+from scripts.initialize_runtime_shared_secret import initialize_shared_secret
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_ENV: Final = "AGENT_GOV_CONTAINER_ACCEPTANCE_ACTIVE"
@@ -116,6 +117,11 @@ class IsolatedEnvironment:
     container_prefix: str
     overrides: dict[str, str]
     source_root: Path = REPO_ROOT
+
+
+class _IsolatedVersionOverrides(TypedDict):
+    APP_VERSION: str
+    AGENTGOV_RUNTIME_VERSION: str
 
 
 PROFILES = {
@@ -252,6 +258,13 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     return True
 
 
+def _acceptance_ports(allocated: tuple[int, ...] | None) -> tuple[int, int, int, int, int]:
+    ports = allocated if allocated is not None else allocate_loopback_ports(5)
+    if len(ports) != 5:
+        raise AcceptanceError("隔离验收必须绑定 5 个 50400–50499 范围内的端口")
+    return ports[0], ports[1], ports[2], ports[3], ports[4]
+
+
 def prepare_isolated_environment(
     source_env: Path,
     run_id: str,
@@ -260,17 +273,18 @@ def prepare_isolated_environment(
     source_env_payload: bytes | None = None,
     source_root: Path = REPO_ROOT,
     source_digest: str | None = None,
+    allocated_ports: tuple[int, ...] | None = None,
 ) -> IsolatedEnvironment:
     runtime_root = (temp_dir / "runtime-root").resolve()
     runtime_root.mkdir(parents=True, exist_ok=True)
     runtime_root.chmod(0o700)
-    api_port, frontend_port, langfuse_port, minio_port, minio_console_port = allocate_loopback_ports(5)
+    api_port, frontend_port, langfuse_port, minio_port, minio_console_port = _acceptance_ports(allocated_ports)
     token = run_id.rsplit("-", 1)[-1]
     api_key = secrets.token_hex(32)
     project_name = f"agv-acceptance-{os.getuid()}-{token}"
     overrides = {
         "AGENTGOV_SOURCE_ARTIFACT_SHA256": source_digest or source_artifact_sha256(source_root),
-        "APP_VERSION": f"acceptance-{token}",
+        **_isolated_version_overrides(source_root, token),
         "COMPOSE_PROJECT_NAME": project_name,
         "CONTAINER_NAME_PREFIX": project_name,
         "API_KEY": api_key,
@@ -333,6 +347,18 @@ def prepare_isolated_environment(
     )
 
 
+def _isolated_version_overrides(source_root: Path, token: str) -> _IsolatedVersionOverrides:
+    try:
+        runtime_version = (source_root / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise AcceptanceError("隔离验收源码缺少产品 VERSION") from exc
+    except UnicodeError as exc:
+        raise AcceptanceError("隔离验收源码的产品 VERSION 无效") from exc
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]{0,126}", runtime_version) is None:
+        raise AcceptanceError("隔离验收源码的产品 VERSION 无效")
+    return {"APP_VERSION": f"acceptance-{token}", "AGENTGOV_RUNTIME_VERSION": runtime_version}
+
+
 def _write_isolated_env(source: bytes, target: Path, overrides: dict[str, str]) -> None:
     # 每个隔离键只保留一个定义，让 Compose、dotenv 和 shell 消费者取得相同值。
     try:
@@ -344,6 +370,10 @@ def _write_isolated_env(source: bytes, target: Path, overrides: dict[str, str]) 
     lines.extend(f"{key}={value}" for key, value in sorted(overrides.items()))
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     target.chmod(0o600)
+    try:
+        initialize_shared_secret(target)
+    except (OSError, ValueError):
+        raise AcceptanceError("ISOLATED_RUNTIME_SHARED_SECRET_INITIALIZATION_FAILED") from None
 
 
 def build_acceptance_env(

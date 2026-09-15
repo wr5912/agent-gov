@@ -27,6 +27,9 @@ from ._store_support import (
     RuntimeStoreError as RuntimeStoreError,
 )
 from ._store_support import (
+    RuntimeTemplateRestartRequired as RuntimeTemplateRestartRequired,
+)
+from ._store_support import (
     SessionCreationStatus as SessionCreationStatus,
 )
 from ._store_support import (

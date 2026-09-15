@@ -48,6 +48,7 @@ export interface SubagentHitlResolution {
 }
 
 export interface AgentScopeStreamConnection {
+  /** connect 返回即表示响应合法且首个 SSE readiness comment 已被浏览器实际读取。 */
   armReply: () => Promise<AgentScopeAgentEvent>;
   setRunId: (runId: string) => void;
   close: () => void;
@@ -175,8 +176,20 @@ export async function connectAgentScopeSessionStream(
   );
   let closedError: Error | undefined;
   const dispatch = createEventDispatcher(reducer, handlers, replyCompletion);
+  let readinessObserved = false;
+  let resolveReadiness!: () => void;
+  let rejectReadiness!: (error: Error) => void;
+  const readiness = new Promise<void>((resolve, reject) => {
+    resolveReadiness = resolve;
+    rejectReadiness = reject;
+  });
+  const markReady = () => {
+    if (readinessObserved) return;
+    readinessObserved = true;
+    resolveReadiness();
+  };
 
-  const closed = consumeAgentScopeSse(response.body!, dispatch, handlers, controller.signal)
+  const closed = consumeAgentScopeSse(response.body!, dispatch, handlers, controller.signal, markReady)
     .catch((error: unknown) => {
       closedError ||= controller.signal.aborted
         ? new Error("Runtime 事件流已关闭。")
@@ -187,8 +200,24 @@ export async function connectAgentScopeSessionStream(
       closedError ||= controller.signal.aborted
         ? new Error("Runtime 事件流已关闭。")
         : new Error("Runtime 事件流在 REPLY_END 前断开。");
+      if (!readinessObserved) rejectReadiness(closedError);
       replyCompletion.fail(closedError);
     });
+
+  let readinessTimedOut = false;
+  const readinessTimeout = globalThis.setTimeout(() => {
+    readinessTimedOut = true;
+    controller.abort("stream_readiness_timeout");
+  }, 60_000);
+  try {
+    await readiness;
+  } catch (error) {
+    controller.abort("stream_readiness_failed");
+    if (readinessTimedOut) throw new Error("等待 Runtime 事件流 readiness 超时。");
+    throw normalizeStreamError(error);
+  } finally {
+    globalThis.clearTimeout(readinessTimeout);
+  }
 
   return {
     armReply: () => replyCompletion.arm(),
@@ -341,6 +370,7 @@ export async function consumeAgentScopeSse(
   dispatch: (event: AgentScopeAgentEvent) => void,
   handlers: AgentScopeStreamHandlers,
   signal: AbortSignal,
+  onReadiness?: () => void,
 ) {
   const reader = body.getReader();
   const cancelReader = () => { void reader.cancel(signal.reason).catch(() => undefined); };
@@ -348,18 +378,32 @@ export async function consumeAgentScopeSse(
   else signal.addEventListener("abort", cancelReader, { once: true });
   const decoder = new TextDecoder();
   let buffer = "";
+  let readinessObserved = onReadiness === undefined;
+  const consumeFrame = (frame: string) => {
+    if (!readinessObserved) {
+      if (!isSseCommentFrame(frame)) {
+        throw new Error("Runtime 事件流未先返回 readiness comment。");
+      }
+      readinessObserved = true;
+      onReadiness?.();
+      return;
+    }
+    const data = dataFromSseFrame(frame);
+    if (data !== undefined) dispatchFrame(data, dispatch, handlers);
+  };
   try {
     while (!signal.aborted) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const parsed = extractSseFrames(buffer);
+      const parsed = extractCompleteSseFrames(buffer);
       buffer = parsed.rest;
-      for (const data of parsed.data) dispatchFrame(data, dispatch, handlers);
+      for (const frame of parsed.frames) consumeFrame(frame);
     }
     buffer += decoder.decode();
-    const parsed = extractSseFrames(buffer, true);
-    for (const data of parsed.data) dispatchFrame(data, dispatch, handlers);
+    const parsed = extractCompleteSseFrames(buffer, true);
+    for (const frame of parsed.frames) consumeFrame(frame);
+    if (!readinessObserved) throw new Error("Runtime 事件流在 readiness comment 前关闭。");
   } finally {
     signal.removeEventListener("abort", cancelReader);
     reader.releaseLock();
@@ -383,18 +427,38 @@ function dispatchFrame(
 }
 
 export function extractSseFrames(input: string, flush = false): { data: string[]; rest: string } {
+  const parsed = extractCompleteSseFrames(input, flush);
+  return {
+    data: parsed.frames.flatMap((frame) => {
+      const data = dataFromSseFrame(frame);
+      return data === undefined ? [] : [data];
+    }),
+    rest: parsed.rest,
+  };
+}
+
+function extractCompleteSseFrames(
+  input: string,
+  flush = false,
+): { frames: string[]; rest: string } {
   const normalized = input.replace(/\r\n/g, "\n");
   const frames = normalized.split("\n\n");
   const rest = flush ? "" : frames.pop() || "";
-  const complete = flush && frames.length === 0 ? [normalized] : frames;
-  const data = complete.flatMap((frame) => {
-    const lines = frame.split("\n");
-    const values = lines
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).replace(/^ /, ""));
-    return values.length ? [values.join("\n")] : [];
-  });
-  return { data, rest };
+  const complete = (flush && frames.length === 0 ? [normalized] : frames)
+    .filter((frame) => frame.length > 0);
+  return { frames: complete, rest };
+}
+
+function isSseCommentFrame(frame: string): boolean {
+  const lines = frame.split("\n").filter(Boolean);
+  return lines.length > 0 && lines.every((line) => line.startsWith(":"));
+}
+
+function dataFromSseFrame(frame: string): string | undefined {
+  const values = frame.split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).replace(/^ /, ""));
+  return values.length ? values.join("\n") : undefined;
 }
 
 function traceKind(type: string): string {

@@ -106,8 +106,17 @@ def test_alert_triage(agent):
 `AGENTGOV_CHANGE_SET_ID`；开发者不需要配置它。显式传入的 `AGENTGOV_TEST_SESSION_ID` 只供直接调用
 `invoke_agent()` 的开发者管理会话使用，pytest fixture 不复用该会话。
 
+同一个测试函数内多次 `agent.run()` 共享该 fixture 创建的 Session，适合验证真实多轮上下文；
+“每测试独立”不是“每次调用独立”。直接调用 `invoke_agent()` 时须传入 `test_session_id` 或设置
+`AGENTGOV_TEST_SESSION_ID`，不要把它当成自动创建 Session 的另一入口。
+
 开发者不需要 `AgentGovTestClient` 或独立 CLI。公共入口只有 `invoke_agent()` 和 pytest 的 `agent`
 fixture；HTTP client 与会话对象均由 testkit 内部封装。
+
+`result.raw["agent_activity"]["tool_calls"]` 由当前 run 的 canonical Message 和持久工具回执派生，
+只含工具 ID、名称、状态及 Reply/Session 引用，不复制参数或返回正文。无法证明完整时为 `null`，
+不能当成没有调用工具；已知子工具无名称时 `name` 为 `null`。验证文件读取要同时检查工具名称
+和 `state == "success"`，不能以 run 成功或“出现过 Read”推断文件已读到。
 
 ## 5. 平台 API
 
@@ -144,6 +153,17 @@ Runner 同时设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`，清除外部 `PYTHON*` 
 checkout 后、pytest 启动前重新检查 suite 与 `suite_digest`。子进程报告的 invocation 列表不受信任；
 平台为运行中测试签发短期内部绑定，真实调用完成后由 API 服务端按精确 `test_run_id` 写入
 `run_id/session_id/agent_version_id/trace_id/errors`，终态报告只投影这份服务端证明。
+
+通过结论同时核对 pytest 完整收集清单、收集结果、每个条目的 setup/call/teardown 与退出码。
+收集失败、缺条目、跳过/xfail、fixture 失败或 teardown 失败都不能因部分 call 通过而变为 passed；
+候选发布测试还必须有服务端确认的真实 Agent invocation。仅在宿主机执行 `assert True`、伪造
+报告或预置 passed 行不能作为发布证据。Git 事务/竞争的宿主契约测试与真实 Agent 发布验收分层，
+不能互相替代。
+
+发布前测试门与已完成发布的历史核验是两个阶段：新候选、审批和发布中状态必须满足当前完整
+测试门；已完成发布则核对原批准、testRun、commit、diff、suite、release 与真实 Git/tag 的
+精确关联，不因规则升级而要求历史报告补记当时不存在的收集或阶段字段。历史报告保持原字节，
+页面保留其精确测试引用；历史记录不能复用为新候选通过证据，也不自动清除已有的发布异常标记。
 
 客户端不能提交命令、工作目录、测试结果、通过状态或任意安装步骤。平台不在 API 容器内执行
 `pip install`，也不因上传或确认待发布变更而自动运行代码。测试运行只有两类合法来源：用户显式调用运行

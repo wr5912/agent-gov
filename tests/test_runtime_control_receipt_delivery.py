@@ -124,8 +124,7 @@ def _control_store(tmp_path: Path):
         session_id=session_id,
         runtime_agent_id="runtime-agent-control",
         input_value={"role": "user", "content": []},
-        alert_id=None,
-        case_id=None,
+        entities={},
         metadata={},
     )
     store.mark_trigger_started(run.run_id)

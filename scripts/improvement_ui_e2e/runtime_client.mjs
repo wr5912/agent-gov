@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { nativeChatReceiptIdentity, nativeChatRequestIdentity, nativeInputLookupPath } from "./native_chat_contract.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,11 +18,11 @@ export class RuntimeApiError extends Error {
 
 function requiredHttpBase(name) {
   const value = String(process.env[name] || "").trim().replace(/\/$/, "");
-  if (!value) throw new Error(`${name} is required and must point to a running real container`);
+  if (!value) throw new Error(`${name} is required and must point to a running AgentGov deployment`);
   const url = new URL(value);
   if (!new Set(["http:", "https:"]).has(url.protocol)) throw new Error(`${name} must use http or https`);
   if (!new Set(["127.0.0.1", "localhost", "::1", "[::1]"]).has(url.hostname)) {
-    throw new Error(`${name} must point to the isolated loopback deployment`);
+    throw new Error(`${name} must point to an AgentGov loopback deployment`);
   }
   const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
   if (!Number.isInteger(port) || port < 50400 || port > 50499) {
@@ -92,6 +93,32 @@ export function jsonInit(method, body) {
 
 const TERMINAL_RUNTIME_STATES = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 
+function acceptanceFailure(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+export function runtimeTraceWaitDecision(evidence, run, deadlineReached = false) {
+  if (deadlineReached) {
+    throw acceptanceFailure(
+      "SOURCE_RUN_TRACE_TIMEOUT",
+      "Source run Langfuse trace did not become complete before timeout",
+    );
+  }
+  if (evidence?.run_id !== run.run_id || (evidence.trace_id && evidence.trace_id !== run.trace_id)) {
+    throw new Error("Langfuse trace evidence is not bound to the exact source run");
+  }
+  if (evidence.trace_status === "complete" && evidence.trace_id) return "complete";
+  if (evidence.trace_status === "incomplete") {
+    throw acceptanceFailure(
+      "SOURCE_RUN_TRACE_INCOMPLETE",
+      "Source run Langfuse trace was durably classified as incomplete",
+    );
+  }
+  return "pending";
+}
+
 export async function getCurrentRuntimeAgent(config, governanceAgentId) {
   const binding = await apiJson(config, "/api/runtime/agents/" + encodeURIComponent(governanceAgentId)
     + "/current");
@@ -124,15 +151,21 @@ export async function waitForTerminalRuntimeRun(config, expected) {
   throw new Error("The exact Runtime run did not reach a terminal state before timeout");
 }
 
+export async function lookupRuntimeRunByNativeInput(config, identity) {
+  const run = await apiJson(config, nativeInputLookupPath(identity));
+  if (!run?.run_id || run.runtime_agent_id !== identity.agentId || run.session_id !== identity.requestedSessionId) {
+    throw new Error("Native input lookup returned a run outside the exact Session/Agent scope");
+  }
+  return run;
+}
+
 export async function waitForCompleteRuntimeTrace(config, run) {
   const deadline = Date.now() + config.actionTimeoutMs;
   const expected = { ...run, governance_agent_id: run.agent_id };
-  while (Date.now() < deadline) {
+  while (true) {
+    if (Date.now() >= deadline) runtimeTraceWaitDecision(null, run, true);
     const evidence = await apiJson(config, "/api/agent-runs/" + encodeURIComponent(run.run_id) + "/trace");
-    if (evidence?.run_id !== run.run_id || (evidence.trace_id && evidence.trace_id !== run.trace_id)) {
-      throw new Error("Langfuse trace evidence is not bound to the exact source run");
-    }
-    if (evidence.trace_status === "complete" && evidence.trace_id) {
+    if (runtimeTraceWaitDecision(evidence, run) === "complete") {
       const persisted = await apiJson(config, "/api/agent-runs/" + encodeURIComponent(run.run_id));
       assertExactRuntimeRun(persisted, expected);
       if (persisted.status !== run.status || persisted.trace_status !== "complete"
@@ -143,7 +176,6 @@ export async function waitForCompleteRuntimeTrace(config, run) {
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error("Source run Langfuse trace did not become complete before timeout");
 }
 
 async function waitForLangfuseTrace(config, traceId) {
@@ -210,21 +242,34 @@ export async function runReviewedScenario(config, binding, text) {
     headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID(), "X-User-ID": "agentgov-ui" },
   });
   if (!session?.session_id) throw new Error("Runtime did not return a real feedback source session");
-  const receipt = await apiRequest(config, "/api/runtime/chat/", jsonInit("POST", {
-    agent_id: binding.runtime_agent_id,
-    session_id: session.session_id,
-    client_operation_id: randomUUID(),
-    input: { name: "user", role: "user", content: [{ type: "text", text }] },
-    metadata: { purpose: "feedback-ui-acceptance" },
-  }));
-  if (!receipt.response.ok) throw new RuntimeApiError(receipt.method, receipt.path, receipt.status, receipt.text);
-  const runId = receipt.response.headers.get("X-AgentGov-Run-Id");
-  if (!runId || receipt.payload?.session_id !== session.session_id) {
-    throw new Error("Runtime chat did not return the exact source run/session receipt");
+  return submitReviewedScenario(config, binding, text, session.session_id);
+}
+
+export async function runReviewedScenarioInSession(config, binding, text, sessionId) {
+  if (typeof sessionId !== "string" || !sessionId.trim()) {
+    throw new Error("Exact Runtime Session identity is required for a reviewed scenario");
   }
-  const expected = { ...binding, run_id: runId, session_id: session.session_id };
+  // 对旧 Session 使用已发布旧 Runtime Agent 查询；GET 失败时绝不创建替代 Session。
+  await apiJson(config, `/api/runtime/sessions/${encodeURIComponent(sessionId)}/status?`
+    + new URLSearchParams({ agent_id: binding.runtime_agent_id }));
+  return submitReviewedScenario(config, binding, text, sessionId);
+}
+
+async function submitReviewedScenario(config, binding, text, sessionId) {
+  const body = {
+    agent_id: binding.runtime_agent_id,
+    session_id: sessionId,
+    input: { id: randomUUID(), name: "user", role: "user", content: [{ type: "text", text }] },
+  };
+  const identity = nativeChatRequestIdentity(body);
   let terminalReached = false;
   try {
+    const receipt = await apiRequest(config, "/api/runtime/chat/", jsonInit("POST", body));
+    if (!receipt.response.ok) throw new RuntimeApiError(receipt.method, receipt.path, receipt.status, receipt.text);
+    const observed = nativeChatReceiptIdentity(identity, receipt.payload,
+      receipt.response.headers.get("X-AgentGov-Run-Id"), receipt.response.headers.get("X-AgentGov-Session-Id"));
+    const expected = { ...binding, run_id: observed.runId, session_id: observed.sessionId };
+    assertExactRuntimeRun(await lookupRuntimeRunByNativeInput(config, identity), expected);
     const terminal = await waitForTerminalRuntimeRun(config, expected);
     terminalReached = true;
     if (terminal.status !== "succeeded" || !terminal.trace_id || !terminal.reply_ids?.length) {
@@ -238,8 +283,14 @@ export async function runReviewedScenario(config, binding, text) {
     };
   } catch (error) {
     if (!terminalReached) {
-      await apiRequest(config, "/api/agent-runs/" + encodeURIComponent(runId) + "/cancel", jsonInit("POST", {}))
-        .catch(() => {});
+      // 丢失回执只查询本次精确 Session 的显式 Msg.id，绝不重发 chat 或猜测最近 run。
+      const owned = await lookupRuntimeRunByNativeInput(config, identity).catch(() => null);
+      if (owned) {
+        assertExactRuntimeRun(owned, { ...binding, run_id: owned.run_id, session_id: sessionId });
+        if (!TERMINAL_RUNTIME_STATES.has(owned.status)) {
+          await apiRequest(config, "/api/agent-runs/" + encodeURIComponent(owned.run_id) + "/cancel", jsonInit("POST", {})).catch(() => {});
+        }
+      }
     }
     throw error;
   }
@@ -274,6 +325,26 @@ export async function seedBaseImprovement(config, governanceAgentId, scenario) {
     agent_version_id: sourceRun.agent_version_id,
     scenario: scenario.scenario_id,
   }));
+  await confirmNormalizedFeedback(config, item, scenario);
+  return {
+    agent,
+    binding,
+    scenario,
+    authorizedTargetPaths: [...allowedTargetPaths],
+    requiredTestLiterals: [...(acceptance.required_test_literals || [])],
+    requiredTestCodeFragments: [...(acceptance.required_code_fragments || [])],
+    feedback,
+    feedbacks: [feedback],
+    sourceRuns: [sourceRun],
+    item,
+    stamp,
+  };
+}
+
+export async function confirmNormalizedFeedback(config, item, scenario) {
+  const allowedTargetPaths = scenario.acceptance?.allowed_target_paths || [];
+  if (!allowedTargetPaths.length) throw new Error("improvement scenario requires acceptance.allowed_target_paths");
+  const feedbackText = scenario.feedback_comment || scenario.input;
   const generated = await apiJson(
     config,
     `/api/improvements/${item.improvement_id}/normalized-feedback/generate`,
@@ -296,19 +367,6 @@ export async function seedBaseImprovement(config, governanceAgentId, scenario) {
     user_quote: feedbackText,
   }));
   await apiJson(config, `/api/improvements/${item.improvement_id}/normalized-feedback/confirm`, jsonInit("POST", {}));
-  return {
-    agent,
-    binding,
-    scenario,
-    authorizedTargetPaths: [...allowedTargetPaths],
-    requiredTestLiterals: [...(acceptance.required_test_literals || [])],
-    requiredTestCodeFragments: [...(acceptance.required_code_fragments || [])],
-    feedback,
-    feedbacks: [feedback],
-    sourceRuns: [sourceRun],
-    item,
-    stamp,
-  };
 }
 
 export async function assertHostileTestRunRejected(config, agentId, commitSha) {

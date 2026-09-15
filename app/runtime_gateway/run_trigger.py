@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 
+from app.runtime.feedback_entities import FeedbackEntities
 from app.runtime.json_types import JsonObject
 
 from ._execution_support import (
@@ -57,12 +58,9 @@ async def admit_and_trigger_chat(
     session_id: str,
     runtime_agent_id: str,
     input_value: object,
-    alert_id: str | None,
-    case_id: str | None,
+    entities: FeedbackEntities,
     metadata: JsonObject,
-    client_operation_id: str,
     confirmation_scope: ConfirmationScope = ConfirmationScope.ONCE,
-    expected_run_id: str | None = None,
 ) -> RuntimeChatTriggerResult:
     """幂等准入、触发原生 ``/chat/``，并在返回前持久化响应。"""
 
@@ -71,19 +69,16 @@ async def admit_and_trigger_chat(
         session_id=session_id,
         runtime_agent_id=runtime_agent_id,
         input_value=governed_input,
-        alert_id=alert_id,
-        case_id=case_id,
+        entities=entities,
         metadata=metadata,
-        client_operation_id=client_operation_id,
         confirmation_scope=confirmation_scope,
-        expected_run_id=expected_run_id,
     )
     run = admission.run
     if not admission.should_trigger_upstream:
         replay = admission.replay_response
         if replay is None:
             raise RuntimeStateConflict(
-                "Runtime operation response is not durably available; recover by client operation lookup",
+                "Runtime operation response is not durably available; recover by native input identity lookup",
             )
         return RuntimeChatTriggerResult(
             run=run,
@@ -103,6 +98,8 @@ async def admit_and_trigger_chat(
         run=run,
         input_value=governed_input,
         operation_key=admission.operation_key,
+        request_session_id=session_id,
+        request_runtime_agent_id=runtime_agent_id,
     )
     return RuntimeChatTriggerResult(
         run=store.get_run(run.run_id),
@@ -121,20 +118,21 @@ async def _trigger_chat_operation(
     run: AgentRunResponse,
     input_value: object,
     operation_key: str,
+    request_session_id: str,
+    request_runtime_agent_id: str,
 ) -> _EncodedChatResponse:
     try:
         upstream = await client.request_json(
             "POST",
             "/chat/",
             json={
-                "agent_id": run.runtime_agent_id,
-                "session_id": run.session_id,
+                "agent_id": request_runtime_agent_id,
+                "session_id": request_session_id,
                 "input": input_value,
             },
         )
         response = _encode_chat_response(
             upstream.body,
-            root_session_id=run.session_id,
             status_code=upstream.status_code,
             headers=upstream.headers,
         )
@@ -212,11 +210,10 @@ async def cancel_active_session_run(
 def _encode_chat_response(
     body: object,
     *,
-    root_session_id: str,
     status_code: int,
     headers: RuntimeHeaders,
 ) -> _EncodedChatResponse:
-    projected = _canonical_chat_response(body, root_session_id=root_session_id)
+    projected = _canonical_chat_response(body)
     response_headers = copy_response_headers(headers)
     encoded = JSONResponse(
         projected,
@@ -231,15 +228,10 @@ def _encode_chat_response(
     )
 
 
-def _canonical_chat_response(body: object, *, root_session_id: str) -> JsonObject:
+def _canonical_chat_response(body: object) -> JsonObject:
     if not isinstance(body, dict) or body.get("status") != "started":
         raise RuntimeUpstreamError(502, b'{"detail":"Runtime chat returned an invalid response"}')
-    projected = deepcopy(body)
-    upstream_session_id = projected.get("session_id")
-    if isinstance(upstream_session_id, str) and upstream_session_id and upstream_session_id != root_session_id:
-        projected["worker_session_id"] = upstream_session_id
-    projected["session_id"] = root_session_id
-    return projected
+    return deepcopy(body)
 
 
 def _record_trigger_failure(

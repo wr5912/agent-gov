@@ -22,6 +22,7 @@ from pydantic import ValidationError
 def test_unconfigured_query_returns_no_trace(config: dict[str, object]) -> None:
     settings = AppSettings(
         _env_file=None,
+        AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret",
         **(
             {
                 "LANGFUSE_ENABLED": True,
@@ -38,6 +39,7 @@ def test_unconfigured_query_returns_no_trace(config: dict[str, object]) -> None:
 def test_query_connection_failure_returns_only_sanitized_error_type() -> None:
     settings = AppSettings(
         _env_file=None,
+        AGENTGOV_RUNTIME_SHARED_SECRET="test-runtime-shared-secret",
         LANGFUSE_ENABLED=True,
         LANGFUSE_BASE_URL="http://127.0.0.1:1",
         LANGFUSE_PUBLIC_KEY="test-public",
@@ -124,6 +126,88 @@ def test_validation_projection_keeps_only_approved_semantics_and_drops_hostile_c
             "metadata": {"attributes": {"gen_ai.request.model": "model-a"}},
         }
     ]
+
+
+@pytest.mark.parametrize("name_field", [{}, {"name": None}, {"name": ""}, {"name": "concrete_private_tool_name"}])
+def test_validation_projection_uses_safe_otel_operation_instead_of_unusable_upstream_name(
+    name_field: dict[str, object],
+) -> None:
+    projected = project_validation_trace(
+        {
+            "id": "trace-1",
+            "observations": [
+                {
+                    "id": "tool-span",
+                    "endTime": "2026-09-11T00:00:00Z",
+                    **name_field,
+                    "metadata": {
+                        "attributes": {
+                            "gen_ai.operation.name": "execute_tool",
+                            "gen_ai.tool.call.id": "call-1",
+                        }
+                    },
+                }
+            ],
+        }
+    )
+
+    observation = projected["observations"][0]
+    assert observation["name"] == "execute_tool"
+    assert observation["metadata"] == {
+        "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.call.id": "call-1",
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        {"name": None, "attributes": {"gen_ai.operation.name": "unapproved-operation"}},
+        {
+            "name": None,
+            "attributes": {"gen_ai.operation.name": "execute_tool"},
+            "metadata": {"attributes": {"gen_ai.operation.name": "chat"}},
+        },
+    ],
+    ids=["unsafe-operation", "conflicting-operation"],
+)
+def test_validation_projection_does_not_invent_unsafe_or_conflicting_name(
+    observation: dict[str, object],
+) -> None:
+    projected = project_validation_trace(
+        {
+            "id": "trace-1",
+            "observations": [
+                {
+                    "id": "span-1",
+                    "endTime": "2026-09-11T00:00:00Z",
+                    **observation,
+                }
+            ],
+        }
+    )
+
+    assert "name" not in projected["observations"][0]
+
+
+def test_validation_projection_rejects_conflicting_safe_name_and_operation() -> None:
+    projected = project_validation_trace(
+        {
+            "id": "trace-1",
+            "observations": [
+                {
+                    "id": "span-1",
+                    "name": "chat",
+                    "endTime": "2026-09-11T00:00:00Z",
+                    "attributes": {"gen_ai.operation.name": "execute_tool"},
+                }
+            ],
+        }
+    )
+
+    assert projected["observations"] == []
 
 
 def test_public_run_trace_contract_has_no_langfuse_payload_field() -> None:

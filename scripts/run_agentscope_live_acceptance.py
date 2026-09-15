@@ -26,6 +26,7 @@ from scripts.agentscope_live_acceptance_report import (
     RunEvidence,
     TerminalEvidence,
     build_live_acceptance_summary,
+    summarize_http_failure,
 )
 from scripts.agentscope_live_acceptance_scenarios import (
     MCP_READONLY_CAPABILITY,
@@ -38,6 +39,7 @@ from scripts.agentscope_live_acceptance_scenarios import (
     validate_evidence_identities,
     validate_sse_evidence,
 )
+from scripts.agentscope_live_native_chat import NativeChatAttempt, lookup_native_run, require_native_run_identity, submit_native_chat
 from scripts.agentscope_mcp_live_acceptance import (
     validate_mcp_evidence_if_present,
     validate_workspace_mcp_if_required,
@@ -112,11 +114,12 @@ async def _wait_for_terminal(
     raise LiveAcceptanceError(f"run {run_id} 未在时限内进入终态")
 
 
-async def _best_effort_cleanup(client: httpx.AsyncClient, session_id: str, agent_id: str, run_id: str | None) -> None:
+async def _best_effort_cleanup(client: httpx.AsyncClient, session_id: str, binding: BindingEvidence, run_id: str | None) -> None:
     if run_id:
         try:
             run_response = await client.get(f"/api/agent-runs/{run_id}")
-            if run_response.status_code == 200 and _json_object(run_response, "run 清理查询").get("status") not in TERMINAL_STATUSES:
+            run = require_native_run_identity(_json_object(run_response, "run 清理查询"), binding, session_id, run_id)
+            if run_response.status_code == 200 and run.get("status") not in TERMINAL_STATUSES:
                 await client.post(f"/api/agent-runs/{run_id}/cancel")
                 await _wait_for_terminal(client, run_id, 30.0)
         except Exception:
@@ -124,7 +127,7 @@ async def _best_effort_cleanup(client: httpx.AsyncClient, session_id: str, agent
     with suppress(Exception):
         await client.delete(
             f"/api/runtime/sessions/{session_id}",
-            params={"agent_id": agent_id},
+            params={"agent_id": binding.runtime_agent_id},
         )
 
 
@@ -152,42 +155,6 @@ async def _current_agent_binding(client: httpx.AsyncClient, governance_agent_id:
         raise LiveAcceptanceError("current 缺少 Runtime Agent 或发布版本绑定")
     runtime_agent_id, version_id, digest = cast(list[str], fields)
     return BindingEvidence(governance_agent_id, runtime_agent_id, version_id, digest)
-
-
-async def _trigger_run(
-    client: httpx.AsyncClient,
-    scenario: Scenario,
-    *,
-    agent_id: str,
-    session_id: str,
-    timeout_seconds: float,
-    client_operation_id: str | None = None,
-) -> tuple[str, str]:
-    operation_id = client_operation_id or f"live-op-{scenario.scenario_id}-{uuid.uuid4().hex}"
-    chat = await client.post(
-        "/api/runtime/chat/",
-        json={
-            "agent_id": agent_id,
-            "session_id": session_id,
-            "client_operation_id": operation_id,
-            "input": {
-                "name": "user",
-                "role": "user",
-                "content": [{"type": "text", "text": scenario.input_text}],
-            },
-            "metadata": {
-                "source": "agentscope_live_acceptance",
-                "scenario_id": scenario.scenario_id,
-                "acceptance_run_id": os.environ["AGENT_GOV_ACCEPTANCE_RUN_ID"],
-            },
-        },
-        timeout=timeout_seconds,
-    )
-    chat.raise_for_status()
-    run_id = str(chat.headers.get("X-AgentGov-Run-Id") or "")
-    if not run_id or chat.headers.get("X-AgentGov-Session-Id") != session_id:
-        raise LiveAcceptanceError("chat 未返回一致的 run/session headers")
-    return run_id, operation_id
 
 
 def _validate_run_identity(
@@ -480,29 +447,23 @@ async def _trigger_with_required_replay(
     client: httpx.AsyncClient,
     scenario: Scenario,
     *,
-    agent_id: str,
+    binding: BindingEvidence,
     session_id: str,
+    input_value: dict[str, object],
+    attempt: NativeChatAttempt,
     timeout_seconds: float,
 ) -> tuple[str, bool]:
-    run_id, operation_id = await _trigger_run(
-        client,
-        scenario,
-        agent_id=agent_id,
-        session_id=session_id,
-        timeout_seconds=timeout_seconds,
-    )
+    run_id = await submit_native_chat(client, binding, session_id, input_value, attempt, timeout_seconds=timeout_seconds)
     if scenario.purpose != "retry":
         return run_id, False
-    replayed_run_id, _ = await _trigger_run(
-        client,
-        scenario,
-        agent_id=agent_id,
-        session_id=session_id,
-        timeout_seconds=timeout_seconds,
-        client_operation_id=operation_id,
-    )
+    if not attempt.receipt_received:
+        raise LiveAcceptanceError("NATIVE_REPLAY_REQUIRES_CONFIRMED_FIRST_RECEIPT")
+    replay = NativeChatAttempt()
+    replayed_run_id = await submit_native_chat(client, binding, session_id, input_value, replay, timeout_seconds=timeout_seconds)
+    if not replay.receipt_received:
+        raise LiveAcceptanceError("NATIVE_REPLAY_RECEIPT_UNCONFIRMED")
     if replayed_run_id != run_id:
-        raise LiveAcceptanceError("重试相同 client_operation_id 创建了第二个 run")
+        raise LiveAcceptanceError("NATIVE_REPLAY_CREATED_DIFFERENT_RUN")
     return run_id, True
 
 
@@ -563,6 +524,8 @@ async def run_scenario(
 ) -> RunEvidence:
     agent_id = binding.runtime_agent_id
     session_id = await _create_session(client, scenario, agent_id)
+    input_value: dict[str, object] = {"id": uuid.uuid4().hex, "name": "user", "role": "user", "content": [{"type": "text", "text": scenario.input_text}]}
+    attempt = NativeChatAttempt()
     run_id: str | None = None
     stream_raw = bytearray()
     stream_ready = asyncio.Event()
@@ -578,8 +541,10 @@ async def run_scenario(
         run_id, operation_replayed = await _trigger_with_required_replay(
             client,
             scenario,
-            agent_id=agent_id,
+            binding=binding,
             session_id=session_id,
+            input_value=input_value,
+            attempt=attempt,
             timeout_seconds=timeout_seconds,
         )
 
@@ -628,10 +593,27 @@ async def run_scenario(
             mcp=mcp_evidence,
         )
     finally:
-        if not stream_task.done():
-            stream_task.cancel()
-        await asyncio.gather(stream_task, return_exceptions=True)
-        await _best_effort_cleanup(client, session_id, agent_id, run_id)
+        await _cleanup_scenario(client, binding, session_id, input_value, attempt, run_id, stream_task)
+
+
+async def _cleanup_scenario(
+    client: httpx.AsyncClient,
+    binding: BindingEvidence,
+    session_id: str,
+    input_value: dict[str, object],
+    attempt: NativeChatAttempt,
+    run_id: str | None,
+    stream_task: asyncio.Task[None],
+) -> None:
+    if not stream_task.done():
+        stream_task.cancel()
+    await asyncio.gather(stream_task, return_exceptions=True)
+    if run_id is None and attempt.submitted:
+        with suppress(Exception):
+            owned_run = await lookup_native_run(client, binding, session_id, input_value, timeout_seconds=10.0)
+            if owned_run is not None:
+                run_id = str(owned_run["run_id"])
+    await _best_effort_cleanup(client, session_id, binding, run_id or attempt.run_id)
 
 
 async def _run_selected_scenarios(
@@ -754,7 +736,10 @@ def main(argv: list[str] | None = None) -> int:
             expected_capability=args.capability,
             capabilities=tuple(item.capability for item in evidence),
         )
-    except (LiveAcceptanceError, TechnicalIntegrationSeedError, httpx.HTTPError, OSError, ValueError) as exc:
+    except httpx.HTTPError as exc:
+        print(f"AGENTSCOPE_LIVE_ACCEPTANCE_FAIL: {summarize_http_failure(exc)}", file=sys.stderr)
+        return 1
+    except (LiveAcceptanceError, TechnicalIntegrationSeedError, OSError, ValueError) as exc:
         print(f"AGENTSCOPE_LIVE_ACCEPTANCE_FAIL: {exc}", file=sys.stderr)
         return 1
     scope = (

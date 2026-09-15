@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from app.openapi_request_examples import REQUEST_EXAMPLE_CONTRACTS
+from jsonschema import Draft202012Validator
 from scripts.export_openapi import build_openapi_schema
 
 HTTP_METHODS = frozenset({"get", "post", "put", "delete", "patch", "options", "head"})
@@ -94,6 +95,19 @@ def test_governance_and_agentscope_examples_cover_high_risk_journeys() -> None:
     assert hitl["input"]["type"] == "USER_CONFIRM_RESULT"
     assert hitl["input"]["reply_id"] == "reply-id-from-require-user-confirm"
     assert "rules" not in hitl["input"]["confirm_results"][0]
+
+
+def test_native_field_examples_match_native_types_without_redefining_schemas() -> None:
+    schema = build_openapi_schema()
+    components = schema["components"]["schemas"]
+    for name in ("Base64Source", "URLSource", "Msg", "ToolCallBlock", "ToolResultBlock", "DataBlock", "ErrorInfo", "ConfirmResult"):
+        for field, contract in components[name]["properties"].items():
+            validator = Draft202012Validator({**contract, "components": schema["components"]})
+            for example in contract.get("examples", []):
+                errors = list(validator.iter_errors(example))
+                assert errors == [], f"{name}.{field} has a documented example outside the native type"
+    assert components["ToolCallBlock"]["properties"]["input"]["type"] == "string"
+    assert components["Msg"]["required"] == ["name", "content", "role"]
 
 
 def test_request_examples_do_not_register_removed_runtime_routes() -> None:

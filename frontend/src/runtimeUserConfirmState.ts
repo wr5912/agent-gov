@@ -8,6 +8,7 @@ import type {
   RuntimeUserConfirmRequest,
 } from "./types/runtime";
 import { isRecord } from "./utils/records";
+import { mergeRuntimePendingRequests } from "./runtimePendingRequestIdentity";
 
 export interface RuntimeUserConfirmSubmission {
   input: AgentScopeUserConfirmResult;
@@ -84,6 +85,7 @@ export function buildUserConfirmSubmission(
 export function userConfirmRequestsFromEvent(
   event: AgentScopeAgentEvent,
   workerSessionId?: string,
+  workerRuntimeAgentId?: string,
 ): RuntimeUserConfirmRequest[] {
   if (event.type !== "REQUIRE_USER_CONFIRM" || !event.reply_id || !Array.isArray(event.tool_calls)) return [];
   const toolCalls = event.tool_calls.map(asToolCall).filter((value): value is AgentScopeToolCallBlock => Boolean(value));
@@ -92,6 +94,7 @@ export function userConfirmRequestsFromEvent(
     requestId: event.id,
     replyId: event.reply_id,
     workerSessionId,
+    workerRuntimeAgentId,
     toolCalls,
     status: "waiting",
   }];
@@ -111,12 +114,7 @@ export function mergeUserConfirmRequests(
   current: RuntimeUserConfirmRequest[] | undefined,
   incoming: RuntimeUserConfirmRequest[],
 ) {
-  const byId = new Map((current || []).map((request) => [request.requestId, request]));
-  for (const request of incoming) {
-    const existing = byId.get(request.requestId);
-    byId.set(request.requestId, existing?.status === "resolved" ? existing : { ...existing, ...request });
-  }
-  return [...byId.values()];
+  return mergeRuntimePendingRequests(current, incoming);
 }
 
 export function patchUserConfirmRequest(

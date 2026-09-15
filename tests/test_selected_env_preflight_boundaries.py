@@ -18,6 +18,70 @@ def _load_selected_env_runner() -> ModuleType:
     return importlib.import_module("scripts.run_selected_env_operation")
 
 
+@pytest.mark.parametrize("operation", ("build", "ui-build"))
+def test_image_build_bypasses_frozen_deployment_runtime_attestation(tmp_path, monkeypatch, operation: str) -> None:
+    runner = _load_selected_env_runner()
+    env_file = tmp_path / "selected.env"
+    env_file.write_text("HOME=/operator\n", encoding="utf-8")
+    calls: list[tuple[Path, str]] = []
+    monkeypatch.setattr(runner, "initialize_before_operation", lambda *_args: None)
+    monkeypatch.setattr(
+        runner.direct_build,
+        "run_direct_build",
+        lambda source, selected, **_kwargs: calls.append((source, selected)) or 0,
+    )
+    monkeypatch.setattr(
+        runner.selected_env_reexec,
+        "freeze_deployment_source",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("pure image build must not freeze deployment runtime")),
+    )
+
+    assert runner.run_operation(env_file, operation) == 0
+    assert calls == [(env_file, operation)]
+
+
+def test_direct_build_uses_selected_env_and_current_source_without_python_or_daemon_probe(tmp_path, monkeypatch) -> None:
+    runner = _load_selected_env_runner()
+    direct_build = runner.direct_build
+    repo = tmp_path / "repo"
+    (repo / "docker").mkdir(parents=True)
+    (repo / "VERSION").write_text("4.0.1\n", encoding="utf-8")
+    for name in ("docker-compose.yml", "docker-compose.langfuse.yml"):
+        (repo / "docker" / name).write_text("services: {}\n", encoding="utf-8")
+    env_file = tmp_path / "selected.env"
+    env_file.write_text("HOME=/operator\n", encoding="utf-8")
+    commands: list[tuple[list[str], dict[str, str], Path]] = []
+    monkeypatch.setattr(direct_build, "parse_selected_env_bindings", lambda _path: {})
+    monkeypatch.setattr(direct_build, "require_current_epoch_env", lambda *_args: None)
+    monkeypatch.setattr(direct_build, "source_artifact_sha256", lambda _root: "a" * 64)
+    monkeypatch.setattr(
+        direct_build.source_snapshot,
+        "selected_env_child_env",
+        lambda *_args, **kwargs: {**kwargs["explicit"], "PATH": "/usr/bin"},
+    )
+    monkeypatch.setattr(direct_build, "run_with_global_cutover_lock", lambda _error, operation: operation())
+
+    def run(command, *, cwd, env, check, **_kwargs):
+        commands.append((command, env, cwd))
+        return subprocess.CompletedProcess(command, 0, stdout="a" * 64 + "\n")
+
+    monkeypatch.setattr(direct_build.subprocess, "run", run)
+
+    assert direct_build.run_direct_build(env_file, "build", repo_root=repo) == 0
+    command, environment, cwd = commands[0]
+    assert command[-2:] == ["build", "--pull=false"]
+    assert cwd == repo
+    assert environment["APP_VERSION"] == "4.0.1"
+    assert environment["AGENTGOV_SOURCE_ARTIFACT_SHA256"] == "a" * 64
+    assert "AGENTGOV_OPERATION_PYTHON" not in environment
+    assert "AGENTGOV_SELECTED_ENV_LOCK_NONCE" not in environment
+    assert [command[-1] for command, _env, _cwd in commands[1:]] == [
+        "agent-gov-api:4.0.1",
+        "agent-gov-agentscope-runtime:4.0.1",
+        "agent-gov-ui:4.0.1",
+    ]
+
+
 def test_selected_env_child_removes_hostile_ambient_and_rejects_control_explicit(tmp_path, monkeypatch) -> None:
     images = importlib.import_module("scripts.agentscope_atomic_cutover_images")
     env_file = tmp_path / "selected.env"

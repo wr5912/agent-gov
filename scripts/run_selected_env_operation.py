@@ -17,6 +17,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts import selected_env_deployed_browser as deployed_browser
+from scripts import selected_env_direct_build as direct_build
 from scripts import selected_env_image_inventory as image_inventory
 from scripts import selected_env_operation_cli, selected_env_reexec
 from scripts import selected_env_operation_contract as operation_contract
@@ -642,8 +643,10 @@ def run_operation(
         raise SelectedEnvError("所选 Compose env 路径不得依赖 shell HOME 展开")
     source = env_file if env_file.is_absolute() else REPO_ROOT / env_file
     source = Path(os.path.abspath(source))
-    source_base = selected_env_reexec.resolve_source_base(source, env_base_dir)
     initialize_before_operation(source, operation)
+    if operation in direct_build.OPERATIONS:
+        return direct_build.run_direct_build(source, operation, repo_root=REPO_ROOT)
+    source_base = selected_env_reexec.resolve_source_base(source, env_base_dir)
     payload, original_identity = _read_stable_regular_file(source)
     with tempfile.TemporaryDirectory(prefix="agentgov-selected-env-") as raw_directory:
         directory = Path(raw_directory)

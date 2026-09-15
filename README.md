@@ -131,7 +131,12 @@ make all-up
 `make images-prepare` 只拉取 Compose 当前声明的第三方镜像，以及三个项目 Dockerfile
 声明的构建基础镜像；所有引用都必须以 `@sha256` 固定。拉取后逐一复核本地 image ID
 和 Docker daemon/host-filesystem 边界。它是新机器的显式
-联网准备步骤；日常 `build/up/all-up` 始终使用 `--pull never`，缺镜像时 fail closed。
+联网准备步骤；日常 `up/all-up` 使用 `--pull never`，`build` 使用 `--pull=false` 且不更新
+基础镜像；部分 BuildKit 版本仍会查询固定摘要的 registry metadata，离线或慢网络环境应先完成
+`make images-prepare`。缺少必要镜像时命令 fail closed。
+`make build` 和 `make ui-build` 只固定所选 env、版本及当前源码摘要后构建本地镜像，不复制
+临时 Python 工具链，也不执行运行态容器/host-filesystem 身份探针；源码或 env 在构建期间变化会拒绝结果。
+容器绑定、持久化准备和切流所需的完整身份核验仍由 `up`、`all-up` 与各 `recreate` 入口执行。
 离线发布应使用 `scripts/deploy_agent_gov_to_host` 产生并校验 SHA-256 的项目镜像与
 Langfuse 依赖镜像包；目标机在首次 `docker load` 前会校验两个归档，加载后仍按
 Compose 精确 digest 和 image ID 放行。
